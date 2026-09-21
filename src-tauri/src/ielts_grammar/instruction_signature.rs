@@ -5,7 +5,7 @@ use crate::schema::ielts_authoring_v2::{
 use serde_json::Value;
 
 use super::instruction_zone::normalize_instruction_text;
-use super::question_number::expand_expression;
+use super::question_number::{expand_expression, instruction_cue_text};
 use crate::schema::ielts_authoring_v2::QuestionNumberExpressionV2;
 
 #[derive(Debug, Clone)]
@@ -21,7 +21,9 @@ pub(crate) fn infer_instruction_signature(
     evidence_anchors: Vec<Value>,
 ) -> SignatureResult {
     let normalized_text = normalize_instruction_text(text);
-    let lower = normalized_text.to_ascii_lowercase();
+    // Cue matching reads a derived view in which compact instruction phrases
+    // (`Completetheformbelow`) are re-spaced; `normalized_text` keeps the source.
+    let lower = instruction_cue_text(&normalized_text);
     let expected_question_numbers = expand_expression(expression);
     let task_type = infer_task_type(&lower, kind_hint);
     let selection_cardinality = selection_cardinality(&lower);
@@ -215,6 +217,15 @@ fn infer_task_type_from_cues(lower: &str) -> Option<TaskTypeV2> {
         && (lower.contains("two") || lower.contains("three"))
         && (lower.contains("letter") || lower.contains("option"))
     {
+        return Some(TaskTypeV2::MultipleChoice);
+    }
+    // Listening papers select four or five labels from one shared bank:
+    // `Choose FOUR correct answers, A-F`, `Choose FIVE correct letters, A-G`.
+    if ["four", "five", "six"].iter().any(|count| {
+        lower.contains(&format!("choose {count} correct"))
+            || lower.contains(&format!("choose {count} letters"))
+            || lower.contains(&format!("choose {count} answers"))
+    }) {
         return Some(TaskTypeV2::MultipleChoice);
     }
     if lower.contains("choose the correct letter")
@@ -709,5 +720,100 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.starts_with("task_type_conflict:")));
+    }
+
+    fn signature_shape(text: &str, expression: &QuestionNumberExpressionV2) -> String {
+        let result = infer_instruction_signature(text, expression, None, Vec::new());
+        let signature = result.signature;
+        format!(
+            "{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}",
+            signature.task_type,
+            signature.expected_question_numbers,
+            signature.option_alphabet,
+            signature.selection_cardinality,
+            signature.answer_assignment,
+            signature.word_limit,
+            signature.confidence,
+            result.warnings
+        )
+    }
+
+    #[test]
+    fn compact_listening_instructions_match_their_spaced_signatures() {
+        let cases = [
+            (
+                "Questions1-4 Completetheformbelow WriteNOMORETHANTWOWORDSforeachanswer.",
+                "Questions 1-4 Complete the form below Write NO MORE THAN TWO WORDS for each answer.",
+                QuestionNumberExpressionV2::Range { start: 1, end: 4 },
+            ),
+            (
+                "Questions8-10 Completetheformbelow WriteNOMORETHANTWOWORDSANDIORANUMBERforeachanswer.",
+                "Questions 8-10 Complete the form below Write NO MORE THAN TWO WORDS AND/OR A NUMBER for each answer.",
+                QuestionNumberExpressionV2::Range { start: 8, end: 10 },
+            ),
+            (
+                "Questions17-20 ChooseFOURcorrectanswers,A-F,nexttoquestions17-20.",
+                "Questions 17-20 Choose FOUR correct answers, A-F, next to questions 17-20.",
+                QuestionNumberExpressionV2::Range { start: 17, end: 20 },
+            ),
+            (
+                "Questions21-25 ChooseFIVEcorrectletters,A-G,nexttoquestions21-25.",
+                "Questions 21-25 Choose FIVE correct letters, A-G, next to questions 21-25.",
+                QuestionNumberExpressionV2::Range { start: 21, end: 25 },
+            ),
+            (
+                "Questions31-40 Completethenotesbelow WriteNOMORETHANTWOWORDSforeachanswer.",
+                "Questions 31-40 Complete the notes below Write NO MORE THAN TWO WORDS for each answer.",
+                QuestionNumberExpressionV2::Range { start: 31, end: 40 },
+            ),
+        ];
+        for (compact, spaced, expression) in cases {
+            assert_eq!(
+                signature_shape(compact, &expression),
+                signature_shape(spaced, &expression),
+                "compact={compact:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn choose_four_and_five_are_multiple_choice_with_declared_alphabets() {
+        let four = infer_instruction_signature(
+            "Questions 17-20 Choose FOUR correct answers, A-F, next to questions 17-20.",
+            &QuestionNumberExpressionV2::Range { start: 17, end: 20 },
+            None,
+            Vec::new(),
+        )
+        .signature;
+        assert_eq!(four.task_type, TaskTypeV2::MultipleChoice);
+        assert_eq!(four.option_alphabet.as_deref(), Some("A-F"));
+        assert_eq!(four.selection_cardinality.and_then(|c| c.exact), Some(4));
+
+        let five = infer_instruction_signature(
+            "Questions 21-25 Choose FIVE correct letters, A-G, next to questions 21-25.",
+            &QuestionNumberExpressionV2::Range { start: 21, end: 25 },
+            None,
+            Vec::new(),
+        )
+        .signature;
+        assert_eq!(five.task_type, TaskTypeV2::MultipleChoice);
+        assert_eq!(five.option_alphabet.as_deref(), Some("A-G"));
+        assert_eq!(five.selection_cardinality.and_then(|c| c.exact), Some(5));
+    }
+
+    #[test]
+    fn compact_word_limit_with_and_or_number_is_parsed() {
+        let limit = infer_instruction_signature(
+            "WriteNOMORETHANTWOWORDSANDIORANUMBERforeachanswer.",
+            &range(),
+            Some("form_completion"),
+            Vec::new(),
+        )
+        .signature
+        .word_limit
+        .expect("word limit");
+        assert_eq!(limit.max_words, Some(2));
+        assert_eq!(limit.max_numbers, Some(1));
+        assert_eq!(limit.words_and_or_number, Some(true));
     }
 }

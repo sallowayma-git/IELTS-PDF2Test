@@ -9,7 +9,6 @@
     "examId",
     "meta",
     "assets",
-    "media",
     "parts",
     "playbackPolicy",
     "taskGroups",
@@ -18,6 +17,14 @@
     "questionOrder",
     "questionDisplayMap",
     "audit"
+  ],
+  "anyOf": [
+    { "required": ["media"] },
+    {
+      "properties": {
+        "parts": { "type": "array", "items": { "type": "object", "required": ["media"] } }
+      }
+    }
   ],
   "properties": {
     "schemaVersion": { "const": "ListeningExamSourceV1" },
@@ -82,33 +89,7 @@
         }
       }
     },
-    "audioProbe": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["status", "provider", "providerVersion", "probedAt", "issueCodes"],
-      "properties": {
-        "status": { "type": "string", "enum": ["passed", "blocked"] },
-        "provider": { "type": "string", "minLength": 1 },
-        "providerVersion": { "type": "string", "minLength": 1 },
-        "probedAt": { "type": "string", "minLength": 1 },
-        "issueCodes": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "enum": [
-              "AUDIO_DECODE_FAILED",
-              "AUDIO_CODEC_UNSUPPORTED",
-              "AUDIO_HASH_MISMATCH",
-              "AUDIO_SEVERE_CLIPPING",
-              "AUDIO_NEAR_SILENT",
-              "AUDIO_CUE_INVALID",
-              "AUDIO_POLICY_MISSING"
-            ]
-          },
-          "uniqueItems": true
-        }
-      }
-    },
+    "audioProbe": { "$ref": "./ielts-authoring-ir-v2.schema.json#/$defs/listeningAudioProbe" },
     "runtimeMedia": {
       "type": "object",
       "additionalProperties": false,

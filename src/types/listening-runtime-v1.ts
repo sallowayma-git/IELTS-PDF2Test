@@ -66,7 +66,8 @@ export interface ListeningExamSourceV1 {
   examId: string;
   meta: ListeningRuntimeMetaV1;
   assets: ListeningRuntimeAssetManifestRefV1;
-  media: ListeningRuntimeMediaV1;
+  /** Complete-exam audio; optional when every part carries section media. */
+  media?: ListeningRuntimeMediaV1;
   parts: ListeningPartV2[];
   playbackPolicy: ListeningPlaybackPolicyV2;
   transcript?: ListeningTranscriptV2;

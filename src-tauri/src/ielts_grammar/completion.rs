@@ -106,7 +106,7 @@ pub(crate) fn recover_completion_structure(
         .filter(|line| {
             let lower = line.text.to_ascii_lowercase();
             !lower.trim().is_empty()
-                && !lower.trim_start().starts_with("questions ")
+                && !super::question_number::starts_with_question_heading(&lower)
                 && !lower.contains("complete the ")
                 && !lower.contains("write no more than")
                 && !lower.contains("write one word")
@@ -125,8 +125,7 @@ pub(crate) fn recover_completion_structure(
 fn completion_control_line(text: &str) -> bool {
     let lower = normalize_instruction_text(text).to_ascii_lowercase();
     let lower = lower.trim();
-    lower.starts_with("questions ")
-        || lower.starts_with("question ")
+    super::question_number::starts_with_question_heading(lower)
         || lower.starts_with("complete ")
         || lower.starts_with("choose ")
         || lower.starts_with("write ")

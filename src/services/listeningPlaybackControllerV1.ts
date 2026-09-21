@@ -37,18 +37,39 @@ function fail(code: ListeningPlaybackControllerErrorCodeV1, message: string): ne
   throw new ListeningPlaybackControllerErrorV1(code, message);
 }
 
-function assertPlayableSource(source: ListeningExamSourceV1): void {
+interface PlaybackMediaV1 {
+  assetId: string;
+  durationMs: number;
+  probe?: { status: string; issueCodes: readonly string[] };
+}
+
+// Kept local (no value imports) so the controller stays a self-contained module.
+function mediaByAssetId(source: ListeningExamSourceV1, assetId: string): PlaybackMediaV1 | undefined {
+  if (source.media?.assetId === assetId) return source.media;
+  return source.parts.find((part) => part.media?.assetId === assetId)?.media;
+}
+
+/** Section audio of `partId`, else complete-exam audio, else the first section audio. */
+function startingMedia(source: ListeningExamSourceV1, partId?: string): PlaybackMediaV1 | undefined {
+  const part = partId === undefined ? undefined : source.parts.find((entry) => entry.partId === partId);
+  if (partId !== undefined && !part) return undefined;
+  return part?.media ?? source.media ?? source.parts.find((entry) => entry.media)?.media;
+}
+
+function assertPlayableMedia(source: ListeningExamSourceV1, media: PlaybackMediaV1 | undefined): PlaybackMediaV1 {
   if (
     source.schemaVersion !== "ListeningExamSourceV1"
-    || source.media.probe.status !== "passed"
-    || source.media.probe.issueCodes.length > 0
+    || !media
+    || media.probe?.status !== "passed"
+    || media.probe.issueCodes.length > 0
   ) {
     fail("PLAYBACK_SOURCE_BLOCKED", "Listening playback requires a passed audio probe.");
   }
+  return media;
 }
 
-function assertIntegerPosition(source: ListeningExamSourceV1, positionMs: number): void {
-  if (!Number.isSafeInteger(positionMs) || positionMs < 0 || positionMs > source.media.durationMs) {
+function assertIntegerPosition(media: PlaybackMediaV1, positionMs: number): void {
+  if (!Number.isSafeInteger(positionMs) || positionMs < 0 || positionMs > media.durationMs) {
     fail("PLAYBACK_POSITION_INVALID", "Playback position must be an integer inside the probed duration.");
   }
 }
@@ -58,10 +79,12 @@ export function validateListeningPlaybackSnapshotV1(
   snapshot: ListeningPlaybackSnapshotV1
 ): string[] {
   const issues: string[] = [];
-  if (snapshot.mediaAssetId !== source.media.assetId) issues.push("media_asset_mismatch");
+  const media = mediaByAssetId(source, snapshot.mediaAssetId);
+  if (!media) issues.push("media_asset_mismatch");
+  const durationMs = media?.durationMs ?? 0;
   if (snapshot.policyMode !== source.playbackPolicy.mode) issues.push("policy_mode_mismatch");
   if (!Number.isSafeInteger(snapshot.playsStarted) || snapshot.playsStarted < 0) issues.push("plays_started_invalid");
-  if (!Number.isSafeInteger(snapshot.positionMs) || snapshot.positionMs < 0 || snapshot.positionMs > source.media.durationMs) {
+  if (!Number.isSafeInteger(snapshot.positionMs) || snapshot.positionMs < 0 || snapshot.positionMs > durationMs) {
     issues.push("position_invalid");
   }
   if (source.playbackPolicy.maxPlays !== undefined && snapshot.playsStarted > source.playbackPolicy.maxPlays) {
@@ -70,11 +93,11 @@ export function validateListeningPlaybackSnapshotV1(
   if (!source.playbackPolicy.allowReplay && snapshot.playsStarted > 1) issues.push("replay_forbidden");
   if (snapshot.status === "ready" && (snapshot.playsStarted !== 0 || snapshot.positionMs !== 0)) issues.push("ready_state_invalid");
   if (snapshot.status === "restart_pending" && (snapshot.playsStarted === 0 || snapshot.positionMs !== 0)) issues.push("restart_state_invalid");
-  if (["playing", "paused"].includes(snapshot.status) && (snapshot.playsStarted === 0 || snapshot.positionMs >= source.media.durationMs)) {
+  if (["playing", "paused"].includes(snapshot.status) && (snapshot.playsStarted === 0 || snapshot.positionMs >= durationMs)) {
     issues.push("active_state_invalid");
   }
   if (snapshot.status === "paused" && !source.playbackPolicy.allowPause) issues.push("pause_forbidden");
-  if (snapshot.status === "ended" && (snapshot.playsStarted === 0 || snapshot.positionMs !== source.media.durationMs)) {
+  if (snapshot.status === "ended" && (snapshot.playsStarted === 0 || snapshot.positionMs !== durationMs)) {
     issues.push("ended_state_invalid");
   }
   if ((snapshot.status === "failed") !== Boolean(snapshot.failureCode)) issues.push("failure_state_invalid");
@@ -86,13 +109,18 @@ function assertSnapshot(source: ListeningExamSourceV1, snapshot: ListeningPlayba
   if (issues.length > 0) fail("PLAYBACK_SNAPSHOT_INVALID", `Invalid playback snapshot: ${issues.join(",")}`);
 }
 
+/**
+ * Starts a playback session. With per-section audio, `partId` selects which
+ * section file the snapshot binds to; otherwise the complete-exam audio is used.
+ */
 export function createListeningPlaybackSnapshotV1(
   source: ListeningExamSourceV1,
-  at: string
+  at: string,
+  partId?: string
 ): ListeningPlaybackSnapshotV1 {
-  assertPlayableSource(source);
+  const media = assertPlayableMedia(source, startingMedia(source, partId));
   return {
-    mediaAssetId: source.media.assetId,
+    mediaAssetId: media.assetId,
     policyMode: source.playbackPolicy.mode,
     playsStarted: 0,
     positionMs: 0,
@@ -136,7 +164,7 @@ export function transitionListeningPlaybackV1(
   snapshot: ListeningPlaybackSnapshotV1,
   event: ListeningPlaybackEventV1
 ): ListeningPlaybackSnapshotV1 {
-  assertPlayableSource(source);
+  const media = assertPlayableMedia(source, mediaByAssetId(source, snapshot.mediaAssetId));
   assertSnapshot(source, snapshot);
   let next: ListeningPlaybackSnapshotV1;
   switch (event.type) {
@@ -160,40 +188,40 @@ export function transitionListeningPlaybackV1(
     case "pause":
       if (!source.playbackPolicy.allowPause) fail("PLAYBACK_PAUSE_FORBIDDEN", "Pause is disabled by source policy.");
       if (snapshot.status !== "playing") fail("PLAYBACK_TRANSITION_INVALID", `Cannot pause from ${snapshot.status}.`);
-      assertIntegerPosition(source, event.positionMs);
+      assertIntegerPosition(media, event.positionMs);
       if (event.positionMs < snapshot.positionMs) fail("PLAYBACK_POSITION_INVALID", "Pause position cannot move backwards.");
       next = {
         ...snapshot,
         positionMs: event.positionMs,
-        status: event.positionMs === source.media.durationMs ? "ended" : "paused",
+        status: event.positionMs === media.durationMs ? "ended" : "paused",
         lastTransitionAt: event.at
       };
       break;
     case "seek":
       if (!source.playbackPolicy.allowSeek) fail("PLAYBACK_SEEK_FORBIDDEN", "Seek is disabled by source policy.");
       if (!["playing", "paused"].includes(snapshot.status)) fail("PLAYBACK_TRANSITION_INVALID", `Cannot seek from ${snapshot.status}.`);
-      assertIntegerPosition(source, event.positionMs);
+      assertIntegerPosition(media, event.positionMs);
       next = {
         ...snapshot,
         positionMs: event.positionMs,
-        status: event.positionMs === source.media.durationMs ? "ended" : snapshot.status,
+        status: event.positionMs === media.durationMs ? "ended" : snapshot.status,
         lastTransitionAt: event.at
       };
       break;
     case "progress":
       if (snapshot.status !== "playing") fail("PLAYBACK_TRANSITION_INVALID", `Cannot advance from ${snapshot.status}.`);
-      assertIntegerPosition(source, event.positionMs);
+      assertIntegerPosition(media, event.positionMs);
       if (event.positionMs < snapshot.positionMs) fail("PLAYBACK_POSITION_INVALID", "Progress cannot move backwards; use seek.");
       next = {
         ...snapshot,
         positionMs: event.positionMs,
-        status: event.positionMs === source.media.durationMs ? "ended" : "playing",
+        status: event.positionMs === media.durationMs ? "ended" : "playing",
         lastTransitionAt: event.at
       };
       break;
     case "ended":
       if (snapshot.status !== "playing") fail("PLAYBACK_TRANSITION_INVALID", `Cannot end from ${snapshot.status}.`);
-      next = { ...snapshot, positionMs: source.media.durationMs, status: "ended", lastTransitionAt: event.at };
+      next = { ...snapshot, positionMs: media.durationMs, status: "ended", lastTransitionAt: event.at };
       break;
     case "refresh_recover":
       next = recover(source, snapshot, source.playbackPolicy.refreshBehavior, event.at);

@@ -128,6 +128,29 @@ pub struct ListeningPartV2 {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cue: Option<ListeningCueV2>,
     pub source_anchors: Vec<SourceAnchorV2>,
+    /// Section audio for this part (one user-supplied MP3 per section). When
+    /// absent the part plays from the exam-level `media`. Cues on a part with
+    /// its own media are relative to that file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<ListeningPartMediaV2>,
+}
+
+/// Per-part (per-section) audio reference. `probe` is optional while authoring
+/// and required (and must pass) in a published `ListeningExamSourceV1`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ListeningPartMediaV2 {
+    pub asset_id: String,
+    pub mime: String,
+    pub duration_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channels: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sample_rate_hz: Option<u32>,
+    pub sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe: Option<super::listening_runtime_v1::ListeningAudioProbeV1>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -191,7 +214,10 @@ pub struct ListeningTranscriptV2 {
 #[serde(deny_unknown_fields)]
 pub struct ListeningStructureV2 {
     pub scope: ListeningScopeV2,
-    pub media: ListeningMediaV2,
+    /// Single complete-exam audio. Optional when every part carries its own
+    /// section `media`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<ListeningMediaV2>,
     pub parts: Vec<ListeningPartV2>,
     pub playback_policy: ListeningPlaybackPolicyV2,
     #[serde(skip_serializing_if = "Option::is_none")]

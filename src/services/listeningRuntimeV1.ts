@@ -8,7 +8,8 @@ import type {
 import type {
   ListeningAttemptV1,
   ListeningExamSourceV1,
-  ListeningPlaybackSnapshotV1
+  ListeningPlaybackSnapshotV1,
+  ListeningRuntimeMediaV1
 } from "../types/listening-runtime-v1";
 import type { AssetDescriptorV2 } from "../types/schema-common-v2";
 
@@ -117,6 +118,27 @@ function addIssue(issues: ListeningRuntimeIssueV1[], code: string, targetId: str
   if (!issues.some((entry) => entry.code === code && entry.targetId === targetId)) issues.push(issue(code, targetId, message));
 }
 
+/** The media fields every exam-level or section audio reference shares. */
+export type ListeningMediaRefV1 = Pick<ListeningRuntimeMediaV1, "assetId" | "mime" | "durationMs" | "sha256"> & { probe?: ListeningRuntimeMediaV1["probe"] };
+
+/** Finds the exam-level or section media a playback snapshot is bound to. */
+export function listeningMediaByAssetIdV1(source: ListeningExamSourceV1, assetId: string): ListeningMediaRefV1 | undefined {
+  if (source.media?.assetId === assetId) return source.media;
+  return source.parts.find((part) => part.media?.assetId === assetId)?.media;
+}
+
+/**
+ * The media a new playback session starts from: the named part's section audio,
+ * else the complete-exam audio, else the first part's section audio.
+ */
+export function listeningPlaybackMediaV1(source: ListeningExamSourceV1, partId?: string): ListeningMediaRefV1 {
+  const part = partId === undefined ? undefined : source.parts.find((entry) => entry.partId === partId);
+  if (partId !== undefined && !part) throw new ListeningRuntimeErrorV1("LISTENING_PART_MISSING", "Unknown Listening part.", partId);
+  const media = part?.media ?? source.media ?? source.parts.find((entry) => entry.media)?.media;
+  if (!media) throw new ListeningRuntimeErrorV1("LISTENING_MEDIA_MISSING", "Listening source has no playable audio.", partId ?? source.examId);
+  return media;
+}
+
 /** Cross-field gate shared by author preview, package staging and student provider. */
 export function validateListeningExamSourceV1(source: ListeningExamSourceV1): ListeningRuntimeIssueV1[] {
   const issues: ListeningRuntimeIssueV1[] = [];
@@ -125,13 +147,20 @@ export function validateListeningExamSourceV1(source: ListeningExamSourceV1): Li
     return issues;
   }
   if (!source.examId || source.assets.examId !== source.examId) addIssue(issues, "RUNTIME_EXAM_ID_MISMATCH", source.examId || "source", "Source and asset examId must match.");
-  if (source.media.probe.status !== "passed" || source.media.probe.issueCodes.length) addIssue(issues, "AUDIO_PROBE_BLOCKED", source.media.assetId, "Audio probe did not pass.");
-  const mediaAsset = source.assets.assets.find((asset) => asset.assetId === source.media.assetId);
-  if (!mediaAsset) addIssue(issues, "ASSET_REFERENCE_MISSING", source.media.assetId, "Media asset is missing from the source manifest.");
-  else {
-    if (mediaAsset.kind !== "audio" || mediaAsset.mime !== source.media.mime) addIssue(issues, "AUDIO_CODEC_UNSUPPORTED", source.media.assetId, "Audio descriptor kind or MIME does not match media.");
-    if (mediaAsset.sha256.toLowerCase() !== source.media.sha256.toLowerCase()) addIssue(issues, "AUDIO_HASH_MISMATCH", source.media.assetId, "Audio hash does not match the asset descriptor.");
-    if (mediaAsset.durationMs !== undefined && mediaAsset.durationMs !== source.media.durationMs) addIssue(issues, "AUDIO_DURATION_MISMATCH", source.media.assetId, "Audio duration does not match the asset descriptor.");
+  const checkMedia = (media: ListeningMediaRefV1) => {
+    if (media.probe?.status !== "passed" || media.probe.issueCodes.length) addIssue(issues, "AUDIO_PROBE_BLOCKED", media.assetId, "Audio probe did not pass.");
+    const mediaAsset = source.assets.assets.find((asset) => asset.assetId === media.assetId);
+    if (!mediaAsset) addIssue(issues, "ASSET_REFERENCE_MISSING", media.assetId, "Media asset is missing from the source manifest.");
+    else {
+      if (mediaAsset.kind !== "audio" || mediaAsset.mime !== media.mime) addIssue(issues, "AUDIO_CODEC_UNSUPPORTED", media.assetId, "Audio descriptor kind or MIME does not match media.");
+      if (mediaAsset.sha256.toLowerCase() !== media.sha256.toLowerCase()) addIssue(issues, "AUDIO_HASH_MISMATCH", media.assetId, "Audio hash does not match the asset descriptor.");
+      if (mediaAsset.durationMs !== undefined && mediaAsset.durationMs !== media.durationMs) addIssue(issues, "AUDIO_DURATION_MISMATCH", media.assetId, "Audio duration does not match the asset descriptor.");
+    }
+  };
+  if (source.media) checkMedia(source.media);
+  for (const part of source.parts) {
+    if (part.media) checkMedia(part.media);
+    else if (!source.media) addIssue(issues, "LISTENING_MEDIA_MISSING", part.partId, "Part has no section audio and the exam has no complete audio.");
   }
   const policy = source.playbackPolicy;
   if ((!policy.allowReplay && policy.maxPlays !== 1) || (policy.allowReplay && policy.maxPlays === 1)) addIssue(issues, "AUDIO_POLICY_MISSING", source.examId, "Playback policy has an inconsistent replay limit.");
@@ -179,7 +208,7 @@ export function validateListeningExamSourceV1(source: ListeningExamSourceV1): Li
   const scoringNumbers = new Set(Object.values(source.answerSlots).filter((slot) => slot.participation === "scoring").map((slot) => slot.questionNumber));
   const partNumbers = new Set<number>();
   const assignedTaskIds = new Set<string>();
-  let priorCueEnd = -1;
+  const priorCueEndByMedia = new Map<string, number>();
   for (const part of source.parts) {
     for (const taskId of part.taskIds) {
       if (!taskById.has(taskId)) addIssue(issues, "LISTENING_TASK_MISSING", taskId, "Part references an unknown task.");
@@ -191,8 +220,11 @@ export function validateListeningExamSourceV1(source: ListeningExamSourceV1): Li
       partNumbers.add(number);
     }
     if (part.cue) {
-      if (part.cue.startMs >= part.cue.endMs || part.cue.endMs > source.media.durationMs || part.cue.startMs < priorCueEnd || !part.cue.confirmed || part.cue.confidence < 0.9) addIssue(issues, "AUDIO_CUE_INVALID", part.partId, "Part cue is out of bounds, overlapping, unconfirmed or low-confidence.");
-      priorCueEnd = part.cue.endMs;
+      // Cues are relative to the file the part plays from: its section media, else the exam media.
+      const media = part.media ?? source.media;
+      const priorCueEnd = priorCueEndByMedia.get(media?.assetId ?? "") ?? -1;
+      if (!media || part.cue.startMs >= part.cue.endMs || part.cue.endMs > media.durationMs || part.cue.startMs < priorCueEnd || !part.cue.confirmed || part.cue.confidence < 0.9) addIssue(issues, "AUDIO_CUE_INVALID", part.partId, "Part cue is out of bounds, overlapping, unconfirmed or low-confidence.");
+      priorCueEndByMedia.set(media?.assetId ?? "", part.cue.endMs);
     }
   }
   if (assignedTaskIds.size !== taskIds.size) addIssue(issues, "LISTENING_TASK_SCOPE_INVALID", source.examId, "Every task must be assigned to exactly one Part.");
@@ -259,8 +291,9 @@ export function validateListeningAttemptV1(source: ListeningExamSourceV1, attemp
   if (attempt.schemaVersion !== "ListeningAttemptV1") issues.push(issue("RUNTIME_ATTEMPT_SCHEMA_UNSUPPORTED", "attempt", "Unsupported Listening attempt schema."));
   if (attempt.examId !== source.examId) issues.push(issue("RUNTIME_ATTEMPT_EXAM_MISMATCH", "attempt", "Attempt examId does not match source."));
   if (attempt.sourceRevision !== sourceRevision(source)) issues.push(issue("RUNTIME_ATTEMPT_REVISION_MISMATCH", "attempt", "Attempt must use the same source revision."));
-  if (attempt.playback.mediaAssetId !== source.media.assetId || attempt.playback.policyMode !== source.playbackPolicy.mode) issues.push(issue("AUDIO_ATTEMPT_BINDING_INVALID", "playback", "Attempt playback is not bound to source media and policy."));
-  if (attempt.playback.positionMs < 0 || attempt.playback.positionMs > source.media.durationMs || (attempt.playback.status === "ready" && (attempt.playback.playsStarted !== 0 || attempt.playback.positionMs !== 0)) || (attempt.playback.status !== "ready" && attempt.playback.status !== "failed" && attempt.playback.playsStarted === 0)) issues.push(issue("AUDIO_PLAYBACK_STATE_INVALID", "playback", "Serialized playback snapshot violates the source duration or play-count contract."));
+  const playbackMedia = listeningMediaByAssetIdV1(source, attempt.playback.mediaAssetId);
+  if (!playbackMedia || attempt.playback.policyMode !== source.playbackPolicy.mode) issues.push(issue("AUDIO_ATTEMPT_BINDING_INVALID", "playback", "Attempt playback is not bound to source media and policy."));
+  if (attempt.playback.positionMs < 0 || attempt.playback.positionMs > (playbackMedia?.durationMs ?? 0) || (attempt.playback.status === "ready" && (attempt.playback.playsStarted !== 0 || attempt.playback.positionMs !== 0)) || (attempt.playback.status !== "ready" && attempt.playback.status !== "failed" && attempt.playback.playsStarted === 0)) issues.push(issue("AUDIO_PLAYBACK_STATE_INVALID", "playback", "Serialized playback snapshot violates the source duration or play-count contract."));
   if (source.playbackPolicy.maxPlays !== undefined && attempt.playback.playsStarted > source.playbackPolicy.maxPlays) issues.push(issue("AUDIO_POLICY_MISSING", "playback", "Attempt exceeds the configured play limit."));
   for (const [slotId, value] of Object.entries(attempt.answers)) {
     const runtimeSlot = model.slots[slotId];
@@ -292,7 +325,7 @@ function assertAttemptBoundary(source: ListeningExamSourceV1, attempt: Listening
 
 export function createListeningAttempt(source: ListeningExamSourceV1, now = new Date(), playback?: ListeningPlaybackSnapshotV1): ListeningAttemptV1 {
   assertListeningExamSourceV1(source);
-  return { schemaVersion: "ListeningAttemptV1", examId: source.examId, sourceRevision: sourceRevision(source), answers: {}, playback: playback ?? { mediaAssetId: source.media.assetId, policyMode: source.playbackPolicy.mode, playsStarted: 0, positionMs: 0, status: "ready", lastTransitionAt: now.toISOString() }, state: "in_progress", updatedAt: now.toISOString() };
+  return { schemaVersion: "ListeningAttemptV1", examId: source.examId, sourceRevision: sourceRevision(source), answers: {}, playback: playback ?? { mediaAssetId: listeningPlaybackMediaV1(source).assetId, policyMode: source.playbackPolicy.mode, playsStarted: 0, positionMs: 0, status: "ready", lastTransitionAt: now.toISOString() }, state: "in_progress", updatedAt: now.toISOString() };
 }
 
 export function setListeningSlotAnswer(source: ListeningExamSourceV1, attempt: ListeningAttemptV1, slotId: string, value: AnswerValueV2, now = new Date()): ListeningAttemptV1 {

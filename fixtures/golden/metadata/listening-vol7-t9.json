@@ -1,0 +1,815 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "listening-vol7-t9",
+  "source": {
+    "path": "fixtures/golden/private-real/listening-vol7-t9.pdf",
+    "originalName": "listening-vol7-t9.pdf",
+    "sha256": "580b56e31aaec252ab1a566991506c97eee455df8808ced0d2af5351721d1d76",
+    "sizeBytes": 284873,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "cover_instructions"
+        ]
+      },
+      {
+        "pageIndex": 2,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 3,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 4,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 5,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 6,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 7,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 8,
+        "roles": [
+          "question"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          1,
+          4
+        ],
+        "kind": "form_completion",
+        "slotIds": [
+          "q1",
+          "q2",
+          "q3",
+          "q4"
+        ],
+        "responseGroupIds": [
+          "group-1-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-1-source"
+        ]
+      },
+      {
+        "id": "group-2",
+        "displayRange": [
+          5,
+          7
+        ],
+        "kind": "single_choice",
+        "slotIds": [
+          "q5",
+          "q6",
+          "q7"
+        ],
+        "responseGroupIds": [
+          "group-2-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-2-source"
+        ]
+      },
+      {
+        "id": "group-3",
+        "displayRange": [
+          8,
+          10
+        ],
+        "kind": "form_completion",
+        "slotIds": [
+          "q8",
+          "q9",
+          "q10"
+        ],
+        "responseGroupIds": [
+          "group-3-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-3-source"
+        ]
+      },
+      {
+        "id": "group-4",
+        "displayRange": [
+          11,
+          16
+        ],
+        "kind": "single_choice",
+        "slotIds": [
+          "q11",
+          "q12",
+          "q13",
+          "q14",
+          "q15",
+          "q16"
+        ],
+        "responseGroupIds": [
+          "group-4-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-4-source"
+        ]
+      },
+      {
+        "id": "group-5",
+        "displayRange": [
+          17,
+          20
+        ],
+        "kind": "matching_features",
+        "slotIds": [
+          "q17",
+          "q18",
+          "q19",
+          "q20"
+        ],
+        "responseGroupIds": [
+          "group-5-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-5-source"
+        ]
+      },
+      {
+        "id": "group-6",
+        "displayRange": [
+          21,
+          25
+        ],
+        "kind": "matching_features",
+        "slotIds": [
+          "q21",
+          "q22",
+          "q23",
+          "q24",
+          "q25"
+        ],
+        "responseGroupIds": [
+          "group-6-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-6-source"
+        ]
+      },
+      {
+        "id": "group-7",
+        "displayRange": [
+          26,
+          30
+        ],
+        "kind": "single_choice",
+        "slotIds": [
+          "q26",
+          "q27",
+          "q28",
+          "q29",
+          "q30"
+        ],
+        "responseGroupIds": [
+          "group-7-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-7-source"
+        ]
+      },
+      {
+        "id": "group-8",
+        "displayRange": [
+          31,
+          40
+        ],
+        "kind": "note_completion",
+        "slotIds": [
+          "q31",
+          "q32",
+          "q33",
+          "q34",
+          "q35",
+          "q36",
+          "q37",
+          "q38",
+          "q39",
+          "q40"
+        ],
+        "responseGroupIds": [
+          "group-8-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-8-source"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q1",
+        "displayNumber": "1",
+        "responseType": "text"
+      },
+      {
+        "id": "q2",
+        "displayNumber": "2",
+        "responseType": "text"
+      },
+      {
+        "id": "q3",
+        "displayNumber": "3",
+        "responseType": "text"
+      },
+      {
+        "id": "q4",
+        "displayNumber": "4",
+        "responseType": "text"
+      },
+      {
+        "id": "q5",
+        "displayNumber": "5",
+        "responseType": "radio"
+      },
+      {
+        "id": "q6",
+        "displayNumber": "6",
+        "responseType": "radio"
+      },
+      {
+        "id": "q7",
+        "displayNumber": "7",
+        "responseType": "radio"
+      },
+      {
+        "id": "q8",
+        "displayNumber": "8",
+        "responseType": "text"
+      },
+      {
+        "id": "q9",
+        "displayNumber": "9",
+        "responseType": "text"
+      },
+      {
+        "id": "q10",
+        "displayNumber": "10",
+        "responseType": "text"
+      },
+      {
+        "id": "q11",
+        "displayNumber": "11",
+        "responseType": "radio"
+      },
+      {
+        "id": "q12",
+        "displayNumber": "12",
+        "responseType": "radio"
+      },
+      {
+        "id": "q13",
+        "displayNumber": "13",
+        "responseType": "radio"
+      },
+      {
+        "id": "q14",
+        "displayNumber": "14",
+        "responseType": "radio"
+      },
+      {
+        "id": "q15",
+        "displayNumber": "15",
+        "responseType": "radio"
+      },
+      {
+        "id": "q16",
+        "displayNumber": "16",
+        "responseType": "radio"
+      },
+      {
+        "id": "q17",
+        "displayNumber": "17",
+        "responseType": "select"
+      },
+      {
+        "id": "q18",
+        "displayNumber": "18",
+        "responseType": "select"
+      },
+      {
+        "id": "q19",
+        "displayNumber": "19",
+        "responseType": "select"
+      },
+      {
+        "id": "q20",
+        "displayNumber": "20",
+        "responseType": "select"
+      },
+      {
+        "id": "q21",
+        "displayNumber": "21",
+        "responseType": "select"
+      },
+      {
+        "id": "q22",
+        "displayNumber": "22",
+        "responseType": "select"
+      },
+      {
+        "id": "q23",
+        "displayNumber": "23",
+        "responseType": "select"
+      },
+      {
+        "id": "q24",
+        "displayNumber": "24",
+        "responseType": "select"
+      },
+      {
+        "id": "q25",
+        "displayNumber": "25",
+        "responseType": "select"
+      },
+      {
+        "id": "q26",
+        "displayNumber": "26",
+        "responseType": "radio"
+      },
+      {
+        "id": "q27",
+        "displayNumber": "27",
+        "responseType": "radio"
+      },
+      {
+        "id": "q28",
+        "displayNumber": "28",
+        "responseType": "radio"
+      },
+      {
+        "id": "q29",
+        "displayNumber": "29",
+        "responseType": "radio"
+      },
+      {
+        "id": "q30",
+        "displayNumber": "30",
+        "responseType": "radio"
+      },
+      {
+        "id": "q31",
+        "displayNumber": "31",
+        "responseType": "text"
+      },
+      {
+        "id": "q32",
+        "displayNumber": "32",
+        "responseType": "text"
+      },
+      {
+        "id": "q33",
+        "displayNumber": "33",
+        "responseType": "text"
+      },
+      {
+        "id": "q34",
+        "displayNumber": "34",
+        "responseType": "text"
+      },
+      {
+        "id": "q35",
+        "displayNumber": "35",
+        "responseType": "text"
+      },
+      {
+        "id": "q36",
+        "displayNumber": "36",
+        "responseType": "text"
+      },
+      {
+        "id": "q37",
+        "displayNumber": "37",
+        "responseType": "text"
+      },
+      {
+        "id": "q38",
+        "displayNumber": "38",
+        "responseType": "text"
+      },
+      {
+        "id": "q39",
+        "displayNumber": "39",
+        "responseType": "text"
+      },
+      {
+        "id": "q40",
+        "displayNumber": "40",
+        "responseType": "text"
+      }
+    ],
+    "assets": [],
+    "optionBanks": [
+      {
+        "id": "group-5-option-bank",
+        "taskGroupId": "group-5",
+        "scope": "task_group",
+        "labels": [
+          "A",
+          "B",
+          "C",
+          "D",
+          "E",
+          "F"
+        ],
+        "allowReuse": false,
+        "sourceEvidenceIds": [
+          "group-5-source"
+        ]
+      },
+      {
+        "id": "group-6-option-bank",
+        "taskGroupId": "group-6",
+        "scope": "task_group",
+        "labels": [
+          "A",
+          "B",
+          "C",
+          "D",
+          "E",
+          "F",
+          "G"
+        ],
+        "allowReuse": false,
+        "sourceEvidenceIds": [
+          "group-6-source"
+        ]
+      }
+    ],
+    "responseGroups": [
+      {
+        "id": "group-1-responses",
+        "taskGroupId": "group-1",
+        "slotIds": [
+          "q1",
+          "q2",
+          "q3",
+          "q4"
+        ],
+        "promptMode": "embedded",
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "assignment": "per_slot",
+        "optionBinding": {
+          "mode": "none"
+        },
+        "reusePolicy": "not_applicable",
+        "scoringPolicy": "per_slot_ielts_normalized",
+        "sourceEvidenceIds": [
+          "group-1-source"
+        ]
+      },
+      {
+        "id": "group-2-responses",
+        "taskGroupId": "group-2",
+        "slotIds": [
+          "q5",
+          "q6",
+          "q7"
+        ],
+        "promptMode": "per_slot",
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "assignment": "per_slot",
+        "optionBinding": {
+          "mode": "inline",
+          "inlineLabels": [
+            "A",
+            "B",
+            "C"
+          ]
+        },
+        "reusePolicy": "allowed",
+        "scoringPolicy": "per_slot_binary",
+        "sourceEvidenceIds": [
+          "group-2-source"
+        ]
+      },
+      {
+        "id": "group-3-responses",
+        "taskGroupId": "group-3",
+        "slotIds": [
+          "q8",
+          "q9",
+          "q10"
+        ],
+        "promptMode": "embedded",
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "assignment": "per_slot",
+        "optionBinding": {
+          "mode": "none"
+        },
+        "reusePolicy": "not_applicable",
+        "scoringPolicy": "per_slot_ielts_normalized",
+        "sourceEvidenceIds": [
+          "group-3-source"
+        ]
+      },
+      {
+        "id": "group-4-responses",
+        "taskGroupId": "group-4",
+        "slotIds": [
+          "q11",
+          "q12",
+          "q13",
+          "q14",
+          "q15",
+          "q16"
+        ],
+        "promptMode": "per_slot",
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "assignment": "per_slot",
+        "optionBinding": {
+          "mode": "inline",
+          "inlineLabels": [
+            "A",
+            "B",
+            "C"
+          ]
+        },
+        "reusePolicy": "allowed",
+        "scoringPolicy": "per_slot_binary",
+        "sourceEvidenceIds": [
+          "group-4-source"
+        ]
+      },
+      {
+        "id": "group-5-responses",
+        "taskGroupId": "group-5",
+        "slotIds": [
+          "q17",
+          "q18",
+          "q19",
+          "q20"
+        ],
+        "promptMode": "per_slot",
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "assignment": "per_slot",
+        "optionBinding": {
+          "mode": "option_bank",
+          "optionBankId": "group-5-option-bank"
+        },
+        "reusePolicy": "disallowed",
+        "scoringPolicy": "per_slot_binary",
+        "sourceEvidenceIds": [
+          "group-5-source"
+        ]
+      },
+      {
+        "id": "group-6-responses",
+        "taskGroupId": "group-6",
+        "slotIds": [
+          "q21",
+          "q22",
+          "q23",
+          "q24",
+          "q25"
+        ],
+        "promptMode": "per_slot",
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "assignment": "per_slot",
+        "optionBinding": {
+          "mode": "option_bank",
+          "optionBankId": "group-6-option-bank"
+        },
+        "reusePolicy": "disallowed",
+        "scoringPolicy": "per_slot_binary",
+        "sourceEvidenceIds": [
+          "group-6-source"
+        ]
+      },
+      {
+        "id": "group-7-responses",
+        "taskGroupId": "group-7",
+        "slotIds": [
+          "q26",
+          "q27",
+          "q28",
+          "q29",
+          "q30"
+        ],
+        "promptMode": "per_slot",
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "assignment": "per_slot",
+        "optionBinding": {
+          "mode": "inline",
+          "inlineLabels": [
+            "A",
+            "B",
+            "C"
+          ]
+        },
+        "reusePolicy": "allowed",
+        "scoringPolicy": "per_slot_binary",
+        "sourceEvidenceIds": [
+          "group-7-source"
+        ]
+      },
+      {
+        "id": "group-8-responses",
+        "taskGroupId": "group-8",
+        "slotIds": [
+          "q31",
+          "q32",
+          "q33",
+          "q34",
+          "q35",
+          "q36",
+          "q37",
+          "q38",
+          "q39",
+          "q40"
+        ],
+        "promptMode": "embedded",
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "assignment": "per_slot",
+        "optionBinding": {
+          "mode": "none"
+        },
+        "reusePolicy": "not_applicable",
+        "scoringPolicy": "per_slot_ielts_normalized",
+        "sourceEvidenceIds": [
+          "group-8-source"
+        ]
+      }
+    ],
+    "sourceEvidence": [
+      {
+        "id": "group-1-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          2
+        ],
+        "references": [
+          "fixtures/golden/private-real/listening-vol7-t9.pdf#page=2"
+        ]
+      },
+      {
+        "id": "group-2-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          2,
+          3
+        ],
+        "references": [
+          "fixtures/golden/private-real/listening-vol7-t9.pdf#page=2",
+          "fixtures/golden/private-real/listening-vol7-t9.pdf#page=3"
+        ]
+      },
+      {
+        "id": "group-3-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          3
+        ],
+        "references": [
+          "fixtures/golden/private-real/listening-vol7-t9.pdf#page=3"
+        ]
+      },
+      {
+        "id": "group-4-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          4
+        ],
+        "references": [
+          "fixtures/golden/private-real/listening-vol7-t9.pdf#page=4"
+        ]
+      },
+      {
+        "id": "group-5-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          5
+        ],
+        "references": [
+          "fixtures/golden/private-real/listening-vol7-t9.pdf#page=5"
+        ]
+      },
+      {
+        "id": "group-6-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          6
+        ],
+        "references": [
+          "fixtures/golden/private-real/listening-vol7-t9.pdf#page=6"
+        ]
+      },
+      {
+        "id": "group-7-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          6,
+          7
+        ],
+        "references": [
+          "fixtures/golden/private-real/listening-vol7-t9.pdf#page=6",
+          "fixtures/golden/private-real/listening-vol7-t9.pdf#page=7"
+        ]
+      },
+      {
+        "id": "group-8-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          8
+        ],
+        "references": [
+          "fixtures/golden/private-real/listening-vol7-t9.pdf#page=8"
+        ]
+      }
+    ]
+  },
+  "knownIssues": [
+    "Private-real listening question paper (IELTS Listening, four sections, no answer key, no audio). The PDF stays outside Git.",
+    "Parts: SECTION 1 = Q1-10 (pages 2-3), SECTION 2 = Q11-20 (pages 4-5), SECTION 3 = Q21-30 (pages 6-7), SECTION 4 = Q31-40 (page 8); headings print compact as SECTION1..SECTION4.",
+    "Word limits: Q1-4 and Q31-40 'NO MORE THAN TWO WORDS'; Q8-10 'NO MORE THAN TWO WORDS AND/OR A NUMBER' (text layer splits it as 'AN D/O R A NUM BER').",
+    "Q17-20 'Choose FOUR correct answers, A-F, next to questions 17-20' and Q21-25 'Choose FIVE correct letters, A-G, next to questions 21-25': each numbered item takes one letter from a shared bank, recorded here as per-slot matching; the epic plan frames them as choose-N selections - canonical task type still to be decided.",
+    "The text layer has no space glyphs; before the pdfium glyph-gap word split (2026-09-21) import produced 0 task groups / 0 slots. The text layer also carries spurious intra-word spaces ('q ue s tions', 'eac h')."
+  ],
+  "review": {
+    "status": "needs_review",
+    "reviewedBy": "listening-epic-recognition-agent",
+    "reviewedAt": "2026-09-21",
+    "method": "source-text-evidence: pdfium block text after glyph-gap split, cross-checked with poppler pdftotext",
+    "evidence": [
+      "fixtures/golden/private-real/listening-vol7-t9.pdf#page=2",
+      "fixtures/golden/private-real/listening-vol7-t9.pdf#page=5",
+      "fixtures/golden/private-real/listening-vol7-t9.pdf#page=6",
+      "fixtures/golden/private-real/listening-vol7-t9.pdf#page=8"
+    ]
+  },
+  "baseline": {
+    "v1Path": "not-recorded (no V1 baseline for this private listening fixture)",
+    "observed": {
+      "pageCount": 8,
+      "groupCount": 0,
+      "slotCount": 0,
+      "observedAt": "2026-09-21",
+      "note": "import result before the geometry fix"
+    }
+  }
+}

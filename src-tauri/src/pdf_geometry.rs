@@ -122,6 +122,24 @@ struct CharWithOrigin {
     ch: char,
     x: f32,
     y: f32,
+    /// Right edge of the glyph's advance box (pdfium loose bounds), when the
+    /// PDF exposes it. Together with `font_size` this lets word assembly see a
+    /// real inter-glyph gap instead of guessing from origin spacing alone.
+    glyph_right: Option<f32>,
+    /// Scaled font size in points, when known.
+    font_size: Option<f32>,
+}
+
+impl CharWithOrigin {
+    /// Glyph metrics absent: word assembly falls back to origin spacing only.
+    #[cfg_attr(not(test), allow(dead_code))]
+    const UNMEASURED: CharWithOrigin = CharWithOrigin {
+        ch: ' ',
+        x: 0.0,
+        y: 0.0,
+        glyph_right: None,
+        font_size: None,
+    };
 }
 
 #[derive(Clone, Debug)]
@@ -365,7 +383,20 @@ fn collect_chars_with_origin(page: &PdfPage) -> Vec<CharWithOrigin> {
         }
         let x = char_obj.origin_x().map(|p| p.value).unwrap_or(0.0);
         let y = char_obj.origin_y().map(|p| p.value).unwrap_or(0.0);
-        chars.push(CharWithOrigin { ch, x, y });
+        let glyph_right = char_obj
+            .loose_bounds()
+            .ok()
+            .map(|bounds| bounds.right().value)
+            .filter(|right| right.is_finite() && *right >= x);
+        let font_size =
+            Some(char_obj.scaled_font_size().value).filter(|size| size.is_finite() && *size > 0.0);
+        chars.push(CharWithOrigin {
+            ch,
+            x,
+            y,
+            glyph_right,
+            font_size,
+        });
     }
     chars
 }
@@ -2134,6 +2165,30 @@ fn build_lines_within_column(chars: &[CharWithOrigin], y_tol: f32) -> Vec<(Strin
     result
 }
 
+/// Minimum blank run, as a fraction of the font size, that reads as a word
+/// space. Real inter-word spaces are ~0.25 em; kerning and tracking inside a
+/// word stay well below 0.05 em (observed on the listening corpus: intra-word
+/// gaps within +/-0.01 em, word gaps 0.17-0.26 em).
+const GLYPH_WORD_GAP_EM: f32 = 0.15;
+
+/// Whether the blank run between two consecutive glyphs on a line is a word
+/// space, judged from the previous glyph's advance box and the font size. Some
+/// PDFs (the listening corpus) position every word without emitting space
+/// characters, and their word gaps are far below the origin-spacing threshold.
+/// Only whitespace is ever added by this rule, never removed or reordered text.
+fn glyph_gap_is_word_space(previous: &CharWithOrigin, current: &CharWithOrigin) -> bool {
+    if previous.ch.is_whitespace() || current.ch.is_whitespace() {
+        return false;
+    }
+    let (Some(previous_right), Some(previous_size), Some(current_size)) =
+        (previous.glyph_right, previous.font_size, current.font_size)
+    else {
+        return false;
+    };
+    let em = previous_size.max(current_size);
+    current.x - previous_right > em * GLYPH_WORD_GAP_EM
+}
+
 fn build_lines_within_column_refined(
     chars: &[CharWithOrigin],
     y_tol: f32,
@@ -2146,17 +2201,19 @@ fn build_lines_within_column_refined(
     for line in lines {
         let gap_threshold = line_word_gap_threshold(&line);
         let mut words: Vec<String> = Vec::new();
-        let mut prev_x: Option<f32> = None;
+        let mut prev: Option<&CharWithOrigin> = None;
         for ch in &line {
-            let start_new = match prev_x {
-                Some(px) => ch.x - px > gap_threshold,
+            let start_new = match prev {
+                Some(previous) => {
+                    ch.x - previous.x > gap_threshold || glyph_gap_is_word_space(previous, ch)
+                }
                 None => true,
             };
             if start_new {
                 words.push(String::new());
             }
             words.last_mut().unwrap().push(ch.ch);
-            prev_x = Some(ch.x);
+            prev = Some(ch);
         }
         result.push((
             canonicalize_extracted_line_text(&words.join(" ")),
@@ -2891,7 +2948,12 @@ mod tests {
                 x += 8.0;
                 continue;
             }
-            chars.push(CharWithOrigin { ch, x, y });
+            chars.push(CharWithOrigin {
+                ch,
+                x,
+                y,
+                ..CharWithOrigin::UNMEASURED
+            });
             x += 4.8;
         }
     }
@@ -3847,17 +3909,20 @@ mod tests {
             ch: 'a',
             x: 290.0,
             y: 700.0,
+            ..CharWithOrigin::UNMEASURED
         }];
         let mut right = vec![
             CharWithOrigin {
                 ch: 'n',
                 x: 301.0,
                 y: 700.0,
+                ..CharWithOrigin::UNMEASURED
             },
             CharWithOrigin {
                 ch: 'C',
                 x: 309.0,
                 y: 700.0,
+                ..CharWithOrigin::UNMEASURED
             },
         ];
         repair_cross_column_word_prefix(&mut left, &mut right, 300.0);
@@ -3869,11 +3934,13 @@ mod tests {
                 ch: 'N',
                 x: 285.0,
                 y: 680.0,
+                ..CharWithOrigin::UNMEASURED
             },
             CharWithOrigin {
                 ch: 'e',
                 x: 290.0,
                 y: 680.0,
+                ..CharWithOrigin::UNMEASURED
             },
         ];
         let mut right = vec![
@@ -3881,11 +3948,13 @@ mod tests {
                 ch: 'i',
                 x: 301.0,
                 y: 680.0,
+                ..CharWithOrigin::UNMEASURED
             },
             CharWithOrigin {
                 ch: 'l',
                 x: 306.0,
                 y: 680.0,
+                ..CharWithOrigin::UNMEASURED
             },
         ];
         repair_cross_column_word_prefix(&mut left, &mut right, 300.0);
@@ -3896,11 +3965,13 @@ mod tests {
             ch: 't',
             x: 290.0,
             y: 660.0,
+            ..CharWithOrigin::UNMEASURED
         }];
         let mut right = vec![CharWithOrigin {
             ch: 'A',
             x: 301.0,
             y: 660.0,
+            ..CharWithOrigin::UNMEASURED
         }];
         repair_cross_column_word_prefix(&mut left, &mut right, 300.0);
         assert_eq!(left.iter().map(|ch| ch.ch).collect::<String>(), "t");
@@ -3920,6 +3991,7 @@ mod tests {
                 ch,
                 x: 28.0 + index as f32 * 4.8,
                 y: 700.0,
+                ..CharWithOrigin::UNMEASURED
             });
         }
         line.extend([
@@ -3927,11 +3999,13 @@ mod tests {
                 ch: 'i',
                 x: 301.0,
                 y: 700.0,
+                ..CharWithOrigin::UNMEASURED
             },
             CharWithOrigin {
                 ch: 'l',
                 x: 306.0,
                 y: 700.0,
+                ..CharWithOrigin::UNMEASURED
             },
         ]);
 
@@ -3954,16 +4028,19 @@ mod tests {
                         // continuation, not an independent column boundary.
                         x: 126.4 + index as f32 * 4.8,
                         y: 700.0 - row_index as f32 * 11.0,
+                        ..CharWithOrigin::UNMEASURED
                     });
                     row.push(CharWithOrigin {
                         ch: 'm',
                         x: 164.8 + index as f32 * 4.8,
                         y: 700.0 - row_index as f32 * 11.0,
+                        ..CharWithOrigin::UNMEASURED
                     });
                     row.push(CharWithOrigin {
                         ch: 'r',
                         x: 306.6 + index as f32 * 4.8,
                         y: 700.0 - row_index as f32 * 11.0,
+                        ..CharWithOrigin::UNMEASURED
                     });
                 }
                 row.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap());
@@ -4341,16 +4418,19 @@ mod tests {
                 ch: 'm',
                 x: 240.0,
                 y: 680.0,
+                ..CharWithOrigin::UNMEASURED
             },
             CharWithOrigin {
                 ch: 'o',
                 x: 244.8,
                 y: 680.0,
+                ..CharWithOrigin::UNMEASURED
             },
             CharWithOrigin {
                 ch: 'r',
                 x: 249.6,
                 y: 680.0,
+                ..CharWithOrigin::UNMEASURED
             },
         ];
         let mut right = Vec::new();
@@ -4399,16 +4479,19 @@ mod tests {
                     ch: 'l',
                     x: 238.0,
                     y: 680.0,
+                    ..CharWithOrigin::UNMEASURED
                 },
                 CharWithOrigin {
                     ch: 'e',
                     x: 242.8,
                     y: 680.0,
+                    ..CharWithOrigin::UNMEASURED
                 },
                 CharWithOrigin {
                     ch: 'f',
                     x: 247.6,
                     y: 680.0,
+                    ..CharWithOrigin::UNMEASURED
                 },
             ]
         };
@@ -4524,5 +4607,185 @@ mod tests {
             );
         }
         let _ = fs::remove_file(&output);
+    }
+
+    fn listening_fixture_path() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/golden/private-real/listening-vol7-t9.pdf")
+    }
+
+    /// Block texts for every page of a PDF through the product line builder.
+    /// `strip_metrics` removes glyph advance/font-size data so the legacy
+    /// origin-gap-only word assembly can be compared on the same characters.
+    fn page_block_texts(path: &Path, strip_metrics: bool) -> Option<Vec<Vec<String>>> {
+        let guard = pdfium_instance().ok()?;
+        let pdfium = guard.as_ref().ok()?;
+        let document = pdfium.load_pdf_from_file(path, None).ok()?;
+        let mut pages = Vec::new();
+        for page in document.pages().iter() {
+            let mut chars = collect_chars_with_origin(&page);
+            if strip_metrics {
+                for ch in &mut chars {
+                    ch.glyph_right = None;
+                    ch.font_size = None;
+                }
+            }
+            pages.push(
+                build_blocks_from_chars(&chars)
+                    .into_iter()
+                    .map(|block| block.text)
+                    .collect(),
+            );
+        }
+        Some(pages)
+    }
+
+    #[test]
+    fn real_listening_instruction_lines_regain_word_spaces() {
+        let path = listening_fixture_path();
+        if !path.exists() {
+            return;
+        }
+        let Some(pages) = page_block_texts(&path, false) else {
+            return;
+        };
+        let page_two = pages
+            .get(1)
+            .expect("listening fixture has page 2")
+            .join("\n");
+        assert!(
+            page_two.contains("Questions 1-4"),
+            "page 2 must expose a spaced question range: {page_two}"
+        );
+        assert!(
+            page_two.contains("Complete the form below"),
+            "page 2 must expose the spaced completion instruction: {page_two}"
+        );
+    }
+
+    #[test]
+    fn glyph_advance_gaps_split_words_without_space_characters() {
+        // 10pt font, 5pt glyph advances, no space characters in the stream:
+        // "Questions" and "1-4" are separated by a 2.5pt (0.25em) blank run,
+        // far below the legacy 2.5x-median origin threshold.
+        let mut chars = Vec::new();
+        let mut x = 72.0;
+        for (word_index, word) in ["Questions", "1-4"].iter().enumerate() {
+            if word_index > 0 {
+                x += 2.5;
+            }
+            for ch in word.chars() {
+                chars.push(CharWithOrigin {
+                    ch,
+                    x,
+                    y: 700.0,
+                    glyph_right: Some(x + 5.0),
+                    font_size: Some(10.0),
+                });
+                x += 5.0;
+            }
+        }
+        let lines = build_lines_within_column_refined(&chars, estimate_y_tolerance(&chars));
+        assert_eq!(lines[0].0, "Questions 1-4");
+
+        // Tight kerning (a small negative/positive gap) never splits a word.
+        let mut kerned = Vec::new();
+        let mut x = 72.0;
+        for (index, ch) in "AVAILABLE".chars().enumerate() {
+            let advance = if index % 2 == 0 { 4.6 } else { 5.3 };
+            kerned.push(CharWithOrigin {
+                ch,
+                x,
+                y: 700.0,
+                glyph_right: Some(x + 5.0),
+                font_size: Some(10.0),
+            });
+            x += advance;
+        }
+        let lines = build_lines_within_column_refined(&kerned, estimate_y_tolerance(&kerned));
+        assert_eq!(lines[0].0, "AVAILABLE");
+    }
+
+    fn collect_reading_fixture_pdfs(dir: &Path, found: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_reading_fixture_pdfs(&path, found);
+            } else if path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
+                && !path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("listening-"))
+            {
+                found.push(path);
+            }
+        }
+    }
+
+    /// Hard invariant for the glyph-gap word splitter: on every reading PDF
+    /// fixture present (checked-in parser/synthetic fixtures plus any local
+    /// private-real corpus), block segmentation is unchanged and each block's
+    /// text differs from the legacy origin-gap-only text in whitespace only.
+    #[test]
+    fn glyph_gap_word_split_changes_only_whitespace_on_reading_fixtures() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures");
+        let mut pdfs = Vec::new();
+        collect_reading_fixture_pdfs(&root.join("parser"), &mut pdfs);
+        collect_reading_fixture_pdfs(&root.join("golden"), &mut pdfs);
+        pdfs.sort();
+        let squash = |text: &str| {
+            text.chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect::<String>()
+        };
+        let mut checked = 0usize;
+        let mut whitespace_diffs = Vec::<String>::new();
+        for pdf in &pdfs {
+            let (Some(legacy), Some(current)) =
+                (page_block_texts(pdf, true), page_block_texts(pdf, false))
+            else {
+                return; // pdfium unavailable in this environment
+            };
+            checked += 1;
+            let name = pdf.file_name().unwrap().to_string_lossy().to_string();
+            assert_eq!(legacy.len(), current.len(), "{name}: page count changed");
+            for (page_index, (legacy_page, current_page)) in
+                legacy.iter().zip(current.iter()).enumerate()
+            {
+                assert_eq!(
+                    legacy_page.len(),
+                    current_page.len(),
+                    "{name} page {}: block segmentation changed",
+                    page_index + 1
+                );
+                for (legacy_text, current_text) in legacy_page.iter().zip(current_page.iter()) {
+                    assert_eq!(
+                        squash(legacy_text),
+                        squash(current_text),
+                        "{name} page {}: non-whitespace text changed",
+                        page_index + 1
+                    );
+                    if legacy_text != current_text {
+                        whitespace_diffs.push(format!(
+                            "{name} p{}: {legacy_text:?} -> {current_text:?}",
+                            page_index + 1
+                        ));
+                    }
+                }
+            }
+        }
+        eprintln!(
+            "glyph-gap invariant: {checked} reading PDFs, {} whitespace-only block diffs",
+            whitespace_diffs.len()
+        );
+        for diff in &whitespace_diffs {
+            eprintln!("  {diff}");
+        }
     }
 }

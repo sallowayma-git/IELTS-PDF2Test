@@ -24,7 +24,9 @@ use super::{
     RegionLayoutNode, SemanticRegionRole, UnassignedEvidence, VisualStimulusCandidateV1,
 };
 use crate::ielts_grammar::issue_codes;
-use crate::ielts_grammar::question_number::parse_question_expression_detailed;
+use crate::ielts_grammar::question_number::{
+    instruction_cue_text, parse_question_expression_detailed,
+};
 use crate::schema::common::{RectV2, SourceAnchorV2};
 use crate::schema::document_ir_v2::{
     DocumentIRV2, LineNodeV2, PageNodeV2, PhysicalRegionKindV2, RegionNodeV2,
@@ -232,7 +234,7 @@ fn is_visual_kind(kind: &PhysicalRegionKindV2) -> bool {
 }
 
 fn instruction_marker(text: &str) -> Option<&'static str> {
-    let lower = text.to_ascii_lowercase();
+    let lower = instruction_cue_text(text);
     for marker in [
         "write ",
         "choose ",
@@ -440,7 +442,7 @@ fn segment_region_roles(page: &PageNodeV2) -> Vec<RegionLayoutNode> {
 // ------------------------------------------------------- instruction zones ---
 
 fn task_hint_from_text(text: &str) -> Option<String> {
-    let lower = text.to_ascii_lowercase();
+    let lower = instruction_cue_text(text);
     let hint = if lower.contains("heading") {
         "matching_headings"
     } else if lower.contains("true") && lower.contains("false") {

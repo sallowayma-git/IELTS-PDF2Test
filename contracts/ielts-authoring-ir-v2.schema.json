@@ -66,7 +66,15 @@
     "listeningStructure": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["scope", "media", "parts", "playbackPolicy"],
+      "required": ["scope", "parts", "playbackPolicy"],
+      "anyOf": [
+        { "required": ["media"] },
+        {
+          "properties": {
+            "parts": { "type": "array", "items": { "type": "object", "required": ["media"] } }
+          }
+        }
+      ],
       "properties": {
         "scope": { "$ref": "#/$defs/listeningScope" },
         "media": { "$ref": "#/$defs/listeningMedia" },
@@ -95,6 +103,47 @@
         "channels": { "type": "integer", "minimum": 1 },
         "sampleRateHz": { "type": "integer", "minimum": 1 },
         "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
+      }
+    },
+    "listeningAudioProbe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "provider", "providerVersion", "probedAt", "issueCodes"],
+      "properties": {
+        "status": { "type": "string", "enum": ["passed", "blocked"] },
+        "provider": { "type": "string", "minLength": 1 },
+        "providerVersion": { "type": "string", "minLength": 1 },
+        "probedAt": { "type": "string", "minLength": 1 },
+        "issueCodes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "AUDIO_DECODE_FAILED",
+              "AUDIO_CODEC_UNSUPPORTED",
+              "AUDIO_HASH_MISMATCH",
+              "AUDIO_SEVERE_CLIPPING",
+              "AUDIO_NEAR_SILENT",
+              "AUDIO_CUE_INVALID",
+              "AUDIO_POLICY_MISSING"
+            ]
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "listeningPartMedia": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assetId", "mime", "durationMs", "sha256"],
+      "properties": {
+        "assetId": { "type": "string", "minLength": 1 },
+        "mime": { "type": "string", "pattern": "^audio/" },
+        "durationMs": { "type": "integer", "exclusiveMinimum": 0 },
+        "channels": { "type": "integer", "minimum": 1 },
+        "sampleRateHz": { "type": "integer", "minimum": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+        "probe": { "$ref": "#/$defs/listeningAudioProbe" }
       }
     },
     "listeningCue": {
@@ -133,6 +182,7 @@
           "uniqueItems": true
         },
         "cue": { "$ref": "#/$defs/listeningCue" },
+        "media": { "$ref": "#/$defs/listeningPartMedia" },
         "sourceAnchors": {
           "type": "array",
           "items": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" }
