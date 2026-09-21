@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Undo2, Redo2, MoreHorizontal, FileSearch, X } from "lucide-react";
 import { command, getJob } from "../../api/tauriCommands";
-import { describeRetryOutcome, retryProcessing, cancelProcessing, subscribeProcessing } from "../../api/processingClient";
+import { describeRetryOutcome, retryAnswerPageRecognition, retryProcessing, cancelProcessing, subscribeProcessing } from "../../api/processingClient";
 import { chooseExportDirectory } from "../../api/desktopDialogs";
 import { describePublishError, publishItem } from "../../api/publishClient";
 import { go, libraryPath, type LibraryIntent } from "../../app/router";
@@ -24,7 +24,7 @@ import { useCanonicalEditor } from "./useCanonicalEditor";
 import { describeDeferredRemoteRefresh } from "./remoteVersion";
 import { toUserFacingError } from "../../utils/userFacingError";
 import { getPublishPreflight, type PublishCheckResultV1 } from "../../api/workspaceClient";
-import { answerPageStatusOf } from "./answerPageStatus";
+import { answerPageStatusOf, describeAnswerPageRetry } from "./answerPageStatus";
 
 // 题目工作区（计划 §16.6 / §9.10）。
 // 打开就是最终 IELTS 题面；左侧 passage、右侧 questions 由 ExamCanvas 渲染。
@@ -485,9 +485,11 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               disabled={Boolean(busyAction)}
               onClick={() => withBusy("answer-page-retry", async () => {
                 await editor.flush();
-                await retryProcessing(itemId);
+                // 只重跑答案页这一步：不重新入队整条流水线，也不重跑十分钟的云端修复。
+                const result = await retryAnswerPageRecognition(itemId);
+                setNotice(describeAnswerPageRetry(result));
                 editor.reload();
-                setNotice("已重新加入识别队列，答案页识别会重新请求视觉服务。题稿仍可编辑。");
+                getJob(itemId).then(setDetail).catch(() => {});
               })}
             >
               重试答案页识别

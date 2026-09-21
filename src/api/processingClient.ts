@@ -48,6 +48,10 @@ export function describeRetryOutcome(queued: boolean): string {
 export async function retryProcessing(itemId: string): Promise<boolean> {
   return retryQueued(await command<{ queued?: boolean } | null>("retry_processing", { itemId }));
 }
+/** 只重跑答案页识别（不重新入队整条流水线）。服务暂时不可用时后端会自动再试一次。 */
+export function retryAnswerPageRecognition(itemId: string) {
+  return command<{ state?: string; stateReason?: string; answerCount?: number; appliedCount?: number }>("retry_answer_page_recognition", { itemId });
+}
 export function cancelProcessing(itemId: string) { return command<void>("cancel_processing", { itemId }); }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

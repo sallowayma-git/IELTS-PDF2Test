@@ -1017,10 +1017,15 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
             let root = root.clone();
             let job_id = job_id.clone();
             move || {
-                let result = crate::auto_pipeline::recognize_and_apply_pdf_answers(
+                // 同一个答案页步骤：服务暂时不可用时自动再试一次，结果写回工作区读的
+                // `parser.visionAnswerExtraction`（此前这里只打日志，界面看不到这次识别）。
+                let result = super::answer_page::run_answer_page_step(
                     &root,
                     &job_id,
                     &answer_profile,
+                    &mut |root, job_id, profile| {
+                        crate::auto_pipeline::recognize_and_apply_pdf_answers(root, job_id, profile)
+                    },
                 );
                 drop(answer_permit);
                 result

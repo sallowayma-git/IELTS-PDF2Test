@@ -1123,6 +1123,28 @@ async fn retry_processing(
     Ok(serde_json::json!({ "queued": queued }))
 }
 
+/// 只重跑答案页识别这一步（不重新入队整条流水线、不重跑云端修复）。
+#[tauri::command]
+async fn retry_answer_page_recognition(item_id: String, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    let report = tauri::async_runtime::spawn_blocking({
+        let root = root.clone();
+        let item_id = item_id.clone();
+        move || {
+            processing::answer_page::retry_answer_page_at_root(&root, &item_id, &mut |root, job_id, profile| {
+                auto_pipeline::recognize_and_apply_pdf_answers(root, job_id, profile)
+            })
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    // 答案可能已写进权威稿：通知工作区按新版本刷新。
+    if let Ok(conn) = library::repository::open_library_connection(&root) {
+        let _ = processing::scheduler::notify_item_content_changed(&conn, &app, &item_id);
+    }
+    Ok(report)
+}
+
 #[tauri::command]
 async fn parse_document(
     job_id: String,
@@ -1683,6 +1705,7 @@ pub fn run() {
             open_source_file,
             cancel_processing,
             retry_processing,
+            retry_answer_page_recognition,
             list_jobs,
             get_job,
             update_job_meta,
