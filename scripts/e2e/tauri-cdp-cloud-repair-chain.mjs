@@ -1192,48 +1192,59 @@ async function main() {
   await session.screenshot("canvas-after-cloud-repair");
 
   // ---- 14. 剩余任务：界面与后端一致，且每条都有真实动作 ----
-  // 第 13 步为了拍到画布把面板收起来了，这里重新展开再读界面。
-  await openPanel();
-  // 面板重新展开后，修复摘要与剩余任务是**异步**取回来的：挂上元素就立刻读会读到空壳
-  // （实测只读到「识别建议 刷新」，于是把「后端有 17 条、界面 0 条」误报成界面缺陷）。
-  // 等它真的渲染出结论再读；等不到也照读，让断言如实失败。
+  // 2026-09-21 起界面只有**一份**编辑辅助清单（工作区「待补充」列表，`[data-task-id]`）：
+  // 本地检查、发布前检查与云端修复剩下的任务合并成一份，每个题位只出一条。修复面板收成
+  // 折叠的「详情」，不再单独列任务。所以这里不再数面板里的旧任务行，而是核对不变量：
+  //   - 后端每条剩余任务的目标，都被清单里某一条接住（按 data-action-target / data-task-id）；
+  //   - 后端有剩余任务时清单不能为空；
+  //   - 新链路上不得渲染旧建议卡（`[data-decision-id]`）。
   await session
     .waitFor(
-      `(() => {
-         const root = document.querySelector('[data-testid="workspace-recognition"]');
-         if (!root) return false;
-         return Boolean(root.querySelector('[data-testid="workspace-recognition-repair-headline"]'))
-           || root.querySelectorAll('[data-testid="workspace-recognition-repair-task"]').length > 0;
-       })()`,
-      { timeoutMs: 25000, intervalMs: 500, label: "recognition-repair-rendered" },
+      `(() => Boolean(document.querySelector('[data-testid="workspace-tasks-headline"], [data-testid="workspace-tasks-clear"]')))()`,
+      { timeoutMs: 25000, intervalMs: 500, label: "editing-aid-list-rendered" },
     )
     .catch(() => null);
+  // 列表折叠时展开，保证读到全部条目。
+  await session.evaluate(`(() => { const more = document.querySelector('[data-testid="workspace-tasks-more"]'); if (more) more.click(); return true; })()`);
   const panel = await session.evaluate(
     `(() => {
-      const root = document.querySelector('[data-testid="workspace-recognition"]');
-      const headline = document.querySelector('[data-testid="workspace-recognition-repair-headline"]');
-      const tasks = [...document.querySelectorAll('[data-testid="workspace-recognition-repair-task"]')];
+      const entries = [...document.querySelectorAll('[data-task-id]')].map((el) => ({
+        taskId: el.getAttribute('data-task-id'),
+        kind: el.getAttribute('data-task-kind'),
+        targets: [...el.querySelectorAll('[data-action-target]')].map((b) => b.getAttribute('data-action-target')),
+        text: el.innerText.replace(/\s+/g,' ').trim().slice(0, 160)
+      }));
       const legacy = [...document.querySelectorAll('[data-decision-id]')];
+      const clear = document.querySelector('[data-testid="workspace-tasks-clear"]');
       return {
-        panelPresent: !!root,
-        text: root ? root.innerText.replace(/\\s+/g,' ').trim().slice(0, 1200) : null,
-        headline: headline ? headline.innerText.replace(/\\s+/g,' ').trim() : null,
-        repairTaskCount: tasks.length,
+        entryCount: entries.length,
+        entries,
+        clearText: clear ? clear.innerText.replace(/\s+/g,' ').trim() : null,
         legacyCardCount: legacy.length
       };
     })()`,
   );
   report.observed.panel = panel;
   const remaining = finalRepair.remainingTasks ?? [];
+  const covered = new Set();
+  for (const entry of panel.entries ?? []) {
+    for (const target of entry.targets ?? []) if (target) covered.add(target);
+    for (const part of String(entry.taskId ?? "").split(/[:+]/)) if (part) covered.add(part);
+  }
+  const uncovered = remaining.filter((task) => {
+    const targets = (task.targetIds ?? []).filter(Boolean);
+    if (targets.length === 0) return (panel.entryCount ?? 0) === 0;
+    return !targets.some((id) => covered.has(id) || covered.has(String(id).replace(/^answerKey:/, "")));
+  });
   const panelProblems = [];
-  if (remaining.length > 0 && panel.repairTaskCount === 0) panelProblems.push("后端有剩余任务，界面上一条都没有");
-  if (remaining.length === 0 && panel.repairTaskCount > 0) panelProblems.push("后端没有剩余任务，界面却列了任务");
+  if (remaining.length > 0 && (panel.entryCount ?? 0) === 0) panelProblems.push("后端有剩余任务，清单里一条都没有");
+  if (uncovered.length > 0) panelProblems.push(`${uncovered.length} 条后端剩余任务没有被清单接住：${uncovered.map((task) => task.userTaskId).slice(0, 5).join(", ")}`);
   if (panel.legacyCardCount > 0) panelProblems.push(`新链路上仍然渲染了 ${panel.legacyCardCount} 张旧建议卡`);
   if (panelProblems.length === 0) {
     record("remaining-tasks-match-backend-and-are-actionable", SCENARIO_STATUS.PASSED, {
       remaining: remaining.length,
-      repairTaskCount: panel.repairTaskCount,
-      headline: panel.headline,
+      entryCount: panel.entryCount,
+      clearText: panel.clearText,
     });
   } else {
     record("remaining-tasks-match-backend-and-are-actionable", SCENARIO_STATUS.FAILED, { problems: panelProblems, remaining: remaining.length });
@@ -1442,7 +1453,12 @@ async function main() {
       remainingBlocking: (afterExport?.item?.canonical?.quality?.issues ?? []).filter((issue) => issue?.severity === "blocking").length,
     };
     await session.screenshot("after-export-attempt");
-    if (afterExport?.item?.status === "published" || (published ?? "").includes("发布完成")) {
+    // 只认**干净**发布：放行发布（`published_forced`）在界面上同样显示「已发布」，
+    // 但对这条验收链不算通过。判据是库里的条目状态，不是提示文案。
+    report.observed.publish.outcome = await session.evaluate(
+      `(() => { const el = document.querySelector('.workspace-notice'); return el ? el.getAttribute('data-publish-outcome') : null; })()`,
+    );
+    if (afterExport?.item?.status === "published") {
       // 发布成功**还不够**。链条的最后一跳是「学生端加载」，而这一跳此前只有
       // `nas-student-contract.mjs` 那层**镜像**证据（按学生端规则重新实现了一遍校验）。
       // 镜像证明「包符合规则」，证明不了「学生端那份代码真的能读」。这里补上真实一跳：
