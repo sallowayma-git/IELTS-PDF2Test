@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { cloudShouldBeEnabledAfterSave } from "./settingsLogic";
+import { cloudShouldBeEnabledAfterSave, hasCloudConnection } from "./settingsLogic";
 import { DEFAULT_APP_SETTINGS, readAppSettings } from "./appSettings";
 
 describe("保存有效密钥即启用云端", () => {
@@ -32,5 +32,13 @@ describe("设置里没有摆设", () => {
     expect(keys).not.toContain("localConcurrency");
     expect(keys).not.toContain("cloudConcurrency");
     expect(Object.keys(readAppSettings())).toEqual(keys);
+  });
+});
+
+describe("导入抽屉的云端提示", () => {
+  it("只有启用中的真实连接才算已连接", () => {
+    expect(hasCloudConnection([{ profileId: "profile-local-placeholder", enabled: true }])).toBe(false);
+    expect(hasCloudConnection([{ profileId: "p1", enabled: false }])).toBe(false);
+    expect(hasCloudConnection([{ profileId: "p1", enabled: true }])).toBe(true);
   });
 });

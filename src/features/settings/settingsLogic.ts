@@ -14,3 +14,8 @@ export function cloudShouldBeEnabledAfterSave(input: {
   if (input.toggle) return true;
   return input.testOk && (input.hasKey || input.provider === "Ollama");
 }
+
+/** 是否已连接云端：存在一个启用中的真实 profile（与导入时的判定一致）。 */
+export function hasCloudConnection(profiles: ReadonlyArray<{ profileId: string; enabled?: boolean }>): boolean {
+  return profiles.some((profile) => profile.enabled && profile.profileId !== "profile-local-placeholder");
+}
