@@ -67,6 +67,12 @@ impl CloudFailure {
 /// 也不要把解析失败当成「模型不支持」而跳过验证）。
 pub(crate) fn classify_cloud_error(error: &str) -> CloudFailure {
     let lower = error.to_ascii_lowercase();
+    // 凭据错误先判：它既不是「模型不支持」也不是「输出非法」，重试没有用，
+    // 用户要去设置页修正密钥。
+    let credentials = ["llm_http_401", "llm_http_403", "invalid_api_key", "credentials_invalid"];
+    if credentials.iter().any(|needle| lower.contains(needle)) {
+        return CloudFailure::unusable(reason::MODEL_CREDENTIALS_INVALID, error);
+    }
     let unsupported = [
         "unsupported",
         "not_supported",

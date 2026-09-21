@@ -72,6 +72,10 @@ pub mod reason {
     pub const MODEL_UNSUPPORTED_INPUT: &str = "MODEL_UNSUPPORTED_INPUT";
     pub const MODEL_TIMEOUT: &str = "MODEL_TIMEOUT";
     pub const MODEL_INVALID_OUTPUT: &str = "MODEL_INVALID_OUTPUT";
+    /// 云端凭据无效（401/403/invalid_api_key）：重试没用，要去设置页修正。
+    pub const MODEL_CREDENTIALS_INVALID: &str = "MODEL_CREDENTIALS_INVALID";
+    /// 云端自动检查被取消（与「未启用云端」区分）。
+    pub const CLOUD_REPAIR_CANCELLED: &str = "CLOUD_REPAIR_CANCELLED";
     pub const SALVAGE_PARTIAL: &str = "SALVAGE_PARTIAL";
     pub const ADJUDICATION_FAILED: &str = "ADJUDICATION_FAILED";
     /// 三路一致且规则命中：在后台留记录，不产生逐项问题。
