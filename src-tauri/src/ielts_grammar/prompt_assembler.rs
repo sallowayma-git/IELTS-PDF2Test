@@ -101,8 +101,7 @@ fn strip_question_prefix(text: &str, question_number: u32) -> String {
 
 fn is_instruction_line(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
-    lower.starts_with("questions ")
-        || lower.starts_with("question ")
+    super::question_number::starts_with_question_heading(&lower)
         || lower.starts_with("choose ")
         || lower.starts_with("complete ")
         || lower.starts_with("do the following")

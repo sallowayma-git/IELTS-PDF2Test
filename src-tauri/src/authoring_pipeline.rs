@@ -1,10 +1,5 @@
 use crate::{html_escape, ImportJob};
 
-// Pure Listening part recognition. Temporarily declared here (file ownership);
-// move to `ielts_grammar/mod.rs` as `pub(crate) mod listening_parts;` when wiring.
-#[allow(dead_code)]
-#[path = "ielts_grammar/listening_parts.rs"]
-pub(crate) mod listening_parts;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};

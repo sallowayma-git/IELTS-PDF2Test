@@ -14,6 +14,10 @@ mod evidence;
 mod instruction_signature;
 mod instruction_zone;
 pub(crate) mod issue_codes;
+// Listening part boundaries (SECTION/PART 1–4). Not wired into the draft builder yet:
+// that happens with listening compile/package, so allow dead code until then.
+#[allow(dead_code)]
+pub(crate) mod listening_parts;
 mod option_bank;
 mod option_run;
 mod prompt_assembler;
@@ -1535,8 +1539,7 @@ fn shared_prompt_from_lines(lines: &[SemanticLine]) -> Option<String> {
 
 fn is_shared_prompt_instruction(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
-    lower.starts_with("questions ")
-        || lower.starts_with("question ")
+    question_number::starts_with_question_heading(&lower)
         || lower.starts_with("choose ")
         || lower.starts_with("complete ")
         || lower.starts_with("look at ")
