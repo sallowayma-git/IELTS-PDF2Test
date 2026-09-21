@@ -1,5 +1,6 @@
 import type { IeltsAuthoringIRV2, ResponseGroupV2 } from "../../types";
 import { issueRootCause, type ActionableIssueV1, type IssueSeverity } from "./actionableIssues";
+import { formatDecisionValue } from "./recognitionDecisions";
 
 // 把「原始问题行」收敛成**用户可以完成的任务**。
 //
@@ -30,16 +31,18 @@ export type UserTaskKind =
   | "structure-incomplete"
   /** 图片/资源缺失：重新识别。 */
   | "missing-asset"
-  /** 其余处理失败：重试处理。 */
-  | "processing-failed";
+  /** 其余处理失败：对照原文件核对。 */
+  | "processing-failed"
+  /** 当前稿与云端读到的不一样（云端没能定论，交给用户看一眼）。 */
+  | "cloud-difference"
+  /** 云端留下的疑问 / 原文件有云端没读全的部分。 */
+  | "cloud-note";
 
 export type UserTaskActionId =
   /** 定位到答案控件（题面上的输入框）。 */
   | "fill-answer"
   /** 打开原文件并定位到题组。 */
-  | "view-source"
-  /** 重新识别这道题。 */
-  | "retry-recognition";
+  | "view-source";
 
 export interface UserTaskActionV1 {
   id: UserTaskActionId;
@@ -73,9 +76,9 @@ export interface UserTaskSummaryV1 {
    */
   ready: boolean;
   tasks: UserTaskV1[];
-  /** 顶部那一行：还有 N 处需要处理 / 可以导出。 */
+  /** 顶部那一行：还有 N 处可以补充 / 没有需要补充的内容。**不是**能不能发布的结论。 */
   headline: string;
-  /** 还有几处阻断（决定「能不能导出」）。 */
+  /** 内部计数（不进普通界面：界面不再展示阻断 / 门槛）。 */
   blockerCount: number;
   /** 被合并掉的原始问题行数（验收报告用，普通界面不显示）。 */
   mergedRowCount: number;
@@ -379,10 +382,8 @@ export function buildUserTasks(
       severity: "blocker",
       title: range ? `${range}没有识别完整` : "这道题还有内容没有识别完整",
       detail: "请对照原文件检查题干和答案。",
-      actions: [
-        { id: "view-source", label: "查看原文", targetId: groupKey },
-        { id: "retry-recognition", label: "重新识别", targetId: groupKey }
-      ],
+      // 不给「重新识别」：重跑不会替换已经生成的题稿，按了也改不掉这里的问题。
+      actions: [{ id: "view-source", label: "查看原文", targetId: groupKey }],
       covers: groupIssues.map((issue) => issue.issueId)
     });
   }
@@ -396,8 +397,8 @@ export function buildUserTasks(
       kind: "missing-asset",
       severity: "blocker",
       title: "这道题有图片没有识别到",
-      detail: "重新识别一次；如果还是不行，请对照原文件确认图片是否清晰。",
-      actions: [{ id: "retry-recognition", label: "重新识别", targetId: assetIssues[0].targetId }],
+      detail: "请对照原文件确认图片。",
+      actions: [{ id: "view-source", label: "查看原文", targetId: assetIssues[0].targetId }],
       covers: assetIssues.map((issue) => issue.issueId)
     });
   }
@@ -409,9 +410,9 @@ export function buildUserTasks(
       taskId: "processing-failed",
       kind: "processing-failed",
       severity: "blocker",
-      title: "这道题有一处处理失败",
-      detail: "重试一次通常可以恢复；重复失败请把原文件重新导入。",
-      actions: [{ id: "retry-recognition", label: "重试处理", targetId: failedIssues[0].targetId }],
+      title: "有一处内容没有处理好",
+      detail: "请对照原文件核对这一处。",
+      actions: [{ id: "view-source", label: "查看原文", targetId: failedIssues[0].targetId }],
       covers: failedIssues.map((issue) => issue.issueId)
     });
   }
@@ -441,9 +442,9 @@ export function buildUserTasks(
       taskId: "structure-incomplete",
       kind: "structure-incomplete",
       severity: "blocker",
-      title: "这组题的结构还不完整，暂时不能导出。",
-      detail: "重新识别一次；仍然不行请把原文件重新导入。",
-      actions: [{ id: "retry-recognition", label: "重新识别", targetId: "document" }],
+      title: "这道题的结构可能还不完整",
+      detail: "请对照原文件核对题组和答案位。",
+      actions: [{ id: "view-source", label: "查看原文", targetId: "document" }],
       covers: [...genericIssues, ...structureIssues].map((issue) => issue.issueId)
     });
   } else if (unexplained.length) {
@@ -452,9 +453,9 @@ export function buildUserTasks(
       taskId: "structure-incomplete:unexplained",
       kind: "structure-incomplete",
       severity: "blocker",
-      title: "这道题还有内容没有处理完，暂时不能导出。",
-      detail: "重新识别一次；仍然不行请把原文件重新导入。",
-      actions: [{ id: "retry-recognition", label: "重新识别", targetId: "document" }],
+      title: "这道题还有内容可能没有识别完整",
+      detail: "请对照原文件核对。",
+      actions: [{ id: "view-source", label: "查看原文", targetId: "document" }],
       covers: unexplained.map((issue) => issue.issueId)
     });
   }
@@ -484,7 +485,9 @@ export function buildUserTasks(
     "incomplete-recognition": 2,
     "structure-incomplete": 3,
     "missing-asset": 4,
-    "processing-failed": 5
+    "processing-failed": 5,
+    "cloud-difference": 6,
+    "cloud-note": 7
   };
   tasks.sort((a, b) => {
     if (a.severity !== b.severity) return a.severity === "blocker" ? -1 : 1;
@@ -500,8 +503,7 @@ export function buildUserTasks(
   return {
     ready: true,
     tasks,
-    // 「没有问题」不生成卡片，只保留这一句（任务书第四节最后一条 + 第六节第 6 条）。
-    headline: tasks.length === 0 ? "可以导出" : `还有 ${tasks.length} 处需要处理`,
+    headline: headlineFor(tasks.length),
     blockerCount,
     mergedRowCount
   };
@@ -563,4 +565,141 @@ export function splitVisibleTasks(tasks: readonly UserTaskV1[], expanded: boolea
     visible: tasks.slice(0, USER_TASK_VISIBLE_LIMIT),
     hiddenCount: tasks.length - USER_TASK_VISIBLE_LIMIT
   };
+}
+
+/**
+ * 列表顶部那一句。**编辑辅助，不是门槛**：不说「可以导出 / 不能导出」，也不报阻断数——
+ * 按「发布」本身就是用户的确认（产品决定 2）。
+ */
+export function headlineFor(count: number): string {
+  return count === 0 ? "没有需要补充的内容" : `还有 ${count} 处可以补充`;
+}
+
+/** 云端修复后剩下的一条（后端 `remainingTasks` 的单项，按读取时的当前稿重算过）。 */
+export interface RepairAidInputV1 {
+  userTaskId: string;
+  targetIds?: string[];
+  message?: string | null;
+  action?: string;
+  field?: string;
+  currentValue?: unknown;
+  cloudValue?: unknown;
+}
+
+const FIELD_LABEL: Record<string, string> = {
+  answer: "答案",
+  prompt: "题面",
+  instructions: "作答说明",
+  stimulus: "材料",
+  option_bank: "选项",
+  task_group: "整组题"
+};
+
+function placeLabel(ds: IeltsAuthoringIRV2, targetId: string): string {
+  const number = numberOf(ds, targetId);
+  if (number !== undefined) return `第 ${number} 题`;
+  const slots = slotIdsOfTarget(ds, targetId)
+    .map((slotId) => numberOf(ds, slotId))
+    .filter((value): value is number => value !== undefined);
+  return slots.length ? questionRangeLabel(slots) : "这一处";
+}
+
+/**
+ * **唯一**一份编辑辅助清单：本地检查 + 发布前检查 + 学生预览的答案形式问题 + 云端修复后剩下的，
+ * 合成一份，每个题位 / 每件事只出一条，修好了就消失（云端那一路在读取时按当前稿重算）。
+ *
+ * 云端那一路的后端文案带内部词（「expected question numbers 与 slots」「计分 slot」「第 q27 题」），
+ * 这里一律不透传：质量问题按质量码走与本地同一套分类与话术；差异写成「现在是 X，云端读到的是 Y」；
+ * 覆盖缺口只说「原文件有一部分云端没读全」。
+ */
+export function buildEditingAids(
+  ds: IeltsAuthoringIRV2 | undefined,
+  issues: readonly ActionableIssueV1[],
+  repairTasks: readonly RepairAidInputV1[] = []
+): UserTaskSummaryV1 {
+  const qualityRows: ActionableIssueV1[] = [];
+  const others: RepairAidInputV1[] = [];
+  for (const task of repairTasks) {
+    const match = /^quality:([A-Z0-9_]+):/.exec(task.userTaskId ?? "");
+    if (match) {
+      qualityRows.push({
+        issueId: `repair:${task.userTaskId}`,
+        targetId: task.targetIds?.find((id) => id) ?? "document",
+        severity: "blocker",
+        code: match[1],
+        userMessage: "",
+        source: "gate",
+        rootCause: match[1]
+      });
+    } else {
+      others.push(task);
+    }
+  }
+  const summary = buildUserTasks(ds, [...issues, ...qualityRows]);
+  if (!ds || !summary.ready) return summary;
+
+  // 已经有条目的题位：云端那一路不再为它另起一条（一个题位只出一条）。
+  const covered = new Set<string>();
+  for (const task of summary.tasks) {
+    for (const action of task.actions) covered.add(action.targetId);
+    for (const part of task.taskId.split(/[:+]/)) covered.add(part);
+  }
+  const tasks = [...summary.tasks];
+  const seen = new Set<string>();
+  for (const task of others) {
+    const target = task.targetIds?.find((id) => id) ?? "";
+    const id = task.userTaskId;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    if (id.startsWith("cloud-diff:")) {
+      if (target && covered.has(target)) continue;
+      const field = task.field ?? id.split(":").pop() ?? "";
+      const where = placeLabel(ds, target);
+      const label = FIELD_LABEL[field] ?? "内容";
+      const isAnswer = field === "answer";
+      tasks.push({
+        taskId: id,
+        kind: "cloud-difference",
+        severity: "warning",
+        title: isAnswer
+          ? `${where}的答案：现在是「${formatDecisionValue(task.currentValue)}」，云端读到的是「${formatDecisionValue(task.cloudValue)}」`
+          : `${where}的${label}和云端读到的不一样`,
+        detail: "云端对照原文件后没能定论，看一眼原文再决定保留哪个。",
+        actions: isAnswer && target
+          ? [{ id: "fill-answer", label: "去看看", targetId: target }, { id: "view-source", label: "查看原文", targetId: target }]
+          : [{ id: "view-source", label: "查看原文", targetId: target || "document" }],
+        covers: [id]
+      });
+      if (target) covered.add(target);
+      continue;
+    }
+    if (id.startsWith("cloud-question:")) {
+      if (target && covered.has(target)) continue;
+      const text = (task.message ?? "").replace(/^云端未能确认[：:]\s*/, "").trim();
+      tasks.push({
+        taskId: id,
+        kind: "cloud-note",
+        severity: "warning",
+        title: target ? `${placeLabel(ds, target)}：云端没能确认` : "云端留下了一条没能确认的内容",
+        detail: text || undefined,
+        actions: target
+          ? [{ id: "fill-answer", label: "去看看", targetId: target }]
+          : [{ id: "view-source", label: "查看原文", targetId: "document" }],
+        covers: [id]
+      });
+      continue;
+    }
+    // 覆盖缺口（cloud-coverage / cloud-coverage-note）与其它未知条目：只说人话，不透传原因码。
+    const page = /^cloud-coverage:[^:]*:(\d+):/.exec(id)?.[1];
+    tasks.push({
+      taskId: id,
+      kind: "cloud-note",
+      severity: "warning",
+      title: page ? `原文件第 ${page} 页有部分内容云端没能读全` : "原文件有一部分内容云端没能读全",
+      detail: "请对照原文件核对这一部分。",
+      actions: [{ id: "view-source", label: "查看原文", targetId: "document" }],
+      covers: [id]
+    });
+  }
+  return { ...summary, tasks, headline: headlineFor(tasks.length) };
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AnswerSlotV2, IeltsAuthoringIRV2, ResponseGroupV2, TaskGroupV2 } from "../../types";
 import type { ActionableIssueV1 } from "./actionableIssues";
-import { buildUserTasks, rootCausesOf, splitVisibleTasks, USER_TASK_VISIBLE_LIMIT } from "./userTasks";
+import { buildEditingAids, buildUserTasks, rootCausesOf, splitVisibleTasks, USER_TASK_VISIBLE_LIMIT } from "./userTasks";
 
 // 证据层级：pure unit。断言的是**本轮任务书第 3/4/5 条**那三条互相牵制的规则：
 //   1. 同一问题不重复显示（连续缺答并成区间、同一题组并成一条）；
@@ -139,7 +139,7 @@ describe("缺答案：连续题号并成一个区间（任务书第 3 条）", (
 });
 
 describe("题组内部问题：并成一条「没有识别完整」，两个动作都在（任务书第 3 条）", () => {
-  it("题干/stimulus/slot host 指向同一题组时只出一条，动作为「查看原文」+「重新识别」", () => {
+  it("题干/stimulus/slot host 指向同一题组时只出一条，动作为「查看原文」", () => {
     const summary = buildUserTasks(DS, [
       issue("i1", "PROMPT_EMPTY", "rg-1"),
       issue("i2", "STIMULUS_MISSING", "rg-1"),
@@ -150,8 +150,9 @@ describe("题组内部问题：并成一条「没有识别完整」，两个动�
     expect(task.kind).toBe("incomplete-recognition");
     expect(task.title).toBe("第 11–13 题没有识别完整");
     // 两个动作分别可操作 —— 「不同修复动作保留可分别操作的入口」。
-    expect(task.actions.map((a) => a.id)).toEqual(["view-source", "retry-recognition"]);
-    expect(task.actions.map((a) => a.label)).toEqual(["查看原文", "重新识别"]);
+    // 不给「重新识别」：重跑不会替换已生成的题稿，按了改不掉这里的问题。
+    expect(task.actions.map((a) => a.id)).toEqual(["view-source"]);
+    expect(task.actions.map((a) => a.label)).toEqual(["查看原文"]);
   });
 
   it("指向答案位的问题会归到它所属的题组（而不是散成三条）", () => {
@@ -191,7 +192,7 @@ describe("泛化行：只有阻塞原因被**完整**表达时才隐藏（任务
     const summary = buildUserTasks(DS, [issue("g1", "QUALITY_NOT_READY", "QUALITY_NOT_READY", "QUALITY_NOT_READY")]);
     expect(summary.tasks).toHaveLength(1);
     expect(summary.tasks[0].kind).toBe("structure-incomplete");
-    expect(summary.tasks[0].title).toBe("这组题的结构还不完整，暂时不能导出。");
+    expect(summary.tasks[0].title).toBe("这道题的结构可能还不完整");
   });
 
   it("**原因没有被表达**的失败不被隐藏：门禁报 A 与 B，只有 A 有任务，B 必须仍出现", () => {
@@ -221,11 +222,11 @@ describe("泛化行：只有阻塞原因被**完整**表达时才隐藏（任务
 });
 
 describe("未知码不丢弃（「不同问题不被隐藏」的兜底）", () => {
-  it("没见过的质量码降级成「处理失败 → 重试处理」，而不是被丢掉", () => {
+  it("没见过的质量码降级成「没有处理好 → 查看原文」，而不是被丢掉", () => {
     const summary = buildUserTasks(DS, [issue("i1", "SOMETHING_BRAND_NEW", "q11")]);
     expect(summary.tasks).toHaveLength(1);
     expect(summary.tasks[0].kind).toBe("processing-failed");
-    expect(summary.tasks[0].actions.map((a) => a.id)).toEqual(["retry-recognition"]);
+    expect(summary.tasks[0].actions.map((a) => a.id)).toEqual(["view-source"]);
     expect(summary.tasks[0].covers).toEqual(["i1"]);
   });
 
@@ -243,7 +244,7 @@ describe("每条任务都有真能解决问题的按钮（任务书第 5 条）"
       issue("i3", "ASSET_MISSING", "q12"),
       issue("i4", "SOMETHING_BRAND_NEW", "q13")
     ]);
-    const allowed = new Set(["fill-answer", "view-source", "retry-recognition"]);
+    const allowed = new Set(["fill-answer", "view-source"]);
     for (const task of summary.tasks) {
       expect(task.actions.length).toBeGreaterThan(0);
       for (const action of task.actions) {
@@ -262,15 +263,15 @@ describe("每条任务都有真能解决问题的按钮（任务书第 5 条）"
 });
 
 describe("headline 与折叠", () => {
-  it("没有问题时不生成卡片，只说「可以导出」", () => {
+  it("没有问题时不生成卡片，也不下「可以导出」这种结论", () => {
     const summary = buildUserTasks(DS, []);
     expect(summary.tasks).toEqual([]);
-    expect(summary.headline).toBe("可以导出");
+    expect(summary.headline).toBe("没有需要补充的内容");
   });
 
-  it("有问题时说「还有 N 处需要处理」", () => {
+  it("有问题时说「还有 N 处可以补充」", () => {
     const summary = buildUserTasks(DS, [issue("i1", "ANSWER_MISSING", "q11"), issue("i2", "PROMPT_EMPTY", "rg-1")]);
-    expect(summary.headline).toBe("还有 2 处需要处理");
+    expect(summary.headline).toBe("还有 2 处可以补充");
   });
 
   it("超过阈值先折叠，展开后全部可见（不再是「仅显示前 N 条」）", () => {
@@ -327,10 +328,55 @@ describe("草稿就绪：没有题稿时不生成任务，也不宣称「可以�
     expect(after.tasks[0].actions[0].targetId).toBe("q11");
   });
 
-  it("有草稿且确实没有问题 → ready=true，这时才可以说「可以导出」", () => {
+  it("有草稿且确实没有问题 → ready=true，这时才说「没有需要补充的内容」", () => {
     const summary = buildUserTasks(DS, []);
     expect(summary.ready).toBe(true);
     expect(summary.tasks).toHaveLength(0);
-    expect(summary.headline).toBe("可以导出");
+    expect(summary.headline).toBe("没有需要补充的内容");
+  });
+});
+
+describe("唯一一份编辑辅助清单：本地 + 发布前检查 + 云端剩下的，每个题位只出一条", () => {
+  it("云端剩下的「q12 缺答案」与本地缺答撞在同一题位：只出一条", () => {
+    const summary = buildEditingAids(DS, [issue("i1", "ANSWER_MISSING", "q12")], [
+      { userTaskId: "quality:ANSWER_KEY_MISSING_SLOT:q12", targetIds: ["q12"], message: "计分 slot 没有可验证的答案 key。" }
+    ]);
+    expect(summary.tasks).toHaveLength(1);
+    expect(summary.tasks[0].title).toBe("第 12 题缺少答案");
+  });
+
+  it("用户补上之后（本地与云端重算都不再报）这一条消失", () => {
+    const summary = buildEditingAids(DS, [], []);
+    expect(summary.tasks).toHaveLength(0);
+    expect(summary.headline).toBe("没有需要补充的内容");
+  });
+
+  it("后端内部词不进界面：质量码走本地话术，差异写成「现在是 X，云端读到的是 Y」", () => {
+    const summary = buildEditingAids(DS, [], [
+      { userTaskId: "quality:SLOT_GROUP_ASSIGNMENT_INVALID:rg-1", targetIds: ["rg-1"], message: "题组的 expected question numbers 与 slots 不一致" },
+      {
+        userTaskId: "cloud-diff:slot:q13:answer",
+        targetIds: ["q13"],
+        message: "第 q13 题的答案与云端识别结果不一致",
+        field: "answer",
+        currentValue: { kind: "text", values: ["river"] },
+        cloudValue: { kind: "text", values: ["rivers"] }
+      },
+      { userTaskId: "cloud-coverage:pdf-1:3:0", targetIds: [], message: "原文件第 3 页云端未能读全（PAGE_UNREADABLE）：ocr failed" }
+    ]);
+    const text = summary.tasks.map((task) => `${task.title} ${task.detail ?? ""}`).join("\n");
+    expect(text).not.toMatch(/expected question numbers|slot|q13|PAGE_UNREADABLE|ocr failed/);
+    expect(text).toContain("第 13 题的答案：现在是「river」，云端读到的是「rivers」");
+    expect(text).toContain("原文件第 3 页");
+  });
+
+  it("没有门槛话术：不出现「不能导出」「阻断」「可以导出」", () => {
+    const summary = buildEditingAids(DS, [
+      issue("i1", "ANSWER_MISSING", "q11"),
+      issue("s1", "RUNTIME_COMPILER_FAILED", "document", "RUNTIME_COMPILER_FAILED"),
+      issue("x1", "SOMETHING_BRAND_NEW", "q13")
+    ], []);
+    const text = [summary.headline, ...summary.tasks.flatMap((task) => [task.title, task.detail ?? "", ...task.actions.map((a) => a.label)])].join("\n");
+    expect(text).not.toMatch(/导出|阻断|发不出去|重新识别/);
   });
 });
