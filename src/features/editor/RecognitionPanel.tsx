@@ -284,7 +284,10 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
               adjudicationStatus: view.adjudicationStatus,
               // 待处理条数用 `pendingDecisionCount`（含 `failed`），不是 `summary.needsReview`：
               // 后者漏掉「处理失败」的项，会让状态行说「没有需要处理的问题」而卡片还在。
-              pendingCount: pending
+              pendingCount: pending,
+              cloudReasonCode: view.cloudReasonCode,
+              // 修复记录优先：批次行的云端链状态可能仍停在本地周期的 not_run。
+              repair: view.repair
             })}
             {collapsed && !hasAnyChainRun(view) ? ` ${emptyStateMessage(view)}` : null}
           </p>
@@ -292,9 +295,10 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
           {/* 云端自主修复这一行**只在真的有修复记录时**出现：没有记录（旧批次、无云导入）
               不是「已修复」，但也不值得占一行位置。文案由 `describeRepairStatus` 决定，
               它保证「没有记录」不会被说成完成、`completed` 也会把剩余条数一并说出来。 */}
-          {view.repair ? (
+          {view.repair && canUndoRepair(view.repair) ? (
             <p className="workspace-recognition-repair" data-testid="workspace-recognition-repair">
-              <span>{describeRepairStatus(view.repair)}</span>
+              {/* 修复状态那句话已经是上面的状态行（`describeVerificationStatus` 以修复为准），
+                  这里只留撤销入口，不再重复同一句话。 */}
               {canUndoRepair(view.repair) ? (
                 <button
                   className="ghost small"

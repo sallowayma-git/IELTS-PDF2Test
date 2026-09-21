@@ -224,8 +224,9 @@ const CHAIN_STATE_TO_STATUS: Record<string, string> = {
   not_run: "not_started",
   not_started: "not_started",
   pending: "not_started",
-  canceled: "not_started",
-  cancelled: "not_started",
+  // 取消是**一次被中止的运行**，不是「没跑」：映射成 not_started 会让界面说「可以开始编辑」。
+  canceled: "canceled",
+  cancelled: "canceled",
   running: "running",
   in_progress: "running",
   done: "succeeded",
@@ -535,6 +536,13 @@ export interface VerificationStatusInputV1 {
   adjudicationStatus?: string;
   /** 待用户处理的条数（`needs_review` + `unverifiable` + `failed`）。 */
   pendingCount?: number;
+  /** 云端链的原因码（只用于区分凭据错误，不进文案）。 */
+  cloudReasonCode?: string | null;
+  /**
+   * 云端自主修复摘要。**有记录时优先**：修复循环才是新主链上云端真正做的事，
+   * 批次行的链状态可能仍停在本地周期写下的值。
+   */
+  repair?: CloudRepairSummaryV1 | null;
 }
 
 /** 明确「只做了一部分」：模型通道失败、预算耗尽、部分分歧未获裁定。 */
@@ -550,14 +558,24 @@ export function describeVerificationStatus(input: VerificationStatusInputV1): st
     cloudStatus,
     sourceStatus,
     adjudicationStatus,
-    pendingCount = 0
+    pendingCount = 0,
+    cloudReasonCode,
+    repair
   } = input;
   // 本机还在读：唯一「什么都还不能做」的状态，也是用户最先看到的。
   if (localStatus === "queued" || localStatus === "running") return "正在本机识别…";
+  // 有修复记录就以它为准：批次行 cloud 阶段可能仍是本地周期写下的 not_run，
+  // 拿它说「可以开始编辑」会与「已自动修正 N 处」自相矛盾。
+  if (repair) return describeRepairStatus(repair);
   if (cloudStatus === "queued" || cloudStatus === "running") return "云端正在校验…";
+  if (cloudStatus === "canceled") return "云端检查已取消，当前是本机识别的题稿";
   // 云端根本没跑（未配置模型 / 未启用）：这是「可以开始编辑」，不是「校验通过」。
   if (!cloudStatus || cloudStatus === "not_started") return "题稿已生成，可以开始编辑";
-  if (CLOUD_UNAVAILABLE_STATES.has(cloudStatus)) return "云端校验暂时不可用，不影响继续编辑";
+  if (CLOUD_UNAVAILABLE_STATES.has(cloudStatus)) {
+    // 凭据错误重试没用，必须去设置页修正——不能说「暂时」。
+    if (cloudReasonCode === "MODEL_CREDENTIALS_INVALID") return "云端密钥无效，请到设置里重新填写；题稿仍可编辑";
+    return "云端校验暂时不可用，不影响继续编辑";
+  }
 
   const verification = [cloudStatus, sourceStatus ?? "not_started", adjudicationStatus ?? "not_started"];
   const partial = verification.some((state) => PARTIAL_STATES.has(state));

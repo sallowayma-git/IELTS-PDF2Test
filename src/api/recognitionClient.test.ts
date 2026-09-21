@@ -176,9 +176,32 @@ describe("describeVerificationStatus — 只用用户能懂的几句话", () => 
     expect(text).not.toContain("没有发现需要处理的问题");
   });
 
-  it("canceled 归入 not_started", () => {
+  it("canceled 是一次被取消的运行，不是「可以开始编辑」", () => {
     const view = normalizeDecisionView({ itemId: "item-1", chains: { cloud: { state: "canceled" } } });
-    expect(view.cloudStatus).toBe("not_started");
+    expect(view.cloudStatus).toBe("canceled");
+    const text = describeVerificationStatus(view);
+    expect(text).not.toContain("可以开始编辑");
+    expect(text).toContain("取消");
+  });
+
+  it("修复记录优先：云端已经自动修正过，绝不再说「题稿已生成，可以开始编辑」", () => {
+    // 复现：批次行 cloud 阶段停在本地周期的 not_run，而修复行说「已自动修正 3 处」。
+    for (const cloudStatus of ["not_started", "succeeded", "partial", undefined]) {
+      const text = describeVerificationStatus({
+        cloudStatus,
+        repair: { status: "completed", appliedCount: 3, remainingTasks: [] }
+      });
+      expect(text).not.toBe("题稿已生成，可以开始编辑");
+      expect(text).toContain("已自动修正 3 处");
+    }
+    const running = describeVerificationStatus({ cloudStatus: "not_started", repair: { status: "running" } });
+    expect(running).not.toContain("可以开始编辑");
+  });
+
+  it("凭据错误不说「暂时」，而是指向设置页", () => {
+    const text = describeVerificationStatus({ cloudStatus: "unavailable", cloudReasonCode: "MODEL_CREDENTIALS_INVALID" });
+    expect(text).not.toContain("暂时");
+    expect(text).toContain("设置");
   });
 
   it("reason code 只作内部分类，绝不进用户文案", () => {
