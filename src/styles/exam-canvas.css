@@ -76,3 +76,29 @@
   max-width: 100%;
   box-sizing: border-box;
 }
+
+/* 听力：没有 passage 栏；头部（Part 导航 + 音频）在上，题目在下，单列。 */
+.exam-canvas-v2.is-listening { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+.listening-header {
+  display: grid;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--exam-border);
+  background: var(--exam-surface-alt);
+}
+.listening-part-nav { display: flex; flex-wrap: wrap; gap: 6px; }
+.listening-part-tab {
+  padding: 5px 12px;
+  border: 1px solid var(--exam-border);
+  border-radius: 999px;
+  background: var(--exam-surface);
+  cursor: pointer;
+}
+.listening-part-tab.active { border-color: var(--exam-accent); color: var(--exam-accent); font-weight: 600; }
+.listening-part-tab.is-blocked { border-color: var(--danger); }
+.listening-audio-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-width: 0; }
+.listening-audio-player { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.listening-audio-player audio { max-width: 100%; }
+.listening-audio-state.is-missing { color: var(--muted); }
+.listening-audio-state.is-blocked { color: var(--danger); }
+.listening-structure-missing { padding: 24px 16px; }
