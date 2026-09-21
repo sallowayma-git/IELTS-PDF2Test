@@ -42,10 +42,19 @@ export function isProcessingStage(stage: LibraryStageV1): boolean {
   return PROCESSING_STAGES.includes(stage);
 }
 
+export type LibraryModality = "reading" | "listening" | "writing";
+
+/** The backend item row is the modality authority; the legacy summary only knows reading/writing. */
+export function rowModality(summary: LibraryExamSummary | undefined, v2?: LibraryItemSummaryV2): LibraryModality {
+  if (v2?.modality === "listening") return "listening";
+  if (summary?.subject === "writing" || v2?.modality === "writing") return "writing";
+  return "reading";
+}
+
 export interface LibraryRowV1 {
   id: string;
   title: string;
-  modality: "reading" | "writing";
+  modality: LibraryModality;
   stage: LibraryStageV1;
   /** 一行人话说明，例如「本地识别完成 · 云端识别中」或「本地 PDF 无法读取」。 */
   detail?: string;
@@ -180,7 +189,7 @@ export function buildRow(
     id,
     // M1：V2 仓库是标题的权威（工作区改名写 library_items_v2）；只在已填充权威稿时覆盖。
     title: v2?.title ?? job?.title ?? summary?.title ?? id,
-    modality: summary?.subject === "writing" ? "writing" : "reading",
+    modality: rowModality(summary, v2),
     stage,
     detail: detailFor(stage, job, actionable, v2),
     progressPercent: job && isProcessingStage(stage) ? STEP_PROGRESS[job.currentStep] : undefined,

@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { choosePdfFolderSources, chooseSourceFiles, type PickedPath } from "../../api/desktopDialogs";
+import { detectImportModality } from "../../api/listeningAudioClient";
 import type { ImportRejection } from "./useImportFiles";
+import { ListeningAudioDialog } from "./ListeningAudioDialog";
+import { listeningCandidates, type ListeningCandidate, type ListeningImportDecision } from "./listeningAudioPlan";
 
 // 导入不再是独立页面，而是题库页上的抽屉（计划 §3.1 / §12.1）。
 // 用户只选文件；title 取文件名、modality 自动、parseMode 自动、云端沿用设置页开关。
@@ -20,9 +23,13 @@ export function ImportDrawer({
   error?: string;
   rejected: ImportRejection[];
   onClose: () => void;
-  onImport: (files: PickedPath[]) => void;
+  onImport: (files: PickedPath[], decisions?: Record<string, ListeningImportDecision>) => void;
 }) {
   const [files, setFiles] = useState<PickedPath[]>([]);
+  const [checking, setChecking] = useState(false);
+  // 识别为听力的文件逐个确认；decisions 以源文件路径为键。
+  const [queue, setQueue] = useState<ListeningCandidate<PickedPath>[]>([]);
+  const [decisions, setDecisions] = useState<Record<string, ListeningImportDecision>>({});
 
   if (!open) return null;
 
@@ -39,8 +46,34 @@ export function ImportDrawer({
 
   const close = () => {
     setFiles([]);
+    setQueue([]);
+    setDecisions({});
     onClose();
   };
+
+  const start = async () => {
+    setChecking(true);
+    const detections = await detectImportModality(files.map((file) => file.path)).catch(() => []);
+    setChecking(false);
+    const candidates = listeningCandidates(files, detections);
+    if (!candidates.length) {
+      onImport(files);
+      return;
+    }
+    setDecisions({});
+    setQueue(candidates);
+  };
+
+  const decide = (decision: ListeningImportDecision) => {
+    const [current, ...rest] = queue;
+    if (!current) return;
+    const next = { ...decisions, [current.file.path]: decision };
+    setDecisions(next);
+    setQueue(rest);
+    if (!rest.length) onImport(files, next);
+  };
+
+  const pending = queue[0];
 
   return (
     <div className="drawer-scrim" role="presentation" onClick={busy ? undefined : close}>
@@ -105,13 +138,25 @@ export function ImportDrawer({
           <button
             className="primary"
             data-testid="import-start"
-            disabled={busy || !files.length}
-            onClick={() => onImport(files)}
+            disabled={busy || checking || !files.length}
+            onClick={start}
           >
-            {busy ? "正在建立条目…" : `开始导入${files.length > 1 ? ` ${files.length} 份` : ""}`}
+            {busy ? "正在建立条目…" : checking ? "正在检查文件…" : `开始导入${files.length > 1 ? ` ${files.length} 份` : ""}`}
           </button>
         </footer>
       </aside>
+      {pending ? (
+        <ListeningAudioDialog
+          key={pending.file.path}
+          paperName={pending.file.name}
+          cues={pending.cues}
+          onDecide={decide}
+          onCancel={() => {
+            setQueue([]);
+            setDecisions({});
+          }}
+        />
+      ) : null}
     </div>
   );
 }

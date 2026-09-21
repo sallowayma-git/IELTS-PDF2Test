@@ -4,6 +4,8 @@ import { MatchingMatrix, matchingRowsFor } from "./renderers/MatchingMatrix";
 import { resolveAuthoringAssetPreview, type AuthoringAssetPreview } from "../api/tauriCommands";
 import { buildReadingInteractionModelV2, buildRuntimeViewModelV2 } from "../services/runtimeViewModelV2";
 import { taskTypeLabel } from "../utils/displayLabels";
+import { ListeningHeader } from "./ListeningHeader";
+import { isListening, listeningParts, listeningStructureMissing, visibleTaskIds } from "./listeningWorkspace";
 import type { AnswerValueV2, ContentNodeV2, IeltsAuthoringIRV2, OptionV2, ResponseGroupV2, TaskGroupV2 } from "../types";
 
 export type ExamCanvasStructureAction =
@@ -421,18 +423,37 @@ export function ExamCanvas(props: ExamCanvasProps) {
     if (props.mode === "author") props.onAnswerChange?.(slotId, { kind: "option", labels: next, assignment });
     else setStudentAnswers((answers) => ({ ...answers, [slotId]: next }));
   };
+  // 听力：没有 passage 栏；头部是 Part 导航 + 音频。Part 映射到题组时只显示该 Part 的题组。
+  const listening = isListening(props.authoring);
+  const [selectedPart, setSelectedPart] = useState<number>(1);
+  const shownTaskIds = listening
+    ? new Set(visibleTaskIds(runtime.taskGroups.map((task) => task.taskId), listeningParts(props.authoring, []), selectedPart))
+    : undefined;
   const optionsFor = (task: TaskGroupV2, response: ResponseGroupV2) => interactionModel.responseGroups[response.responseGroupId]?.options ?? task.optionBank?.options ?? [];
 
   return <CanvasAnswersContext.Provider value={{ answers: canvasAnswers, setText, setOption }}>
-    <div className={`exam-canvas-v2 ${props.mode === "author" ? "is-author" : "is-student"}`} data-testid={`exam-canvas-v2-${props.mode}`}>
+    <div className={`exam-canvas-v2 ${props.mode === "author" ? "is-author" : "is-student"}${listening ? " is-listening" : ""}`} data-testid={`exam-canvas-v2-${props.mode}`}>
+    {listening ? (
+      <ListeningHeader
+        itemId={props.authoring.jobId}
+        authoring={props.authoring}
+        mode={props.mode}
+        selectedPart={selectedPart}
+        onSelectPart={setSelectedPart}
+      />
+    ) : (
     <main id="left" className="reading-pane passage-pane pane v2-passage-pane">
       <article className="reading-html passage-html v2-passage-content" aria-label={runtime.title}>
         <ContentNodes nodes={runtime.passage} canvas={props} />
       </article>
     </main>
-    <section id="right" className="reading-pane question-pane pane v2-question-pane" aria-label="Reading questions">
+    )}
+    <section id="right" className="reading-pane question-pane pane v2-question-pane" aria-label={listening ? "Listening questions" : "Reading questions"}>
       <div id="question-groups" className="question-groups v2-question-groups">
-        {runtime.taskGroups.map((task) => <article key={task.taskId} className={`question-group unified-group v2-task-group${props.selectedId === task.taskId ? " is-selected" : ""}`} data-group-id={task.taskId} data-editor-id={task.taskId} onClick={() => props.mode === "author" && props.onSelect?.(task.taskId)}>
+        {listening && listeningStructureMissing(props.authoring) ? (
+          <p className="empty listening-structure-missing" data-testid="listening-structure-missing">听力结构尚未识别</p>
+        ) : null}
+        {runtime.taskGroups.filter((task) => !shownTaskIds || shownTaskIds.has(task.taskId)).map((task) => <article key={task.taskId} className={`question-group unified-group v2-task-group${props.selectedId === task.taskId ? " is-selected" : ""}`} data-group-id={task.taskId} data-editor-id={task.taskId} onClick={() => props.mode === "author" && props.onSelect?.(task.taskId)}>
           <header className="v2-task-header"><h2>{taskTypeLabel(task.taskType)}</h2><div className="v2-instruction"><ContentNodes nodes={task.instructions} canvas={props} /></div></header>
           {task.stimulus?.length ? <div className="v2-stimulus"><ContentNodes nodes={task.stimulus} canvas={props} /></div> : null}
           {(() => {

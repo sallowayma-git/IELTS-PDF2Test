@@ -67,8 +67,11 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
     });
   }, []);
 
-  const startImport = useCallback(async (files: Parameters<typeof importer.importFiles>[0]) => {
-    const result = await importer.importFiles(files);
+  const startImport = useCallback(async (
+    files: Parameters<typeof importer.importFiles>[0],
+    decisions?: NonNullable<Parameters<typeof importer.importFiles>[1]>["decisions"]
+  ) => {
+    const result = await importer.importFiles(files, decisions ? { decisions } : undefined);
     setRejected(result.rejected);
     if (result.rows.length) {
       store.prependOptimistic(result.rows);

@@ -20,7 +20,11 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; frame-src 'self' data: blob:; connect-src 'self' http://localhost:1420 ws://localhost:1420 ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; frame-src 'self' data: blob:; connect-src 'self' http://localhost:1420 ws://localhost:1420 ipc: http://ipc.localhost; media-src 'self' asset: http://asset.localhost",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$APPDATA/audio/**"]
+      }
     }
   },
   "bundle": {
