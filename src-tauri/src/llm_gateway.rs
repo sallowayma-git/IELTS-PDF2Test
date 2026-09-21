@@ -1046,6 +1046,15 @@ fn authoring_candidate_prompt(input: &Value) -> String {
             )
         })
         .unwrap_or_default();
+    let chunk_rules = input
+        .get("chunk")
+        .and_then(|chunk| {
+            let label = chunk.get("label").and_then(Value::as_str)?;
+            Some(format!(
+                "- This request covers ONLY {label} of the paper. Recognise only the task groups of these questions; every answerSlots questionNumber MUST be one of them. Ignore all other questions: they are recognised in separate requests.\n"
+            ))
+        })
+        .unwrap_or_default();
     let (envelope_extra, modality_rules) = if modality == "listening" {
         (
             ", \"listeningParts\"",
@@ -1062,6 +1071,7 @@ Return exactly one JSON object with the top-level keys \"taskGroups\", \"answerS
 This is NOT an outline and NOT a comparison summary: transcribe the FULL question content so it can be rendered.\n\
 {repair}\n\
 Rules that matter most:\n\
+{chunk_rules}\
 {modality_rules}\
 - Transcribe every question's FULL prompt text; never abbreviate or summarise a question.\n\
 - Transcribe every option label and its FULL text; keep one option bank per task group.\n\
@@ -1150,9 +1160,10 @@ The extracted source text below is the ONLY evidence you may use; do not invent 
     )?;
     let content = openai_chat_content(&payload)?;
     let mut parsed = parse_llm_json_content(&content)?;
-    validate_authoring_candidate_output(
+    validate_authoring_candidate_output_for_chunk(
         &mut parsed,
         input.get("modality").and_then(Value::as_str).unwrap_or("reading"),
+        input.get("chunk"),
     )?;
     if !warnings.is_empty() {
         if let Some(items) = parsed.get_mut("warnings").and_then(Value::as_array_mut) {
@@ -1169,6 +1180,46 @@ The extracted source text below is the ONLY evidence you may use; do not invent 
 /// 只校验「形状是否可用」：内容对不对是模型结合原文的语义判断，程序替代不了。
 /// 但形状不对必须**具体**报错——原因会原样回给模型，让它定向修好再交一次。
 /// 这里刻意**不**校验 quality / audit / 身份字段：那些由后端生成，模型写什么都不采信。
+/// Chunked candidate requests (see `reconcile::candidate::plan_candidate_chunks`)
+/// may only answer for their own question numbers: two chunks that both
+/// "helpfully" recognised a neighbour's question would put it in the merged
+/// candidate twice. The prompt states the same limit.
+fn validate_authoring_candidate_output_for_chunk(
+    output: &mut Value,
+    modality: &str,
+    chunk: Option<&Value>,
+) -> CommandResult<()> {
+    if let Some(allowed) = chunk
+        .and_then(|chunk| chunk.get("questionNumbers"))
+        .and_then(Value::as_array)
+        .map(|numbers| {
+            numbers
+                .iter()
+                .filter_map(Value::as_u64)
+                .collect::<std::collections::BTreeSet<u64>>()
+        })
+        .filter(|allowed| !allowed.is_empty())
+    {
+        for (key, slot) in output
+            .get("answerSlots")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(number) = slot.get("questionNumber").and_then(Value::as_u64) {
+                if !allowed.contains(&number) {
+                    return Err(format!(
+                        "cloud_authoring_output_slot_outside_chunk:{key}:{number}:allowed={}..{}",
+                        allowed.iter().next().copied().unwrap_or(0),
+                        allowed.iter().next_back().copied().unwrap_or(0)
+                    ));
+                }
+            }
+        }
+    }
+    validate_authoring_candidate_output(output, modality)
+}
+
 fn validate_authoring_candidate_output(output: &mut Value, modality: &str) -> CommandResult<()> {
     let modality = crate::llm_suggestions::candidate_modality(modality);
     let Some(object) = output.as_object() else {

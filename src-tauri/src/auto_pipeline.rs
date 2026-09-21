@@ -2639,7 +2639,9 @@ pub(crate) fn generate_cloud_authoring_candidate_raw(
         &extraction,
         &modality,
     );
-    if !is_pdf {
+    // 分块计划的依据：**原文件自己的文本**（PDF 走独立的文本层抽取，DOCX/TXT 走同一份
+    // 证据文本），绝不读本地识别的结论。
+    let plan_text = if !is_pdf {
         // `data_url_for_pdf` 会按 `data:application/pdf` 发送 `pdfPath`，对 DOCX 是
         // 错误声明，必须先摘掉；证据面改为原文件独立抽出的文本。
         if let Some(object) = input.as_object_mut() {
@@ -2647,33 +2649,80 @@ pub(crate) fn generate_cloud_authoring_candidate_raw(
         }
         let source_text = prepare_cloud_source_evidence(root, &job)
             .ok_or_else(|| format!("cloud_source_text_unavailable:{job_id}"))?;
-        input["sourceText"] = json!(source_text);
-    }
+        input["sourceText"] = json!(source_text.clone());
+        Some(source_text)
+    } else {
+        original_pdf_text_for_chunk_plan(&upload_path)
+    };
+    let plan = plan_text
+        .as_deref()
+        .map(crate::reconcile::candidate::plan_candidate_chunks)
+        .unwrap_or_default();
     let api_key = load_llm_api_key(root, &selected);
-    match run_llm_gateway(
-        root,
-        job_id,
-        "generate_authoring_candidate",
-        &input,
-        api_key.as_deref(),
-    ) {
+    generate_candidate_by_chunks(&input, &plan, |request| {
+        candidate_request_with_one_repair(root, job_id, request, api_key.as_deref())
+    })
+}
+
+/// 原 PDF 的文本层（独立于本地识别的抽取），只用于规划分块。抽不出来（扫描件、
+/// 解析库 panic）就返回 `None`，调用方回到一次整卷请求。
+fn original_pdf_text_for_chunk_plan(path: &Path) -> Option<String> {
+    let path = path.to_path_buf();
+    std::panic::catch_unwind(move || pdf_extract::extract_text_by_pages(&path).ok())
+        .ok()
+        .flatten()
+        .map(|pages| pages.join("\n"))
+        .filter(|text| !text.trim().is_empty())
+}
+
+/// S3 编排：有分块计划就逐块请求（输入带 `chunk`，prompt 与校验器据此限定题号），
+/// 然后合并；没有计划就是一次整卷请求。
+///
+/// 各块**顺序**执行：整个候选调用本就持有一个云端 permit（见调度器），并行发块会绕过
+/// 那条并发约束。一块失败不拖垮其余块——合并结果是 Partial，并列出未覆盖的题号。
+pub(crate) fn generate_candidate_by_chunks<F>(
+    base_input: &Value,
+    plan: &[crate::reconcile::candidate::CandidateChunk],
+    mut call: F,
+) -> CommandResult<Value>
+where
+    F: FnMut(&Value) -> CommandResult<Value>,
+{
+    if plan.is_empty() {
+        return call(base_input);
+    }
+    let mut results = Vec::with_capacity(plan.len());
+    for chunk in plan {
+        let mut input = base_input.clone();
+        input["chunk"] = chunk.as_value();
+        let result = call(&input);
+        results.push((chunk.clone(), result));
+    }
+    crate::reconcile::candidate::merge_candidate_chunks(results)
+}
+
+/// 一次候选请求 + 至多一次受约束修复：首次输出被结构校验拒了，把**被拒原因原样**回给
+/// 模型再问一次。网络/配置类错误重试同一句话毫无意义，直接返回。
+fn candidate_request_with_one_repair(
+    root: &Path,
+    job_id: &str,
+    input: &Value,
+    api_key: Option<&str>,
+) -> CommandResult<Value> {
+    match run_llm_gateway(root, job_id, "generate_authoring_candidate", input, api_key) {
         Ok(value) => Ok(value),
         Err(first_error) => {
-            // 只有**结构**类拒绝才值得再问一次；网络/配置类错误重试同一句话毫无意义。
-            if !first_error.starts_with("cloud_authoring_output_") {
+            if !first_error.starts_with("cloud_authoring_output_")
+                && !first_error.starts_with("llm_json_parse_failed")
+            {
                 return Err(first_error);
             }
-            if let Some(object) = input.as_object_mut() {
+            let mut retry = input.clone();
+            if let Some(object) = retry.as_object_mut() {
                 object.insert("repairNote".to_string(), json!(first_error));
             }
-            run_llm_gateway(
-                root,
-                job_id,
-                "generate_authoring_candidate",
-                &input,
-                api_key.as_deref(),
-            )
-            .map_err(|second_error| format!("cloud_authoring_candidate_rejected:{second_error}"))
+            run_llm_gateway(root, job_id, "generate_authoring_candidate", &retry, api_key)
+                .map_err(|second_error| format!("cloud_authoring_candidate_rejected:{second_error}"))
         }
     }
 }
@@ -4782,6 +4831,42 @@ where
 mod tests {
     use super::*;
     use crate::IssueCounts;
+
+    /// S3 编排：有分块计划时逐块请求（每块输入带 `chunk`），一块失败不拖垮其余块；
+    /// 没有计划时仍是一次整卷请求。
+    #[test]
+    fn candidate_generation_runs_one_request_per_chunk_and_survives_a_failed_chunk() {
+        use crate::reconcile::candidate::CandidateChunk;
+        let base = serde_json::json!({"mode": "generate_authoring_candidate"});
+        let plan = vec![CandidateChunk::new(vec![1, 2]), CandidateChunk::new(vec![3, 4])];
+        let mut seen = Vec::new();
+        let merged = generate_candidate_by_chunks(&base, &plan, |input| {
+            let label = input["chunk"]["label"].as_str().unwrap_or("").to_string();
+            seen.push(label.clone());
+            if label == "Questions 3-4" {
+                return Err("llm_timeout_budget_exhausted:llm_http_timeout".to_string());
+            }
+            Ok(serde_json::json!({
+                "taskGroups": [{"taskId": "cloud-tg-1"}],
+                "answerSlots": {"cloud-q1": {"slotId": "cloud-q1", "questionNumber": 1}},
+                "answerKey": {}
+            }))
+        })
+        .expect("一块成功就不是整份失败");
+        assert_eq!(seen, vec!["Questions 1-2", "Questions 3-4"]);
+        assert_eq!(merged["uncoveredQuestionNumbers"], serde_json::json!([3, 4]));
+        assert_eq!(merged["taskGroups"][0]["taskId"], serde_json::json!("c1-cloud-tg-1"));
+
+        let mut calls = 0;
+        let whole = generate_candidate_by_chunks(&base, &[], |input| {
+            calls += 1;
+            assert!(input.get("chunk").is_none(), "没有计划时不得带 chunk");
+            Ok(serde_json::json!({"whole": true}))
+        })
+        .unwrap();
+        assert_eq!(calls, 1);
+        assert_eq!(whole, serde_json::json!({"whole": true}));
+    }
     use crate::job_store::save_job;
     use crate::util::{ensure_app_dirs, ensure_job_dirs, job_dir, write_json};
     use serde_json::{json, Value};
