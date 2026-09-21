@@ -33,6 +33,9 @@ pub(crate) struct ImportFilesInput {
     pub cloud_enabled: Option<bool>,
     #[serde(default)]
     pub cloud_profile_id: Option<String>,
+    /// `reading` (default) or `listening`; confirmed by the user in the import flow.
+    #[serde(default)]
+    pub modality: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -65,6 +68,7 @@ pub(crate) async fn import_files_core(app: &AppHandle, input: ImportFilesInput) 
 
 pub(crate) fn import_files_at_root(root: &std::path::Path, input: ImportFilesInput) -> CommandResult<ImportFilesResult> {
     let cloud_enabled = input.cloud_enabled.unwrap_or(false);
+    let modality = normalize_import_modality(input.modality.as_deref())?;
     let mut created = Vec::new();
     let mut rejected = Vec::new();
 
@@ -117,6 +121,7 @@ pub(crate) fn import_files_at_root(root: &std::path::Path, input: ImportFilesInp
             &file.name,
             cloud_enabled,
             input.cloud_profile_id.as_deref(),
+            modality,
         );
         if let Err(error) = queue_result {
             // G1/A4-F01：queue 失败必须补偿——磁盘 job 目录（含 staged 文件）
@@ -173,6 +178,7 @@ fn queue_import(
     file_name: &str,
     cloud_enabled: bool,
     cloud_profile_id: Option<&str>,
+    modality: &str,
 ) -> CommandResult<()> {
     let conn = open_library_connection(root)?;
     let transaction = rusqlite::Transaction::new_unchecked(&conn, rusqlite::TransactionBehavior::Immediate)
@@ -181,7 +187,7 @@ fn queue_import(
         &transaction,
         &UpsertItemInput {
             id: job_id,
-            modality: "reading",
+            modality,
             title,
             status: "processing",
             source_asset_id: None,
@@ -196,11 +202,22 @@ fn queue_import(
         &json!({
             "cloudEnabled": cloud_enabled,
             "fileName": file_name,
-            "cloudProfileId": cloud_profile_id
+            "cloudProfileId": cloud_profile_id,
+            "modality": modality
         }),
     )?;
     transaction.commit().map_err(|error| error.to_string())?;
     Ok(())
+}
+
+/// Import accepts exactly the paper modalities this pipeline can host; anything else is a
+/// caller bug and fails the whole request before any job is created.
+pub(crate) fn normalize_import_modality(modality: Option<&str>) -> CommandResult<&'static str> {
+    match modality.map(str::trim).filter(|value| !value.is_empty()) {
+        None | Some("reading") => Ok("reading"),
+        Some("listening") => Ok("listening"),
+        Some(other) => Err(format!("import_modality_unsupported:{other}")),
+    }
 }
 
 fn format_bytes(bytes: u64) -> String {
@@ -249,6 +266,7 @@ mod tests {
             }],
             cloud_enabled: Some(false),
             cloud_profile_id: None,
+            modality: None,
         };
         let result = import_files_at_root(&root, input).unwrap();
         assert!(result.created.is_empty(), "queue 失败的文件不得计入 created");
@@ -258,6 +276,103 @@ mod tests {
             .map(|entries| entries.count())
             .unwrap_or(0);
         assert_eq!(leftover, 0, "queue 失败后不得留下 job 目录孤儿");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    fn import_one(root: &std::path::Path, modality: Option<&str>) -> String {
+        crate::util::ensure_app_dirs(root).unwrap();
+        let source = root.join("paper.pdf");
+        fs::write(&source, b"%PDF-1.4 fake").unwrap();
+        let input = ImportFilesInput {
+            files: vec![ImportFileInput {
+                path: source.to_string_lossy().to_string(),
+                name: "paper.pdf".to_string(),
+                size_bytes: 13,
+                title_hint: None,
+            }],
+            cloud_enabled: Some(false),
+            cloud_profile_id: None,
+            modality: modality.map(str::to_string),
+        };
+        let result = import_files_at_root(root, input).unwrap();
+        assert_eq!(result.created.len(), 1, "rejected: {:?}", result.rejected.iter().map(|r| &r.reason).collect::<Vec<_>>());
+        result.created[0].item_id.clone()
+    }
+
+    /// Simulates the pipeline's local recognition output (always built as a
+    /// reading-shaped draft today) and runs the real first-seed entry point.
+    fn seed_pipeline_draft(root: &std::path::Path, item_id: &str) -> Value {
+        let authoring = json!({
+            "schemaVersion": "IeltsAuthoringIRV2",
+            "modality": "reading",
+            "exam": {"title": "Paper"},
+            "taskGroups": []
+        });
+        fs::write(
+            crate::util::job_dir(root, item_id).join(crate::authoring_v2_commands::AUTHORING_V2_SHADOW_FILE),
+            serde_json::to_vec(&authoring).unwrap(),
+        )
+        .unwrap();
+        assert!(crate::library::migration::ensure_initial_canonical(root, item_id).unwrap());
+        let conn = open_library_connection(root).unwrap();
+        crate::library::repository::get_canonical_ds(&conn, item_id).unwrap().unwrap().0
+    }
+
+    fn item_rows(root: &std::path::Path) -> Vec<(String, String)> {
+        let conn = open_library_connection(root).unwrap();
+        let mut stmt = conn.prepare("SELECT id, modality FROM library_items_v2").unwrap();
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    }
+
+    #[test]
+    fn listening_import_creates_one_listening_item_and_listening_canonical() {
+        let root = temp_root();
+        let item_id = import_one(&root, Some("listening"));
+        let rows = item_rows(&root);
+        assert_eq!(rows, vec![(item_id.clone(), "listening".to_string())]);
+        let conn = open_library_connection(&root).unwrap();
+        let payload: String = conn
+            .query_row("SELECT progress_json FROM processing_jobs_v2 WHERE id = ?1", [&item_id], |row| row.get(0))
+            .unwrap();
+        drop(conn);
+        assert_eq!(serde_json::from_str::<Value>(&payload).unwrap()["modality"], "listening");
+        let canonical = seed_pipeline_draft(&root, &item_id);
+        assert_eq!(canonical["modality"], "listening");
+        assert_eq!(item_rows(&root).len(), 1, "seeding must not create a second item");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn reading_import_stays_reading_by_default() {
+        let root = temp_root();
+        let item_id = import_one(&root, None);
+        assert_eq!(item_rows(&root), vec![(item_id.clone(), "reading".to_string())]);
+        let canonical = seed_pipeline_draft(&root, &item_id);
+        assert_eq!(canonical["modality"], "reading");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unknown_import_modality_is_rejected() {
+        let root = temp_root();
+        crate::util::ensure_app_dirs(&root).unwrap();
+        let source = root.join("paper.pdf");
+        fs::write(&source, b"%PDF-1.4 fake").unwrap();
+        let input = ImportFilesInput {
+            files: vec![ImportFileInput {
+                path: source.to_string_lossy().to_string(),
+                name: "paper.pdf".to_string(),
+                size_bytes: 13,
+                title_hint: None,
+            }],
+            cloud_enabled: Some(false),
+            cloud_profile_id: None,
+            modality: Some("writing".to_string()),
+        };
+        assert!(import_files_at_root(&root, input).is_err());
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -277,6 +392,7 @@ mod tests {
             }],
             cloud_enabled: Some(false),
             cloud_profile_id: None,
+            modality: None,
         };
         let result = import_files_at_root(&root, input).unwrap();
         assert!(result.created.is_empty());

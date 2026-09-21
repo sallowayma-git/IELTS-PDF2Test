@@ -57,6 +57,17 @@ fn is_authoring_shape(value: &Value) -> bool {
         || (value.get("exam").is_some() && value.get("taskGroups").is_some())
 }
 
+/// The library row carries the modality the user confirmed at import. Local recognition
+/// still builds a reading-shaped draft, so the first seed adopts the row's modality: a
+/// listening import must never surface as a reading draft.
+pub(crate) fn align_draft_modality(authoring: &mut Value, item_modality: &str) {
+    if item_modality == "listening" {
+        if let Some(object) = authoring.as_object_mut() {
+            object.insert("modality".to_string(), Value::String("listening".to_string()));
+        }
+    }
+}
+
 fn title_of(job_json: &Value, fallback: &str) -> String {
     job_json
         .get("title")
@@ -80,9 +91,13 @@ fn status_of(job_json: &Value, has_ds: bool) -> &'static str {
 }
 
 fn repair_shadow_seed(conn: &rusqlite::Connection, root: &Path, job_id: &str) -> CommandResult<bool> {
-    let Some((revision, "revision")) = candidate_authoring(root, job_id) else { return Ok(false) };
-    let shadow: Option<Value> = fs::read(job_dir(root, job_id).join(AUTHORING_V2_SHADOW_FILE))
+    let Some((mut revision, "revision")) = candidate_authoring(root, job_id) else { return Ok(false) };
+    let mut shadow: Option<Value> = fs::read(job_dir(root, job_id).join(AUTHORING_V2_SHADOW_FILE))
         .ok().and_then(|bytes| serde_json::from_slice(&bytes).ok());
+    if let Some(item) = get_item(conn, job_id)? {
+        align_draft_modality(&mut revision, &item.modality);
+        if let Some(shadow) = shadow.as_mut() { align_draft_modality(shadow, &item.modality); }
+    }
     let Some((current, 1)) = super::repository::get_canonical_ds(conn, job_id)? else { return Ok(false) };
     if shadow.as_ref() != Some(&current) || current == revision { return Ok(false); }
     let updated = conn.execute(
@@ -178,10 +193,13 @@ pub(crate) fn ensure_initial_canonical(root: &Path, job_id: &str) -> CommandResu
             return Ok(true);
         }
     }
-    let Some((authoring, _source)) = candidate_authoring(root, job_id) else {
+    let Some((mut authoring, _source)) = candidate_authoring(root, job_id) else {
         // 没有候选：不建壳、不写稿，如实返回 false。
         return Ok(false);
     };
+    if let Some(item) = get_item(&conn, job_id)? {
+        align_draft_modality(&mut authoring, &item.modality);
+    }
     if get_item(&conn, job_id)?.is_none() {
         let job_json: Value = fs::read(job_dir(root, job_id).join("job.json"))
             .ok()
