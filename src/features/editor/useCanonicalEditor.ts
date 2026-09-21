@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { applyEditorCommands, getWorkspaceItem } from "../../api/workspaceClient";
 import { applyAuthoringV2Patches as applyLocalPatches, inverseAuthoringPatch } from "../../services/authoringV2Patches";
-import { conflictRecoveryNotice, rebasePendingPatches } from "./conflictRecovery";
+import {
+  conflictRecoveryNotice,
+  rebasePendingPatches,
+  tryAutoRebase,
+  type ConflictRebaseResult
+} from "./conflictRecovery";
 import {
   decideRemoteVersionAction,
   shouldApplyDeferredRemoteRefresh,
@@ -121,6 +126,8 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
   const redoStack = useRef<HistoryEntry[]>([]);
   const timer = useRef<number | undefined>(undefined);
   const inFlight = useRef<Promise<void> | undefined>(undefined);
+  /** 本轮冲突是否已经自动重放过一次（成功保存后复位）。只自动一次，避免与后台写入无限追逐。 */
+  const autoRebaseTried = useRef(false);
   const recoveryKey = `${RECOVERY_KEY_PREFIX}${itemId}`;
 
   /**
@@ -182,11 +189,46 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
     }
   }, [requestReload]);
 
+  /**
+   * 把一次冲突重放的结果收进编辑器状态（自动重放与「重试保存」共用）。
+   * 未能重放的补丁**丢弃而不强写**，并写入需要用户手动关闭的提示。
+   */
+  const adoptRebase = useCallback((
+    latestDs: IeltsAuthoringIRV2,
+    latestVersion: number,
+    latestTitle: string | undefined,
+    rebase: ConflictRebaseResult,
+    localTitle: string | undefined
+  ) => {
+    draftRef.current = rebase.rebased;
+    setDraft(rebase.rebased);
+    setVersion(latestVersion);
+    // 这次读取已经拿到最新版本，推迟记录不再有意义。
+    clearDeferredRemoteRefresh();
+    batchRef.current = undefined;
+    pendingRef.current = rebase.applied;
+    pendingTitleRef.current = localTitle && localTitle !== latestTitle ? localTitle : undefined;
+    if (latestTitle !== undefined) {
+      titleRef.current = latestTitle;
+      setTitleState(latestTitle);
+    }
+    // 撤销栈建立在旧基线上，重放后不再可靠。
+    undoStack.current = [];
+    redoStack.current = [];
+    setHistoryDepth({ undo: 0, redo: 0 });
+    checkpoint();
+    // 只在确有补丁未能应用时写入，且**绝不自动清除**（见 `conflictRecoveryNotice`）。
+    if (rebase.dropped > 0) {
+      setSaveNotice(conflictRecoveryNotice(rebase.applied.length, rebase.dropped));
+    }
+    void latestDs;
+  }, [checkpoint, clearDeferredRemoteRefresh, setVersion]);
+
   const persist = useCallback((): Promise<void> => {
     if (timer.current !== undefined) window.clearTimeout(timer.current);
     timer.current = undefined;
     if (inFlight.current) return inFlight.current;
-    const run = async () => {
+    const run = async (): Promise<void> => {
       try {
         while (batchRef.current || pendingRef.current.length || pendingTitleRef.current !== undefined) {
           if (!batchRef.current) {
@@ -205,10 +247,35 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
           batchRef.current = undefined;
           checkpoint();
         }
+        autoRebaseTried.current = false;
         setSaveState("saved");
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const conflict = message.includes("EDIT_VERSION_CONFLICT");
+        // 撞上的是云端修复 / 答案页识别自己的写入：自动重放**一次**，不逼用户二选一。
+        // 只有冲突里有人工写入、或重放本身失败时，才落到下面的按钮。
+        if (conflict && !autoRebaseTried.current) {
+          autoRebaseTried.current = true;
+          const localTitle = batchRef.current?.title ?? pendingTitleRef.current;
+          let latestTitle: string | undefined;
+          const outcome = await tryAutoRebase({
+            localBase: batchRef.current?.baseVersion ?? versionRef.current,
+            outstanding: [...(batchRef.current?.commands ?? []), ...pendingRef.current],
+            fetchLatest: async () => {
+              const workspace = await getWorkspaceItem(itemId);
+              latestTitle = workspace.item.title;
+              return {
+                ds: workspace.ds as unknown as IeltsAuthoringIRV2,
+                editVersion: workspace.editVersion,
+                recentEdits: workspace.recentEdits
+              };
+            }
+          });
+          if (outcome.kind === "rebased") {
+            adoptRebase(outcome.latest.ds, outcome.latest.editVersion, latestTitle, outcome.rebase, localTitle);
+            return run();
+          }
+        }
         setSaveState(conflict ? "conflict" : "failed");
         setSaveMessage(conflict
           ? "这道题在别处也被改过。本地修改仍保留，可「重试保存」重新应用，或「放弃本地修改」以最新版本重新加载。"
@@ -220,7 +287,7 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
     // Start in a microtask so even an immediate failure clears the assigned promise.
     inFlight.current = Promise.resolve().then(run).finally(() => { inFlight.current = undefined; });
     return inFlight.current;
-  }, [itemId, checkpoint]);
+  }, [itemId, checkpoint, adoptRebase]);
 
   /**
    * 收到「权威稿版本推进」通知时的处置。
@@ -426,30 +493,8 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
       const base = workspace.ds as unknown as IeltsAuthoringIRV2;
       // 逐条重放：某条补丁因原文已改动而无法应用时停下，已应用的部分照常保存，
       // 未应用的部分明确告知用户——绝不静默丢弃本地修改。
-      const { rebased, applied, dropped } = rebasePendingPatches(base, outstanding);
-      draftRef.current = rebased;
-      setDraft(rebased);
-      setVersion(workspace.editVersion);
-      // 上面这次读取已经拿到最新版本，推迟记录不再有意义。
-      clearDeferredRemoteRefresh();
-      batchRef.current = undefined;
-      pendingRef.current = applied;
-      pendingTitleRef.current = localTitle && localTitle !== workspace.item.title ? localTitle : undefined;
-      titleRef.current = workspace.item.title;
-      setTitleState(workspace.item.title);
-      // 撤销栈建立在旧基线上，重放后不再可靠。
-      undoStack.current = [];
-      redoStack.current = [];
-      setHistoryDepth({ undo: 0, redo: 0 });
-      checkpoint();
+      adoptRebase(base, workspace.editVersion, workspace.item.title, rebasePendingPatches(base, outstanding), localTitle);
       setSaveState("idle");
-      // 只在确有补丁未能应用时写入，且**绝不自动清除**。
-      // 这条提示说的是「有修改永久没有保存」——用户没点关闭之前，任何自动清除
-      // （包括后续一次 dropped === 0 的恢复、以及后台识别事件触发的 reload）
-      // 都可能把尚未看到的数据丢失信息抹掉。清除只发生在用户主动关闭或放弃本地修改时。
-      if (dropped > 0) {
-        setSaveNotice(conflictRecoveryNotice(applied.length, dropped));
-      }
       await persist();
     } catch (error) {
       setSaveState("failed");
@@ -457,7 +502,7 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
     } finally {
       setConflictRecovering(false);
     }
-  }, [checkpoint, clearDeferredRemoteRefresh, conflictRecovering, itemId, outstandingCommands, persist]);
+  }, [adoptRebase, conflictRecovering, itemId, outstandingCommands, persist]);
 
   return {
     loading, loadError, draft, saveState, saveMessage, pendingCount, title, setTitle,

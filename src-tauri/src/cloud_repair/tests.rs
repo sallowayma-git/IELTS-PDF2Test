@@ -2905,3 +2905,27 @@ fn remaining_tasks_are_recomputed_on_read_so_a_fixed_problem_disappears() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// 工作区读取要带上最近的编辑来源：前端保存撞上冲突时，据此判断「只是被云端修复
+/// 自己的写入挤掉了」，自动重放，而不是逼用户在「重试保存 / 放弃本地修改」之间选。
+#[test]
+fn workspace_item_reports_recent_edit_origins_for_conflict_rebase() {
+    use crate::library::repository::EditOrigin;
+    let root = temp_root();
+    seed_item(&root, &golden_authoring());
+    let base = canonical_version(&root);
+    commit_edit(&root, EditOrigin::CloudRepair, Some("run-machine"), set_answer("q15", "E"));
+    commit_edit(&root, EditOrigin::Human, None, set_answer("q14", "A"));
+
+    let workspace = crate::library::commands::get_workspace_item_core(&root, ITEM_ID).expect("读工作区");
+    let edits = workspace["recentEdits"].as_array().cloned().unwrap_or_default();
+    let origin_at = |version: i64| {
+        edits
+            .iter()
+            .find(|edit| edit["baseVersion"].as_i64() == Some(version))
+            .and_then(|edit| edit["origin"].as_str().map(str::to_string))
+    };
+    assert_eq!(origin_at(base).as_deref(), Some("cloud_repair"), "{workspace}");
+    assert_eq!(origin_at(base + 1).as_deref(), Some("human"), "{workspace}");
+    let _ = std::fs::remove_dir_all(&root);
+}

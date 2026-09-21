@@ -50,3 +50,63 @@ export function conflictRecoveryNotice(
   if (droppedCount <= 0) return undefined;
   return `已把前 ${appliedCount} 项修改重新应用到最新版本；从第 ${appliedCount + 1} 项起的 ${droppedCount} 项因原文已被改动而无法应用，没有保存，请手动补回。`;
 }
+
+/** 后端编辑日志里的一行（`get_workspace_item.recentEdits`）。 */
+export interface RecentEditV1 {
+  baseVersion: number;
+  /** `human` | `cloud_repair` | `answer_page_recognition` | `undo` | null（来源不明）。 */
+  origin?: string | null;
+}
+
+/**
+ * 本地基线之后的所有写入是否**全是机器写入**。
+ *
+ * 只有这种情况才自动重放：云端修复 / 答案页识别是后台在写，用户没有做任何需要他
+ * 二选一的事。只要夹着一次人工写入（另一个窗口）、来源不明、或日志不完整（条数对不上
+ * 版本差），就不猜，交回给用户。
+ */
+export function conflictWasMachineOnly(input: {
+  localBase: number;
+  remoteVersion: number;
+  recentEdits: RecentEditV1[] | undefined;
+}): boolean {
+  const { localBase, remoteVersion, recentEdits } = input;
+  if (!Array.isArray(recentEdits) || remoteVersion <= localBase) return false;
+  const since = recentEdits.filter((edit) => edit.baseVersion >= localBase && edit.baseVersion < remoteVersion);
+  if (since.length !== remoteVersion - localBase) return false;
+  return since.every((edit) => typeof edit.origin === "string" && edit.origin !== "human" && edit.origin !== "undo");
+}
+
+export interface LatestWorkspaceV1 {
+  ds: IeltsAuthoringIRV2;
+  editVersion: number;
+  recentEdits?: RecentEditV1[];
+}
+
+export type AutoRebaseOutcome =
+  | { kind: "rebased"; latest: LatestWorkspaceV1; rebase: ConflictRebaseResult }
+  | { kind: "manual" };
+
+/**
+ * 保存冲突的**自动**出路：冲突只由机器写入造成时，读最新版本、把本地修改重放上去。
+ *
+ * 重放失败的补丁**丢弃而不强写**（`rebasePendingPatches` 的语义），由调用方如实提示；
+ * 读取失败或冲突里有人工写入时返回 `manual`，界面才出现「重试保存 / 放弃本地修改」。
+ */
+export async function tryAutoRebase(input: {
+  localBase: number;
+  outstanding: AuthoringPatchV2[];
+  fetchLatest: () => Promise<LatestWorkspaceV1>;
+}): Promise<AutoRebaseOutcome> {
+  let latest: LatestWorkspaceV1;
+  try {
+    latest = await input.fetchLatest();
+  } catch {
+    return { kind: "manual" };
+  }
+  if (!latest?.ds) return { kind: "manual" };
+  if (!conflictWasMachineOnly({ localBase: input.localBase, remoteVersion: latest.editVersion, recentEdits: latest.recentEdits })) {
+    return { kind: "manual" };
+  }
+  return { kind: "rebased", latest, rebase: rebasePendingPatches(latest.ds, input.outstanding) };
+}

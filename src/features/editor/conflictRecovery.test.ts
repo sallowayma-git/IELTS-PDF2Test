@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { conflictRecoveryNotice, rebasePendingPatches } from "./conflictRecovery";
+import { conflictRecoveryNotice, conflictWasMachineOnly, rebasePendingPatches, tryAutoRebase } from "./conflictRecovery";
 import type { AuthoringPatchV2, IeltsAuthoringIRV2 } from "../../types";
 
 // 纯逻辑测试（vitest.config.ts 层 1）：验证保存冲突后的重放语义。
@@ -82,5 +82,73 @@ describe("conflictRecoveryNotice", () => {
     const notice = conflictRecoveryNotice(0, 4);
     expect(notice).toBeDefined();
     expect(notice).toContain("4 项");
+  });
+});
+
+// 与修复循环自己的写入撞上的保存冲突：不应逼用户在「重试保存 / 放弃本地修改」之间选。
+describe("conflictWasMachineOnly", () => {
+  it("本地基线之后只有机器写入（云端修复 / 答案页识别）→ 可以自动重放", () => {
+    expect(conflictWasMachineOnly({
+      localBase: 3,
+      remoteVersion: 5,
+      recentEdits: [
+        { baseVersion: 1, origin: "human" },
+        { baseVersion: 3, origin: "cloud_repair" },
+        { baseVersion: 4, origin: "answer_page_recognition" }
+      ]
+    })).toBe(true);
+  });
+
+  it("中间夹着一次人工写入（另一个窗口）→ 不自动处理", () => {
+    expect(conflictWasMachineOnly({
+      localBase: 3,
+      remoteVersion: 5,
+      recentEdits: [{ baseVersion: 3, origin: "cloud_repair" }, { baseVersion: 4, origin: "human" }]
+    })).toBe(false);
+  });
+
+  it("日志不完整（被裁剪 / 旧后端没有这个字段）→ 不猜，不自动处理", () => {
+    expect(conflictWasMachineOnly({ localBase: 3, remoteVersion: 5, recentEdits: [{ baseVersion: 4, origin: "cloud_repair" }] })).toBe(false);
+    expect(conflictWasMachineOnly({ localBase: 3, remoteVersion: 5, recentEdits: undefined })).toBe(false);
+  });
+});
+
+describe("tryAutoRebase", () => {
+  it("冲突来自机器写入时自动重放，本地修改全部保留、服务端的机器修改也保留", async () => {
+    const remote = baseDocument();
+    nodeById(remote, "slot-1").displayLabel = "14 云端修正";
+    const outcome = await tryAutoRebase({
+      localBase: 3,
+      outstanding: [setDisplayLabel("slot-2", "15 本地")],
+      fetchLatest: async () => ({
+        ds: remote,
+        editVersion: 4,
+        recentEdits: [{ baseVersion: 3, origin: "cloud_repair" }]
+      })
+    });
+    expect(outcome.kind).toBe("rebased");
+    if (outcome.kind !== "rebased") return;
+    expect(outcome.rebase.dropped).toBe(0);
+    expect(outcome.latest.editVersion).toBe(4);
+    expect(nodeById(outcome.rebase.rebased, "slot-1").displayLabel).toBe("14 云端修正");
+    expect(nodeById(outcome.rebase.rebased, "slot-2").displayLabel).toBe("15 本地");
+  });
+
+  it("冲突来自人工写入时交回给用户（按钮），不自动覆盖", async () => {
+    const outcome = await tryAutoRebase({
+      localBase: 3,
+      outstanding: [setDisplayLabel("slot-2", "15 本地")],
+      fetchLatest: async () => ({ ds: baseDocument(), editVersion: 4, recentEdits: [{ baseVersion: 3, origin: "human" }] })
+    });
+    expect(outcome.kind).toBe("manual");
+  });
+
+  it("读取最新版本失败时交回给用户", async () => {
+    const outcome = await tryAutoRebase({
+      localBase: 3,
+      outstanding: [],
+      fetchLatest: async () => { throw new Error("offline"); }
+    });
+    expect(outcome.kind).toBe("manual");
   });
 });

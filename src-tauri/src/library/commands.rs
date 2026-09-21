@@ -58,8 +58,33 @@ pub(crate) fn get_workspace_item_core(root: &Path, item_id: &str) -> CommandResu
         "ds": ds,
         "editVersion": item.current_edit_version,
         "issues": issues,
-        "seededByOnDemandMigration": seeded
+        "seededByOnDemandMigration": seeded,
+        // 最近的编辑来源（基线版本 + origin）。前端保存撞上冲突时据此判断是不是只被
+        // 机器写入（云端修复 / 答案页识别）挤掉——是就自动重放，不逼用户二选一。
+        "recentEdits": recent_edit_origins(&conn, item_id)?
     }))
+}
+
+fn recent_edit_origins(conn: &rusqlite::Connection, item_id: &str) -> CommandResult<Value> {
+    let mut statement = conn
+        .prepare(
+            "SELECT base_version, edit_origin FROM editor_journal_v1
+              WHERE library_item_id = ?1 ORDER BY id DESC LIMIT 50",
+        )
+        .map_err(|error| format!("library_v2_recent_edits:{error}"))?;
+    let rows = statement
+        .query_map([item_id], |row| {
+            Ok(json!({
+                "baseVersion": row.get::<_, i64>(0)?,
+                "origin": row.get::<_, Option<String>>(1)?,
+            }))
+        })
+        .map_err(|error| format!("library_v2_recent_edits:{error}"))?;
+    let mut edits = Vec::new();
+    for row in rows {
+        edits.push(row.map_err(|error| format!("library_v2_recent_edits:{error}"))?);
+    }
+    Ok(Value::Array(edits))
 }
 
 pub(crate) fn apply_editor_commands_core(
