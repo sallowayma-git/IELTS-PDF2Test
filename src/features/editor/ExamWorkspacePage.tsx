@@ -392,7 +392,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               }}
               onCancel={() => setTitleEditing(false)}
             />
-            {processingNote ? <small>{processingNote}</small> : null}
+            {processingNote ? <small data-testid="workspace-processing-note">{processingNote}</small> : null}
           </div>
         </div>
 

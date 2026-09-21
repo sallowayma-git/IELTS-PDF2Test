@@ -1210,6 +1210,16 @@ async function main() {
       { timeoutMs: 25000, intervalMs: 500, label: "editing-aid-list-rendered" },
     )
     .catch(() => null);
+  // 修复循环结束后，任务还要跑完答案页等收尾步骤；在那之前工作区标题下显示
+  // 「云端自动检查中」，云端剩余条目也还没并进清单。等处理真正结束再比对，
+  // 并把「是否等到了结束」记进报告：一直不结束本身就是要报出来的问题。
+  const processingSettled = await session
+    .waitFor(
+      `(() => !document.querySelector('[data-testid="workspace-processing-note"]'))()`,
+      { timeoutMs: 90000, intervalMs: 1000, label: "processing-settled" },
+    )
+    .then(() => true)
+    .catch(() => false);
   // 列表折叠时展开，保证读到全部条目。
   await session.evaluate(`(() => { const more = document.querySelector('[data-testid="workspace-tasks-more"]'); if (more) more.click(); return true; })()`);
   const panel = await session.evaluate(
@@ -1246,6 +1256,7 @@ async function main() {
   if (remaining.length > 0 && (panel.entryCount ?? 0) === 0) panelProblems.push("后端有剩余任务，清单里一条都没有");
   if (uncovered.length > 0) panelProblems.push(`${uncovered.length} 条后端剩余任务没有被清单接住：${uncovered.map((task) => task.userTaskId).slice(0, 5).join(", ")}`);
   if (panel.legacyCardCount > 0) panelProblems.push(`新链路上仍然渲染了 ${panel.legacyCardCount} 张旧建议卡`);
+  if (!processingSettled) panelProblems.push("修复结束 90 秒后标题下仍显示「云端自动检查中」");
   if (panelProblems.length === 0) {
     record("remaining-tasks-match-backend-and-are-actionable", SCENARIO_STATUS.PASSED, {
       remaining: remaining.length,
