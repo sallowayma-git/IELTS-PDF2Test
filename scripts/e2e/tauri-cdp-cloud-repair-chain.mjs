@@ -1198,6 +1198,12 @@ async function main() {
   //   - 后端每条剩余任务的目标，都被清单里某一条接住（按 data-action-target / data-task-id）；
   //   - 后端有剩余任务时清单不能为空；
   //   - 新链路上不得渲染旧建议卡（`[data-decision-id]`）。
+  // 清单是顶栏「待补充 N」按钮开合的侧栏，默认收起；收起时条目不在 DOM 里。先打开它。
+  await session.evaluate(`(() => {
+    const toggle = document.querySelector('[data-testid="workspace-issues"]');
+    if (toggle && toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
+    return true;
+  })()`);
   await session
     .waitFor(
       `(() => Boolean(document.querySelector('[data-testid="workspace-tasks-headline"], [data-testid="workspace-tasks-clear"]')))()`,
