@@ -434,3 +434,275 @@ fn force_never_bypasses_unsafe_exam_ids_asset_io_or_duplicate_exam_ids() {
     assert!(publish_records(&root, &first).is_empty());
     let _ = fs::remove_dir_all(root);
 }
+
+// ───────────────────────── Feature 2：题库保存 ─────────────────────────
+
+fn final_version_row(root: &Path, item_id: &str) -> Option<(i64, Value, Option<String>, Option<Value>)> {
+    let conn = crate::library::repository::open_library_connection(root).unwrap();
+    conn.query_row(
+        "SELECT edit_version, evidence_json, source_purged_at, purge_report_json
+         FROM library_final_versions_v2 WHERE library_item_id = ?1",
+        [item_id],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                serde_json::from_str::<Value>(&row.get::<_, String>(1)?).unwrap(),
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?
+                    .map(|text| serde_json::from_str::<Value>(&text).unwrap()),
+            ))
+        },
+    )
+    .ok()
+}
+
+fn list_relative_files(dir: &Path) -> Vec<String> {
+    fn walk(base: &Path, dir: &Path, files: &mut Vec<String>) {
+        for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(base, &path, files);
+            } else {
+                files.push(path.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(dir, dir, &mut files);
+    files.sort();
+    files
+}
+
+fn edit_first_text(root: &Path, item_id: &str, suffix: &str) -> i64 {
+    let workspace = crate::library::commands::get_workspace_item_core(root, item_id).unwrap();
+    let version = workspace["editVersion"].as_i64().unwrap();
+    let (node_id, text) = first_text_node(&workspace["ds"]).expect("text node");
+    let length = text.chars().count();
+    let result = crate::library::commands::apply_editor_commands_core(
+        root,
+        crate::library::repository::ApplyEditorCommandsInput {
+            item_id: item_id.to_string(),
+            base_version: version,
+            request_id: Some(format!("edit-{item_id}-{version}")),
+            commands: vec![json!({
+                "op": "replaceText",
+                "nodeId": node_id,
+                "from": length,
+                "to": length,
+                "text": suffix
+            })],
+            title: None,
+        },
+    )
+    .expect("editing a purged item must save");
+    result["editVersion"].as_i64().unwrap()
+}
+
+#[test]
+fn publish_freezes_evidence_and_purges_only_this_items_sources() {
+    let root = temp_root("final-purge");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_item(&root, "final-purge", true, |_| {});
+    let untouched = seed_item(&root, "final-untouched", false, |_| {});
+    // 另一位 agent 的听力托管音频：属于可编辑版本，绝不可被清理。
+    let audio = root.join("audio").join(&item).join("part1.mp3");
+    fs::create_dir_all(audio.parent().unwrap()).unwrap();
+    fs::write(&audio, b"ID3 fake audio").unwrap();
+    let untouched_before = list_relative_files(&job_dir(&root, &untouched));
+
+    let result = publish(&root, &[&item], force_now()).expect("publish must succeed");
+    let outcome = outcome_for(&result, &item);
+    assert_eq!(outcome["finalVersion"]["frozen"], json!(true), "{outcome}");
+    assert_eq!(outcome["finalVersion"]["sourcePurged"], json!(true), "{outcome}");
+
+    let remaining = list_relative_files(&job_dir(&root, &item));
+    assert_eq!(
+        remaining,
+        vec!["assets/blobs/img-map.png".to_string(), "job.json".to_string()],
+        "只保留权威稿引用的资产与作业元数据"
+    );
+    assert!(audio.is_file(), "<appData>/audio/<itemId>/ 下的文件必须保留");
+    assert_eq!(
+        list_relative_files(&job_dir(&root, &untouched)),
+        untouched_before,
+        "不得清理其他条目的文件"
+    );
+
+    let (edit_version, evidence, purged_at, purge_report) =
+        final_version_row(&root, &item).expect("final version row");
+    assert_eq!(edit_version, 1);
+    assert!(purged_at.is_some());
+    assert_eq!(evidence["declaredQuestionNumbers"], json!([14, 15]));
+    assert_eq!(evidence["questionCoverage"]["status"], json!("complete"));
+    assert_eq!(evidence["nodeCoverage"]["complete"], json!(true));
+    assert_eq!(evidence["publishedEditVersion"], json!(1));
+    assert!(evidence["publishedAt"].as_str().is_some());
+    assert_eq!(purge_report.unwrap()["failed"], json!([]));
+
+    // 重新打开：预览资产仍可解析；工作区知道原文件已删除。
+    let preview =
+        crate::authoring_v2_commands::resolve_authoring_asset_preview_core(&root, &item, "img-map")
+            .expect("a reopened preview must still render the kept image");
+    assert_eq!(preview["assetId"], json!("img-map"));
+    let workspace = crate::library::commands::get_workspace_item_core(&root, &item).unwrap();
+    assert_eq!(workspace["item"]["sourcePurged"], json!(true));
+    assert!(workspace["ds"].is_object(), "最终版必须仍可编辑");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn purged_item_reopens_edits_saves_and_republishes_as_a_normal_publish() {
+    let root = temp_root("final-republish");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_item(&root, "final-republish", true, |_| {});
+    publish(&root, &[&item], force_now()).expect("first publish");
+    assert!(!job_dir(&root, &item).join(DOCUMENT_V2_SHADOW_FILE).exists());
+
+    let version = edit_first_text(&root, &item, " (revised)");
+    assert_eq!(version, 2);
+    let workspace = crate::library::commands::get_workspace_item_core(&root, &item).unwrap();
+    assert_eq!(
+        workspace["ds"]["quality"]["coverageStatus"]["physicalShadow"],
+        json!("verified_at_publish_source_purged")
+    );
+    assert_eq!(workspace["ds"]["quality"]["state"], json!("ready"), "{:#}", workspace["ds"]["quality"]);
+
+    let result = publish(&root, &[&item], force_now()).expect("republish must succeed");
+    let outcome = outcome_for(&result, &item);
+    assert_eq!(outcome["forced"], json!(false), "清理后的正常稿必须是正常发布：{outcome}");
+    assert_eq!(outcome["studentLoadable"], json!(true));
+    let records = publish_records(&root, &item);
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[1].forced, 0);
+    assert_eq!(records[1].edit_version, 2);
+    assert_eq!(records[1].verdict["status"], json!("ready"));
+    assert_eq!(item_status(&root, &item), "published");
+    let (edit_version, evidence, _, _) = final_version_row(&root, &item).unwrap();
+    assert_eq!(edit_version, 2, "最终版只有一份，指向最新发布的版本");
+    assert_eq!(evidence["declaredQuestionNumbers"], json!([14, 15]), "冻结声明被沿用");
+    let manifest = manifest(&root);
+    assert!(manifest["final-republish"].get("publishOverride").is_none());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn purged_item_with_a_deleted_question_republishes_as_forced_and_blocked_by_coverage() {
+    let root = temp_root("final-delete-question");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_item(&root, "final-delete-question", false, |_| {});
+    publish(&root, &[&item], force_now()).expect("first publish");
+
+    // 删除第 15 题。编辑器没有针对该共享多选题组的单命令删除路径，这里直接按
+    // 编辑事务的写法改权威稿并推进版本（质量块由导出时统一重算）。
+    let conn = crate::library::repository::open_library_connection(&root).unwrap();
+    let (mut ds, version) = crate::library::repository::get_canonical_ds(&conn, &item)
+        .unwrap()
+        .unwrap();
+    ds["answerSlots"].as_object_mut().unwrap().remove("q15");
+    ds["answerKey"].as_object_mut().unwrap().remove("q15");
+    for group in ds["taskGroups"][0]["responseGroups"].as_array_mut().unwrap() {
+        if let Some(slots) = group.get_mut("slotIds").and_then(Value::as_array_mut) {
+            slots.retain(|slot| slot != "q15");
+        }
+    }
+    conn.execute(
+        "UPDATE library_items_v2 SET canonical_ds_json = ?2, current_edit_version = ?3 WHERE id = ?1",
+        rusqlite::params![item, ds.to_string(), version + 1],
+    )
+    .unwrap();
+    drop(conn);
+
+    let mut refreshed = ds.clone();
+    crate::authoring_v2_commands::refresh_quality_report(&root, &item, &mut refreshed).unwrap();
+    assert_eq!(refreshed["quality"]["questionCoverage"]["missingQuestionNumbers"], json!([15]));
+    assert!(refreshed["quality"]["hardFailures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|code| code == "SOURCE_QUESTION_COVERAGE_MISSING"));
+
+    let result = publish(&root, &[&item], force_now()).expect("republish must still go out");
+    let outcome = outcome_for(&result, &item);
+    assert_eq!(outcome["forced"], json!(true), "{outcome}");
+    let records = publish_records(&root, &item);
+    let last = records.last().unwrap();
+    assert_eq!(last.forced, 1);
+    assert_eq!(last.verdict["status"], json!("blocked"));
+    assert!(
+        last.verdict.to_string().contains("原文声明的题号集合"),
+        "门禁原因必须是题号覆盖：{}",
+        last.verdict
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn non_purged_item_with_a_missing_shadow_behaves_exactly_as_today() {
+    let root = temp_root("final-non-purged");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_item(&root, "final-non-purged", false, |_| {});
+    fs::remove_file(job_dir(&root, &item).join(DOCUMENT_V2_SHADOW_FILE)).unwrap();
+    let conn = crate::library::repository::open_library_connection(&root).unwrap();
+    let (mut ds, _) = crate::library::repository::get_canonical_ds(&conn, &item).unwrap().unwrap();
+    drop(conn);
+    crate::authoring_v2_commands::refresh_quality_report(&root, &item, &mut ds).unwrap();
+    assert_eq!(ds["quality"]["coverageStatus"]["physicalShadow"], json!("missing"));
+    assert_eq!(ds["quality"]["sourceCoverage"], json!(0.0));
+    assert_eq!(ds["quality"]["state"], json!("review_required"));
+    assert!(ds["quality"]["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|issue| issue["code"] == "PHYSICAL_SHADOW_MISSING"));
+    assert!(crate::library::final_version::ensure_source_available(&root, &item).is_ok());
+    let error = publish(&root, &[&item], None).unwrap_err();
+    assert!(error.contains("authoring_v2_export_blocked"), "{error}");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn purged_items_reject_source_dependent_operations_explicitly() {
+    let root = temp_root("final-guard");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_item(&root, "final-guard", false, |_| {});
+    assert!(crate::library::final_version::ensure_source_available(&root, &item).is_ok());
+    publish(&root, &[&item], force_now()).unwrap();
+    let error = crate::library::final_version::ensure_source_available(&root, &item).unwrap_err();
+    assert!(error.starts_with(crate::library::final_version::SOURCE_PURGED_ERROR), "{error}");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn a_purge_failure_is_reported_but_never_fails_the_publish() {
+    let root = temp_root("final-purge-failure");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_item(&root, "final-purge-failure", false, |_| {});
+    let locked = job_dir(&root, &item).join("uploads").join("abcd1234-source.pdf");
+    // 让删除必然失败：Windows 上以「不共享删除」打开句柄；其他平台把父目录设为只读。
+    #[cfg(windows)]
+    let _guard = {
+        use std::os::windows::fs::OpenOptionsExt;
+        fs::OpenOptions::new().read(true).share_mode(0).open(&locked).unwrap()
+    };
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(locked.parent().unwrap(), fs::Permissions::from_mode(0o555)).unwrap();
+    }
+
+    let result = publish(&root, &[&item], force_now()).expect("purge failure must not fail publish");
+    let outcome = outcome_for(&result, &item);
+    let failed = outcome["finalVersion"]["purge"]["failed"].as_array().unwrap().clone();
+    assert!(!failed.is_empty(), "清理失败必须如实报告：{outcome}");
+    assert_eq!(item_status(&root, &item), "published");
+    assert!(manifest(&root)["final-purge-failure"].is_object());
+
+    #[cfg(windows)]
+    drop(_guard);
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(locked.parent().unwrap(), fs::Permissions::from_mode(0o755));
+    }
+    let _ = fs::remove_dir_all(root);
+}

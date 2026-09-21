@@ -44,6 +44,14 @@ pub(crate) fn get_workspace_item_core(root: &Path, item_id: &str) -> CommandResu
     } else {
         (None, json!([]))
     };
+    // 题库保存：发布后原文件已删除的条目要让工作区知道——需要原文件的操作
+    // （重新识别 / 云端修复 / 答案页重试）在界面上禁用并说明原因。
+    let final_version = super::final_version::final_version_status(&conn, item_id)?;
+    let source_purged = final_version
+        .as_ref()
+        .and_then(|status| status.get("sourcePurged"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     Ok(json!({
         "schemaVersion": "WorkspaceItemV1",
         "item": {
@@ -53,8 +61,10 @@ pub(crate) fn get_workspace_item_core(root: &Path, item_id: &str) -> CommandResu
             "status": item.status,
             "editVersion": item.current_edit_version,
             "hasCanonicalDs": item.has_canonical_ds,
-            "updatedAt": item.updated_at
+            "updatedAt": item.updated_at,
+            "sourcePurged": source_purged
         },
+        "finalVersion": final_version,
         "ds": ds,
         "editVersion": item.current_edit_version,
         "issues": issues,

@@ -10,4 +10,5 @@
 pub(crate) mod commands;
 pub(crate) mod migration;
 pub(crate) mod repository;
+pub(crate) mod final_version;
 pub(crate) mod schema;

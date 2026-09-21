@@ -53,6 +53,9 @@ pub enum SuggestedActionV2 {
 pub enum PhysicalShadowStatusV2 {
     Available,
     Missing,
+    /// 发布后原文件与 physical shadow 已按「题库保存」规则删除；节点覆盖结论取自
+    /// 发布时冻结的证据摘要，不再是可以重新计算的事实。
+    VerifiedAtPublishSourcePurged,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -1203,7 +1203,17 @@ pub(crate) fn refresh_quality_report_for_targets(
     let previous_quality = authoring.get("quality").cloned();
     let physical_shadow = read_json_opt(&job_dir(root, job_id).join(DOCUMENT_V2_SHADOW_FILE))?
         .filter(|shadow| physical_shadow_matches_authoring(shadow, authoring));
-    let mut quality = evaluate_quality(authoring, physical_shadow.as_ref());
+    // 「题库保存」：发布后原文件与 shadow 被删除的条目改用发布时冻结的证据。
+    // 只有**确实被清理过**的条目才有冻结证据；非清理条目缺 shadow 与今天完全一样。
+    let mut quality = match physical_shadow.as_ref() {
+        Some(shadow) => evaluate_quality(authoring, Some(shadow)),
+        None => match crate::library::final_version::load_purged_evidence(root, job_id) {
+            Some(frozen) => {
+                crate::ielts_grammar::quality::evaluate_quality_with_frozen_evidence(authoring, &frozen)
+            }
+            None => evaluate_quality(authoring, None),
+        },
+    };
     preserve_issue_resolutions(&mut quality, previous_quality.as_ref(), affected_targets);
     authoring
         .as_object_mut()
@@ -1212,7 +1222,7 @@ pub(crate) fn refresh_quality_report_for_targets(
     Ok(())
 }
 
-fn physical_shadow_matches_authoring(shadow: &Value, authoring: &Value) -> bool {
+pub(crate) fn physical_shadow_matches_authoring(shadow: &Value, authoring: &Value) -> bool {
     let authoring_source_ids = authoring
         .get("exam")
         .and_then(|exam| exam.get("sourceFiles"))

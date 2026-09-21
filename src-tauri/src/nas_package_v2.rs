@@ -328,7 +328,7 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
     // 提交点标志：清单替换成功即为「包已对学生可见」。此后任何失败都不得回滚资源。
     let mut manifest_committed = false;
     let mut publications: Vec<ItemPublication> = Vec::new();
-    let result = (|| -> CommandResult<Value> {
+    let mut result = (|| -> CommandResult<Value> {
         fs::create_dir_all(&staging).map_err(|error| error.to_string())?;
         let mut outcomes = Vec::new();
         // 全部 examId（重复检查是硬性不变量，放行模式同样适用）；
@@ -524,6 +524,60 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
                 "PUBLISH_BATCH_STATUS_DRIFT:manifest_committed:{}",
                 serde_json::to_string(&status_drift).unwrap_or_default()
             ));
+        }
+        // ── 题库保存：发布**已提交且状态已确认**之后，冻结最终版证据并删除原文件与
+        // 过程文件。两步都不得让发布失败或回滚（包已对学生可见）；结果逐题如实报告。
+        // 冻结失败时**不**删除：没有冻结证据，删除 shadow 会让这道题再也无法正常发布。
+        let mut final_versions = BTreeMap::new();
+        for publication in &publications {
+            let Some((_, ds, _)) = snapshots.iter().find(|(id, _, _)| id == &publication.item_id) else {
+                continue;
+            };
+            let report = match crate::library::final_version::freeze_final_version(
+                &conn,
+                root,
+                &publication.item_id,
+                publication.edit_version,
+                &publication.record_id,
+                ds,
+            ) {
+                Ok(_) => {
+                    let purge = crate::library::final_version::purge_source_artifacts(
+                        root,
+                        &publication.item_id,
+                        ds,
+                    );
+                    let marked = crate::library::final_version::mark_source_purged(
+                        &conn,
+                        &publication.item_id,
+                        &purge,
+                    );
+                    let failed = purge.get("failed").and_then(Value::as_array).map_or(0, Vec::len);
+                    if failed > 0 {
+                        eprintln!("[publish] source purge for {} left {failed} entries", publication.item_id);
+                    }
+                    json!({"frozen": true, "sourcePurged": marked.is_ok(), "purge": purge,
+                        "error": marked.err()})
+                }
+                Err(error) => {
+                    eprintln!("[publish] final version freeze failed for {}: {error}", publication.item_id);
+                    json!({"frozen": false, "sourcePurged": false, "error": error})
+                }
+            };
+            final_versions.insert(publication.item_id.clone(), report);
+        }
+        if let Ok(value) = result.as_mut() {
+            for outcome in value
+                .get_mut("succeeded")
+                .and_then(Value::as_array_mut)
+                .into_iter()
+                .flatten()
+            {
+                let item_id = outcome.get("itemId").and_then(Value::as_str).unwrap_or_default().to_string();
+                if let Some(report) = final_versions.remove(&item_id) {
+                    outcome["finalVersion"] = report;
+                }
+            }
         }
     }
     let _ = fs::remove_file(&paths.lock_metadata_path);

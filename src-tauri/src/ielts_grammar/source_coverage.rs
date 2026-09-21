@@ -147,6 +147,42 @@ pub(crate) fn assess(
     }
 }
 
+/// 原文件已在发布后删除时，用发布时冻结的「原文声明题号集合」核对当前稿。
+///
+/// 冻结集合为空（发布时就没能解析出声明）⇒ 仍是 Undetermined，与今天无 shadow 时
+/// 的结论一致，不因为原文件被删而升级成 Complete。
+pub(crate) fn assess_against_frozen_declaration(
+    authoring: &Value,
+    frozen_declared: &[u32],
+    frozen_declarations: &[String],
+) -> QuestionCoverageAssessment {
+    let canonical = canonical_question_numbers(authoring);
+    if frozen_declared.is_empty() {
+        return undetermined(
+            canonical.into_iter().collect(),
+            "frozen_declaration_unavailable_source_purged",
+        );
+    }
+    let declared = frozen_declared.iter().copied().collect::<BTreeSet<_>>();
+    let missing = declared.difference(&canonical).copied().collect::<Vec<_>>();
+    let extra = canonical.difference(&declared).copied().collect::<Vec<_>>();
+    let status = if missing.is_empty() && extra.is_empty() {
+        QuestionCoverageStatus::Complete
+    } else {
+        QuestionCoverageStatus::Missing
+    };
+    QuestionCoverageAssessment {
+        status,
+        declared_question_numbers: declared.into_iter().collect(),
+        canonical_question_numbers: canonical.into_iter().collect(),
+        missing_question_numbers: missing,
+        extra_question_numbers: extra,
+        declarations: frozen_declarations.to_vec(),
+        unparsed_declarations: Vec::new(),
+        reason: None,
+    }
+}
+
 fn undetermined(canonical_question_numbers: Vec<u32>, reason: &str) -> QuestionCoverageAssessment {
     QuestionCoverageAssessment {
         status: QuestionCoverageStatus::Undetermined,

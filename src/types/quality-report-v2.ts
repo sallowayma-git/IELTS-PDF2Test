@@ -38,7 +38,7 @@ export interface QualityCoverageEntryV2 {
 }
 
 export interface CoverageStatusV2 {
-  physicalShadow: "available" | "missing";
+  physicalShadow: "available" | "missing" | "verified_at_publish_source_purged";
   complete: boolean;
   significantSourceNodeCount: number;
   explainedSourceNodeCount: number;
