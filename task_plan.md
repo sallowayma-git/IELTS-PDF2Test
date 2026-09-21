@@ -860,3 +860,18 @@ Errors encountered:
 `llm_timeout_budget_exhausted` 只可能来自**图片回退**那次请求。更可能的真实过程是：直连 PDF 的请求因未知原因快速失败
 （该错误被丢弃），随后带页图的第二次请求用满 120 s 超时。结论不变的部分："服务端太慢"仍未被证明；
 新增的部分：一次坏请求最坏可烧掉约 4× 超时，已排为云端链路 S1 首要修复。
+
+### 2026-09-21 合并进度与第三波输入
+
+- 集成分支 `integrate/2026-09-21`（从 main 拉出，main 保持在已验证点）：已合并"听力导入"和"听力识别"两支；
+  补做识别代理在受限文件里要求的三处改动（`listening_parts` 移到 `ielts_grammar/mod.rs` 声明；
+  `mod.rs` 与 `prompt_assembler.rs` 里剩余的字面 `"questions "` 判断改走 `starts_with_question_heading`）。
+- 听力识别模块级结果：`listening-vol7-t9.pdf` → 4 parts / 8 task groups / 题 1–40；几何词间距修复在 20 份阅读 PDF 上
+  0 处文本变化（含空白）。证据等级：模块/单元级，真实导入端到端未跑。
+- **题型决策（第三波接线用）**：Q17–20 / Q21–25 这类「Choose FOUR/FIVE … write the letters next to questions 17-20」
+  按每题一个 slot、组内共享一个选项库、`assignment: "unordered_set"` 计分（IELTS 允许任意顺序），
+  与阅读侧多选既有的 unordered_set 同一模型。
+- 第三波待办（依赖剩余三支合并）：`listening_parts` 接入草稿构建器生成 `ListeningPartV2`；把
+  `listening_audio_assets_v1` 的受管音频写进每个 part 的 `media`；听力编译/打包（ListeningExamSourceV1、NAS 包、
+  quality/validation 按 modality 分派）；云端候选保留 listening parts；学生端仓库支持每 part 音频；
+  永久删除条目时清理受管音频；NAS 对端仓库同步新契约 schema（`npm run sync:phase1:peer`）。
