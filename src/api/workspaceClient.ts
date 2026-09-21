@@ -14,6 +14,8 @@ export interface WorkspaceItemSummaryV1 {
   editVersion: number;
   hasCanonicalDs: boolean;
   updatedAt: string;
+  /** 题库保存：发布后原文件与过程文件已删除（需要原文件的操作不可用）。 */
+  sourcePurged?: boolean;
 }
 
 export interface WorkspaceItemV1 {

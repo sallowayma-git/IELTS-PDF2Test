@@ -33,6 +33,25 @@ function v2WithProcessing(processing: {
   } as unknown as LibraryItemSummaryV2;
 }
 
+describe("buildRow 已发布 / 放行发布展示", () => {
+  function v2WithStatus(status: string): LibraryItemSummaryV2 {
+    return { ...v2WithProcessing({ stage: "x", localStatus: "x" }), status, processing: null } as LibraryItemSummaryV2;
+  }
+
+  it("正常发布显示已发布", () => {
+    const row = buildRow("item-1", undefined, undefined, {}, v2WithStatus("published"));
+    expect(row.stage).toBe("published");
+    expect(row.publishedForced).toBe(false);
+  });
+
+  it("放行发布同样是已发布，并标出放行", () => {
+    const row = buildRow("item-1", undefined, undefined, {}, v2WithStatus("published_forced"));
+    expect(row.stage).toBe("published");
+    expect(row.publishedForced).toBe(true);
+    expect(row.detail).toBe("已发布（强制发布）");
+  });
+});
+
 describe("buildRow 重试耗尽展示（G1/A4-F03）", () => {
   it("恢复上限后显示已达上限，而非排队中", () => {
     const row = buildRow(

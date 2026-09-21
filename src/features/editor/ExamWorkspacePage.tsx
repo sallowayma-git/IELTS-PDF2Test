@@ -3,7 +3,9 @@ import { ArrowLeft, Undo2, Redo2, MoreHorizontal, FileSearch, X } from "lucide-r
 import { command, getJob } from "../../api/tauriCommands";
 import { retryProcessing, cancelProcessing, subscribeProcessing } from "../../api/processingClient";
 import { chooseExportDirectory } from "../../api/desktopDialogs";
-import { describePublishError, publishItem } from "../../api/publishClient";
+import { describePublishOutcome, publishItem } from "../../api/publishClient";
+import { getWorkspaceItem } from "../../api/workspaceClient";
+import { SOURCE_PURGED_EXPLANATION, saveToLibrary, sourceActionsAvailable } from "./finalVersion";
 import { go, libraryPath, type LibraryIntent } from "../../app/router";
 import { ExamCanvas } from "../../exam-canvas/ExamCanvas";
 import { compileStructureAction } from "../../exam-canvas/structureActions";
@@ -91,6 +93,16 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
     getJob(itemId).then(setDetail).catch(() => setDetail(undefined));
   }, [itemId]);
 
+  // 题库保存：发布后原文件已删除的题目，需要原文件的操作要禁用并说明原因。
+  const [sourcePurged, setSourcePurged] = useState(false);
+  const refreshSourcePurged = () => {
+    getWorkspaceItem(itemId)
+      .then((workspace) => setSourcePurged(Boolean(workspace.item.sourcePurged)))
+      .catch(() => {});
+  };
+  useEffect(refreshSourcePurged, [itemId]);
+  const sourceActionsEnabled = sourceActionsAvailable(sourcePurged);
+
   useEffect(() => {
     let stopped = false;
     let stop: (() => void) | undefined;
@@ -146,7 +158,8 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   //     这一条：面板挂载即显示「可以导出」，而同一时刻后端门禁报 34 条阻断）。
   //   - 没有待保存修改（`pendingCount === 0`）——门禁评的是**已保存的权威稿**，
   //     草稿还有没落盘的东西时，它评的不是用户眼前这份。
-  const canExport = taskSummary.tasks.length === 0 && Boolean(preflight) && !preflightError && editor.pendingCount === 0;
+  // 这只描述「问题列表是不是真的查过且为空」，**不**控制发布：点击「发布」本身就是确认。
+  const tasksVerifiedClear = taskSummary.tasks.length === 0 && Boolean(preflight) && !preflightError && editor.pendingCount === 0;
   // 门禁的三种状态，供界面如实措辞，也给验收脚本一个可等待的锚点。
   const preflightState: "loading" | "loaded" | "error" = preflightError ? "error" : preflight ? "loaded" : "loading";
   const answerPageStatus = useMemo(
@@ -222,6 +235,10 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
       locateTarget(action.targetId);
       return;
     }
+    if (!sourceActionsEnabled) {
+      setNotice(SOURCE_PURGED_EXPLANATION);
+      return;
+    }
     await withBusy(`task:${task.taskId}`, async () => {
       // 先把未落盘的编辑刷进权威稿，再重新识别——否则识别评的是旧稿，结果会立刻过期。
       await editor.flush();
@@ -261,7 +278,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   }, [itemId, editor.pendingCount, editor.saveState, editor.loading]);
 
   useEffect(() => {
-    if (intent === "publish") setNotice("检查下面的问题后，点右上角「发布」把这道题发到 NAS。");
+    if (intent === "publish") setNotice("点右上角「发布」把这道题发到 NAS。");
   }, [intent]);
 
   /** 失败提示一律经用户文案层收敛；机器码/路径只进日志与开发者附注（audit A7-F04）。 */
@@ -305,8 +322,18 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
         writeAppSettings({ nasDestination: picked });
         destination = picked;
       }
+      // 一次点击即发布：不预检、不列阻断、不二次确认。点击本身就是确认。
       const outcome = await publishItem(itemId, destination);
-      setNotice(outcome.ok ? `发布完成：${outcome.examId ?? itemId}` : outcome.message ?? "发布失败。");
+      setNotice(describePublishOutcome(outcome));
+      // 发布提交后原文件会被删除：刷新「原文件是否还在」，并重读题稿（状态与质量块已变）。
+      refreshSourcePurged();
+      if (outcome.ok) editor.reload();
+    });
+  }
+
+  async function save() {
+    await withBusy("save", async () => {
+      setNotice(await saveToLibrary(editor.flush));
     });
   }
 
@@ -396,6 +423,9 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             >识别建议</button>
             <button title="撤销" aria-label="撤销" disabled={!editor.canUndo} onClick={editor.undo}><Undo2 size={16} /></button>
             <button title="重做" aria-label="重做" disabled={!editor.canRedo} onClick={editor.redo}><Redo2 size={16} /></button>
+            <button data-testid="workspace-save" disabled={Boolean(busyAction)} onClick={save}>
+              {busyAction === "save" ? "正在保存…" : "保存"}
+            </button>
             <button data-testid="workspace-publish" disabled={Boolean(busyAction)} onClick={publish}>
               {busyAction === "publish" ? "正在发布…" : "发布"}
             </button>
@@ -404,11 +434,20 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
 
           {menuOpen ? (
             <div className="workspace-menu" role="menu">
-              <button role="menuitem" onClick={() => withBusy("local", async () => {
-                await editor.flush();
-                await retryProcessing(itemId);
-                setNotice("已加入识别队列。");
-              })}>重新识别</button>
+              <button
+                role="menuitem"
+                data-testid="workspace-rerun-recognition"
+                disabled={!sourceActionsEnabled}
+                title={sourceActionsEnabled ? undefined : SOURCE_PURGED_EXPLANATION}
+                onClick={() => withBusy("local", async () => {
+                  await editor.flush();
+                  await retryProcessing(itemId);
+                  setNotice("已加入识别队列。");
+                })}
+              >重新识别</button>
+              {!sourceActionsEnabled ? (
+                <small className="workspace-menu-note" data-testid="workspace-source-purged-note">{SOURCE_PURGED_EXPLANATION}</small>
+              ) : null}
               <button role="menuitem" onClick={() => withBusy("cancel", async () => {
                 await cancelProcessing(itemId);
                 setNotice("已请求停止识别。");
@@ -477,11 +516,14 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
         >
           <span>{answerPageStatus.message}</span>
           {answerPageStatus.detail ? <small className="workspace-notice-detail">{answerPageStatus.detail}</small> : null}
+          {answerPageStatus.canRetry && !sourceActionsEnabled ? (
+            <small className="workspace-notice-detail" data-testid="workspace-answer-page-purged">{SOURCE_PURGED_EXPLANATION}</small>
+          ) : null}
           {answerPageStatus.canRetry ? (
             <button
               className="primary small"
               data-testid="workspace-answer-page-retry"
-              disabled={Boolean(busyAction)}
+              disabled={Boolean(busyAction) || !sourceActionsEnabled}
               onClick={() => withBusy("answer-page-retry", async () => {
                 await editor.flush();
                 await retryProcessing(itemId);
@@ -530,7 +572,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
           data-testid="workspace-issue-list"
           data-task-count={taskSummary.tasks.length}
           data-merged-rows={taskSummary.mergedRowCount}
-          data-can-export={canExport ? "true" : "false"}
+          data-can-export={tasksVerifiedClear ? "true" : "false"}
           data-preflight-state={preflightState}
           data-tasks-ready={taskSummary.ready ? "true" : "false"}
         >
@@ -575,7 +617,8 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
                           data-testid={`workspace-task-action-${task.taskId}-${action.id}`}
                           data-action-id={action.id}
                           data-action-target={action.targetId}
-                          disabled={Boolean(busyAction)}
+                          disabled={Boolean(busyAction) || (action.id === "retry-recognition" && !sourceActionsEnabled)}
+                          title={action.id === "retry-recognition" && !sourceActionsEnabled ? SOURCE_PURGED_EXPLANATION : undefined}
                           onClick={() => { void runTaskAction(task, action); }}
                         >
                           {busyAction === `task:${task.taskId}` ? "正在处理…" : action.label}
@@ -600,13 +643,13 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             // 「没有问题」不生成问题卡片，只保留这一句（任务书第四节）。
             // 但**只有后端发布检查确实读到了**才敢说「可以导出」。
             <p className="empty compact" data-testid="workspace-tasks-clear">
-              {canExport
-                ? "可以导出"
+              {tasksVerifiedClear
+                ? "没有需要处理的问题"
                 : preflightState === "loading"
                   ? "正在检查是否还有需要处理的问题…"
                   : editor.pendingCount > 0
                     ? "正在保存修改，保存后会重新检查一遍。"
-                    : "暂时读不到发布检查结果，还无法确认是否可以导出。"}
+                    : "暂时读不到检查结果，问题列表可能不完整。"}
             </p>
           )}
           {locateMiss ? (
@@ -657,7 +700,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               <p className="empty compact"><small>技术详情：{editor.loadError}</small></p>
             ) : null}
             <div className="button-row">
-              <button className="primary small" onClick={() => withBusy("local", async () => {
+              <button className="primary small" disabled={!sourceActionsEnabled} title={sourceActionsEnabled ? undefined : SOURCE_PURGED_EXPLANATION} onClick={() => withBusy("local", async () => {
                 await retryProcessing(itemId);
               })}>
                 运行本地识别
@@ -779,7 +822,9 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               <button className="ghost small" onClick={() => setSourceOpen(false)} aria-label="关闭">×</button>
             </header>
             <div className="drawer-body">
-              {detail?.job.sourceFiles.length ? (
+              {!sourceActionsEnabled ? (
+                <p className="empty compact" data-testid="workspace-source-purged">{SOURCE_PURGED_EXPLANATION}</p>
+              ) : detail?.job.sourceFiles.length ? (
                 <ul className="picked-file-list">
                   {detail.job.sourceFiles.map((file) => (
                     <li key={file.fileId}>

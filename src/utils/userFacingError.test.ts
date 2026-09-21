@@ -28,6 +28,25 @@ describe("toUserFacingError — 已知机器码分类", () => {
     expect(result.userMessage).toContain("发布");
   });
 
+  it("发布相关文案不再要求用户「先补齐」再发布", () => {
+    for (const raw of [
+      "authoring_v2_export_blocked:missing_options",
+      "authoring_v2_export_blocked:quality_state=review_required",
+      "authoring_v2_export_blocked:unresolved_answers=q1"
+    ]) {
+      expect(userMessageOf(raw)).not.toContain("请先补齐");
+    }
+  });
+
+  it("发布与题库保存的新机器码都有人话", () => {
+    expect(userMessageOf("PUBLISH_FORCE_OVERRIDE_INVALID:confirmedAt:bad")).toBe("发布请求无效，请重新点击发布。");
+    expect(userMessageOf("PUBLISH_DUPLICATE_EXAM_ID:exam-1")).toContain("编号重复");
+    expect(userMessageOf("nas_package_v2_lock_busy:os error 33")).toContain("另一次发布");
+    expect(userMessageOf("ITEM_SOURCE_PURGED_AFTER_PUBLISH:item-1")).toBe(
+      "原文件已在发布后删除，不能重新识别；题目仍可编辑、保存和发布。"
+    );
+  });
+
   it("把 requires_tauri_runtime 归为 runtime", () => {
     expect(toUserFacingError("requires_tauri_runtime").category).toBe("runtime");
   });
@@ -126,6 +145,8 @@ describe("toUserFacingError — 云端候选与发布门禁文案", () => {
     expect(userMessageOf("authoring_v2_export_blocked:unresolved_answers=q14,q15")).toContain("没有答案");
     expect(userMessageOf("authoring_v2_export_blocked:ai_fallback=a.b.c")).toContain("手动补齐");
     // 未知原因仍然有兜底，不会把机器码当人话输出。
-    expect(userMessageOf("authoring_v2_export_blocked:unknown_reason")).toContain("补齐");
+    // （旧的「请先补齐…再次发布」已移除：产品发布按钮一次点击即发布，不再有发布前补齐的要求。）
+    expect(userMessageOf("authoring_v2_export_blocked:unknown_reason")).toContain("未完成");
+    expect(userMessageOf("authoring_v2_export_blocked:unknown_reason")).not.toContain("authoring_v2");
   });
 });

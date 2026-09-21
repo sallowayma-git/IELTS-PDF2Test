@@ -8,6 +8,11 @@ export interface PublishItemOutcome {
   manifestPath?: string;
   assetCount?: number;
   message?: string;
+  /** 后端记录：这次发布时门禁结论不是 Ready、由用户点击发布显式放行。只用于审计/测试，不驱动界面分支。 */
+  forced?: boolean;
+  /** 学生端能否打开这道题（未解析答案或编译不过时为 false，只写了授权快照）。 */
+  studentLoadable?: boolean;
+  publishRecordId?: string;
 }
 
 export interface PublishBatchOutcome {
@@ -21,6 +26,31 @@ export function describePublishError(error: unknown): string {
   return toUserFacingError(error, "发布失败，请稍后重试。").userMessage;
 }
 
+export const PUBLISHED_NOTICE = "已发布";
+export const PUBLISHED_NOT_LOADABLE_NOTICE = "已发布，但学生端暂时无法打开这道题";
+
+/**
+ * 单题发布提示。产品决策：用户点了「发布」就是确认，不向用户展示门禁阈值或阻断清单；
+ * 严格发布与学生端可加载的放行发布说的是同一句「已发布」。放行与否以后端发布记录为准，
+ * 这里刻意**不**用「发布完成」——验收脚本把那四个字当作干净通过。
+ */
+export function describePublishOutcome(outcome: PublishItemOutcome): string {
+  if (!outcome.ok) return outcome.message ?? "发布失败。";
+  return outcome.studentLoadable === false ? PUBLISHED_NOT_LOADABLE_NOTICE : PUBLISHED_NOTICE;
+}
+
+export function describeBatchPublishOutcome(outcome: PublishBatchOutcome): string {
+  const parts = [`已发布 ${outcome.succeeded.length} 题`];
+  const notLoadable = outcome.succeeded.filter((item) => item.studentLoadable === false).length;
+  if (notLoadable) parts.push(`其中 ${notLoadable} 题学生端暂时无法打开`);
+  if (outcome.failed.length) parts.push(`${outcome.failed.length} 题未发布`);
+  return parts.join(" · ");
+}
+
+/**
+ * 一次点击发布：请求里总是带着放行确认（`confirmedAt` = 点击时间）。
+ * 后端照常计算门禁；只有结论确实不是 Ready 时这份确认才被使用并记录为放行。
+ */
 export async function publishItems(
   itemIds: string[], destination: string,
   onProgress?: (done: number, total: number, itemId: string) => void
@@ -28,7 +58,8 @@ export async function publishItems(
   if (!itemIds.length) return { destination, succeeded: [], failed: [] };
   onProgress?.(0, itemIds.length, itemIds[0]);
   try {
-    const result = await command<PublishBatchOutcome>("publish_items", { input: { itemIds, destination } });
+    const force = { confirmedAt: new Date().toISOString(), acknowledgedReasons: [] as string[] };
+    const result = await command<PublishBatchOutcome>("publish_items", { input: { itemIds, destination, force } });
     onProgress?.(itemIds.length, itemIds.length, "");
     return result;
   } catch (error) {
