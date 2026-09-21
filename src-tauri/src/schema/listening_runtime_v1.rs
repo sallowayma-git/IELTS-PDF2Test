@@ -2,8 +2,7 @@ use super::common::{AssetDescriptorV2, AssetKindV2};
 use super::ielts_authoring_v2::{
     AnswerSlotParticipationV2, AnswerSlotV2, AnswerValueV2, ListeningPartV2,
     ListeningPlaybackModeV2, ListeningPlaybackPolicyV2, ListeningRecoveryBehaviorV2,
-    ListeningScopeV2, ListeningStructureV2, ListeningTranscriptV2, RevisionSourceV2,
-    TaskGroupV2,
+    ListeningScopeV2, ListeningStructureV2, ListeningTranscriptV2, RevisionSourceV2, TaskGroupV2,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -702,7 +701,10 @@ mod tests {
         for part in &mut uncovered.parts {
             part.media = None;
         }
-        uncovered.assets.assets.push(single.assets.assets[0].clone());
+        uncovered
+            .assets
+            .assets
+            .push(single.assets.assets[0].clone());
         uncovered.media = single.media.clone();
         let issues = validate_listening_exam_source_v1(&uncovered);
         assert!(!issues
