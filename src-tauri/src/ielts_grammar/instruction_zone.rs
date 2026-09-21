@@ -491,5 +491,4 @@ mod tests {
         assert_eq!(zone.line_ids, vec!["h", "i"]);
         assert_eq!(zone.end_index, 2);
     }
-
 }

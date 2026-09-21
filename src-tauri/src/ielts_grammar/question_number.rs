@@ -535,7 +535,10 @@ mod tests {
                 "WriteNOMORETHANTWOWORDSforeachanswer.",
                 "write no more than two words foreachanswer.",
             ),
-            ("ChooseFOURcorrectanswers,A-F", "choose four correct answers,a-f"),
+            (
+                "ChooseFOURcorrectanswers,A-F",
+                "choose four correct answers,a-f",
+            ),
             (
                 "WriteNOMORETHANTWOWORDSANDIORANUMBER",
                 "write no more than two words and/or a number",
@@ -560,5 +563,4 @@ mod tests {
             assert_eq!(instruction_cue_text(text), text.to_ascii_lowercase(), "{text:?}");
         }
     }
-
 }

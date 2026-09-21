@@ -816,5 +816,4 @@ mod tests {
         assert_eq!(limit.max_numbers, Some(1));
         assert_eq!(limit.words_and_or_number, Some(true));
     }
-
 }
