@@ -132,6 +132,29 @@ Multiple independent Section MP3s do not. Choose explicitly between (a) v1 accep
 audio file and multi-file support is deferred, or (b) extend each part with a media asset reference.
 Do not silently concatenate files or pretend the current single-media contract supports both.
 
+**Decision taken (option b): each part carries its own media reference.** `ListeningPartV2.media`
+is `ListeningPartMediaV2`; the exam-level `ListeningStructureV2.media` stays optional and unused
+for per-part audio. This is what the real paper needs (four independent Section MP3s) and what
+`validate_listening_structure_media_v2` already closes against the draft's `assets` list.
+
+Asset identity rule (stable, content-derived, no extra state to keep in sync):
+
+- `assetId` = `audio-<sha256>` — identical bytes always resolve to the same asset id.
+- Package-relative path = `audio/<sha256>.<ext>`, extension lower-cased from the managed file
+  (falls back to `bin`). Both are produced by `listening_audio::canonical_media`
+  (`audio_asset_id` / `audio_relative_path`) so the NAS package builder reproduces the same
+  values without reading a second table.
+- Managed file lives at `<appData>/audio/<itemId>/<sha256>.<ext>`, outside the job directory.
+
+The mirror from `listening_audio_assets_v1` onto the draft runs through a **real edit
+transaction** (`EditOrigin::ListeningAudio`, base-version CAS, editor journal), so a stale writer
+loses to a concurrent human save and `human_protected_targets` is honoured: a part whose media the
+user edited by hand keeps their value, and the quality report says the audio is missing instead of
+the write silently losing. Triggers: bind / replace / unbind, seed generation
+(`ensure_initial_canonical`), and one idempotent re-sync right after seeding in
+`processing::scheduler` (the seed reads bindings before it writes the draft, so a bind landing in
+between would otherwise be missed by both sides).
+
 Acceptance: corrupt/unsupported/missing audio cannot become ready; valid managed audio remains
 playable after the original source file is moved.
 

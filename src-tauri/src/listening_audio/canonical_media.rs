@@ -260,6 +260,11 @@ pub(crate) struct AudioMediaSyncV1 {
     pub updated_parts: Vec<String>,
     /// Edit version after the write; `None` when nothing had to change.
     pub edit_version: Option<i64>,
+    /// Parts left untouched because a human edited their media by hand. The audio
+    /// file is still bound in the managed table; only the mirror is refused, so
+    /// the user keeps the value they set and the quality report says what is
+    /// missing instead of the write silently losing.
+    pub protected_parts: Vec<String>,
 }
 
 /// Mirror the managed bindings onto the canonical draft.
@@ -276,14 +281,22 @@ pub(crate) fn sync_item_audio_media(root: &Path, item_id: &str) -> CommandResult
         return Ok(AudioMediaSyncV1 {
             updated_parts: Vec::new(),
             edit_version: None,
+            protected_parts: Vec::new(),
         });
     };
     let changed = changed_parts(&canonical, &bindings);
+    // A part whose media a human edited is dropped from the batch *before* it is
+    // built. Leaving it in would make the all-or-nothing transaction reject the
+    // whole batch, so one hand-edited part would freeze every other part's audio.
+    let protected = crate::library::repository::human_protected_targets(&conn, item_id, &canonical)?;
+    let (protected_parts, changed): (Vec<String>, Vec<String>) =
+        changed.into_iter().partition(|part_id| protected.contains(part_id));
     let assets_changed = assets_need_update(&canonical, &bindings);
     if changed.is_empty() && !assets_changed {
         return Ok(AudioMediaSyncV1 {
             updated_parts: Vec::new(),
             edit_version: None,
+            protected_parts,
         });
     }
     let desired = desired_media_by_part(&bindings);
@@ -296,6 +309,7 @@ pub(crate) fn sync_item_audio_media(root: &Path, item_id: &str) -> CommandResult
             })
         })
         .collect::<Vec<_>>();
+    let protected_parts_for_result = protected_parts.clone();
     let command = json!({
         "op": SET_LISTENING_PART_MEDIA_OP,
         "parts": entries,
@@ -328,10 +342,24 @@ pub(crate) fn sync_item_audio_media(root: &Path, item_id: &str) -> CommandResult
             validate_authoring(document)
         },
         &|_, _| Ok(()),
-    )?;
+    );
+    let result = match result {
+        Ok(result) => result,
+        // The user edited this part's media by hand. Binding the file still
+        // succeeded in the managed table; refusing the mirror keeps their value.
+        Err(error) if error.starts_with("EDIT_PROTECTED_TARGET:") => {
+            return Ok(AudioMediaSyncV1 {
+                updated_parts: Vec::new(),
+                edit_version: None,
+                protected_parts: changed,
+            });
+        }
+        Err(error) => return Err(error),
+    };
     Ok(AudioMediaSyncV1 {
         updated_parts: changed,
         edit_version: Some(result.edit_version),
+        protected_parts: protected_parts_for_result,
     })
 }
 
@@ -669,6 +697,83 @@ mod media_sync_tests {
         // and land on 8 — never on a stale 2.
         let sync = sync_item_audio_media(&root, "item-stale").unwrap();
         assert_eq!(sync.edit_version, Some(8));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn four_bound_parts_close_the_media_contract() {
+        use crate::schema::common::AssetDescriptorV2;
+        use crate::schema::ielts_authoring_v2::ListeningStructureV2;
+        use crate::schema::listening_runtime_v1::validate_listening_structure_media_v2;
+
+        let root = temp_root();
+        seed_listening_item(&root, "item-four");
+        for ordinal in 1..=4 {
+            let source = root.join(format!("section-{ordinal}.wav"));
+            tone(&source, 300.0 + ordinal as f64 * 60.0);
+            bind_audio(&root, "item-four", ordinal, &source).unwrap();
+        }
+        let sync = sync_item_audio_media(&root, "item-four").unwrap();
+        assert_eq!(
+            sync.updated_parts,
+            vec!["part-1", "part-2", "part-3", "part-4"]
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        );
+
+        let ds = canonical(&root, "item-four");
+        let structure: ListeningStructureV2 =
+            serde_json::from_value(ds["listening"].clone()).expect("listening structure");
+        let assets: Vec<AssetDescriptorV2> =
+            serde_json::from_value(ds["assets"].clone()).expect("asset list");
+        assert_eq!(structure.parts.len(), 4);
+        assert!(structure.media.is_none(), "audio is per part, not exam-level");
+        assert_eq!(assets.len(), 4);
+        assert_eq!(
+            validate_listening_structure_media_v2(&structure, &assets),
+            Vec::new(),
+            "four bound parts must close the contract"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_human_edited_part_media_is_never_overwritten_by_a_rebind() {
+        let root = temp_root();
+        seed_listening_item(&root, "item-protected");
+        {
+            let conn = open_library_connection(&root).unwrap();
+            conn.execute(
+                "UPDATE library_items_v2 SET protected_edits_json = ?2 WHERE id = ?1",
+                rusqlite::params!["item-protected", r#"{"targets":["part-1"]}"#],
+            )
+            .unwrap();
+        }
+        let source = root.join("section-1.wav");
+        tone(&source, 440.0);
+        let bound = bind_audio(&root, "item-protected", 1, &source).unwrap();
+        assert!(bound.playable);
+
+        let sync = sync_item_audio_media(&root, "item-protected").unwrap();
+        assert!(sync.updated_parts.is_empty());
+        assert_eq!(sync.protected_parts, vec!["part-1".to_string()]);
+        let ds = canonical(&root, "item-protected");
+        assert!(
+            ds["listening"]["parts"][0].get("media").is_none(),
+            "the protected part must keep the value the human set"
+        );
+        // A part nobody edited is still mirrored.
+        let other = root.join("section-2.wav");
+        tone(&other, 660.0);
+        bind_audio(&root, "item-protected", 2, &other).unwrap();
+        let sync = sync_item_audio_media(&root, "item-protected").unwrap();
+        assert_eq!(sync.updated_parts, vec!["part-2".to_string()]);
+        // part-1 is still not mirrored, so it is still reported as protected — the
+        // UI has to keep saying so instead of the refusal disappearing silently.
+        assert_eq!(sync.protected_parts, vec!["part-1".to_string()]);
+        let ds = canonical(&root, "item-protected");
+        assert!(ds["listening"]["parts"][1]["media"]["assetId"].is_string());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

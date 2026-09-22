@@ -634,4 +634,123 @@ mod tests {
         assert!(codes.contains(&"ITEM_DS_NOT_SEEDED"), "{codes:?}");
         let _ = fs::remove_dir_all(&root);
     }
+
+    /// 一秒钟的 16-bit 单声道 WAV，够 symphonia 探测出一个可用音频。
+    fn write_tone(path: &Path, hz: f64) {
+        use std::io::Write;
+        let rate = 16_000_u32;
+        let samples = (0..16_000)
+            .map(|index| ((index as f64 / 16_000.0) * hz * std::f64::consts::TAU).sin() * 8_000.0)
+            .map(|value| value as i16)
+            .collect::<Vec<_>>();
+        let data = (samples.len() * 2) as u32;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&(36 + data).to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&rate.to_le_bytes());
+        bytes.extend_from_slice(&(rate * 2).to_le_bytes());
+        bytes.extend_from_slice(&2_u16.to_le_bytes());
+        bytes.extend_from_slice(&16_u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&data.to_le_bytes());
+        for sample in samples {
+            bytes.extend_from_slice(&sample.to_le_bytes());
+        }
+        fs::File::create(path)
+            .unwrap()
+            .write_all(&bytes)
+            .unwrap();
+    }
+
+    /// 前端在入队后**立刻**绑定音频，此时权威稿通常还没建（处理仍在跑），绑定只落在受管
+    /// 表里。种子稿必须把它一起播种进去，否则用户第一次打开条目时看到的是「四个 part
+    /// 都没有音频」——而音频其实已经绑定成功了。
+    ///
+    /// 同一件事也解释了 `processing::scheduler` 为什么要在播种之后再补一次镜像：种子是
+    /// 「先读绑定、后写稿」，绑定若恰好落在这两步之间，种子与绑定侧那次同步都读不到它。
+    #[test]
+    fn audio_bound_before_the_draft_exists_is_seeded_onto_the_listening_draft() {
+        let root = temp_root();
+        crate::util::ensure_app_dirs(&root).unwrap();
+        let job_id = "job-listening";
+        let dir = crate::util::job_dir(&root, job_id);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("job.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "jobId": job_id,
+                "title": "Listening Paper",
+                "status": "NeedsReview"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        // 听力影子稿：四个 part、无 passage、无音频。
+        let mut shadow: Value = serde_json::from_str(include_str!(
+            "../../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
+        ))
+        .unwrap();
+        shadow["modality"] = serde_json::json!("listening");
+        shadow.as_object_mut().unwrap().remove("passage");
+        shadow["assets"] = serde_json::json!([]);
+        shadow["listening"] = serde_json::json!({
+            "scope": "complete_exam",
+            "parts": (1..=4)
+                .map(|ordinal| serde_json::json!({
+                    "partId": format!("part-{ordinal}"),
+                    "displayLabel": format!("SECTION {ordinal}"),
+                    "expectedQuestionNumbers": [ordinal],
+                    "taskIds": [],
+                    "sourceAnchors": []
+                }))
+                .collect::<Vec<_>>(),
+            "playbackPolicy": { "mode": "practice" }
+        });
+        fs::write(
+            dir.join(AUTHORING_V2_SHADOW_FILE),
+            serde_json::to_vec(&shadow).unwrap(),
+        )
+        .unwrap();
+
+        // 题库行在导入时就带上了用户确认的 modality（`queue_import` 写的）。
+        let conn = crate::library::repository::open_library_connection(&root).unwrap();
+        crate::library::repository::upsert_item_shell(
+            &conn,
+            &crate::library::repository::UpsertItemInput {
+                id: job_id,
+                modality: "listening",
+                title: "Listening Paper",
+                status: "processing",
+                source_asset_id: None,
+            },
+        )
+        .unwrap();
+
+        // 绑定发生在权威稿存在**之前**：受管表里有它，canonical 里还没有。
+        let source = root.join("section-1.wav");
+        write_tone(&source, 440.0);
+        let bound = crate::listening_audio::store::bind_audio(&root, job_id, 1, &source).unwrap();
+        assert!(
+            get_canonical_ds(&conn, job_id).unwrap().is_none(),
+            "前提：绑定时权威稿尚未播种"
+        );
+
+        assert!(ensure_initial_canonical(&root, job_id).unwrap());
+        let (ds, _) = get_canonical_ds(&conn, job_id).unwrap().unwrap();
+        assert_eq!(
+            ds.pointer("/listening/parts/0/media/sha256")
+                .and_then(Value::as_str),
+            Some(bound.sha256.as_str()),
+            "种子稿必须带上绑定前就存在的音频，否则用户第一次打开时四个 part 都是空的"
+        );
+        assert!(
+            ds.pointer("/listening/parts/1/media").is_none(),
+            "未绑定的 part 不得被伪造出 media"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
 }

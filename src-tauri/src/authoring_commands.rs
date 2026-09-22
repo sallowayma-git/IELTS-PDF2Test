@@ -10,7 +10,8 @@ use crate::{
     docx_facts_shadow::write_docx_facts_shadow_with_v1,
     environment::{authoring_v2_shadow_enabled, document_ir_v2_shadow_enabled},
     ielts_grammar::{
-        write_authoring_v2_shadow, SHADOW_ARTIFACT_FILE as AUTHORING_V2_SHADOW_ARTIFACT_FILE,
+        write_authoring_v2_shadow_for_modality,
+        SHADOW_ARTIFACT_FILE as AUTHORING_V2_SHADOW_ARTIFACT_FILE,
         SHADOW_COMPARE_FILE as AUTHORING_V2_SHADOW_COMPARE_FILE,
         SHADOW_ERROR_FILE as AUTHORING_V2_SHADOW_ERROR_FILE,
     },
@@ -428,7 +429,10 @@ pub(crate) fn build_authoring_ir_core(
                 })
             })
         };
-        match write_authoring_v2_shadow(
+        // Re-recognition rebuilds the draft from the library row, not from a reading
+        // default: a listening item must keep its section structure instead of being
+        // silently rewritten into a passage-shaped reading paper.
+        match write_authoring_v2_shadow_for_modality(
             &dir,
             &job,
             &ir,
@@ -436,6 +440,7 @@ pub(crate) fn build_authoring_ir_core(
             document.as_ref(),
             physical_shadow.as_ref(),
             &shadow_path,
+            crate::library::migration::draft_modality(root, job_id),
         ) {
             Ok(_) => {
                 let _ = fs::remove_file(error_path);

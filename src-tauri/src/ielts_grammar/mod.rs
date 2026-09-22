@@ -3340,4 +3340,64 @@ mod listening_draft_builder_tests {
         assert!(!issues.iter().any(|issue| issue["code"]
             == json!(crate::ielts_grammar::issue_codes::LISTENING_AUDIO_MISSING)));
     }
+
+    #[test]
+    fn a_blocked_probe_turns_the_missing_audio_issue_into_a_probe_issue() {
+        use crate::listening_audio::canonical_media::apply_bindings_to_authoring;
+        use crate::listening_audio::store::ListeningAudioAssetV1;
+
+        let mut authoring = build(ExamModalityV2::Listening);
+        let binding = |ordinal: i64, playable: bool| ListeningAudioAssetV1 {
+            item_id: "listening-draft-job".to_string(),
+            part_ordinal: ordinal,
+            managed_path: format!("/tmp/section-{ordinal}.wav"),
+            sha256: format!("{:064x}", ordinal),
+            size_bytes: 2048,
+            mime: Some("audio/wav".to_string()),
+            duration_ms: Some(1000),
+            probe: json!({
+                "sha256": format!("{:064x}", ordinal),
+                "mime": "audio/wav",
+                "durationMs": 1000,
+                "probe": {
+                    "status": if playable { "passed" } else { "blocked" },
+                    "provider": "symphonia",
+                    "providerVersion": "0.6.0",
+                    "probedAt": "2026-09-22T00:00:00Z",
+                    "issueCodes": if playable { json!([]) } else { json!(["AUDIO_NEAR_SILENT"]) }
+                }
+            }),
+            original_name: format!("section-{ordinal}.wav"),
+            created_at: "2026-09-22T00:00:00Z".to_string(),
+            playable,
+            issue_codes: if playable {
+                Vec::new()
+            } else {
+                vec!["AUDIO_NEAR_SILENT".to_string()]
+            },
+        };
+        let bindings = vec![binding(1, true), binding(2, false)];
+        apply_bindings_to_authoring(&mut authoring, &bindings);
+        let quality = crate::ielts_grammar::quality::evaluate_quality(&authoring, None);
+        authoring["quality"] = quality;
+        let issues = authoring["quality"]["issues"].as_array().unwrap();
+        let codes = |code: &str| {
+            issues
+                .iter()
+                .filter(|issue| issue["code"] == json!(code))
+                .collect::<Vec<_>>()
+        };
+        // Part 1 is bound and passed: no issue. Part 2 probed blocked: its own code.
+        // Parts 3 and 4 are still unbound: still `LISTENING_AUDIO_MISSING`.
+        assert_eq!(
+            codes(crate::ielts_grammar::issue_codes::LISTENING_AUDIO_PROBE_BLOCKED).len(),
+            1
+        );
+        assert_eq!(
+            codes(crate::ielts_grammar::issue_codes::LISTENING_AUDIO_MISSING).len(),
+            2
+        );
+        assert!(codes(crate::ielts_grammar::issue_codes::LISTENING_AUDIO_PROBE_BLOCKED)[0]["targetId"]
+            == json!("part-2"));
+    }
 }

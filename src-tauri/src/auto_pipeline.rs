@@ -8,8 +8,8 @@ use crate::{
     docx_facts_shadow::write_docx_facts_shadow_with_v1,
     environment::{authoring_v2_shadow_enabled, quality_gate_v2_enabled},
     ielts_grammar::{
-        build_authoring_v2_shadow, write_authoring_v2_shadow,
-        write_authoring_v2_shadow_for_modality,
+        build_authoring_v2_shadow, build_authoring_v2_shadow_for_modality,
+        write_authoring_v2_shadow, write_authoring_v2_shadow_for_modality,
         SHADOW_ARTIFACT_FILE as AUTHORING_V2_SHADOW_ARTIFACT_FILE,
         SHADOW_COMPARE_FILE as AUTHORING_V2_SHADOW_COMPARE_FILE,
         SHADOW_ERROR_FILE as AUTHORING_V2_SHADOW_ERROR_FILE,
@@ -4094,7 +4094,17 @@ where
         let static_runtime_passed = report_passed && runtime_mode == "static-rust";
 
         let v2_quality_gate = if quality_gate_v2_enabled() {
-            match build_authoring_v2_shadow(&job, &ir, &split, doc.as_ref(), physical_shadow.as_ref()) {
+            // Rebuild with the row's modality, not the reading default: the gate a
+            // listening paper reports must include its per-part audio issues, otherwise
+            // a paper with no bound audio would look ready.
+            match build_authoring_v2_shadow_for_modality(
+                &job,
+                &ir,
+                &split,
+                doc.as_ref(),
+                physical_shadow.as_ref(),
+                crate::library::migration::draft_modality(root, &job_id),
+            ) {
             Ok(authoring_v2) => authoring_v2.get("quality").cloned().unwrap_or_else(
                 || json!({"state":"blocked","issues":[],"hardFailures":["QUALITY_REPORT_MISSING"]}),
             ),
@@ -4584,12 +4594,13 @@ where
     let physical_shadow = current_physical_shadow(&dir, &job);
     let split = make_dynamic_split_candidates(job_id, &job, source_doc.as_ref());
     let v2_quality_gate = if quality_gate_v2_enabled() {
-        match build_authoring_v2_shadow(
+        match build_authoring_v2_shadow_for_modality(
             &job,
             &ir,
             &split,
             source_doc.as_ref(),
             physical_shadow.as_ref(),
+            crate::library::migration::draft_modality(root, job_id),
         ) {
             Ok(authoring_v2) => authoring_v2.get("quality").cloned().unwrap_or_else(
                 || json!({"state":"blocked","issues":[],"hardFailures":["QUALITY_REPORT_MISSING"]}),

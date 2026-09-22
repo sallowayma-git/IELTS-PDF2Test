@@ -587,6 +587,24 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         }
     }
 
+    // 音频镜像补一次（幂等）。`ensure_initial_canonical` 是「先读绑定、后写稿」，而前端
+    // 在入队后立刻绑定音频：若绑定恰好落在这两步之间，种子稿会漏掉它，且绑定侧那次同步
+    // 读到的还是「尚无权威稿」因而 no-op——两边都漏，绑定只留在受管表里，预览/导出/学生端
+    // 全看不到。这里在稿落库之后重读一次绑定表，把漏掉的 part 补上；已同步时零副作用。
+    //
+    // 失败不裁决任务：种子已如实镜像它看到的部分，质量报告会照实指出哪个 part 没有音频，
+    // 这比在这里把整次处理判失败更诚实。
+    let audio_sync = tauri::async_runtime::spawn_blocking({
+        let root = root.clone();
+        let job_id = job_id.clone();
+        move || crate::listening_audio::canonical_media::sync_item_audio_media(&root, &job_id)
+    })
+    .await
+    .unwrap_or_else(|error| Err(format!("processing_join:{error}")));
+    if let Err(error) = audio_sync {
+        eprintln!("[processing] listening audio mirror skipped for {job_id}: {error}");
+    }
+
     // 批次基线：本地稿定稿时的编辑版本。**必须在草稿发布「可编辑」之前**冻结，
     // 否则用户若在「发布」与「读 baseline」之间改稿，基线版本会被抬高，而后续
     // 云端裁决若按当前稿重投影本地候选，就会把用户编辑误当成本地识别结果。
