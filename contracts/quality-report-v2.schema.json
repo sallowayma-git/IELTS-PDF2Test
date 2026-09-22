@@ -80,7 +80,7 @@
         "code": { "type": "string", "minLength": 1 },
         "severity": { "type": "string", "enum": ["info", "warning", "blocking"] },
         "message": { "type": "string", "minLength": 1 },
-        "targetType": { "type": "string", "enum": ["document", "page", "region", "task", "response_group", "slot", "asset"] },
+        "targetType": { "type": "string", "enum": ["document", "page", "region", "task", "response_group", "slot", "asset", "part"] },
         "targetId": { "type": "string", "minLength": 1 },
         "sourceAnchors": { "type": "array", "items": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" } },
         "suggestedActions": {

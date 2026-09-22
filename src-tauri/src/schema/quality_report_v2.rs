@@ -182,3 +182,78 @@ impl QualityReportV2 {
         self.schema_version == QUALITY_REPORT_V2_SCHEMA_VERSION
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wire(value: &impl Serialize) -> String {
+        serde_json::to_value(value)
+            .expect("线上枚举必须可序列化")
+            .as_str()
+            .expect("线上枚举必须序列化为字符串")
+            .to_string()
+    }
+
+    fn published_enum(schema: &Value, definition: &str, property: &str) -> Vec<String> {
+        let mut values: Vec<String> = schema["$defs"][definition]["properties"][property]["enum"]
+            .as_array()
+            .unwrap_or_else(|| panic!("契约 schema 必须声明 {definition}.{property} 的 enum"))
+            .iter()
+            .map(|value| value.as_str().expect("enum 必须是字符串").to_string())
+            .collect();
+        values.sort();
+        values
+    }
+
+    /// 契约护栏：Rust 的线上枚举是 `targetType` 的唯一来源，必须与
+    /// `contracts/quality-report-v2.schema.json` 逐字一致。
+    ///
+    /// 这曾**真实漂移过**：听力 Part 被加进 Rust/TS 的 `ReviewTargetType`
+    /// （质量门禁要用 `targetType: "part"` 指向某个 Section），但 schema 的 enum
+    /// 没跟着加 —— 结果是真实产出会被自家发布的契约 schema 拒绝。
+    /// `verify-schema-contract.mjs` 只比文件哈希，比不出这种「类型与 schema 不一致」。
+    #[test]
+    fn review_target_type_matches_the_published_schema() {
+        let schema: Value = serde_json::from_str(include_str!(
+            "../../../contracts/quality-report-v2.schema.json"
+        ))
+        .expect("契约 schema 必须是合法 JSON");
+        let mut shipped = vec![
+            wire(&ReviewTargetTypeV2::Document),
+            wire(&ReviewTargetTypeV2::Page),
+            wire(&ReviewTargetTypeV2::Region),
+            wire(&ReviewTargetTypeV2::Task),
+            wire(&ReviewTargetTypeV2::ResponseGroup),
+            wire(&ReviewTargetTypeV2::Slot),
+            wire(&ReviewTargetTypeV2::Asset),
+            wire(&ReviewTargetTypeV2::Part),
+        ];
+        shipped.sort();
+        assert_eq!(
+            published_enum(&schema, "reviewIssue", "targetType"),
+            shipped,
+            "ReviewTargetTypeV2 与已发布契约 schema 漂移"
+        );
+    }
+
+    /// 同一类漂移的另一半：发布后原文件被删的状态也曾只加在 Rust 侧。
+    #[test]
+    fn physical_shadow_status_matches_the_published_schema() {
+        let schema: Value = serde_json::from_str(include_str!(
+            "../../../contracts/quality-report-v2.schema.json"
+        ))
+        .expect("契约 schema 必须是合法 JSON");
+        let mut shipped = vec![
+            wire(&PhysicalShadowStatusV2::Available),
+            wire(&PhysicalShadowStatusV2::Missing),
+            wire(&PhysicalShadowStatusV2::VerifiedAtPublishSourcePurged),
+        ];
+        shipped.sort();
+        assert_eq!(
+            published_enum(&schema, "coverageStatus", "physicalShadow"),
+            shipped,
+            "PhysicalShadowStatusV2 与已发布契约 schema 漂移"
+        );
+    }
+}

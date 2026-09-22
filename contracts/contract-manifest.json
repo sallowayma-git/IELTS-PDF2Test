@@ -20,7 +20,7 @@
     },
     "QualityReportV2": {
       "path": "quality-report-v2.schema.json",
-      "sha256": "9578abd47920fc491166b16b3ca25cf52f80245ca02db0ebc92ea7dd27e88fe7"
+      "sha256": "79931b1602bbb017dbad189c4ed15adad781b302681275f407a525dd338ce0f3"
     },
     "ReadingExamSourceV2": {
       "path": "reading-exam-source-v2.schema.json",
