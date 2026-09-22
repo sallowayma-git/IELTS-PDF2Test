@@ -83,6 +83,41 @@ pub(crate) fn item_audio_dir(root: &Path, item_id: &str) -> CommandResult<PathBu
     Ok(audio_root(root).join(item_id))
 }
 
+/// 受管音频文件的落盘路径：`<appData>/audio/<itemId>/<sha256>.<ext>`。
+///
+/// 导出与打包必须靠它取用户上传的 Section 音频。文件**不在** job 目录里（这是刻意的：
+/// job 目录装的是过程产物、发布后会被清理，而音频是最终版的一部分），所以「按资源描述符
+/// 的相对路径从 job 目录找」永远找不到它——那正是「导出一份带音频的听力卷」曾经失败的
+/// 原因。
+///
+/// 扩展名来自用户上传的原始文件名，无法从 sha 推出来，所以按文件名前缀匹配。
+pub(crate) fn managed_audio_path(
+    root: &Path,
+    item_id: &str,
+    sha256: &str,
+) -> CommandResult<Option<PathBuf>> {
+    let dir = item_audio_dir(root, item_id)?;
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Ok(None);
+    };
+    let needle = sha256.trim().to_ascii_lowercase();
+    if needle.is_empty() {
+        return Ok(None);
+    }
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        let stem = name.split('.').next().unwrap_or_default();
+        if stem.eq_ignore_ascii_case(&needle) {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
 fn audio_extension(name: &str) -> String {
     let extension = Path::new(name)
         .extension()

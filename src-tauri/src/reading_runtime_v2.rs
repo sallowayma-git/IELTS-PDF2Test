@@ -6,7 +6,8 @@
 //! loader. Keeping the path and asset closure policy here first gives the
 //! authoring export and the future student probe one deterministic contract.
 
-use crate::reading_source_v2::{validate_reading_source_v2, ReadingExamSourceV2};
+use crate::listening_source_v1::CompiledExamSourceV2;
+use crate::reading_source_v2::ReadingExamSourceV2;
 use crate::schema::common::{canonical_json_bytes_js, AssetDescriptorV2, AssetKindV2};
 use crate::schema::content_doc_v2::ContentNodeV2;
 use serde::{Deserialize, Serialize};
@@ -61,7 +62,7 @@ pub(crate) struct ProbePackageFiles<'a> {
 }
 
 pub(crate) fn run_student_loader_probe(
-    source: &ReadingExamSourceV2,
+    source: &CompiledExamSourceV2,
     manifest: &ExamAssetManifestV2,
     resource_root: &Path,
 ) -> StudentProbeReportV2 {
@@ -69,19 +70,23 @@ pub(crate) fn run_student_loader_probe(
 }
 
 pub(crate) fn run_student_loader_probe_with_files(
-    source: &ReadingExamSourceV2,
+    source: &CompiledExamSourceV2,
     manifest: &ExamAssetManifestV2,
     resource_root: &Path,
     package_files: Option<&ProbePackageFiles<'_>>,
 ) -> StudentProbeReportV2 {
     let mut issues = Vec::new();
-    let referenced_asset_ids = referenced_asset_ids(source);
+    let exam_id = source.exam_id().to_string();
+    let referenced_asset_ids = source.referenced_asset_ids();
     let checked_asset_ids = manifest.assets.keys().cloned().collect::<Vec<_>>();
-    if !validate_reading_source_v2(source).is_empty() {
+    if !source.validate().is_empty() {
         issues.push(asset_issue(
             "RUNTIME_SOURCE_INVALID",
-            &source.exam_id,
-            "ReadingExamSourceV2 failed the runtime semantic validator.",
+            &exam_id,
+            &format!(
+                "{} failed the runtime semantic validator.",
+                source.schema_version()
+            ),
         ));
     }
     if manifest.schema_version != EXAM_ASSET_MANIFEST_V2_SCHEMA_VERSION {
@@ -91,19 +96,19 @@ pub(crate) fn run_student_loader_probe_with_files(
             "Unsupported asset manifest schema version.",
         ));
     }
-    if manifest.exam_id != source.exam_id || source.assets.exam_id != source.exam_id {
+    if manifest.exam_id != exam_id || source.assets_exam_id() != exam_id {
         issues.push(asset_issue(
             "ASSET_MANIFEST_EXAM_MISMATCH",
-            &source.exam_id,
+            &exam_id,
             "Runtime source, source asset reference and package manifest must use the same examId.",
         ));
     }
 
-    let source_assets = unique_asset_map(&source.assets.assets, &mut issues);
+    let source_assets = unique_asset_map(source.assets(), &mut issues);
     if source_assets.len() != manifest.assets.len() {
         issues.push(asset_issue(
             "ASSET_MANIFEST_SET_MISMATCH",
-            &source.exam_id,
+            &exam_id,
             "Package asset manifest must contain exactly the source asset set.",
         ));
     }
@@ -158,7 +163,7 @@ pub(crate) fn run_student_loader_probe_with_files(
 
     StudentProbeReportV2 {
         schema_version: "StudentLoaderProbeV2".to_string(),
-        exam_id: source.exam_id.clone(),
+        exam_id,
         passed: issues.is_empty(),
         checked_asset_ids,
         referenced_asset_ids,
@@ -175,16 +180,17 @@ pub(crate) fn run_student_loader_probe_with_files(
 ///                           payload object embedded in that wrapper.
 /// * `assetManifestSha256` — sha256 of the raw `asset-manifest.json` bytes.
 fn verify_staged_checksums(
-    source: &ReadingExamSourceV2,
+    source: &CompiledExamSourceV2,
     files: &ProbePackageFiles<'_>,
 ) -> Vec<RuntimeAssetIssueV2> {
     let mut issues = Vec::new();
+    let exam_id = source.exam_id().to_string();
     let script_bytes = match fs::read(files.exam_script_path) {
         Ok(bytes) => Some(bytes),
         Err(error) => {
             issues.push(asset_issue(
                 "RUNTIME_SCRIPT_UNREADABLE",
-                &source.exam_id,
+                &exam_id,
                 &format!("{}:{error}", files.exam_script_path.display()),
             ));
             None
@@ -195,7 +201,7 @@ fn verify_staged_checksums(
         if actual != files.expected_script_sha256.to_ascii_lowercase() {
             issues.push(asset_issue(
                 "RUNTIME_SCRIPT_HASH_MISMATCH",
-                &source.exam_id,
+                &exam_id,
                 "Staged script bytes do not match the manifest scriptSha256.",
             ));
         }
@@ -208,14 +214,14 @@ fn verify_staged_checksums(
                 if sha256_hex(&runtime_bytes) != files.expected_runtime_sha256.to_ascii_lowercase() {
                     issues.push(asset_issue(
                         "RUNTIME_SOURCE_HASH_MISMATCH",
-                        &source.exam_id,
+                        &exam_id,
                         "Runtime payload re-encoded from the staged script does not match the manifest runtimeSha256.",
                     ));
                 }
             }
             None => issues.push(asset_issue(
                 "RUNTIME_PAYLOAD_UNREADABLE",
-                &source.exam_id,
+                &exam_id,
                 "Could not extract the registered payload object from the staged script.",
             )),
         }
@@ -225,14 +231,14 @@ fn verify_staged_checksums(
             if sha256_hex(&bytes) != files.expected_asset_manifest_sha256.to_ascii_lowercase() {
                 issues.push(asset_issue(
                     "RUNTIME_ASSET_MANIFEST_HASH_MISMATCH",
-                    &source.exam_id,
+                    &exam_id,
                     "Staged asset manifest bytes do not match the manifest assetManifestSha256.",
                 ));
             }
         }
         Err(error) => issues.push(asset_issue(
             "RUNTIME_ASSET_MANIFEST_UNREADABLE",
-            &source.exam_id,
+            &exam_id,
             &format!("{}:{error}", files.asset_manifest_path.display()),
         )),
     }
@@ -383,7 +389,10 @@ fn unique_asset_map<'a>(
     result
 }
 
-fn referenced_asset_ids(source: &ReadingExamSourceV2) -> Vec<String> {
+/// Asset ids the reading body references. Shared with the listening package
+/// path through `PackagedSourceV2`, so both contracts close the manifest the
+/// same way.
+pub(crate) fn reading_referenced_asset_ids(source: &ReadingExamSourceV2) -> Vec<String> {
     let mut ids = BTreeSet::new();
     collect_node_asset_ids(&source.passage.content, &mut ids);
     for task in &source.task_groups {
@@ -556,12 +565,12 @@ mod tests {
             "../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
         ))
         .unwrap();
-        let source = crate::reading_source_v2::compile_reading_source_v2(&authoring).unwrap();
+        let source = crate::listening_source_v1::compile_exam_source_v2(&authoring).unwrap();
         let mut assets = BTreeMap::new();
         assets.insert("asset-1".to_string(), descriptor(b"phase6-asset"));
         let manifest = ExamAssetManifestV2 {
             schema_version: EXAM_ASSET_MANIFEST_V2_SCHEMA_VERSION.to_string(),
-            exam_id: source.exam_id.clone(),
+            exam_id: source.exam_id().to_string(),
             generated_at: "2026-08-12T00:00:00Z".to_string(),
             assets,
         };
@@ -586,8 +595,8 @@ mod tests {
             "../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
         ))
         .unwrap();
-        let source = crate::reading_source_v2::compile_reading_source_v2(&authoring).unwrap();
-        let mut source_value = serde_json::to_value(&source).unwrap();
+        let source = crate::listening_source_v1::compile_exam_source_v2(&authoring).unwrap();
+        let mut source_value = source.document().unwrap();
         // Inject an explicit `null` for an optional field the typed struct
         // skips.  The default export→publish chain round-trips the typed value
         // so it never emits this, but the public publish command accepts an
@@ -596,7 +605,7 @@ mod tests {
         source_value["audit"]["notes"] = Value::Null;
 
         let root = temp_root();
-        let script_path = root.join(format!("{}.js", source.exam_id));
+        let script_path = root.join(format!("{}.js", source.exam_id()));
         let manifest_path = root.join("asset-manifest.json");
         let wrapper = crate::export_artifacts::build_wrapper(&source_value).unwrap();
         fs::write(&script_path, wrapper.as_bytes()).unwrap();
@@ -604,7 +613,7 @@ mod tests {
 
         let manifest = ExamAssetManifestV2 {
             schema_version: EXAM_ASSET_MANIFEST_V2_SCHEMA_VERSION.to_string(),
-            exam_id: source.exam_id.clone(),
+            exam_id: source.exam_id().to_string(),
             generated_at: "2026-08-12T00:00:00Z".to_string(),
             assets: BTreeMap::new(),
         };
@@ -633,7 +642,7 @@ mod tests {
         // The buggy operand: hashing the typed re-serialization drops the null,
         // so the advertised hash no longer matches the embedded payload.
         let typed_only =
-            sha256_hex(&canonical_json_bytes_js(&serde_json::to_value(&source).unwrap()));
+            sha256_hex(&canonical_json_bytes_js(&source.document().unwrap()));
         assert_ne!(typed_only, honest_runtime, "test fixture must diverge");
         let stale = ProbePackageFiles {
             expected_runtime_sha256: &typed_only,

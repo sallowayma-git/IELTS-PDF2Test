@@ -1715,3 +1715,75 @@ A3/A4 覆盖扩展、PDF/DOCX 完整链到学生端计分。
 UI / 学生端）尚未跑**，属于 T6。
 
 未完成（T1 范围内）：无。T2–T7 未开始。
+
+## 2026-09-22 第三波 T2：听力编译 / 打包 / 预览
+
+用户现在能做到而以前做不到的事：
+
+- 一份听力卷可以**真的发布到 NAS**：包里有 `ListeningExamSourceV1` 的运行时源、`asset-manifest.json`
+  里四段 Section 音频、`resources/<examId>/audio/<sha256>.<ext>` 落盘，NAS 清单条目的 `schemaVersion`
+  与 `modality` 如实写成 `ListeningExamSourceV1` / `listening`（以前只会写死阅读，听力卷根本进不来）。
+- 编辑器里的**学生预览**对听力稿走听力编译：预览里能看到「4 个 Section · 40 个答案位 · 4 段音频」，
+  缺音频 / 音频不在资源清单里会**在预览阶段**就报出可定位的问题，而不是等发布后被学生端拒绝。
+- 放行（一键发布）一份缺音频的听力卷时，该条**降级为 authoring-only**（`studentLoadable=false`）：
+  已上传的音频原样留在授权快照里，不产出学生端运行时，不进学生清单，绝不编造缺失的那段音频。
+- 用户上传的 Section 音频现在能被**导出与打包**找到（以前导出按相对路径去 job 目录找，而音频刻意存在
+  `<appData>/audio/<itemId>/`，因此任何带音频的听力卷都会在导出阶段失败）。
+
+已提交（分支 `wave3-listening`，未 push）：
+
+- `f8882ae feat(listening): compile the draft into ListeningExamSourceV1 behind one entry point`（T2 前半，上一批）
+- 本批：`feat(listening): package, probe and preview a listening paper through the same compiler`
+  - `listening_source_v1.rs`（T2 核心）：`CompiledExamSourceV2` 成为**唯一**编译产物的载体，
+    `compile_exam_source_v2` 按稿件自身的 `modality` 分派。四个 `compile_reading_source_v2` 调用点
+    全部迁移完毕（导出、NAS 包、质量门禁编译器探针、发布预检）。阅读产物逐字节不变
+    （文件名 `reading-source-v2.json`、同一 compiler、同一 validation、同一 probe schemaVersion）。
+  - `reading_runtime_v2.rs` / `nas_package_v2.rs`：学生端探针、包事务、清单条目改走访问器；
+    `schemaVersion` / `modality` / 运行时文件名不再写死阅读。
+  - `authoring_v2_commands.rs`：**受管音频的导出解析**（新增缺口，见下）。
+  - `listening_audio/store.rs`：`managed_audio_path` —— 按 sha256 前缀在
+    `<appData>/audio/<itemId>/` 里定位受管音频文件。
+  - `test_support.rs`：共享听力夹具。真实 1 秒 16 kHz 单声道 WAV 字节与哈希；`complete_listening_exam()`
+    给出**四个 Section 各自一段不同音频**的完整卷（以前四个 part 共用一个资产，会让「只落一份音频」
+    的缺陷悄悄通过）；`stage_listening_audio` 按资源描述符的相对路径落盘。
+  - `publish_final_tests.rs`：听力播种器走**真实上传入口** `bind_audio`，两条端到端用例
+    （缺音频 → 仅授权快照；四段齐全 → 进学生清单且以听力身份进）。
+  - 前端：`listeningRuntimeV1.ts` 新增 `buildListeningSourceV1FromAuthoring`（Rust 编译器的镜像，
+    同样拒绝无听力结构与整卷级音频）；`studentPreview.ts` 按 `modality` 分派，`PreviewCompileResult`
+    增加 `compiled`（判别联合）与 `summary.modality` / `summary.listeningParts`；
+    `readingRuntimeV2.ts` 的答案形式校验泛化为 `validateAnswerKeyKinds`，两份契约共用同一份判断
+    （以前听力预览会声称「答案形式没问题」，而它根本没检查过）。
+
+本批发现并修掉的**新缺口**（不在任务书清单里，是写测试时撞出来的）：
+
+- **导出找不到受管音频**。`materialize_authoring_assets` 一律按 `relativePath` 从 job 目录取文件，
+  而 Section 音频刻意存在 `<appData>/audio/<itemId>/`（job 目录是过程产物、发布后会被清理）。
+  于是任何带音频的听力卷都会在导出阶段报 `authoring_v2_asset_source_missing`。
+  修复：`resolve_authoring_asset_source` 对 `kind == audio` 先查受管目录，找不到再退回 job 目录
+  （保持既有图片/页裁切行为不变，也保持 job 目录内的路径逃逸检查）。
+
+先红后绿的测试：
+
+- **听力 NAS 打包**（`a_listening_paper_packages_every_section_audio_into_the_nas_root`）：
+  变异检验两轮——把清单条目改回写死 `ReadingExamSourceV2` / `reading` → 红（`left:
+  "ReadingExamSourceV2", right: "ListeningExamSourceV1"`）；把资产循环改成只取第一份
+  (`take(1)`) → 红（两条用例同时红）→ 恢复 → 绿。
+- **听力学生预览**（4 条）：实现前 3 条红——一份缺 Section 音频的听力稿被**当成阅读稿编译并报
+  `ok: true`**（`expected false, received true`），正是「预览通过、学生端拒绝」的假通过 →
+  实现分派编译后转绿。
+- **放行 + authoring-only 两条**：先红于 `authoring_v2_asset_source_missing`（上面那条新缺口）
+  → 补上受管音频解析后转绿。
+- `listening_source_v1` 的夹具从硬编码假哈希 `"aaa…"` 改为真实音频字节派生。假哈希在纯 schema
+  校验下能过，但打包与探针会重新哈希磁盘文件，永远对不上——那会伪装成产品缺陷。
+
+全量数字：Rust **1006 passed / 0 failed / 11 ignored**（基线 973/0/11，净 +33）；Vitest **394 passed /
+27 files**（基线 390，净 +4）；`npx tsc --noEmit` 无输出（干净）。
+
+证据等级：
+
+- **命令处理器层**：听力发布两条用例走 `publish_items_core` → 真实 NAS 事务 → 磁盘事实
+  （清单条目、`resources/<examId>/asset-manifest.json`、落盘音频字节）。
+- **单元**：编译拒绝（缺音频 / 探测未通过 / 资产不一致 / 整卷级音频）、NAS 包探针、前端预览编译。
+- **产品端到端（真实 Tauri UI / 学生端真实 provider）尚未跑**，属于 T6。
+
+未完成（T2 范围内）：无。T3–T7 未开始。

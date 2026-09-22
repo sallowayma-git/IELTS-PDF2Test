@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import type {
   AnswerSlotV2,
   AnswerValueV2,
+  AssetDescriptorV2,
   IeltsAuthoringIRV2,
+  ListeningPartV2,
+  ListeningStructureV2,
   OptionV2,
   ResponseGroupV2,
   TaskGroupV2
@@ -73,16 +76,20 @@ function makeDs(input: {
   taskGroups: TaskGroupV2[];
   answerSlots?: Record<string, AnswerSlotV2>;
   answerKey?: Record<string, AnswerValueV2>;
+  modality?: "reading" | "listening";
+  listening?: ListeningStructureV2;
+  assets?: AssetDescriptorV2[];
 }): IeltsAuthoringIRV2 {
   return {
     schemaVersion: "IeltsAuthoringIRV2",
     jobId: "job-1",
     exam: { examId: "exam-1", title: "T", language: "en", tags: [], sourceFiles: [] },
-    modality: "reading",
+    modality: input.modality ?? "reading",
+    listening: input.listening,
     taskGroups: input.taskGroups,
     answerSlots: input.answerSlots ?? {},
     answerKey: input.answerKey ?? {},
-    assets: [],
+    assets: input.assets ?? [],
     sourceDocumentId: "doc-1",
     quality: {
       schemaVersion: "QualityReportV2",
@@ -121,7 +128,15 @@ describe("compilePreviewSource — 编译闸门", () => {
     const result = compilePreviewSource(makeDs({ taskGroups: [] }));
     expect(result?.ok).toBe(true);
     if (result?.ok) {
-      expect(result.summary).toEqual({ taskGroups: 0, slots: 0, assets: 0, answeredSlots: 0, answerKeyIssues: [] });
+      expect(result.summary).toEqual({
+        modality: "reading",
+        taskGroups: 0,
+        slots: 0,
+        assets: 0,
+        answeredSlots: 0,
+        listeningParts: 0,
+        answerKeyIssues: []
+      });
     }
   });
 
@@ -178,7 +193,8 @@ describe("compilePreviewSource — 编译闸门", () => {
       expect(result.summary.taskGroups).toBe(1);
       expect(result.summary.slots).toBe(1);
       expect(result.summary.answeredSlots).toBe(1);
-      expect(result.source.answerKey.q1).toBeTruthy();
+      expect(result.compiled.modality).toBe("reading");
+      if (result.compiled.modality === "reading") expect(result.compiled.reading.answerKey.q1).toBeTruthy();
     }
   });
 });
@@ -306,5 +322,142 @@ describe("describePreviewPublishLimitation — 预览与发布的差距", () => 
     expect(note.level).toBe("info");
     expect(note.message).toContain("一致");
     expect(note.message).not.toMatch(/\bv\d+\b/);
+  });
+});
+
+// ——— 听力稿的学生预览 ———
+//
+// 听力卷和阅读卷的学生端契约是两份不同的东西（`ListeningExamSourceV1` vs
+// `ReadingExamSourceV2`），题面结构也不同（Section 各自一段音频 vs 一篇文章）。
+// 预览如果只会按阅读编译，听力稿要么编译失败、要么被编译成一份没有文章的「阅读稿」
+// 而看起来通过了——两者都是只在发布后才暴露的假象。
+
+function audioAsset(ordinal: number): AssetDescriptorV2 {
+  const sha = String(ordinal).repeat(64).slice(0, 64);
+  return {
+    assetId: `audio-${sha}`,
+    kind: "audio",
+    mime: "audio/wav",
+    relativePath: `audio/${sha}.wav`,
+    sha256: sha,
+    byteLength: 1024,
+    durationMs: 1000,
+    extractionMode: "user_upload"
+  };
+}
+
+function audioPart(ordinal: number, questionNumber: number): ListeningPartV2 {
+  const asset = audioAsset(ordinal);
+  return {
+    partId: `part-${ordinal}`,
+    displayLabel: `SECTION ${ordinal}`,
+    expectedQuestionNumbers: [questionNumber],
+    taskIds: [`task-${ordinal}`],
+    sourceAnchors: [],
+    media: {
+      assetId: asset.assetId,
+      mime: "audio/wav",
+      durationMs: 1000,
+      channels: 1,
+      sampleRateHz: 16000,
+      sha256: asset.sha256,
+      probe: { status: "passed", provider: "symphonia", providerVersion: "0.6.0", probedAt: "", issueCodes: [] }
+    }
+  };
+}
+
+/** `partial_practice`：一份只有几个 Section 的练习卷，不受「四部分四十题」约束。 */
+function listeningDs(ordinals: number[]): IeltsAuthoringIRV2 {
+  const assets: AssetDescriptorV2[] = [];
+  const parts: ListeningPartV2[] = [];
+  const taskGroups: TaskGroupV2[] = [];
+  const answerSlots: Record<string, AnswerSlotV2> = {};
+  const answerKey: Record<string, AnswerValueV2> = {};
+  ordinals.forEach((ordinal, index) => {
+    const number = index + 1;
+    const slotId = `q${number}`;
+    assets.push(audioAsset(ordinal));
+    parts.push(audioPart(ordinal, number));
+    answerSlots[slotId] = { ...slot(slotId, number), hostType: "paragraph", interaction: "text" };
+    answerKey[slotId] = { kind: "text", values: [`answer ${number}`], normalization: "ielts_default" };
+    taskGroups.push(
+      task({
+        taskId: `task-${ordinal}`,
+        taskType: "note_completion",
+        displayRange: { kind: "range", start: number, end: number },
+        instructionSignature: {
+          normalizedText: "Write ONE WORD ONLY.",
+          taskType: "note_completion",
+          expectedQuestionNumbers: [number],
+          expectedSlotCount: 1,
+          evidenceAnchors: [],
+          confidence: 1
+        },
+        responseGroups: [group({ responseGroupId: `rg-${ordinal}`, kind: "text_entry", slotIds: [slotId] })]
+      })
+    );
+  });
+  const listening: ListeningStructureV2 = {
+    scope: "partial_practice",
+    parts,
+    playbackPolicy: {
+      mode: "practice",
+      allowPause: true,
+      allowSeek: true,
+      allowReplay: true,
+      maxPlays: 2,
+      refreshBehavior: "resume_from_snapshot",
+      crashRecoveryBehavior: "resume_from_snapshot",
+      showCurrentTime: true,
+      showDuration: true
+    }
+  };
+  return makeDs({ taskGroups, answerSlots, answerKey, modality: "listening", listening, assets });
+}
+
+describe("compilePreviewSource — 听力稿按听力契约编译", () => {
+  it("四个 Section 各带音频的听力稿可以预览，并如实汇报 Section 数与音频数", () => {
+    const result = compilePreviewSource(listeningDs([1, 2, 3, 4]));
+    expect(result?.ok, JSON.stringify(result)).toBe(true);
+    if (result?.ok) {
+      expect(result.summary.modality).toBe("listening");
+      expect(result.summary.listeningParts).toBe(4);
+      expect(result.summary.assets).toBe(4);
+    }
+  });
+
+  it("某个 Section 没有音频时预览编译失败，并定位到那个 Section", () => {
+    const ds = listeningDs([1, 2, 3, 4]);
+    ds.listening!.parts[2].media = undefined;
+    const result = compilePreviewSource(ds);
+    expect(result?.ok).toBe(false);
+    if (result && !result.ok) {
+      expect(result.issue.code).toBe("LISTENING_MEDIA_MISSING");
+      expect(result.issue.targetId).toBe("part-3");
+    }
+  });
+
+  it("Section 指向的音频不在资源清单里时预览编译失败，并定位到那个音频", () => {
+    const ds = listeningDs([1, 2]);
+    ds.assets = ds.assets.slice(0, 1);
+    const result = compilePreviewSource(ds);
+    expect(result?.ok).toBe(false);
+    if (result && !result.ok) {
+      expect(result.issue.code).toBe("ASSET_REFERENCE_MISSING");
+      expect(result.issue.targetId).toBe(audioAsset(2).assetId);
+    }
+  });
+
+  it("答案形式与题目不匹配的听力稿也如实报出来（和学生端提交阶段一致）", () => {
+    const ds = listeningDs([1]);
+    ds.answerKey.q1 = { kind: "option", labels: ["A"], assignment: "per_slot" };
+    const result = compilePreviewSource(ds);
+    expect(result?.ok, JSON.stringify(result)).toBe(true);
+    if (result?.ok) {
+      expect(result.summary.answerKeyIssues.map((item) => item.code)).toEqual([
+        "RUNTIME_TEXT_SLOT_ANSWER_NOT_TEXT"
+      ]);
+      expect(result.summary.answerKeyIssues[0].targetId).toBe("q1");
+    }
   });
 });

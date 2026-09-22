@@ -14,7 +14,7 @@ use crate::artifact_store::{
 use crate::ielts_grammar::evaluate_quality;
 use crate::ielts_grammar::quality::derive_instruction_signature_for_group;
 use crate::listening_source_v1::compile_exam_source_v2;
-use crate::schema::common::AssetDescriptorV2;
+use crate::schema::common::{AssetDescriptorV2, AssetKindV2};
 use crate::schema::IeltsAuthoringIRV2;
 use crate::source_review::{
     source_review_issues, source_review_status, source_review_status_for_job,
@@ -938,7 +938,13 @@ pub(crate) fn export_authoring_snapshot_with_mode(
             }
             None => None,
         };
-        materialize_authoring_assets(&artifact_layout.job_dir, &staging_dir, &authoring.assets)?;
+        materialize_authoring_assets(
+            root,
+            &authoring.job_id,
+            &artifact_layout.job_dir,
+            &staging_dir,
+            &authoring.assets,
+        )?;
         let files: Vec<&str> = if student_loadable {
             vec!["authoring-ir-v2.json", runtime_file_name, "manifest-v2.json"]
         } else {
@@ -1059,7 +1065,45 @@ fn safe_asset_relative_path(raw: &str) -> CommandResult<PathBuf> {
     Ok(path)
 }
 
+/// 一个资源描述符对应的真实文件。
+///
+/// 用户上传的 Section 音频落在**受管目录** `<appData>/audio/<itemId>/`，不在 job 目录里，
+/// 所以音频必须先去受管目录找；找不到再退回 job 目录（导入链早期、以及把音频直接放在
+/// job 目录的夹具走这条路）。其余资源（图片、页裁切）照旧按相对路径从 job 目录取。
+fn resolve_authoring_asset_source(
+    root: &Path,
+    job_id: &str,
+    source_root: &Path,
+    asset: &AssetDescriptorV2,
+) -> CommandResult<PathBuf> {
+    if asset.kind == AssetKindV2::Audio {
+        if let Some(path) =
+            crate::listening_audio::store::managed_audio_path(root, job_id, &asset.sha256)?
+        {
+            return fs::canonicalize(&path).map_err(|error| {
+                format!("authoring_v2_asset_managed_missing:{}:{error}", asset.asset_id)
+            });
+        }
+    }
+    let source = source_root.join(safe_asset_relative_path(&asset.relative_path)?);
+    let source_real = fs::canonicalize(&source).map_err(|error| {
+        format!(
+            "authoring_v2_asset_source_missing:{}:{error}",
+            asset.asset_id
+        )
+    })?;
+    if !source_real.starts_with(source_root) {
+        return Err(format!(
+            "authoring_v2_asset_source_escape:{}",
+            asset.asset_id
+        ));
+    }
+    Ok(source_real)
+}
+
 fn materialize_authoring_assets(
+    root: &Path,
+    job_id: &str,
     source_root: &Path,
     staging_dir: &Path,
     assets: &[AssetDescriptorV2],
@@ -1078,19 +1122,7 @@ fn materialize_authoring_assets(
                 asset.relative_path
             ));
         }
-        let source = source_root.join(&relative);
-        let source_real = fs::canonicalize(&source).map_err(|error| {
-            format!(
-                "authoring_v2_asset_source_missing:{}:{error}",
-                asset.asset_id
-            )
-        })?;
-        if !source_real.starts_with(&source_root) {
-            return Err(format!(
-                "authoring_v2_asset_source_escape:{}",
-                asset.asset_id
-            ));
-        }
+        let source_real = resolve_authoring_asset_source(root, job_id, &source_root, asset)?;
         let target = staging_dir.join(&relative);
         let (actual_hash, actual_size) = stage_file_with_hash(&source_real, &target)
             .map_err(|error| format!("authoring_v2_asset_stage:{}:{error}", asset.asset_id))?;
@@ -3309,13 +3341,21 @@ mod tests {
             source_anchor: None,
             diagram_question_region: None,
         };
-        materialize_authoring_assets(&source_root, &staging, &[descriptor.clone()]).unwrap();
+        // 图片资源仍按相对路径从 job 目录取（`root`/`job_id` 在这里没有受管音频可找）。
+        materialize_authoring_assets(&source_root, "job-assets", &source_root, &staging, &[descriptor.clone()])
+            .unwrap();
         assert_eq!(fs::read(staging.join(relative_path)).unwrap(), bytes);
 
         let mut bad = descriptor;
         bad.sha256 = "0".repeat(64);
-        let error = materialize_authoring_assets(&source_root, &staging.join("bad"), &[bad])
-            .expect_err("asset hash mismatch must fail closed");
+        let error = materialize_authoring_assets(
+            &source_root,
+            "job-assets",
+            &source_root,
+            &staging.join("bad"),
+            &[bad],
+        )
+        .expect_err("asset hash mismatch must fail closed");
         assert!(error.contains("authoring_v2_asset_hash_mismatch"));
         let _ = fs::remove_dir_all(source_root);
     }

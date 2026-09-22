@@ -1,7 +1,8 @@
 //! Phase 6 NAS V2 package builder and two-phase publisher.
 //!
 //! The V1 exporter remains untouched.  This module is an opt-in publisher for
-//! a single `ReadingExamSourceV2` and deliberately commits the discovery
+//! the runtime contract the paper actually uses (reading or listening) and
+//! deliberately commits the discovery
 //! manifest last, after the staged package has passed the same probe used by
 //! the runtime validator.
 
@@ -15,9 +16,7 @@ use crate::reading_runtime_v2::{
     run_student_loader_probe_with_files, safe_join_asset_path, ExamAssetManifestV2,
     ProbePackageFiles, StudentProbeReportV2,
 };
-use crate::reading_source_v2::{
-    compile_reading_source_v2, validate_reading_source_v2, ReadingExamSourceV2,
-};
+use crate::listening_source_v1::{compile_exam_source_v2, CompiledExamSourceV2};
 use crate::schema::common::{canonical_json_bytes, canonical_json_bytes_js};
 use crate::schema::IeltsAuthoringIRV2;
 use crate::CommandResult;
@@ -61,9 +60,17 @@ fn validate_v2_export_binding(
     source_path: &Path,
     source_bytes: &[u8],
 ) -> CommandResult<()> {
-    if source_path.file_name().and_then(|name| name.to_str()) != Some("reading-source-v2.json") {
-        return Err("nas_package_v2_export_receipt_required:source_filename".to_string());
-    }
+    // A receipt names the runtime file after the contract it holds: reading keeps
+    // `reading-source-v2.json`, a listening paper ships `listening-source-v1.json`.
+    // Anything else is not an export we produced.
+    let runtime_file_name = source_path.file_name().and_then(|name| name.to_str());
+    let expected_runtime_file = match runtime_file_name {
+        Some("reading-source-v2.json") => "reading-source-v2.json",
+        Some("listening-source-v1.json") => "listening-source-v1.json",
+        _ => {
+            return Err("nas_package_v2_export_receipt_required:source_filename".to_string());
+        }
+    };
     let export_dir = source_path
         .parent()
         .ok_or_else(|| "nas_package_v2_export_receipt_required:source_parent".to_string())?;
@@ -88,11 +95,7 @@ fn validate_v2_export_binding(
         .get("files")
         .and_then(Value::as_array)
         .ok_or_else(|| "nas_package_v2_export_receipt_invalid:files".to_string())?;
-    let expected_files = [
-        "authoring-ir-v2.json",
-        "reading-source-v2.json",
-        "manifest-v2.json",
-    ];
+    let expected_files = ["authoring-ir-v2.json", expected_runtime_file, "manifest-v2.json"];
     if files.len() != expected_files.len()
         || expected_files
             .iter()
@@ -191,13 +194,14 @@ fn validate_v2_export_binding(
     }
     let bound_authoring: IeltsAuthoringIRV2 = serde_json::from_value(authoring_value.clone())
         .map_err(|error| format!("nas_package_v2_export_binding_invalid:authoring:{error}"))?;
-    let bound_source = compile_reading_source_v2(&bound_authoring).map_err(|issues| {
+    let bound_source = compile_exam_source_v2(&bound_authoring).map_err(|issues| {
         format!(
             "nas_package_v2_export_binding_invalid:authoring_compile:{}",
             serde_json::to_string(&issues).unwrap_or_default()
         )
     })?;
-    let exported_source: ReadingExamSourceV2 = serde_json::from_slice(source_bytes)
+    let exported_source = CompiledExamSourceV2::parse(&serde_json::from_slice::<Value>(source_bytes)
+        .map_err(|error| format!("nas_package_v2_export_binding_invalid:runtime:{error}"))?)
         .map_err(|error| format!("nas_package_v2_export_binding_invalid:runtime:{error}"))?;
     if exported_source != bound_source {
         return Err("nas_package_v2_export_binding_detached:runtime".to_string());
@@ -371,7 +375,7 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
             }
             let source_path = PathBuf::from(receipt.get("runtimePath").and_then(Value::as_str).ok_or("PUBLISH_RUNTIME_MISSING")?);
             let source_value: Value = crate::util::read_json(&source_path)?;
-            let source: ReadingExamSourceV2 = serde_json::from_value(source_value.clone()).map_err(|error| error.to_string())?;
+            let source = CompiledExamSourceV2::parse(&source_value).map_err(|error| error.to_string())?;
             let exam_id = safe_exam_id(&source_value)?;
             if !exam_ids.insert(exam_id.clone()) { return Err(format!("PUBLISH_DUPLICATE_EXAM_ID:{exam_id}")); }
             loadable_exam_ids.insert(exam_id.clone());
@@ -398,7 +402,7 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
             }
             manifest.insert(exam_id.clone(), staged.entry);
             outcomes.push(json!({"itemId": item_id, "ok": true, "examId": exam_id,
-                "editVersion": version, "manifestPath": paths.manifest_path, "assetCount": source.assets.assets.len(),
+                "editVersion": version, "manifestPath": paths.manifest_path, "assetCount": source.assets().len(),
                 "forced": forced, "studentLoadable": true, "publishRecordId": record_id,
                 "verdictStatus": verdict.get("status").cloned().unwrap_or(Value::Null)}));
             publications.push(ItemPublication { item_id: item_id.clone(), edit_version: *version, record_id,
@@ -731,9 +735,9 @@ pub(crate) fn publish_nas_package_v2_core(root: &Path, input: Value) -> CommandR
             source_path.display()
         )
     })?;
-    let source: ReadingExamSourceV2 = serde_json::from_value(source_value.clone())
+    let source = CompiledExamSourceV2::parse(&source_value)
         .map_err(|error| format!("nas_package_v2_source_contract:{error}"))?;
-    let issues = validate_reading_source_v2(&source);
+    let issues = source.validate();
     if !issues.is_empty() {
         return Err(format!(
             "nas_package_v2_source_invalid:{}",
@@ -824,7 +828,7 @@ struct StagedPackage {
 
 fn stage_package_files(
     input: &NasPackagePublishInput,
-    source: &ReadingExamSourceV2,
+    source: &CompiledExamSourceV2,
     source_value: &Value,
     source_path: &Path,
     paths: &PackagePaths,
@@ -845,7 +849,7 @@ fn stage_package_files(
 
     let mut manifest_assets = BTreeMap::new();
     let mut seen_destinations = BTreeSet::new();
-    for descriptor in &source.assets.assets {
+    for descriptor in source.assets() {
         validate_package_relative_path(&descriptor.relative_path)?;
         let source_asset =
             safe_join_asset_path(&asset_root, &descriptor.relative_path).map_err(|error| {
@@ -855,7 +859,7 @@ fn stage_package_files(
                 )
             })?;
         let destination_relative =
-            format!("resources/{}/{}", source.exam_id, descriptor.relative_path);
+            format!("resources/{}/{}", source.exam_id(), descriptor.relative_path);
         let destination = paths.staging_root.join(&destination_relative);
         let collision_key = destination_relative.to_ascii_lowercase();
         if !seen_destinations.insert(collision_key) {
@@ -876,7 +880,7 @@ fn stage_package_files(
     let generated_at = Utc::now().to_rfc3339();
     let asset_manifest = ExamAssetManifestV2 {
         schema_version: "ExamAssetManifestV2".to_string(),
-        exam_id: source.exam_id.clone(),
+        exam_id: source.exam_id().to_string(),
         generated_at,
         assets: manifest_assets,
     };
@@ -935,16 +939,16 @@ fn stage_package_files(
         .unwrap_or("0.2.0");
     validate_minimum_runtime_version(minimum_runtime_version)?;
     let entry = json!({
-            "examId": source.exam_id,
-            "dataKey": source.exam_id,
-            "script": format!("./{}.js", source.exam_id),
-            "title": source.meta.title,
-            "category": source.meta.category,
-            "schemaVersion": "ReadingExamSourceV2",
-            "modality": "reading",
+            "examId": source.exam_id(),
+            "dataKey": source.exam_id(),
+            "script": format!("./{}.js", source.exam_id()),
+            "title": source.title(),
+            "category": source.category_value(),
+            "schemaVersion": source.schema_version(),
+            "modality": source.modality(),
             "minimumRuntimeVersion": minimum_runtime_version,
-            "resourcesBase": format!("./resources/{}/", source.exam_id),
-            "assetManifest": format!("./resources/{}/{}", source.exam_id, ASSET_MANIFEST_FILE_NAME),
+            "resourcesBase": format!("./resources/{}/", source.exam_id()),
+            "assetManifest": format!("./resources/{}/{}", source.exam_id(), ASSET_MANIFEST_FILE_NAME),
             "checksums": {
                 "scriptSha256": script_sha256,
                 "assetManifestSha256": asset_manifest_sha256,
@@ -957,7 +961,7 @@ fn stage_package_files(
 fn stage_and_commit(
     _app_root: &Path,
     input: &NasPackagePublishInput,
-    source: &ReadingExamSourceV2,
+    source: &CompiledExamSourceV2,
     source_value: &Value,
     source_path: &Path,
     paths: &PackagePaths,
@@ -967,7 +971,7 @@ fn stage_and_commit(
         stage_package_files(input, source, source_value, source_path, paths)?;
     verify_manifest_compare_and_swap(&paths.manifest_path, &paths.base_manifest_sha256)?;
     let mut manifest = load_existing_manifest(&paths.manifest_path)?;
-    manifest.insert(source.exam_id.clone(), entry);
+    manifest.insert(source.exam_id().to_string(), entry);
     let mut metadata = manifest
         .remove("_meta")
         .unwrap_or_else(|| json!({"schemaVersion": "ReadingExamManifestV1"}));
@@ -1057,7 +1061,7 @@ fn stage_and_commit(
     Ok(json!({
         "schemaVersion": "NasPackagePublishReportV2",
         "status": "committed",
-        "examId": source.exam_id,
+        "examId": source.exam_id(),
         "manifestPath": paths.manifest_path,
         "reportPath": paths.report_path,
         "probe": receipt.probe,
@@ -1082,7 +1086,7 @@ fn recover_post_commit_metadata_failure(paths: &PackagePaths, error: &str) -> St
 
 fn commit_package(
     paths: &PackagePaths,
-    source: &ReadingExamSourceV2,
+    source: &CompiledExamSourceV2,
     probe: &StudentProbeReportV2,
     runtime_sha256: &str,
     export_id: &str,
@@ -1153,7 +1157,7 @@ fn commit_package(
             paths,
             &backup_exam,
             &backup_resources,
-            source.exam_id.as_str(),
+            source.exam_id(),
             had_exam,
             had_resources,
         );
@@ -1173,7 +1177,7 @@ fn commit_package(
                 paths,
                 &backup_exam,
                 &backup_resources,
-                source.exam_id.as_str(),
+                source.exam_id(),
                 had_exam,
                 had_resources,
             );
@@ -1189,13 +1193,13 @@ fn commit_package(
         }
         if let Err(error) = fs::rename(
             &paths.resource_path,
-            backup_resources.join(source.exam_id.as_str()),
+            backup_resources.join(source.exam_id()),
         ) {
             let rollback_errors = restore_partial_backup_before_commit(
                 paths,
                 &backup_exam,
                 &backup_resources,
-                source.exam_id.as_str(),
+                source.exam_id(),
                 had_exam,
                 had_resources,
             );
@@ -1222,7 +1226,7 @@ fn commit_package(
             &backup_resources,
             &backup_manifest,
             &backup_report,
-            source.exam_id.as_str(),
+            source.exam_id(),
             had_exam,
             had_resources,
             had_manifest,
@@ -1239,10 +1243,10 @@ fn commit_package(
             }
             if had_resources
                 && !paths.resource_path.exists()
-                && backup_resources.join(source.exam_id.as_str()).is_dir()
+                && backup_resources.join(source.exam_id()).is_dir()
             {
                 if let Err(restore_error) = fs::rename(
-                    backup_resources.join(source.exam_id.as_str()),
+                    backup_resources.join(source.exam_id()),
                     &paths.resource_path,
                 ) {
                     errors.push(format!(
@@ -1274,7 +1278,7 @@ fn commit_package(
             }
         }
         if had_resources {
-            let backup_path = backup_resources.join(source.exam_id.as_str());
+            let backup_path = backup_resources.join(source.exam_id());
             if let Err(error) = fs::rename(backup_path, &paths.resource_path) {
                 errors.push(format!("restore_resources:{error}"));
             }
@@ -1343,13 +1347,13 @@ fn commit_package(
 
     let manifest_bytes = fs::read(&paths.manifest_path).map_err(|error| error.to_string())?;
     Ok(PackageReceipt {
-        exam_id: source.exam_id.clone(),
+        exam_id: source.exam_id().to_string(),
         runtime_sha256: runtime_sha256.to_string(),
         asset_manifest_sha256: sha256_hex(
             &fs::read(paths.resource_path.join(ASSET_MANIFEST_FILE_NAME))
                 .map_err(|error| error.to_string())?,
         ),
-        asset_count: source.assets.assets.len(),
+        asset_count: source.assets().len(),
         probe: probe.clone(),
         manifest_sha256: sha256_hex(&manifest_bytes),
     })
@@ -2065,7 +2069,7 @@ fn write_synced_file(path: &Path, bytes: &[u8]) -> CommandResult<()> {
 
 fn write_journal(
     paths: &PackagePaths,
-    source: &ReadingExamSourceV2,
+    source: &CompiledExamSourceV2,
     status: &str,
     error: Option<&String>,
     export_id: &str,
@@ -2073,7 +2077,7 @@ fn write_journal(
     let journal = json!({
         "schemaVersion": "NasCommitJournalV1",
         "exportId": export_id,
-        "examId": source.exam_id,
+        "examId": source.exam_id(),
         "status": status,
         "manifestPath": paths.manifest_path,
         "stagingRoot": paths.staging_root,
@@ -2201,7 +2205,7 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
-    fn test_export_bundle(root: &Path) -> (PathBuf, ReadingExamSourceV2) {
+    fn test_export_bundle(root: &Path) -> (PathBuf, crate::reading_source_v2::ReadingExamSourceV2) {
         let mut authoring_value: Value = serde_json::from_str(include_str!(
             "../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
         ))
@@ -2255,6 +2259,171 @@ mod tests {
         )
         .unwrap();
         (source_path, source)
+    }
+
+    /// A listening export bundle: the canonical listening draft, its compiled
+    /// `ListeningExamSourceV1`, the four section audio files and the export receipt the
+    /// publisher demands before it will touch the NAS root.
+    fn test_listening_export_bundle(root: &Path) -> PathBuf {
+        let authoring = crate::test_support::complete_listening_exam();
+        let mut authoring_value = serde_json::to_value(&authoring).unwrap();
+        authoring_value["quality"]["state"] = json!("ready");
+        authoring_value["quality"]["issues"] = json!([]);
+        let authoring: IeltsAuthoringIRV2 =
+            serde_json::from_value(authoring_value.clone()).unwrap();
+
+        let compiled = crate::listening_source_v1::compile_exam_source_v2(&authoring)
+            .expect("the listening paper compiles");
+        assert_eq!(compiled.modality(), "listening");
+        assert_eq!(compiled.file_name(), "listening-source-v1.json");
+        let source_value = compiled.document().unwrap();
+        let source_bytes = canonical_json_bytes(&source_value).unwrap();
+
+        let export_dir = root.join("export");
+        fs::create_dir_all(&export_dir).unwrap();
+        fs::create_dir_all(root.join("jobs").join(&authoring.job_id)).unwrap();
+        // The packager resolves every asset relative to the runtime source's own directory.
+        let staged_audio = crate::test_support::stage_listening_audio(&export_dir, &[1, 2, 3, 4]);
+        assert_eq!(staged_audio.len(), 4);
+
+        fs::write(
+            export_dir.join("authoring-ir-v2.json"),
+            canonical_json_bytes(&authoring_value).unwrap(),
+        )
+        .unwrap();
+        let source_path = export_dir.join("listening-source-v1.json");
+        fs::write(&source_path, &source_bytes).unwrap();
+        fs::write(
+            root.join("jobs")
+                .join(&authoring.job_id)
+                .join(AUTHORING_V2_SHADOW_FILE),
+            canonical_json_bytes(&authoring_value).unwrap(),
+        )
+        .unwrap();
+
+        let proof =
+            validate_authoring_v2_publish_readiness(root, &authoring.job_id, 0, &authoring_value)
+                .unwrap();
+        let manifest = json!({
+            "schemaVersion": "AuthoringV2ExportReceiptV1",
+            "jobId": authoring.job_id,
+            "examId": authoring.exam.exam_id,
+            "revision": 0,
+            "sourceDocumentId": authoring.source_document_id,
+            "files": ["authoring-ir-v2.json", "listening-source-v1.json", "manifest-v2.json"],
+            "authoringSha256": sha256_hex(&canonical_json_bytes(&authoring_value).unwrap()),
+            "runtimeSha256": sha256_hex(&source_bytes),
+            "assetCount": authoring.assets.len(),
+            "assets": authoring.assets,
+            "v1FilesRemainReadable": true,
+            "pdfPerQuestionLlmRepair": false,
+            "reviewRequired": false,
+            "publishProof": proof
+        });
+        fs::write(
+            export_dir.join("manifest-v2.json"),
+            canonical_json_bytes(&manifest).unwrap(),
+        )
+        .unwrap();
+        source_path
+    }
+
+    /// The whole point of T2's packaging half: a listening paper must reach the NAS root as a
+    /// listening paper, with every section's own audio present and hash-checked. Before the
+    /// single compile entry point existed there was no way for a listening paper to get here at
+    /// all — the package builder only knew how to publish a `ReadingExamSourceV2`.
+    #[test]
+    fn a_listening_paper_packages_every_section_audio_into_the_nas_root() {
+        let root = temp_root();
+        let source_path = test_listening_export_bundle(&root);
+        let nas_parent = root.join("nas");
+        let result = publish_nas_package_v2_core(
+            &root,
+            json!({
+                "libraryRoot": nas_parent,
+                "sourcePath": source_path
+            }),
+        )
+        .unwrap();
+        assert_eq!(result["status"], "committed");
+
+        // The manifest entry has to say what this paper actually is. Writing a hard-coded
+        // "ReadingExamSourceV2" here is exactly the drift this task removes.
+        let manifest = load_existing_manifest(&nas_parent.join("manifest.js")).unwrap();
+        let entry = manifest
+            .get("early-approaches")
+            .unwrap_or_else(|| panic!("the exam is in the manifest: {manifest:?}"));
+        assert_eq!(entry["schemaVersion"], "ListeningExamSourceV1", "{entry}");
+        assert_eq!(entry["modality"], "listening", "{entry}");
+        assert_eq!(entry["category"], Value::Null, "a listening paper has no passage category");
+        assert_eq!(entry["resourcesBase"], "./resources/early-approaches/");
+
+        // Four sections, four files, each byte-identical to what the descriptor promised.
+        let resource_dir = nas_parent.join("resources").join("early-approaches");
+        for ordinal in 1..=4 {
+            let descriptor = crate::test_support::listening_audio_asset(ordinal);
+            let staged = resource_dir.join(&descriptor.relative_path);
+            let bytes = fs::read(&staged)
+                .unwrap_or_else(|error| panic!("{}: {error}", staged.display()));
+            assert_eq!(sha256_hex(&bytes), descriptor.sha256, "section {ordinal}");
+            assert_eq!(bytes.len() as u64, descriptor.byte_length, "section {ordinal}");
+        }
+
+        let asset_manifest: Value =
+            serde_json::from_slice(&fs::read(resource_dir.join(ASSET_MANIFEST_FILE_NAME)).unwrap())
+                .unwrap();
+        assert_eq!(asset_manifest["schemaVersion"], "ExamAssetManifestV2");
+        assert_eq!(asset_manifest["examId"], "early-approaches");
+        assert_eq!(
+            asset_manifest["assets"].as_object().unwrap().len(),
+            4,
+            "every section's audio must be listed, not just the first"
+        );
+
+        // The wrapper is modality-agnostic on purpose: the student registry is the same one,
+        // only the payload inside it differs (parts instead of a passage).
+        let script = fs::read_to_string(nas_parent.join("early-approaches.js"))
+            .unwrap_or_else(|error| panic!("the exam script must be readable: {error}"));
+        assert!(script.contains("__READING_EXAM_DATA__.register("), "{script}");
+        assert!(script.contains("\"ListeningExamSourceV1\""), "{script}");
+        assert!(
+            !script.contains("\"passage\""),
+            "a listening payload has no passage: {script}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Deleting or never uploading one section's audio must stop the package, not silently
+    /// publish three sections plus a hole.
+    #[test]
+    fn a_listening_paper_whose_audio_is_absent_is_refused_rather_than_published_silent() {
+        let root = temp_root();
+        let source_path = test_listening_export_bundle(&root);
+        let missing = crate::test_support::listening_audio_asset(3);
+        fs::remove_file(root.join("export").join(&missing.relative_path)).unwrap();
+
+        let nas_parent = root.join("nas");
+        let error = publish_nas_package_v2_core(
+            &root,
+            json!({
+                "libraryRoot": nas_parent,
+                "sourcePath": source_path
+            }),
+        )
+        .unwrap_err();
+        assert!(
+            error.starts_with("nas_package_v2_asset_copy")
+                || error.starts_with("nas_package_v2_asset_source"),
+            "{error}"
+        );
+        assert!(
+            !nas_parent.join("manifest.js").exists(),
+            "no discovery manifest may be committed for a paper we cannot ship"
+        );
+        assert!(!nas_parent.join("resources").join("early-approaches").exists());
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

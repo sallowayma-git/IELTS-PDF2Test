@@ -767,7 +767,9 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             {preview?.ok ? (
               <>
                 <p className="workspace-preview-summary" data-testid="workspace-preview-summary">
-                  {preview.summary.taskGroups} 个题组 · {preview.summary.slots} 个答案位 · {preview.summary.assets} 个资源
+                  {preview.summary.modality === "listening"
+                    ? `听力 · ${preview.summary.listeningParts} 个 Section · ${preview.summary.slots} 个答案位 · ${preview.summary.assets} 段音频`
+                    : `${preview.summary.taskGroups} 个题组 · ${preview.summary.slots} 个答案位 · ${preview.summary.assets} 个资源`}
                 </p>
                 {/* 答案形式不匹配的题已经并进「待补充」清单，这里不再另列一份。 */}
                 {/* key 绑草稿版本令牌：草稿一变，预览的作答状态整体重置。 */}

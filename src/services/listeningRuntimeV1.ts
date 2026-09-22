@@ -1,17 +1,25 @@
 import type {
   AnswerSlotV2,
   AnswerValueV2,
+  IeltsAuthoringIRV2,
   OptionV2,
   ResponseGroupV2,
   TaskGroupV2
 } from "../types/ielts-authoring-v2";
-import type {
-  ListeningAttemptV1,
-  ListeningExamSourceV1,
-  ListeningPlaybackSnapshotV1,
-  ListeningRuntimeMediaV1
+import {
+  LISTENING_EXAM_SOURCE_V1_SCHEMA_VERSION,
+  type ListeningAttemptV1,
+  type ListeningExamSourceV1,
+  type ListeningPlaybackSnapshotV1,
+  type ListeningRuntimeMediaV1
 } from "../types/listening-runtime-v1";
 import type { AssetDescriptorV2 } from "../types/schema-common-v2";
+
+/**
+ * 编译产物声明的运行时最低版本。必须与 Rust 侧 `LISTENING_MINIMUM_RUNTIME_VERSION` 一致，
+ * 否则预览接受的稿子会在学生端被版本闸门拒掉。
+ */
+export const LISTENING_MINIMUM_RUNTIME_VERSION_V1 = "1.0.0";
 
 export type ListeningAttemptValidationModeV1 = "draft" | "submit";
 
@@ -423,4 +431,63 @@ export async function resolveListeningAsset(
   if (resolved.assetId !== assetId || resolved.mime !== descriptor.mime || resolved.byteLength !== descriptor.byteLength || resolved.sha256.toLowerCase() !== descriptor.sha256.toLowerCase()) throw new ListeningRuntimeErrorV1("ASSET_RESOLUTION_INTEGRITY_FAILED", "Listening provider returned metadata different from the manifest.", assetId);
   if (/^(?:https?:|file:)/iu.test(resolved.resourceUri)) throw new ListeningRuntimeErrorV1("ASSET_URI_UNSAFE", "Listening assets must use a controlled local resource URI.", assetId);
   return resolved;
+}
+
+/**
+ * 把权威稿编成学生端真正会加载的 `ListeningExamSourceV1`。
+ *
+ * 与 Rust 侧 `compile_listening_source_v1` 是同一份规则的镜像：题号顺序、题号显示表、
+ * 审计信息都取自同一处，契约版本也必须一致，否则会出现「编辑器预览通过、发布后被学生端
+ * 拒绝」这种只在真机上暴露的偏差。
+ *
+ * 两处**如实拒绝**，不编造：
+ *   - 没有听力结构的稿子不是听力卷，不能悄悄编成一份空的听力源；
+ *   - 整卷级音频（`listening.media`）在草稿里只记录 mime/时长/哈希，没有 codec/container，
+ *     而运行时契约要求两者，所以拒绝并要求改为每个 Section 各绑一段音频。
+ */
+export function buildListeningSourceV1FromAuthoring(authoring: IeltsAuthoringIRV2): ListeningExamSourceV1 {
+  const structure = authoring.listening;
+  if (!structure) {
+    throw new ListeningRuntimeErrorV1("RUNTIME_LISTENING_MISSING", "Listening authoring source has no listening structure.", authoring.jobId);
+  }
+  if (structure.media) {
+    throw new ListeningRuntimeErrorV1(
+      "LISTENING_EXAM_MEDIA_UNSUPPORTED",
+      "Exam-level listening audio cannot be compiled: the draft records no codec/container. Bind one audio file per part instead.",
+      authoring.exam.examId
+    );
+  }
+  const orderedSlots = Object.values(authoring.answerSlots).sort(
+    (left, right) => left.questionNumber - right.questionNumber || left.slotId.localeCompare(right.slotId)
+  );
+  const source: ListeningExamSourceV1 = {
+    schemaVersion: LISTENING_EXAM_SOURCE_V1_SCHEMA_VERSION,
+    examId: authoring.exam.examId,
+    meta: {
+      title: authoring.exam.title,
+      language: authoring.exam.language,
+      scope: structure.scope
+    },
+    assets: { examId: authoring.exam.examId, assets: authoring.assets },
+    parts: structuredClone(structure.parts),
+    playbackPolicy: structure.playbackPolicy,
+    transcript: structure.transcript,
+    taskGroups: structuredClone(authoring.taskGroups),
+    answerSlots: authoring.answerSlots,
+    answerKey: authoring.answerKey,
+    questionOrder: orderedSlots.map((slot) => slot.slotId),
+    questionDisplayMap: orderedSlots.reduce<Record<string, string>>((result, slot) => {
+      result[slot.slotId] = slot.displayLabel;
+      return result;
+    }, {}),
+    audit: {
+      sourceSchemaVersion: authoring.schemaVersion,
+      sourceDocumentId: authoring.sourceDocumentId,
+      sourceRevision: authoring.audit.revision,
+      sourceRevisionKind: authoring.audit.source,
+      minimumRuntimeVersion: LISTENING_MINIMUM_RUNTIME_VERSION_V1
+    }
+  };
+  assertListeningExamSourceV1(source);
+  return source;
 }

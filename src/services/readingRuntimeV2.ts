@@ -266,10 +266,20 @@ export function assertReadingExamSourceV2(source: ReadingExamSourceV2): void {
  *
  * `unresolved` 表示「答案还没填」，属另一类问题，不在本检查范围。
  */
-export function validateReadingAnswerKeyKinds(source: ReadingExamSourceV2): ReadingRuntimeIssueV2[] {
+/**
+ * 答案键类型与题位交互是否对得上。真实学生端在提交阶段会因为一处不匹配而拒掉整份提交，
+ * 所以预览必须如实报出来，而不是渲染完题面就当作「没问题」。
+ *
+ * 只看 `answerSlots` 与 `answerKey`，两者在阅读与听力契约里同名同形，所以听力预览复用
+ * 同一份判断——否则听力预览会声称「答案形式都没问题」，而它其实根本没检查过。
+ */
+export function validateAnswerKeyKinds(input: {
+  answerSlots: Record<string, AnswerSlotV2>;
+  answerKey: Record<string, AnswerValueV2>;
+}): ReadingRuntimeIssueV2[] {
   const issues: ReadingRuntimeIssueV2[] = [];
-  for (const [slotId, slot] of Object.entries(source.answerSlots)) {
-    const answer = source.answerKey[slotId];
+  for (const [slotId, slot] of Object.entries(input.answerSlots)) {
+    const answer = input.answerKey[slotId];
     if (!answer || answer.kind === "unresolved") continue;
     if (slot.interaction === "text") {
       if (answer.kind !== "text") {
@@ -284,6 +294,10 @@ export function validateReadingAnswerKeyKinds(source: ReadingExamSourceV2): Read
     }
   }
   return issues;
+}
+
+export function validateReadingAnswerKeyKinds(source: ReadingExamSourceV2): ReadingRuntimeIssueV2[] {
+  return validateAnswerKeyKinds(source);
 }
 
 /**

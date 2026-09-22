@@ -96,6 +96,103 @@ pub(crate) fn runtime_source_file_name(modality: ExamModalityV2) -> &'static str
     }
 }
 
+/// Parsing and the packaging/probing accessors. The two contracts share
+/// everything a package cares about — exam id, title, assets, schema version —
+/// and differ only in the exam body, which packaging never reads. One accessor
+/// set stops the NAS transaction and the student loader probe from growing a
+/// reading-shaped copy of themselves for each new modality.
+impl CompiledExamSourceV2 {
+    /// Parse a runtime source document, dispatching on its `schemaVersion`.
+    ///
+    /// An unknown version is parsed as reading so the caller's existing error
+    /// surface is unchanged; the compile step already guarantees a listening
+    /// source carries the listening version.
+    pub(crate) fn parse(value: &serde_json::Value) -> Result<Self, String> {
+        let schema = value
+            .get("schemaVersion")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        if schema == LISTENING_EXAM_SOURCE_V1_SCHEMA_VERSION {
+            serde_json::from_value::<ListeningExamSourceV1>(value.clone())
+                .map(|source| Self::Listening(Box::new(source)))
+                .map_err(|error| error.to_string())
+        } else {
+            serde_json::from_value::<ReadingExamSourceV2>(value.clone())
+                .map(Self::Reading)
+                .map_err(|error| error.to_string())
+        }
+    }
+
+    pub(crate) fn title(&self) -> &str {
+        match self {
+            Self::Reading(source) => &source.meta.title,
+            Self::Listening(source) => &source.meta.title,
+        }
+    }
+
+    /// `meta.category` as the NAS manifest spells it. Listening has no category,
+    /// so it is `null` there rather than an invented passage kind.
+    pub(crate) fn category_value(&self) -> serde_json::Value {
+        match self {
+            Self::Reading(source) => source
+                .meta
+                .category
+                .as_ref()
+                .and_then(|category| serde_json::to_value(category).ok())
+                .unwrap_or(serde_json::Value::Null),
+            Self::Listening(_) => serde_json::Value::Null,
+        }
+    }
+
+    pub(crate) fn assets(&self) -> &[crate::schema::common::AssetDescriptorV2] {
+        match self {
+            Self::Reading(source) => &source.assets.assets,
+            Self::Listening(source) => &source.assets.assets,
+        }
+    }
+
+    pub(crate) fn assets_exam_id(&self) -> &str {
+        match self {
+            Self::Reading(source) => &source.assets.exam_id,
+            Self::Listening(source) => &source.assets.exam_id,
+        }
+    }
+
+    /// Re-check the document against its own contract.
+    pub(crate) fn validate(&self) -> Vec<CompilerIssueV2> {
+        match self {
+            Self::Reading(source) => crate::reading_source_v2::validate_reading_source_v2(source),
+            Self::Listening(source) => validate_listening_exam_source_v1(source)
+                .into_iter()
+                .map(|issue| {
+                    compiler_issue(&issue.code, contract_message(&issue.code), &issue.target_id)
+                })
+                .collect(),
+        }
+    }
+
+    /// Asset ids the exam body actually plays or displays. The package manifest
+    /// must contain exactly the source asset set, and this is the "referenced"
+    /// half of that closure.
+    pub(crate) fn referenced_asset_ids(&self) -> Vec<String> {
+        match self {
+            Self::Reading(source) => crate::reading_runtime_v2::reading_referenced_asset_ids(source),
+            Self::Listening(source) => {
+                let mut ids = std::collections::BTreeSet::new();
+                if let Some(media) = &source.media {
+                    ids.insert(media.asset_id.clone());
+                }
+                for part in &source.parts {
+                    if let Some(media) = &part.media {
+                        ids.insert(media.asset_id.clone());
+                    }
+                }
+                ids.into_iter().collect()
+            }
+        }
+    }
+}
+
 /// The runtime contract schema version a modality compiles into. Used by the
 /// quality report's compiler probe, which has to name the contract it actually
 /// exercised instead of always claiming `ReadingExamSourceV2`.
@@ -247,181 +344,15 @@ fn contract_message(code: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::common::AssetDescriptorV2;
     use crate::schema::ielts_authoring_v2::{
-        AnswerSlotParticipationV2, AnswerSlotV2, AnswerValueV2, ListeningPartMediaV2,
-        ListeningPartV2, ListeningPlaybackPolicyV2, ListeningScopeV2, ListeningStructureV2,
-        QuestionNumberExpressionV2, TaskGroupV2,
+        AnswerSlotParticipationV2, ListeningScopeV2, QuestionNumberExpressionV2,
     };
     use crate::schema::listening_runtime_v1::ListeningAudioProbeStatusV1;
+    use crate::test_support::complete_listening_exam;
     use serde_json::json;
 
-    const SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-
-    fn asset() -> AssetDescriptorV2 {
-        serde_json::from_value(json!({
-            "assetId": format!("audio-{SHA}"),
-            "kind": "audio",
-            "mime": "audio/wav",
-            "relativePath": format!("audio/{SHA}.wav"),
-            "sha256": SHA,
-            "byteLength": 4096,
-            "durationMs": 1000,
-            "extractionMode": "user_upload"
-        }))
-        .unwrap()
-    }
-
-    fn media() -> ListeningPartMediaV2 {
-        serde_json::from_value(json!({
-            "assetId": format!("audio-{SHA}"),
-            "mime": "audio/wav",
-            "durationMs": 1000,
-            "channels": 1,
-            "sampleRateHz": 16000,
-            "sha256": SHA,
-            "probe": {
-                "status": "passed",
-                "provider": "symphonia",
-                "providerVersion": "0.6.0",
-                "probedAt": "2026-09-22T00:00:00Z",
-                "issueCodes": []
-            }
-        }))
-        .unwrap()
-    }
-
-    fn part(ordinal: u32, questions: Vec<u32>) -> ListeningPartV2 {
-        ListeningPartV2 {
-            part_id: format!("part-{ordinal}"),
-            display_label: format!("SECTION {ordinal}"),
-            expected_question_numbers: questions.clone(),
-            task_ids: vec![format!("task-{ordinal}")],
-            cue: None,
-            source_anchors: Vec::new(),
-            media: Some(media()),
-        }
-    }
-
-    /// One slot per question, each owned by its part's task group.
-    fn listening_source(parts: Vec<ListeningPartV2>, questions_per_part: usize) -> IeltsAuthoringIRV2 {
-        let mut task_groups = Vec::new();
-        let mut answer_slots = BTreeMap::new();
-        let mut answer_key = BTreeMap::new();
-        for part in &parts {
-            let mut slot_ids = Vec::new();
-            for number in &part.expected_question_numbers {
-                let slot_id = format!("q{number}");
-                slot_ids.push(slot_id.clone());
-                answer_slots.insert(
-                    slot_id.clone(),
-                    serde_json::from_value::<AnswerSlotV2>(json!({
-                        "slotId": slot_id,
-                        "questionNumber": number,
-                        "displayLabel": number.to_string(),
-                        "hostType": "paragraph",
-                        "interaction": "text",
-                        "participation": "scoring",
-                        "constraints": {"maxWords": 1, "maxNumbers": 0},
-                        "sourceAnchors": [],
-                        "confidence": 1
-                    }))
-                    .unwrap(),
-                );
-                answer_key.insert(
-                    slot_id,
-                    AnswerValueV2::Text {
-                        values: vec![format!("answer {number}")],
-                        normalization: None,
-                    },
-                );
-            }
-            task_groups.push(
-                serde_json::from_value::<TaskGroupV2>(json!({
-                    "taskId": part.task_ids[0],
-                    "displayRange": {
-                        "kind": "range",
-                        "start": part.expected_question_numbers.first().unwrap(),
-                        "end": part.expected_question_numbers.last().unwrap()
-                    },
-                    "taskType": "note_completion",
-                    "instructions": [],
-                    "instructionSignature": {
-                        "normalizedText": "Write ONE WORD ONLY.",
-                        "taskType": "note_completion",
-                        "expectedQuestionNumbers": part.expected_question_numbers,
-                        "expectedSlotCount": part.expected_question_numbers.len(),
-                        "selectionCardinality": {"min": 1, "max": 1, "exact": 1},
-                        "answerAssignment": "per_slot",
-                        "wordLimit": {"maxWords": 1, "maxNumbers": 0, "wordsAndOrNumber": false},
-                        "evidenceAnchors": [],
-                        "confidence": 1
-                    },
-                    "stimulus": [],
-                    "responseGroups": [{
-                        "responseGroupId": format!("{}-response", part.part_id),
-                        "kind": "text_entry",
-                        "slotIds": slot_ids,
-                        "cardinality": {"min": 1, "max": 1, "exact": 1},
-                        "assignment": "per_slot",
-                        "scoringPolicy": "per_slot_binary",
-                        "duplicatePolicy": "ignore_duplicates",
-                        "allowOptionReuse": false,
-                        "sourceAnchors": []
-                    }],
-                    "sourceAnchors": [],
-                    "quality": {"score": 1, "sourceCoverage": 1, "hardFailures": []},
-                    "reviewState": "confirmed"
-                }))
-                .unwrap(),
-            );
-        }
-        let _ = questions_per_part;
-        // Start from the committed reading draft so every required piece of exam
-        // metadata is genuinely schema-valid, then reshape the body into a listening
-        // paper. Hand-writing the whole document here would let the fixture drift
-        // away from the schema without anything noticing.
-        let mut source: IeltsAuthoringIRV2 = serde_json::from_str(include_str!(
-            "../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
-        ))
-        .expect("committed authoring fixture parses");
-        source.modality = ExamModalityV2::Listening;
-        source.passage = None;
-        source.assets = vec![asset()];
-        source.listening = Some(ListeningStructureV2 {
-            scope: ListeningScopeV2::CompleteExam,
-            media: None,
-            parts,
-            playback_policy: serde_json::from_value::<ListeningPlaybackPolicyV2>(json!({
-                "mode": "practice",
-                "autoplay": false,
-                "allowPause": true,
-                "allowSeek": true,
-                "allowReplay": true,
-                "refreshBehavior": "resume_from_snapshot",
-                "crashRecoveryBehavior": "resume_from_snapshot",
-                "showCurrentTime": true,
-                "showDuration": true
-            }))
-            .unwrap(),
-            transcript: None,
-        });
-        source.task_groups = task_groups;
-        source.answer_slots = answer_slots;
-        source.answer_key = answer_key;
-        source.source_document_id = "doc-listening".to_string();
-        source.audit.revision = 3;
-        source
-    }
-
     fn complete_exam() -> IeltsAuthoringIRV2 {
-        let parts = vec![
-            part(1, (1..=10).collect()),
-            part(2, (11..=20).collect()),
-            part(3, (21..=30).collect()),
-            part(4, (31..=40).collect()),
-        ];
-        listening_source(parts, 10)
+        complete_listening_exam()
     }
 
     #[test]
@@ -439,15 +370,40 @@ mod tests {
         assert!(validate_listening_exam_source_v1(&compiled).is_empty());
     }
 
+    /// Four sections, four files. A paper whose sections all played the same recording would
+    /// satisfy every count-based check while being unusable in a real exam.
+    #[test]
+    fn each_part_carries_its_own_audio_asset() {
+        let compiled = compile_listening_source_v1(&complete_exam()).expect("compiles");
+        let asset_ids = compiled
+            .parts
+            .iter()
+            .map(|part| {
+                part.media
+                    .as_ref()
+                    .expect("every part is bound")
+                    .asset_id
+                    .clone()
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(asset_ids.len(), 4, "{asset_ids:?}");
+        assert_eq!(compiled.assets.assets.len(), 4);
+        for descriptor in &compiled.assets.assets {
+            assert!(
+                asset_ids.contains(&descriptor.asset_id),
+                "{} is not referenced by any part",
+                descriptor.asset_id
+            );
+        }
+    }
+
     #[test]
     fn a_part_without_audio_is_rejected_instead_of_shipping_silence() {
         let mut source = complete_exam();
         source.listening.as_mut().unwrap().parts[2].media = None;
         let issues = compile_listening_source_v1(&source).expect_err("must not compile");
         assert!(issues.iter().any(|issue| issue.code == "LISTENING_MEDIA_MISSING"));
-        assert!(issues
-            .iter()
-            .any(|issue| issue.target_id == "part-3"));
+        assert!(issues.iter().any(|issue| issue.target_id == "part-3"));
     }
 
     #[test]
@@ -482,12 +438,13 @@ mod tests {
         for part in source.listening.as_mut().unwrap().parts.iter_mut() {
             part.media = None;
         }
+        let sha = crate::test_support::audio_sha256();
         source.listening.as_mut().unwrap().media = Some(
             serde_json::from_value(json!({
-                "assetId": format!("audio-{SHA}"),
+                "assetId": format!("audio-{sha}"),
                 "mime": "audio/wav",
                 "durationMs": 1000,
-                "sha256": SHA
+                "sha256": sha
             }))
             .unwrap(),
         );
@@ -501,6 +458,8 @@ mod tests {
         let listening = compile_exam_source_v2(&complete_exam()).expect("listening compiles");
         assert!(matches!(listening, CompiledExamSourceV2::Listening(_)));
         assert_eq!(listening.schema_version(), "ListeningExamSourceV1");
+        assert_eq!(listening.file_name(), "listening-source-v1.json");
+        assert_eq!(listening.modality(), "listening");
         let document = listening.document().unwrap();
         assert_eq!(document["schemaVersion"], "ListeningExamSourceV1");
         assert_eq!(document["parts"].as_array().unwrap().len(), 4);

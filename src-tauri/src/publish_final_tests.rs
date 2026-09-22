@@ -706,3 +706,148 @@ fn a_purge_failure_is_reported_but_never_fails_the_publish() {
     }
     let _ = fs::remove_dir_all(root);
 }
+
+/// 播种一道**听力**题：识别阶段产出四个 Section、没有音频的草稿，音频由用户后传。
+///
+/// `bound_parts` 列出已上传音频的 Section 序号，其余 Section 保持未绑定（用户还没传完）。
+/// 音频走真实的受管入口 `bind_audio`（受管表 + `<appData>/audio/<itemId>/<sha>.<ext>`），
+/// 而不是往草稿里塞一个假 `media`——权威稿里的 `media` 只能由那条路产生。
+///
+/// 题库行在导入时就带上了用户确认的 `modality`，播种按行里的模态决定稿件形状：这正是 T1
+/// 修掉的那个「听力卷被播成阅读形状」的缺陷。
+fn seed_listening_item(root: &Path, exam_id: &str, bound_parts: &[i64]) -> String {
+    let job = chain_job(&format!("Publish final {exam_id}"));
+    save_job(root, &job).unwrap();
+    let dir = job_dir(root, &job.job_id);
+    ensure_job_dirs(&dir).unwrap();
+    let mut authoring =
+        serde_json::to_value(crate::test_support::complete_listening_exam()).unwrap();
+    authoring["jobId"] = json!(job.job_id);
+    authoring["exam"]["examId"] = json!(exam_id);
+    authoring["assets"] = json!([]);
+    for part in authoring["listening"]["parts"].as_array_mut().unwrap() {
+        part.as_object_mut().unwrap().remove("media");
+    }
+
+    let conn = crate::library::repository::open_library_connection(root).unwrap();
+    crate::library::repository::upsert_item_shell(
+        &conn,
+        &crate::library::repository::UpsertItemInput {
+            id: &job.job_id,
+            modality: "listening",
+            title: "Listening Paper",
+            status: "processing",
+            source_asset_id: None,
+        },
+    )
+    .unwrap();
+    drop(conn);
+    write_json(&dir.join(AUTHORING_V2_SHADOW_FILE), &authoring).unwrap();
+    let physical = physical_shadow_for(&authoring);
+    write_json(&dir.join(DOCUMENT_V2_SHADOW_FILE), &physical).unwrap();
+    fs::create_dir_all(dir.join("uploads")).unwrap();
+    fs::write(dir.join("uploads").join("abcd1234-source.pdf"), b"%PDF-1.4 fake source").unwrap();
+    fs::write(dir.join("pipeline-report.json"), b"{}").unwrap();
+
+    for ordinal in bound_parts {
+        let upload = root.join(format!("upload-section-{ordinal}.wav"));
+        crate::test_support::write_audio_fixture(&upload, 220.0 * (*ordinal as f64));
+        let bound = crate::listening_audio::store::bind_audio(root, &job.job_id, *ordinal, &upload)
+            .expect("binding a section upload must succeed");
+        assert!(bound.playable, "section {ordinal} must probe clean: {:?}", bound.issue_codes);
+    }
+
+    crate::library::commands::get_workspace_item_core(root, &job.job_id)
+        .expect("on-demand migration must seed the canonical draft");
+    job.job_id
+}
+
+/// 缺一个 Section 音频的听力卷，放行后只能停在授权快照里。
+///
+/// 这一条在单一编译入口之前是**假通过**：导出走的是阅读编译器，一份没有 passage 的听力稿
+/// 会被编成一份「空文章的阅读稿」并判定可加载，于是学生端拿到一份没有声音的卷子。
+#[test]
+fn forced_publish_of_a_listening_paper_missing_section_audio_is_authoring_only() {
+    let root = temp_root("publish-forced-listening-audio");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_listening_item(&root, "final-listening-audio", &[1, 2, 4]);
+
+    let result = publish(&root, &[&item], force_now()).expect("forced publish must succeed");
+    let outcome = outcome_for(&result, &item);
+    assert_eq!(outcome["forced"], json!(true));
+    assert_eq!(outcome["studentLoadable"], json!(false), "{outcome}");
+
+    let receipt = snapshot_receipts(&root)
+        .into_iter()
+        .find(|receipt| receipt["examId"] == json!("final-listening-audio"))
+        .expect("authoring-only snapshot must be written");
+    assert_eq!(receipt["studentLoadable"], json!(false));
+    assert_eq!(receipt["reviewRequired"], json!(true), "reviewRequired 必须如实");
+    let dir = PathBuf::from(receipt["__dir"].as_str().unwrap());
+    assert!(
+        !dir.join("listening-source-v1.json").exists(),
+        "缺音频的听力卷不得产出学生端运行时"
+    );
+    assert!(
+        !dir.join("reading-source-v2.json").exists(),
+        "听力卷绝不能被编成阅读稿"
+    );
+    // 已上传的三段音频原样留在授权快照里：放行不清理、不编造。
+    let authoring: Value =
+        serde_json::from_slice(&fs::read(dir.join("authoring-ir-v2.json")).unwrap()).unwrap();
+    assert_eq!(authoring["modality"], json!("listening"));
+    let parts = authoring["listening"]["parts"].as_array().unwrap();
+    assert!(parts[0]["media"]["sha256"].is_string(), "已上传的 Section 音频不得被放行清掉");
+    assert!(parts[1]["media"]["sha256"].is_string());
+    assert!(parts[3]["media"]["sha256"].is_string());
+    assert!(parts[2].get("media").is_none(), "没上传的 Section 不得被伪造出音频");
+    assert_eq!(authoring["assets"].as_array().unwrap().len(), 3);
+    if reading_root(&root).join("manifest.js").is_file() {
+        assert!(
+            manifest(&root).get("final-listening-audio").is_none(),
+            "学生端加载不了的题不得进学生清单"
+        );
+    }
+    let records = publish_records(&root, &item);
+    assert_eq!(records[0].forced, 1);
+    assert_eq!(records[0].student_loadable, 0);
+    assert_eq!(item_status(&root, &item), "published_forced");
+    let _ = fs::remove_dir_all(root);
+}
+
+/// 四个 Section 音频齐全的听力卷，放行后**要**进学生清单，并且以听力的身份进。
+#[test]
+fn forced_publish_of_a_complete_listening_paper_reaches_the_student_manifest() {
+    let root = temp_root("publish-forced-listening-complete");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_listening_item(&root, "final-listening-full", &[1, 2, 3, 4]);
+
+    let result = publish(&root, &[&item], force_now()).expect("publish must succeed");
+    let outcome = outcome_for(&result, &item);
+    assert_eq!(outcome["studentLoadable"], json!(true), "{outcome}");
+
+    let manifest = manifest(&root);
+    let entry = manifest
+        .get("final-listening-full")
+        .unwrap_or_else(|| panic!("the exam is in the manifest: {manifest}"));
+    assert_eq!(entry["schemaVersion"], json!("ListeningExamSourceV1"));
+    assert_eq!(entry["modality"], json!("listening"));
+
+    let resources = reading_root(&root).join("resources").join("final-listening-full");
+    let asset_manifest: Value = serde_json::from_slice(
+        &fs::read(resources.join("asset-manifest.json")).unwrap(),
+    )
+    .unwrap();
+    let assets = asset_manifest["assets"].as_object().unwrap();
+    assert_eq!(assets.len(), 4, "四段 Section 音频都要进资源清单: {asset_manifest}");
+    for (asset_id, descriptor) in assets {
+        let relative = descriptor["relativePath"].as_str().unwrap();
+        assert!(
+            resources.join(relative).is_file(),
+            "{asset_id} must reach the student resources directory ({relative})"
+        );
+    }
+    let records = publish_records(&root, &item);
+    assert_eq!(records[0].student_loadable, 1);
+    let _ = fs::remove_dir_all(root);
+}

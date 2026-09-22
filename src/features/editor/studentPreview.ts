@@ -1,17 +1,23 @@
 import type { IeltsAuthoringIRV2 } from "../../types";
-import { buildReadingSourceV2FromAuthoring, validateReadingAnswerKeyKinds } from "../../services/readingRuntimeV2";
+import { buildReadingSourceV2FromAuthoring, validateAnswerKeyKinds } from "../../services/readingRuntimeV2";
 import { ReadingRuntimeError, type ReadingExamSourceV2 } from "../../types/reading-runtime-v2";
+import { buildListeningSourceV1FromAuthoring, ListeningRuntimeErrorV1 } from "../../services/listeningRuntimeV1";
+import type { ListeningExamSourceV1 } from "../../types/listening-runtime-v1";
 
 // 学生预览的编译入口。
 //
-// 预览**必须**走产品真正使用的那条编译路径：发布器把 `IeltsAuthoringIRV2` 编成
-// `ReadingExamSourceV2` 后写进 NAS 包，学生端渲染的是编译产物。如果预览自己另做一份
-// 近似渲染，就会出现「预览能看、发布后被学生端拒绝」这类只在真机上暴露的问题。
+// 预览**必须**走产品真正使用的那条编译路径：发布器把 `IeltsAuthoringIRV2` 编成运行时契约
+// （阅读 `ReadingExamSourceV2`、听力 `ListeningExamSourceV1`）后写进 NAS 包，学生端渲染的是
+// 编译产物。如果预览自己另做一份近似渲染，就会出现「预览能看、发布后被学生端拒绝」这类
+// 只在真机上暴露的问题。
 //
-// 所以这里先调用同一个 `buildReadingSourceV2FromAuthoring`：
-//   - 编译失败（结构非法 / 热点越界 / 资源路径不安全）→ 返回可定位的错误，**不**渲染预览，
-//     避免用户对着过期画面继续编辑；
+// 所以这里按稿件自身的 `modality` 分派到同一个编译器：
+//   - 编译失败（结构非法 / 热点越界 / 资源路径不安全 / Section 缺音频）→ 返回可定位的错误，
+//     **不**渲染预览，避免用户对着过期画面继续编辑；
 //   - 编译成功 → 交给共享的 ExamCanvas student 模式渲染，交互语义与学生端一致。
+//
+// 按 `modality` 分派而不是按形状猜测：一份丢了 Section 的听力卷必须**以听力的身份失败**，
+// 而不是被编成一份没有文章的「阅读稿」然后看起来通过了。
 //
 // 注意：编译成功**不等于**可发布。可发布还要过发布门禁，两者在界面上分开显示。
 
@@ -21,15 +27,22 @@ export interface PreviewCompileIssue {
   message: string;
 }
 
+export type PreviewCompiledSource =
+  | { modality: "reading"; reading: ReadingExamSourceV2 }
+  | { modality: "listening"; listening: ListeningExamSourceV1 };
+
 export type PreviewCompileResult =
   | {
       ok: true;
-      source: ReadingExamSourceV2;
+      compiled: PreviewCompiledSource;
       summary: {
+        modality: "reading" | "listening";
         taskGroups: number;
         slots: number;
         assets: number;
         answeredSlots: number;
+        /** 听力稿的 Section 数（每个 Section 一段独立音频）；阅读稿恒为 0。 */
+        listeningParts: number;
         /** 答案键类型与槽位交互不一致的槽位（真实学生端会在提交阶段拒绝整份提交）。 */
         answerKeyIssues: PreviewCompileIssue[];
       };
@@ -40,6 +53,9 @@ function compileIssue(error: unknown): PreviewCompileIssue {
   if (error instanceof ReadingRuntimeError) {
     return { code: error.code, targetId: error.targetId ?? "exam", message: error.message };
   }
+  if (error instanceof ListeningRuntimeErrorV1) {
+    return { code: error.code, targetId: error.targetId ?? "exam", message: error.message };
+  }
   const raw = error instanceof Error ? error.message : String(error);
   return { code: "PREVIEW_COMPILE_FAILED", targetId: "exam", message: raw };
 }
@@ -48,8 +64,18 @@ function compileIssue(error: unknown): PreviewCompileIssue {
 export function compilePreviewSource(draft: IeltsAuthoringIRV2 | undefined): PreviewCompileResult | undefined {
   if (!draft) return undefined;
   try {
-    const source = buildReadingSourceV2FromAuthoring(draft);
+    const compiled: PreviewCompiledSource =
+      draft.modality === "listening"
+        ? { modality: "listening", listening: buildListeningSourceV1FromAuthoring(draft) }
+        : { modality: "reading", reading: buildReadingSourceV2FromAuthoring(draft) };
+    const source = compiled.modality === "listening" ? compiled.listening : compiled.reading;
     const slots = Object.keys(source.answerSlots).length;
+    // 两份契约的资源清单在 TS 侧形状不同（阅读是 `Record<assetId, …>`，听力是数组）。
+    // 这是既有差异，不在本次改动范围内，这里如实分别计数。
+    const assetCount =
+      compiled.modality === "listening"
+        ? compiled.listening.assets.assets.length
+        : Object.keys(compiled.reading.assets.assets).length;
     const answeredSlots = Object.values(source.answerKey).filter((value) => {
       if (!value) return false;
       if (value.kind === "text") return value.values.some((entry) => entry.trim().length > 0);
@@ -58,19 +84,22 @@ export function compilePreviewSource(draft: IeltsAuthoringIRV2 | undefined): Pre
     }).length;
     // 编译通过 ≠ 学生端能收下。答案键类型不匹配时题面照样渲染，但真实学生端会在提交阶段
     // 拒绝整份提交。这里如实带出来，让预览把「能看」和「能提交」分开说，不留假完成。
-    const answerKeyIssues = validateReadingAnswerKeyKinds(source).map((item) => ({
+    // `answerSlots` / `answerKey` 在两份契约里同名同形，所以两种稿子跑的是同一份判断。
+    const answerKeyIssues = validateAnswerKeyKinds(source).map((item) => ({
       code: item.code,
       targetId: item.targetId,
       message: item.message
     }));
     return {
       ok: true,
-      source,
+      compiled,
       summary: {
+        modality: compiled.modality,
         taskGroups: source.taskGroups.length,
         slots,
-        assets: Object.keys(source.assets.assets).length,
+        assets: assetCount,
         answeredSlots,
+        listeningParts: compiled.modality === "listening" ? compiled.listening.parts.length : 0,
         answerKeyIssues
       }
     };
