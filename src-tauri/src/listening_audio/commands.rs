@@ -51,22 +51,42 @@ pub(crate) struct BindListeningAudioInput {
 pub(crate) async fn bind_listening_audio(input: BindListeningAudioInput, app: AppHandle) -> CommandResult<Value> {
     let root = crate::app_root(&app)?;
     allow_managed_audio(&app, &root);
-    let bound = blocking(move || store::bind_audio(&root, &input.item_id, input.part_ordinal, Path::new(&input.path))).await?;
-    to_value(bound)
+    let item_id = input.item_id.clone();
+    let part_ordinal = input.part_ordinal;
+    let path = input.path.clone();
+    let bound = blocking(move || {
+        let bound = store::bind_audio(&root, &item_id, part_ordinal, Path::new(&path))?;
+        // Mirror onto the canonical draft's part `media` through a real edit
+        // transaction, so preview/export/student runtime read one document.
+        let sync = super::canonical_media::sync_item_audio_media(&root, &item_id)?;
+        Ok((bound, sync))
+    })
+    .await?;
+    to_value(bound.0)
 }
 
 #[tauri::command]
 pub(crate) async fn bind_listening_audio_folder(item_id: String, folder: String, app: AppHandle) -> CommandResult<Value> {
     let root = crate::app_root(&app)?;
     allow_managed_audio(&app, &root);
-    let bound = blocking(move || store::bind_folder(&root, &item_id, Path::new(&folder))).await?;
+    let bound = blocking(move || {
+        let bound = store::bind_folder(&root, &item_id, Path::new(&folder))?;
+        super::canonical_media::sync_item_audio_media(&root, &item_id)?;
+        Ok(bound)
+    })
+    .await?;
     to_value(bound)
 }
 
 #[tauri::command]
 pub(crate) async fn unbind_listening_audio(item_id: String, part_ordinal: i64, app: AppHandle) -> CommandResult<Value> {
     let root = crate::app_root(&app)?;
-    let removed = blocking(move || store::unbind_audio(&root, &item_id, part_ordinal)).await?;
+    let removed = blocking(move || {
+        let removed = store::unbind_audio(&root, &item_id, part_ordinal)?;
+        super::canonical_media::sync_item_audio_media(&root, &item_id)?;
+        Ok(removed)
+    })
+    .await?;
     to_value(removed)
 }
 

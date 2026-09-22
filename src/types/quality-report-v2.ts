@@ -3,7 +3,15 @@ import type { SourceAnchorV2 } from "./schema-common-v2";
 export type ReviewSeverity = "info" | "warning" | "blocking";
 export type ReadinessState = "ready" | "review_required" | "blocked";
 
-export type ReviewTargetType = "document" | "page" | "region" | "task" | "response_group" | "slot" | "asset";
+export type ReviewTargetType =
+  | "document"
+  | "page"
+  | "region"
+  | "task"
+  | "response_group"
+  | "slot"
+  | "asset"
+  | "part";
 
 export type SuggestedAction =
   | "assign_role"

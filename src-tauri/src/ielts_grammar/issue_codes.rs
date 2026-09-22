@@ -55,3 +55,13 @@ pub const ASSET_HASH_MISMATCH: &str = "ASSET_HASH_MISMATCH";
 pub const ASSET_PATH_UNSAFE: &str = "ASSET_PATH_UNSAFE";
 pub const DIAGRAM_QUESTION_REGION_OCR_REQUIRED: &str = "DIAGRAM_QUESTION_REGION_OCR_REQUIRED";
 pub const SIGNIFICANT_REGION_UNASSIGNED: &str = "SIGNIFICANT_REGION_UNASSIGNED";
+
+// --- Listening (per-part audio and per-part source coverage) ---
+/// A recognised listening part has no bound audio in the draft.
+pub const LISTENING_AUDIO_MISSING: &str = "LISTENING_AUDIO_MISSING";
+/// A recognised listening part's audio did not pass the probe (or was never probed).
+pub const LISTENING_AUDIO_PROBE_BLOCKED: &str = "LISTENING_AUDIO_PROBE_BLOCKED";
+/// The source declares a listening part the current draft does not carry.
+pub const LISTENING_PART_MISSING: &str = "LISTENING_PART_MISSING";
+/// The source declares question numbers inside a part that no task group covers.
+pub const LISTENING_PART_COVERAGE_MISSING: &str = "LISTENING_PART_COVERAGE_MISSING";

@@ -31,6 +31,9 @@ pub enum ReviewTargetTypeV2 {
     ResponseGroup,
     Slot,
     Asset,
+    /// A listening part (section). Parts own task groups, so neither `task` nor
+    /// `region` can address them without lying about what the id points at.
+    Part,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

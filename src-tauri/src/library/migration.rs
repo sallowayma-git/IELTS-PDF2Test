@@ -60,6 +60,35 @@ fn is_authoring_shape(value: &Value) -> bool {
 /// The library row carries the modality the user confirmed at import. Local recognition
 /// still builds a reading-shaped draft, so the first seed adopts the row's modality: a
 /// listening import must never surface as a reading draft.
+/// The modality the user confirmed at import, read from the library row.
+///
+/// This is the authority the draft builder follows: `queue_import` writes the row
+/// before the pipeline runs, so by the time a shadow is built the answer exists.
+/// A missing row (legacy job, unit fixture) falls back to `reading`.
+pub(crate) fn draft_modality(
+    root: &Path,
+    job_id: &str,
+) -> crate::schema::ielts_authoring_v2::ExamModalityV2 {
+    use crate::schema::ielts_authoring_v2::ExamModalityV2;
+    let modality = get_item_row_modality(root, job_id);
+    if modality == "listening" {
+        ExamModalityV2::Listening
+    } else {
+        ExamModalityV2::Reading
+    }
+}
+
+fn get_item_row_modality(root: &Path, job_id: &str) -> String {
+    let conn = match super::repository::open_library_connection(root) {
+        Ok(conn) => conn,
+        Err(_) => return "reading".to_string(),
+    };
+    match get_item(&conn, job_id) {
+        Ok(Some(item)) => item.modality,
+        _ => "reading".to_string(),
+    }
+}
+
 pub(crate) fn align_draft_modality(authoring: &mut Value, item_modality: &str) {
     if item_modality == "listening" {
         if let Some(object) = authoring.as_object_mut() {
@@ -199,6 +228,17 @@ pub(crate) fn ensure_initial_canonical(root: &Path, job_id: &str) -> CommandResu
     };
     if let Some(item) = get_item(&conn, job_id)? {
         align_draft_modality(&mut authoring, &item.modality);
+        // Audio bound before the draft existed (the import dialog lets the user bind
+        // while processing runs) must be mirrored onto the seeded draft, otherwise
+        // the first time the user opens the item the parts look unbound.
+        if item.modality == "listening" {
+            if let Ok(bindings) = crate::listening_audio::store::list_bindings(root, job_id) {
+                crate::listening_audio::canonical_media::apply_bindings_to_authoring(
+                    &mut authoring,
+                    &bindings,
+                );
+            }
+        }
     }
     if get_item(&conn, job_id)?.is_none() {
         let job_json: Value = fs::read(job_dir(root, job_id).join("job.json"))

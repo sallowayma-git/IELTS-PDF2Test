@@ -14,8 +14,8 @@ mod evidence;
 mod instruction_signature;
 mod instruction_zone;
 pub(crate) mod issue_codes;
-// Listening part boundaries (SECTION/PART 1–4). Not wired into the draft builder yet:
-// that happens with listening compile/package, so allow dead code until then.
+// Listening part boundaries (SECTION/PART 1–4).
+pub(crate) mod listening_draft;
 #[allow(dead_code)]
 pub(crate) mod listening_parts;
 mod option_bank;
@@ -31,7 +31,7 @@ mod real_pdf_acceptance;
 pub(crate) use quality::evaluate_quality;
 
 use crate::artifact_store::write_canonical_json_atomic;
-use crate::schema::ielts_authoring_v2::{QuestionNumberExpressionV2, TaskTypeV2};
+use crate::schema::ielts_authoring_v2::{ExamModalityV2, QuestionNumberExpressionV2, TaskTypeV2};
 use crate::schema::IeltsAuthoringIRV2;
 use crate::{CommandResult, ImportJob, SourceFile};
 use serde_json::{json, Map, Value};
@@ -71,7 +71,38 @@ pub(crate) fn write_authoring_v2_shadow(
     physical_shadow: Option<&Value>,
     output_path: &Path,
 ) -> CommandResult<Value> {
-    let value = build_authoring_v2_shadow(job, v1_authoring, split, v1_document, physical_shadow)?;
+    write_authoring_v2_shadow_for_modality(
+        job_dir,
+        job,
+        v1_authoring,
+        split,
+        v1_document,
+        physical_shadow,
+        output_path,
+        ExamModalityV2::Reading,
+    )
+}
+
+/// Same writer, with the paper's modality supplied by the caller (library row).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn write_authoring_v2_shadow_for_modality(
+    job_dir: &Path,
+    job: &ImportJob,
+    v1_authoring: &Value,
+    split: &Value,
+    v1_document: Option<&Value>,
+    physical_shadow: Option<&Value>,
+    output_path: &Path,
+    modality: ExamModalityV2,
+) -> CommandResult<Value> {
+    let value = build_authoring_v2_shadow_for_modality(
+        job,
+        v1_authoring,
+        split,
+        v1_document,
+        physical_shadow,
+        modality,
+    )?;
     write_canonical_json_atomic(output_path, &value)?;
     let compare = build_shadow_compare(job, v1_authoring, &value, physical_shadow);
     write_canonical_json_atomic(&job_dir.join(SHADOW_COMPARE_FILE), &compare)?;
@@ -85,6 +116,31 @@ pub(crate) fn build_authoring_v2_shadow(
     v1_document: Option<&Value>,
     physical_shadow: Option<&Value>,
 ) -> CommandResult<Value> {
+    build_authoring_v2_shadow_for_modality(
+        job,
+        v1_authoring,
+        split,
+        v1_document,
+        physical_shadow,
+        ExamModalityV2::Reading,
+    )
+}
+
+/// Same draft builder, but the caller supplies the paper's modality.
+///
+/// Modality is **not** inferred here: the library row the user confirmed at import is
+/// the authority (`processing::commands::queue_import` writes it), and the pipeline
+/// reads it back before building the draft. A listening paper gets a `listening`
+/// structure and no `passage`; everything else is shared with reading.
+pub(crate) fn build_authoring_v2_shadow_for_modality(
+    job: &ImportJob,
+    v1_authoring: &Value,
+    split: &Value,
+    v1_document: Option<&Value>,
+    physical_shadow: Option<&Value>,
+    modality: ExamModalityV2,
+) -> CommandResult<Value> {
+    let listening = modality == ExamModalityV2::Listening;
     let source = job
         .source_files
         .iter()
@@ -121,18 +177,22 @@ pub(crate) fn build_authoring_v2_shadow(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let passage = build_passage(
-        job,
-        v1_authoring,
-        split,
-        &v1_lines,
-        &fallback_lines,
-        &physical_lines,
-        &assets,
-        source_file_id,
-        source_hash,
-        source_type,
-    );
+    let passage = if listening {
+        Value::Null
+    } else {
+        build_passage(
+            job,
+            v1_authoring,
+            split,
+            &v1_lines,
+            &fallback_lines,
+            &physical_lines,
+            &assets,
+            source_file_id,
+            source_hash,
+            source_type,
+        )
+    };
     let mut task_groups = Vec::new();
     let mut answer_slots = Map::new();
     let answer_key_v1 = answer_key_from_v1(v1_authoring);
@@ -368,8 +428,7 @@ pub(crate) fn build_authoring_v2_shadow(
         "schemaVersion": "IeltsAuthoringIRV2",
         "jobId": job.job_id,
         "exam": exam_value(job, source),
-        "modality": "reading",
-        "passage": passage,
+        "modality": if listening { "listening" } else { "reading" },
         "taskGroups": task_groups,
         "answerSlots": answer_slots,
         "answerKey": answer_key_v2,
@@ -385,6 +444,33 @@ pub(crate) fn build_authoring_v2_shadow(
             "notes": ["Phase 4 grammar shadow; V1 remains authoritative."]
         }
     });
+    if listening {
+        // A listening paper has sections, not a passage. Section boundaries and the
+        // part -> task-group assignment come from the recognised lines, so the draft
+        // carries the same structure the runtime contract will check.
+        let draft = listening_draft::build_listening_structure(
+            &fallback_lines,
+            authoring["taskGroups"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .as_slice(),
+            source_file_id,
+            source_hash,
+            source_type,
+        );
+        for warning in &draft.warnings {
+            if let Some(notes) = authoring
+                .pointer_mut("/audit/notes")
+                .and_then(Value::as_array_mut)
+            {
+                notes.push(Value::String(warning.clone()));
+            }
+        }
+        authoring["listening"] = draft.structure;
+    } else {
+        authoring["passage"] = passage;
+    }
     if !recognition_blockers.is_empty() {
         authoring["recognitionBlockers"] = json!(recognition_blockers);
     }
@@ -3080,5 +3166,178 @@ mod tests {
                 .and_then(Value::as_u64)
                 .unwrap() as usize
         );
+    }
+}
+
+#[cfg(test)]
+mod listening_draft_builder_tests {
+    use super::*;
+    use crate::schema::ielts_authoring_v2::ExamModalityV2;
+    use chrono::Utc;
+
+    fn job() -> ImportJob {
+        ImportJob {
+            job_id: "listening-draft-job".to_string(),
+            title: "Listening fixture".to_string(),
+            status: crate::JobStatus::Working,
+            category: Some("P1".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: vec![],
+            source_files: vec![SourceFile {
+                file_id: "file-1".to_string(),
+                original_name: "listening.pdf".to_string(),
+                stored_name: "listening.pdf".to_string(),
+                file_type: "pdf".to_string(),
+                sha256: "a".repeat(64),
+                size_bytes: 1,
+                role: "MainQuestion".to_string(),
+                imported_at: Utc::now(),
+            }],
+            active_llm_profile_id: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            current_step: crate::WorkflowStep::Authoring,
+            issue_counts: crate::IssueCounts::default(),
+        }
+    }
+
+    const LAYOUT: [(u32, [(u32, u32); 3]); 4] = [
+        (1, [(1, 4), (5, 7), (8, 10)]),
+        (2, [(11, 16), (17, 20), (0, 0)]),
+        (3, [(21, 25), (26, 30), (0, 0)]),
+        (4, [(31, 40), (0, 0), (0, 0)]),
+    ];
+
+    fn groups() -> Vec<(u32, u32)> {
+        LAYOUT
+            .iter()
+            .flat_map(|(_, ranges)| ranges.iter().copied())
+            .filter(|(start, end)| *end > *start)
+            .collect()
+    }
+
+    fn listening_document() -> Value {
+        let mut blocks = vec![json!({"blockId": "title", "text": "Listening"})];
+        for (section, ranges) in LAYOUT {
+            blocks.push(json!({"blockId": format!("section-{section}"), "text": format!("SECTION {section}")}));
+            for (start, end) in ranges {
+                if end > start {
+                    blocks.push(json!({"blockId": format!("questions-{start}"), "text": format!("Questions {start}-{end}")}));
+                }
+            }
+        }
+        json!({"pages": [{"pageIndex": 1, "blocks": blocks}]})
+    }
+
+    fn listening_split() -> Value {
+        let candidates = groups()
+            .iter()
+            .enumerate()
+            .map(|(index, (start, end))| {
+                json!({
+                    "groupId": format!("g{}", index + 1),
+                    "heading": format!("Questions {start}-{end}"),
+                    "instructionText": format!("Questions {start}-{end} Complete the notes below."),
+                    "questionRange": [start, end],
+                    "kindHint": "note_completion",
+                    "sectionEvidence": [{
+                        "blockId": format!("questions-{start}"),
+                        "textPreview": format!("Questions {start}-{end} Complete the notes below."),
+                        "pageIndex": 1
+                    }]
+                })
+            })
+            .collect::<Vec<_>>();
+        json!({"questionGroupCandidates": candidates, "passageCandidates": []})
+    }
+
+    fn build(modality: ExamModalityV2) -> Value {
+        build_authoring_v2_shadow_for_modality(
+            &job(),
+            &json!({"schemaVersion": "ReadingAuthoringIRV1", "groups": []}),
+            &listening_split(),
+            Some(&listening_document()),
+            None,
+            modality,
+        )
+        .expect("draft must build")
+    }
+
+    #[test]
+    fn a_listening_import_builds_four_sections_and_no_passage() {
+        let authoring = build(ExamModalityV2::Listening);
+        assert_eq!(authoring["modality"], json!("listening"));
+        assert!(
+            authoring.get("passage").is_none() || authoring["passage"].is_null(),
+            "a listening paper has no passage: {}",
+            authoring["passage"]
+        );
+        let parts = authoring["listening"]["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 4, "{authoring}");
+        assert_eq!(authoring["listening"]["scope"], json!("complete_exam"));
+        assert_eq!(
+            parts
+                .iter()
+                .map(|part| part["partId"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>(),
+            vec!["part-1", "part-2", "part-3", "part-4"]
+        );
+        assert_eq!(
+            parts
+                .iter()
+                .map(|part| part["displayLabel"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>(),
+            vec!["SECTION 1", "SECTION 2", "SECTION 3", "SECTION 4"]
+        );
+        // Every task group lands in exactly one section, in order.
+        let assigned = parts
+            .iter()
+            .flat_map(|part| part["taskIds"].as_array().unwrap().iter())
+            .map(|task_id| task_id.as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(assigned, vec!["g1", "g2", "g3", "g4", "g5", "g6", "g7", "g8"]);
+        assert_eq!(
+            parts[0]["expectedQuestionNumbers"],
+            json!([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        );
+        assert_eq!(parts[3]["expectedQuestionNumbers"], json!((31..=40).collect::<Vec<u32>>()));
+        // Every declared question number appears exactly once across the parts.
+        let mut numbers = parts
+            .iter()
+            .flat_map(|part| part["expectedQuestionNumbers"].as_array().unwrap().iter())
+            .map(|value| value.as_u64().unwrap() as u32)
+            .collect::<Vec<_>>();
+        numbers.sort_unstable();
+        assert_eq!(numbers, (1..=40).collect::<Vec<u32>>());
+    }
+
+    #[test]
+    fn a_listening_draft_without_audio_reports_one_missing_audio_issue_per_part() {
+        let authoring = build(ExamModalityV2::Listening);
+        let issues = authoring["quality"]["issues"].as_array().unwrap();
+        let audio = issues
+            .iter()
+            .filter(|issue| issue["code"] == json!(crate::ielts_grammar::issue_codes::LISTENING_AUDIO_MISSING))
+            .collect::<Vec<_>>();
+        assert_eq!(audio.len(), 4, "{issues:?}");
+        assert!(audio
+            .iter()
+            .all(|issue| issue["severity"] == json!("blocking")));
+        assert!(authoring["quality"]["hardFailures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|code| code == crate::ielts_grammar::issue_codes::LISTENING_AUDIO_MISSING));
+    }
+
+    #[test]
+    fn the_reading_path_is_unchanged_by_the_listening_branch() {
+        let authoring = build(ExamModalityV2::Reading);
+        assert_eq!(authoring["modality"], json!("reading"));
+        assert!(authoring.get("listening").is_none() || authoring["listening"].is_null());
+        assert!(authoring.get("passage").is_some());
+        let issues = authoring["quality"]["issues"].as_array().unwrap();
+        assert!(!issues.iter().any(|issue| issue["code"]
+            == json!(crate::ielts_grammar::issue_codes::LISTENING_AUDIO_MISSING)));
     }
 }

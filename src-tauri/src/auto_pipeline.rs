@@ -9,6 +9,7 @@ use crate::{
     environment::{authoring_v2_shadow_enabled, quality_gate_v2_enabled},
     ielts_grammar::{
         build_authoring_v2_shadow, write_authoring_v2_shadow,
+        write_authoring_v2_shadow_for_modality,
         SHADOW_ARTIFACT_FILE as AUTHORING_V2_SHADOW_ARTIFACT_FILE,
         SHADOW_COMPARE_FILE as AUTHORING_V2_SHADOW_COMPARE_FILE,
         SHADOW_ERROR_FILE as AUTHORING_V2_SHADOW_ERROR_FILE,
@@ -430,15 +431,20 @@ fn write_pipeline_authoring_v2_shadow(
     split: &Value,
     document: Option<&Value>,
     physical_shadow: Option<&Value>,
+    modality: crate::schema::ielts_authoring_v2::ExamModalityV2,
 ) -> CommandResult<()> {
     if !authoring_v2_shadow_enabled() {
         return Ok(());
     }
+    let listening = modality == crate::schema::ielts_authoring_v2::ExamModalityV2::Listening;
     let shadow_path = dir.join(AUTHORING_V2_SHADOW_ARTIFACT_FILE);
     let error_path = dir.join(AUTHORING_V2_SHADOW_ERROR_FILE);
     // G2-T04：direct canonical（QLG → IeltsAuthoringIRV2，不经 V1 authoring）。
     // flag 默认关闭；物理层或 QLG 图不可用时回退 V1 链（可回滚）。
-    if crate::environment::qlg_direct_canonical_enabled() {
+    // The direct-canonical path builds a reading-shaped draft from the question
+    // layout graph; it has no notion of sections. A listening import must go
+    // through the V1 chain, which does.
+    if crate::environment::qlg_direct_canonical_enabled() && !listening {
         let graph_path = dir.join(crate::recognition::QUESTION_LAYOUT_GRAPH_ARTIFACT_FILE);
         if physical_shadow.is_none() {
             eprintln!("[direct-canonical] physical shadow missing; falling back to V1 chain");
@@ -481,7 +487,7 @@ fn write_pipeline_authoring_v2_shadow(
             }
         }
     }
-    match write_authoring_v2_shadow(
+    match write_authoring_v2_shadow_for_modality(
         dir,
         job,
         authoring,
@@ -489,6 +495,7 @@ fn write_pipeline_authoring_v2_shadow(
         document,
         physical_shadow,
         &shadow_path,
+        modality,
     ) {
         Ok(_) => {
             let _ = fs::remove_file(error_path);
@@ -4070,6 +4077,7 @@ where
             &split,
             doc.as_ref(),
             physical_shadow.as_ref(),
+            crate::library::migration::draft_modality(root, &job_id),
         )?;
 
         let report = validate_for_runtime_gate(root, &job_id, &ir, false)?;

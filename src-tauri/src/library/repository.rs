@@ -244,6 +244,11 @@ pub(crate) enum EditOrigin {
     AnswerPageRecognition,
     /// 撤销自动修复产生的修改。
     Undo,
+    /// 受管听力音频绑定镜像到权威稿的 part `media`。
+    ///
+    /// 机器派生结果，不是人工编辑；但仍须尊重人工保护目标，否则重新绑定一次
+    /// 音频就会盖掉用户手改过的 part media。
+    ListeningAudio,
 }
 
 impl EditOrigin {
@@ -253,6 +258,7 @@ impl EditOrigin {
             EditOrigin::CloudRepair => "cloud_repair",
             EditOrigin::AnswerPageRecognition => "answer_page_recognition",
             EditOrigin::Undo => "undo",
+            EditOrigin::ListeningAudio => "listening_audio",
         }
     }
 
@@ -271,7 +277,10 @@ impl EditOrigin {
     /// 以免改变已经上线并被测试覆盖的行为。
     fn enforces_protection(self, repair_run_id: Option<&str>) -> bool {
         matches!(self, EditOrigin::CloudRepair) && repair_run_id.is_some()
-            || matches!(self, EditOrigin::AnswerPageRecognition)
+            || matches!(
+                self,
+                EditOrigin::AnswerPageRecognition | EditOrigin::ListeningAudio
+            )
     }
 }
 
@@ -599,6 +608,18 @@ impl EditFootprint {
                         extend_with_context(document, &[slot_id.to_string()], &mut targets);
                         targets.extend(task_groups_owning_slot(document, slot_id));
                     }
+                }
+            }
+            // 听力 part 音频：目标就是被点名的 partId。粒度刻意停在 part 上——
+            // 一个 part 的音频换了不该让其它 part 的绑定被判定为"已触及"。
+            "setListeningPartMedia" => {
+                for entry in command
+                    .get("parts")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    targets.extend(strings_of(entry.get("partId")));
                 }
             }
             // 未知 / 不允许的命令：影响范围取「整个稿件」这一最保守的边界，

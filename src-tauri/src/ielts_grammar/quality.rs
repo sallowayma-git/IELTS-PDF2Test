@@ -10,7 +10,9 @@ use crate::schema::ielts_authoring_v2::QuestionNumberExpressionV2;
 use crate::validator::validate_reading_source_contract;
 
 use super::instruction_signature::infer_instruction_signature;
+use super::instruction_zone::semantic_lines_from_v2_shadow;
 use super::issue_codes::*;
+use super::listening_parts::detect_listening_parts;
 use super::source_coverage::{assess as assess_source_question_coverage, QuestionCoverageStatus};
 
 #[derive(Debug, Clone, Default)]
@@ -277,25 +279,18 @@ fn evaluate_quality_inner(
     let mut expected_numbers = BTreeSet::new();
     let mut actual_numbers = Vec::new();
 
-    // Reading-only independent view: the question domain comes from the raw
-    // physical source, never from task groups or cloud output.  Listening will
-    // get its own modality-aware contract when that path is implemented.
-    let question_coverage = if authoring
-        .get("modality")
-        .and_then(Value::as_str)
-        != Some("listening")
-    {
-        Some(match frozen {
-            Some(frozen) => super::source_coverage::assess_against_frozen_declaration(
-                authoring,
-                &frozen.declared_question_numbers,
-                &frozen.declarations,
-            ),
-            None => assess_source_question_coverage(authoring, physical_shadow),
-        })
-    } else {
-        None
-    };
+    // Independent view of the question domain: it comes from the raw physical
+    // source, never from task groups or cloud output.  Listening uses the same
+    // document-level check (its declared `Questions a-b` ranges are read the same
+    // way) and adds the per-part view in `validate_listening_parts`.
+    let question_coverage = Some(match frozen {
+        Some(frozen) => super::source_coverage::assess_against_frozen_declaration(
+            authoring,
+            &frozen.declared_question_numbers,
+            &frozen.declarations,
+        ),
+        None => assess_source_question_coverage(authoring, physical_shadow),
+    });
 
     if let Some(assessment) = question_coverage.as_ref() {
         match assessment.status {
@@ -331,6 +326,8 @@ fn evaluate_quality_inner(
 
     validate_exam_id(authoring, &mut issues, &mut hard_failures);
     validate_passage(authoring, &mut issues, &mut hard_failures);
+    validate_listening_parts(authoring, physical_shadow, &mut issues, &mut hard_failures);
+    validate_listening_media(authoring, &mut issues, &mut hard_failures);
     validate_assets(authoring, physical_shadow, &mut issues, &mut hard_failures);
     validate_identifier_and_reference_closure(authoring, &mut issues, &mut hard_failures);
     validate_provenance(authoring, &mut issues, &mut hard_failures);
@@ -671,8 +668,187 @@ fn validate_exam_id(authoring: &Value, issues: &mut Vec<Value>, hard_failures: &
     }
 }
 
-fn validate_passage(authoring: &Value, issues: &mut Vec<Value>, hard_failures: &mut Vec<String>) {
-    if authoring.get("modality").and_then(Value::as_str) == Some("listening") {
+/// Question numbers a task group covers, from its `displayRange`.
+fn task_group_question_numbers(authoring: &Value, task_id: &str) -> Vec<u32> {
+    let Some(groups) = authoring.get("taskGroups").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let Some(group) = groups
+        .iter()
+        .find(|group| group.get("taskId").and_then(Value::as_str) == Some(task_id))
+    else {
+        return Vec::new();
+    };
+    group
+        .get("displayRange")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<QuestionNumberExpressionV2>(value).ok())
+        .map(|expression| super::question_number::expand_expression(&expression))
+        .unwrap_or_default()
+}
+
+/// Listening-only, **per part**: the question domain the original paper declares
+/// inside each section, compared with what the draft actually covers.
+///
+/// The document-level source coverage compares two sets; it cannot see *where* a
+/// question was declared. A listening section whose declared numbers are not all
+/// covered by its task groups is a gap no other check can attribute, so it gets
+/// its own code and its own target. When the physical source is gone the check
+/// cannot run at all and stays silent — it never claims the part is complete.
+fn validate_listening_parts(
+    authoring: &Value,
+    physical_shadow: Option<&Value>,
+    issues: &mut Vec<Value>,
+    hard_failures: &mut Vec<String>,
+) {
+    if authoring.get("modality").and_then(Value::as_str) != Some("listening") {
+        return;
+    }
+    let Some(physical) = physical_shadow else {
+        return;
+    };
+    let lines = semantic_lines_from_v2_shadow(physical);
+    if lines.is_empty() {
+        return;
+    }
+    let texts = lines.iter().map(|line| line.text.as_str()).collect::<Vec<_>>();
+    let detected = detect_listening_parts(&texts);
+    if detected.parts.is_empty() {
+        return;
+    }
+    let declared_parts = authoring
+        .pointer("/listening/parts")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for part in &detected.parts {
+        let part_id = format!("part-{}", part.ordinal);
+        let Some(draft_part) = declared_parts
+            .iter()
+            .find(|value| value.get("partId").and_then(Value::as_str) == Some(part_id.as_str()))
+        else {
+            push_issue(
+                issues,
+                hard_failures,
+                issue(
+                    LISTENING_PART_MISSING,
+                    "blocking",
+                    "原文存在这个听力部分，当前稿里没有对应的 part。",
+                    "part",
+                    &part_id,
+                    Vec::new(),
+                    vec!["split_prompt", "edit_text"],
+                ),
+            );
+            continue;
+        };
+        let covered = draft_part
+            .get("taskIds")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .flat_map(|task_id| task_group_question_numbers(authoring, task_id))
+            .collect::<BTreeSet<u32>>();
+        let missing = part
+            .question_numbers
+            .iter()
+            .copied()
+            .filter(|number| !covered.contains(number))
+            .collect::<Vec<_>>();
+        if missing.is_empty() {
+            continue;
+        }
+        let mut coverage_issue = issue(
+            LISTENING_PART_COVERAGE_MISSING,
+            "blocking",
+            "原文在这一部分声明的题号，没有全部落到题组里，可能漏题。",
+            "part",
+            &part_id,
+            Vec::new(),
+            vec!["split_prompt", "edit_text"],
+        );
+        coverage_issue["details"] = json!({
+            "missingQuestionNumbers": missing,
+            "declaredQuestionNumbers": part.question_numbers,
+        });
+        push_issue(issues, hard_failures, coverage_issue);
+    }
+}
+
+/// Listening-only: every part must carry audio that passed its probe.
+///
+/// Both codes are blocking: a listening paper without usable audio is not
+/// publishable as a student-loadable exam. Publishing anyway is the user's
+/// explicit one-click override (`published_forced`), which is a different,
+/// recorded decision — not something this gate may silently allow.
+fn validate_listening_media(
+    authoring: &Value,
+    issues: &mut Vec<Value>,
+    hard_failures: &mut Vec<String>,
+) {
+    if authoring.get("modality").and_then(Value::as_str) != Some("listening") {
+        return;
+    }
+    let Some(parts) = authoring
+        .pointer("/listening/parts")
+        .and_then(Value::as_array)
+    else {
+        return;
+    };
+    for part in parts {
+        let Some(part_id) = part.get("partId").and_then(Value::as_str) else {
+            continue;
+        };
+        match part.get("media").filter(|value| !value.is_null()) {
+            None => {
+                push_issue(
+                    issues,
+                    hard_failures,
+                    issue(
+                        LISTENING_AUDIO_MISSING,
+                        "blocking",
+                        "这个听力部分还没有绑定音频。",
+                        "part",
+                        part_id,
+                        Vec::new(),
+                        vec!["assign_role"],
+                    ),
+                );
+            }
+            Some(media) => {
+                let probe = media.get("probe");
+                let passed = probe
+                    .and_then(|probe| probe.get("status"))
+                    .and_then(Value::as_str)
+                    == Some("passed")
+                    && probe
+                        .and_then(|probe| probe.get("issueCodes"))
+                        .and_then(Value::as_array)
+                        .is_some_and(|codes| codes.is_empty());
+                if passed {
+                    continue;
+                }
+                let mut audio_issue = issue(
+                    LISTENING_AUDIO_PROBE_BLOCKED,
+                    "blocking",
+                    "这个听力部分的音频没有通过探测，播放或判分可能不可用。",
+                    "part",
+                    part_id,
+                    Vec::new(),
+                    vec!["assign_role"],
+                );
+                audio_issue["details"] = json!({
+                    "assetId": media.get("assetId").cloned().unwrap_or(Value::Null),
+                    "probe": probe.cloned().unwrap_or(Value::Null),
+                });
+                push_issue(issues, hard_failures, audio_issue);
+            }
+        }
+    }
+}
+
+fn validate_passage(authoring: &Value, issues: &mut Vec<Value>, hard_failures: &mut Vec<String>) {    if authoring.get("modality").and_then(Value::as_str) == Some("listening") {
         return;
     }
     let content = authoring.pointer("/passage/content");
