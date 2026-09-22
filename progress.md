@@ -1646,3 +1646,72 @@ A3/A4 覆盖扩展、PDF/DOCX 完整链到学生端计分。
   `data-publish-outcome="published"`，quality `ready`），学生端真实 provider 加载 14 题 / 3 题组。
   运行档案：`artifacts/e2e-cdp/run-cloud-repair-chain-2026-09-21T18-51-21-267Z`。
 - 证据等级：产品端到端（受控模型服务；真实模型仍因网关额度未测）。
+
+## 2026-09-22 第三波 T1：听力草稿成形 + 音频写入 part media + 听力检查
+
+分支 `wave3-listening`（基于 `01b04fc`）。注意：本环境的 PortableGit bash **无法创建含斜杠的分支名**
+（`.git/refs/heads/feat/` 目录被静默丢弃，HEAD 会悬空、`git status` 误报 607 文件全 staged），
+故一律使用扁平分支名；误入悬空状态时用 `git symbolic-ref HEAD refs/heads/main` 复位。
+
+用户现在能做到而以前做不到的事：
+
+- 导入一份听力卷后，题稿**自带四个 part**（SECTION 1–4）、每个 part 的题号范围与题组归属，
+  且**没有** `passage`——不再被写成一个「没有正文的阅读稿」。
+- 在导入弹窗里绑定 Part 音频后，音频会出现在**权威稿**里（part 的 `media` + 文档 `assets`），
+  因此预览、导出、学生端都能从同一份稿编译出来，而不是只存在于 SQLite 受管表里。
+- 听力卷的质量门禁会**如实报出**「哪个 part 没有音频」「哪个 part 的音频探测没通过」，
+  而不是像以前那样对听力整体跳过源覆盖检查、对音频一无所知。
+
+已提交：
+
+- `6943cdd feat(listening): build a listening draft with sections, part audio and listening checks`
+  - `ielts_grammar/listening_draft.rs`（新建）：`build_listening_structure` 把识别到的 SECTION/PART
+    边界变成 `ListeningStructureV2`，并按「题号全部落在该 part 内」把已有 task group 归属过去；
+    落在所有 part 之外的题组记 `LISTENING_TASK_OUTSIDE_PARTS` 警告，**不丢弃**。
+    `scope`：4 个 part → `complete_exam`，否则 `partial_practice`。
+  - `ielts_grammar/mod.rs`：`build_authoring_v2_shadow` 拆出带 modality 的
+    `build_authoring_v2_shadow_for_modality`；听力走 `listening` 分支（无 passage），阅读路径逐字节不变。
+  - `listening_audio/canonical_media.rs`（新建）：经**真实编辑事务**把受管音频镜像进 part `media`
+    与 `assets`；`EditOrigin::ListeningAudio`；只在真不同时写（无版本抖动）。
+  - `ielts_grammar/quality.rs`：移除「听力跳过 source coverage」守卫；新增 per-part 题段比对
+    （`LISTENING_PART_MISSING` / `LISTENING_PART_COVERAGE_MISSING`）与音频检查
+    （`LISTENING_AUDIO_MISSING` / `LISTENING_AUDIO_PROBE_BLOCKED`，均 blocking）。
+  - `schema/quality_report_v2.rs` + `src/types/quality-report-v2.ts`：`ReviewTargetTypeV2` 新增
+    `Part` / `"part"`（**契约扩展**，T3 学生端与对端 schema 需同步）。
+  - `library/migration.rs`：`draft_modality` 从库行读真实 modality；种子稿阶段套用已绑定音频。
+- `b20bdb4 feat(listening): mirror bound audio onto every draft, and keep the row's modality`（T1 收尾）
+  - 人工保护的 part 在批次构建**前**剔除，否则 all-or-nothing 事务会让一个手改 part 冻结其余全部；
+    剔除结果仍回报给 UI，拒绝不静默消失。
+  - 重识别命令（`authoring_commands.rs`）与流水线的两处质量门禁重算（`auto_pipeline.rs`）
+    改读库行 modality——以前用阅读默认重建，听力卷会被改写成阅读形状，且「没绑音频」看起来是 ready。
+  - `processing/scheduler.rs`：播种**之后**再补一次镜像。种子是「先读绑定、后写稿」，而前端在入队后
+    立刻绑定音频；绑定若落在这两步之间，种子与绑定侧那次同步都读不到它，音频只留在受管表里。
+  - `docs/recognition-survey/LISTENING-EPIC-PLAN.md`：记录已选定的契约（每 part 各自 `media`，
+    option b）与稳定的资产标识规则 `audio-<sha256>` / `audio/<sha256>.<ext>`。
+
+先红后绿的测试：
+
+- `audio_bound_before_the_draft_exists_is_seeded_onto_the_listening_draft`：临时禁用种子路径的音频
+  镜像 → 红（`left: None, right: Some("<sha256>")`，失败信息正是"种子稿必须带上绑定前就存在的音频"）
+  → 恢复 → 绿。
+- 更早一轮：`authoring_ir_v2_shadow_schema_validation_failed:unknown variant 'part'` 让两条听力草稿
+  测试红，补上 `ReviewTargetTypeV2::Part` 后转绿；`a_human_edited_part_media_is_never_overwritten_by_a_rebind`
+  两轮红后转绿（先是整批被拒、后是断言写错）。
+
+真实卷验收（`fixtures/golden/private-real/listening-vol7-t9.pdf`，本机存在但 gitignored；缺失或 pdfium
+不可用时优雅跳过）：
+
+- `listening_parts::real_listening_fixture_yields_four_parts_eight_groups_forty_questions`：
+  4 parts、8 组、题号 1–40 各一次，题组区间 `[(1,4),(5,7),(8,10)] [(11,16),(17,20)] [(21,25),(26,30)] [(31,40)]`。
+- `listening_draft::the_real_paper_forms_four_parts_covering_one_to_forty`（本次新增）：在**草稿层**
+  同样成立——4 parts、无警告、`expectedQuestionNumbers` 恰好 1–40 各一次且有序、各 part 的
+  `taskIds` 数 `[3,2,2,1]`。已用 `--nocapture` 确认它真跑而非跳过（同一守卫的模块测试打印了
+  `listening-vol7-t9: 4 parts, 8 groups, 40 questions`）。
+
+全量数字：Rust **991 passed / 0 failed / 11 ignored**（基线 973/0/11，净 +18）；Vitest **390 passed /
+27 files**（与基线一致）；`npx tsc --noEmit` 无输出（干净）。
+
+证据等级：单元 + 命令处理器层（真实 SQLite + 真实编辑事务 + 真实 PDF 解析）。**产品端到端（真实 Tauri
+UI / 学生端）尚未跑**，属于 T6。
+
+未完成（T1 范围内）：无。T2–T7 未开始。

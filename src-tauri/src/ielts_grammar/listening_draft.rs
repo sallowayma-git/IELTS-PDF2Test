@@ -296,4 +296,122 @@ mod tests {
         assert_eq!(draft.structure["scope"], "partial_practice");
         assert_eq!(draft.structure["parts"], json!([]));
     }
+
+    /// Draft-level acceptance on the real paper (skips when the private PDF or
+    /// pdfium is unavailable). Detection alone is already covered; this ties the
+    /// real SECTION 1-4 boundaries to the shared task groups and checks the
+    /// draft's own contract: four parts, no group outside every part, and
+    /// 1-40 covered exactly once.
+    #[test]
+    fn the_real_paper_forms_four_parts_covering_one_to_forty() {
+        let input = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/golden/private-real/listening-vol7-t9.pdf");
+        if !input.exists() || crate::pdf_geometry::pdfium_library_path().is_none() {
+            return;
+        }
+        let output = std::env::temp_dir().join(format!(
+            "pdf2test-listening-draft-{}.json",
+            std::process::id()
+        ));
+        let mut job = crate::job_store::make_job(crate::CreateJobInput {
+            title: Some("Listening draft regression".to_string()),
+            ..Default::default()
+        });
+        let source = crate::SourceFile {
+            file_id: "listening-vol7-t9".to_string(),
+            original_name: "listening-vol7-t9.pdf".to_string(),
+            stored_name: "listening-vol7-t9.pdf".to_string(),
+            file_type: "pdf".to_string(),
+            sha256: "fixture".to_string(),
+            size_bytes: std::fs::metadata(&input).map(|meta| meta.len()).unwrap_or(0),
+            role: "MainQuestion".to_string(),
+            imported_at: chrono::Utc::now(),
+        };
+        job.source_files = vec![source.clone()];
+        let Ok(ir) =
+            crate::pdf_geometry::parse_pdf_with_pdfium(&job, &source, &input, &output, "auto")
+        else {
+            return;
+        };
+        let _ = std::fs::remove_file(&output);
+
+        let mut semantic = Vec::new();
+        for (page_index, page) in ir["pages"].as_array().into_iter().flatten().enumerate() {
+            for block in page["blocks"].as_array().into_iter().flatten() {
+                let Some(text) = block.get("text").and_then(Value::as_str) else {
+                    continue;
+                };
+                let order = semantic.len();
+                semantic.push(SemanticLine {
+                    id: format!("line-{order}"),
+                    text: text.to_string(),
+                    source_anchor: json!({
+                        "sourceFileId": "listening-vol7-t9",
+                        "pageIndex": page_index,
+                        "nodeIds": [format!("line-{order}")],
+                        "extractionMode": "pdf_native",
+                        "sourceHash": "fixture"
+                    }),
+                    page_index: page_index as i32,
+                    order,
+                    role: "body".to_string(),
+                    bbox: None,
+                });
+            }
+        }
+
+        // Task groups stand in for the shared grammar's output: one group per
+        // question range the paper prints. Which part each lands in is the
+        // draft's decision, and is what this test checks.
+        let texts = semantic
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect::<Vec<_>>();
+        let detected = detect_listening_parts(&texts);
+        assert_eq!(detected.parts.len(), 4, "{detected:?}");
+        let groups = detected
+            .parts
+            .iter()
+            .flat_map(|part| part.groups.iter())
+            .enumerate()
+            .map(|(index, group)| {
+                task_group(
+                    &format!("task-{}", index + 1),
+                    *group.question_numbers.first().unwrap(),
+                    *group.question_numbers.last().unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(groups.len(), 8, "eight question groups on the real paper");
+
+        let draft =
+            build_listening_structure(&semantic, &groups, "listening-vol7-t9", "fixture", "pdf");
+        assert!(draft.warnings.is_empty(), "{:?}", draft.warnings);
+        assert_eq!(draft.part_count, 4);
+        assert_eq!(draft.structure["scope"], "complete_exam");
+        let parts = draft.structure["parts"].as_array().unwrap();
+        let all = parts
+            .iter()
+            .flat_map(|part| {
+                part["expectedQuestionNumbers"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|number| number.as_u64().unwrap() as u32)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            all,
+            (1..=40).collect::<Vec<u32>>(),
+            "every question number 1-40 appears exactly once, in order"
+        );
+        assert_eq!(
+            parts
+                .iter()
+                .map(|part| part["taskIds"].as_array().unwrap().len())
+                .collect::<Vec<_>>(),
+            vec![3, 2, 2, 1],
+            "groups stay in the part whose question range contains them"
+        );
+    }
 }
