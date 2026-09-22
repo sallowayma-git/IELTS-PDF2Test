@@ -493,14 +493,17 @@ pub(crate) fn publish_verdict(
             );
         }
         // 编译链：V2 的唯一编译入口。编译不过就不是"能不能发"的问题，
-        // 而是根本没有可发布产物。
+        // 而是根本没有可发布产物。目标契约按稿件自己的 modality 命名——听力卷
+        // 编译进 `ListeningExamSourceV1`，报成阅读契约会让用户按错误的契约去排查。
         if let Ok(typed) = serde_json::from_value::<crate::schema::IeltsAuthoringIRV2>(
             authoring.clone(),
         ) {
-            if let Err(issues) = crate::reading_source_v2::compile_reading_source_v2(&typed) {
+            let schema_version =
+                crate::listening_source_v1::runtime_schema_version(&typed.modality);
+            if let Err(issues) = crate::listening_source_v1::compile_exam_source_v2(&typed) {
                 builder.block(
                     "COMPILE_FAILED",
-                    "ReadingExamSourceV2",
+                    schema_version,
                     None,
                     serde_json::to_string(&issues).unwrap_or_default(),
                 );

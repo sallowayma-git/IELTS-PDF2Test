@@ -943,7 +943,7 @@ fn answer_labels(value: Option<&AnswerValueV2>) -> BTreeSet<String> {
     }
 }
 
-fn compiler_issue(code: &str, message: &str, target_id: &str) -> CompilerIssueV2 {
+pub(crate) fn compiler_issue(code: &str, message: &str, target_id: &str) -> CompilerIssueV2 {
     CompilerIssueV2 {
         code: code.to_string(),
         message: message.to_string(),

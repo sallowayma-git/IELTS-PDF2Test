@@ -13,7 +13,7 @@ use crate::artifact_store::{
 };
 use crate::ielts_grammar::evaluate_quality;
 use crate::ielts_grammar::quality::derive_instruction_signature_for_group;
-use crate::reading_source_v2::compile_reading_source_v2;
+use crate::listening_source_v1::compile_exam_source_v2;
 use crate::schema::common::AssetDescriptorV2;
 use crate::schema::IeltsAuthoringIRV2;
 use crate::source_review::{
@@ -866,11 +866,10 @@ pub(crate) fn export_authoring_snapshot_with_mode(
     );
     // 学生端加载时拒绝未解析答案与编译不过的运行时。放行模式下这种稿只写授权
     // 快照（不产出运行时、不进学生清单），绝不为了能加载而编造任何内容。
-    let runtime = match compile_reading_source_v2(&authoring) {
+    let runtime = match compile_exam_source_v2(&authoring) {
         Ok(runtime) if publish_override.is_none() => Some(runtime),
-        Ok(runtime) => (!has_unresolved_answers(&authoring_value)
-            && crate::reading_source_v2::validate_reading_source_v2(&runtime).is_empty())
-        .then_some(runtime),
+        Ok(runtime) => (!has_unresolved_answers(&authoring_value) && runtime.is_valid())
+            .then_some(runtime),
         Err(_) if publish_override.is_some() => None,
         Err(issues) => {
             return Err(format!(
@@ -919,7 +918,12 @@ pub(crate) fn export_authoring_snapshot_with_mode(
         return Err(create_error);
     }
     let authoring_path = staging_dir.join("authoring-ir-v2.json");
-    let runtime_path = staging_dir.join("reading-source-v2.json");
+    // Reading keeps `reading-source-v2.json`; a listening paper writes its own
+    // contract under its own name so a receipt never mislabels which runtime a
+    // student will be handed.
+    let runtime_file_name =
+        crate::listening_source_v1::runtime_source_file_name(authoring.modality.clone());
+    let runtime_path = staging_dir.join(runtime_file_name);
     let manifest_path = staging_dir.join("manifest-v2.json");
     let materialize_result: CommandResult<()> = (|| {
         let authoring_receipt = write_canonical_json_atomic(&authoring_path, &authoring_value)?;
@@ -929,15 +933,14 @@ pub(crate) fn export_authoring_snapshot_with_mode(
         // reading_source_integrity_failed。
         let runtime_sha256 = match runtime.as_ref() {
             Some(runtime) => {
-                let runtime_value =
-                    serde_json::to_value(runtime).map_err(|error| error.to_string())?;
+                let runtime_value = runtime.document()?;
                 Some(write_js_canonical_json_atomic(&runtime_path, &runtime_value)?.sha256)
             }
             None => None,
         };
         materialize_authoring_assets(&artifact_layout.job_dir, &staging_dir, &authoring.assets)?;
         let files: Vec<&str> = if student_loadable {
-            vec!["authoring-ir-v2.json", "reading-source-v2.json", "manifest-v2.json"]
+            vec!["authoring-ir-v2.json", runtime_file_name, "manifest-v2.json"]
         } else {
             vec!["authoring-ir-v2.json", "manifest-v2.json"]
         };
@@ -991,7 +994,7 @@ pub(crate) fn export_authoring_snapshot_with_mode(
         "outputDir": output_dir,
         "authoringPath": output_dir.join("authoring-ir-v2.json"),
         "runtimePath": if student_loadable {
-            json!(output_dir.join("reading-source-v2.json"))
+            json!(output_dir.join(runtime_file_name))
         } else {
             Value::Null
         },

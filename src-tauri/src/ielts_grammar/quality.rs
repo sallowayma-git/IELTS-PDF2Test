@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::environment::recognition_blockers_gate_enabled;
 use crate::reading_source::ReadingExamSourceV1;
-use crate::reading_source_v2::{compile_reading_source_v2, CompilerIssueV2};
+use crate::reading_source_v2::CompilerIssueV2;
 use crate::schema::IeltsAuthoringIRV2;
 use crate::schema::ielts_authoring_v2::QuestionNumberExpressionV2;
 use crate::validator::validate_reading_source_contract;
@@ -1282,30 +1282,45 @@ fn evaluate_compiler_probes(authoring: &Value) -> Value {
     let typed = typed_authoring_for_probe(authoring);
     let (v2_probe, v1_probe) = match typed {
         Ok(typed) => {
-            let v2 = match compile_reading_source_v2(&typed) {
+            let schema_version = crate::listening_source_v1::runtime_schema_version(&typed.modality);
+            let v2 = match crate::listening_source_v1::compile_exam_source_v2(&typed) {
                 Ok(runtime) => {
-                    let round_trip = serde_json::to_value(&runtime)
+                    let round_trip = runtime
+                        .document()
                         .map_err(|error| error.to_string())
                         .and_then(|value| {
-                            serde_json::from_value::<crate::reading_source_v2::ReadingExamSourceV2>(
-                                value,
-                            )
-                            .map(|_| ())
-                            .map_err(|error| error.to_string())
+                            // Re-parse against the contract the compiler actually
+                            // chose: a listening source read back as a reading one
+                            // would report a false round-trip failure.
+                            let reparsed = match &runtime {
+                                crate::listening_source_v1::CompiledExamSourceV2::Reading(_) => {
+                                    serde_json::from_value::<
+                                        crate::reading_source_v2::ReadingExamSourceV2,
+                                    >(value)
+                                    .map(|_| ())
+                                }
+                                crate::listening_source_v1::CompiledExamSourceV2::Listening(_) => {
+                                    serde_json::from_value::<
+                                        crate::schema::listening_runtime_v1::ListeningExamSourceV1,
+                                    >(value)
+                                    .map(|_| ())
+                                }
+                            };
+                            reparsed.map_err(|error| error.to_string())
                         });
                     match round_trip {
-                        Ok(()) => {
-                            compiler_probe("passed", "ReadingExamSourceV2", Vec::new(), Vec::new())
-                        }
+                        Ok(()) => compiler_probe("passed", schema_version, Vec::new(), Vec::new()),
                         Err(error) => compiler_probe(
                             "failed",
-                            "ReadingExamSourceV2",
+                            schema_version,
                             vec!["RUNTIME_SCHEMA_ROUND_TRIP_FAILED".to_string()],
                             vec![error],
                         ),
                     }
                 }
-                Err(compiler_issues) => compiler_probe_from_v2_issues(compiler_issues),
+                Err(compiler_issues) => {
+                    compiler_probe_from_v2_issues(compiler_issues, schema_version)
+                }
             };
             let v1 = probe_v1_compatibility(authoring);
             (v2, v1)
@@ -1364,7 +1379,7 @@ fn probe_quality_placeholder() -> Value {
     })
 }
 
-fn compiler_probe_from_v2_issues(issues: Vec<CompilerIssueV2>) -> Value {
+fn compiler_probe_from_v2_issues(issues: Vec<CompilerIssueV2>, schema_version: &str) -> Value {
     let mut codes = issues
         .iter()
         .map(|issue| issue.code.clone())
@@ -1374,7 +1389,7 @@ fn compiler_probe_from_v2_issues(issues: Vec<CompilerIssueV2>) -> Value {
     codes.sort();
     compiler_probe(
         "failed",
-        "ReadingExamSourceV2",
+        schema_version,
         codes,
         issues
             .into_iter()

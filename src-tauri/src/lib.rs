@@ -68,6 +68,7 @@ mod job_commands;
 mod job_store;
 mod library;
 mod listening_audio;
+mod listening_source_v1;
 mod processing;
 mod library_commands;
 mod llm_commands;

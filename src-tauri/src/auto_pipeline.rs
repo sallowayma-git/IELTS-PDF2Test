@@ -9,7 +9,7 @@ use crate::{
     environment::{authoring_v2_shadow_enabled, quality_gate_v2_enabled},
     ielts_grammar::{
         build_authoring_v2_shadow, build_authoring_v2_shadow_for_modality,
-        write_authoring_v2_shadow, write_authoring_v2_shadow_for_modality,
+        write_authoring_v2_shadow_for_modality,
         SHADOW_ARTIFACT_FILE as AUTHORING_V2_SHADOW_ARTIFACT_FILE,
         SHADOW_COMPARE_FILE as AUTHORING_V2_SHADOW_COMPARE_FILE,
         SHADOW_ERROR_FILE as AUTHORING_V2_SHADOW_ERROR_FILE,
