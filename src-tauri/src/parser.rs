@@ -2181,7 +2181,7 @@ pub(crate) fn render_pdf_pages_with_adapter(
                     job_id,
                     input_path,
                     output_path,
-                    _asset_dir,
+                    asset_dir,
                     prior_warnings,
                 )
             }
