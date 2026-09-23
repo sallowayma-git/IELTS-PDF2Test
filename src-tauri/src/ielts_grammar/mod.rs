@@ -3378,7 +3378,22 @@ mod listening_draft_builder_tests {
         };
         let bindings = vec![binding(1, true), binding(2, false)];
         apply_bindings_to_authoring(&mut authoring, &bindings);
-        let quality = crate::ielts_grammar::quality::evaluate_quality(&authoring, None);
+        // 这两段音频是用户上传的：它们的资产判据是受管台账，不是 PDF shadow。这台测试没有
+        // 台账，就把「台账核对通过」如实喂进去——否则门禁会按「无法核对」fail closed。
+        let verified = bindings
+            .iter()
+            .map(|binding| {
+                (
+                    crate::listening_audio::canonical_media::audio_asset_id(&binding.sha256),
+                    crate::ielts_grammar::quality::ManagedAudioCheckV1::Verified,
+                )
+            })
+            .collect();
+        let quality = crate::ielts_grammar::quality::evaluate_quality_with_managed_audio(
+            &authoring,
+            None,
+            Some(&crate::ielts_grammar::quality::ManagedAudioFactsV1::new(verified)),
+        );
         authoring["quality"] = quality;
         let issues = authoring["quality"]["issues"].as_array().unwrap();
         let codes = |code: &str| {
@@ -3399,5 +3414,11 @@ mod listening_draft_builder_tests {
         );
         assert!(codes(crate::ielts_grammar::issue_codes::LISTENING_AUDIO_PROBE_BLOCKED)[0]["targetId"]
             == json!("part-2"));
+        // 台账核对通过的这两段音频不该再被拿去和 PDF 的 shadow 比。
+        assert!(
+            codes(crate::ielts_grammar::issue_codes::ASSET_REFERENCE_MISSING).is_empty(),
+            "{:?}",
+            codes(crate::ielts_grammar::issue_codes::ASSET_REFERENCE_MISSING)
+        );
     }
 }

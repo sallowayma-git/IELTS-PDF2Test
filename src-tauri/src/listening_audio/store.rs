@@ -416,6 +416,75 @@ pub(crate) fn verify_bindings(root: &Path, item_id: &str) -> CommandResult<Liste
     audio_status(root, item_id)
 }
 
+/// 只读打开既有库，只为核对受管音频台账。
+///
+/// **不能**直接用 `open_library_connection`：质量重算是在编辑事务的校验回调里跑的
+/// （`apply_editor_commands_tx_with` 的 `validate`），而 `open_library_connection` 会跑
+/// `PRAGMA journal_mode=WAL` 加 `ensure_v2_schema` 的一串 `CREATE TABLE IF NOT EXISTS`
+/// ——那是**写**，在同一个库上和已经开着的事务抢锁。实测结果是这一读必然失败，于是每一段
+/// 音频都被判成「无法核对」，门禁对所有听力稿报 `ASSET_REFERENCE_MISSING`。
+///
+/// 只做 SELECT 就没有这个问题：WAL 下读事务看到的是最近一次已提交的快照，既不挡写事务也
+/// 不被写事务挡住。
+///
+/// 表不存在（库还没升级到带音频台账的版本）时这里会报错，调用方按「核对不了 == 不通过」
+/// 处理——宁可如实说不通过，也不假装音频没问题。
+fn open_ledger_for_read(root: &Path) -> CommandResult<Connection> {
+    let path = crate::db::db_path(root);
+    let conn =
+        Connection::open(&path).map_err(|error| format!("listening_audio_ledger_open:{error}"))?;
+    conn.execute_batch("PRAGMA busy_timeout=5000;")
+        .map_err(|error| format!("listening_audio_ledger_pragma:{error}"))?;
+    Ok(conn)
+}
+
+/// 受管音频核对事实：台账有行、受管文件在、内容哈希与台账一致、探测通过。
+///
+/// 交给质量门禁消费（门禁自己不开连接、不碰文件系统，所以那四条必须是数据）。这里**现场
+/// 重跑探针**而不是读表里存的那份结论文本：表里的结论是上次绑定时写的，用户把磁盘上的文件
+/// 换掉/改坏之后它照样写着 `passed`——那正是「界面上说音频没问题、学生端播不出来」的成因。
+/// 探针同时完成三件事：重算内容哈希、按台账的 sha 比对、真解码一遍。
+///
+/// 「sha256 与 part media 一致」不在这里核：那是稿内的两条声明，门禁自己就能比。
+pub(crate) fn managed_audio_facts(
+    root: &Path,
+    item_id: &str,
+) -> CommandResult<crate::ielts_grammar::quality::ManagedAudioFactsV1> {
+    use crate::ielts_grammar::quality::{ManagedAudioCheckV1, ManagedAudioFactsV1};
+    use crate::schema::listening_runtime_v1::ListeningAudioIssueCodeV1;
+
+    let conn = open_ledger_for_read(root)?;
+    let mut checks = std::collections::BTreeMap::new();
+    for binding in list_bindings_conn(&conn, item_id)? {
+        let path = PathBuf::from(&binding.managed_path);
+        let check = if !path.is_file() {
+            ManagedAudioCheckV1::FileMissing
+        } else {
+            let probe = probe_listening_audio_v1(
+                &path,
+                Some(&binding.sha256),
+                &ListeningAudioProbePolicyV1::default(),
+            );
+            if probe
+                .probe
+                .issue_codes
+                .contains(&ListeningAudioIssueCodeV1::AudioHashMismatch)
+            {
+                ManagedAudioCheckV1::HashMismatch
+            } else if probe.is_passed() {
+                ManagedAudioCheckV1::Verified
+            } else {
+                ManagedAudioCheckV1::ProbeBlocked
+            }
+        };
+        checks.insert(
+            crate::listening_audio::canonical_media::audio_asset_id(&binding.sha256),
+            check,
+        );
+    }
+    Ok(ManagedAudioFactsV1::new(checks))
+}
+
 /// Splits a name into text and number runs so `Part 10` sorts after `Part 2`.
 fn natural_key(name: &str) -> Vec<(u8, String, u128)> {
     let mut key = Vec::new();

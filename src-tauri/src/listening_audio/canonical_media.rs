@@ -636,6 +636,144 @@ mod media_sync_tests {
         get_canonical_ds(&conn, item_id).unwrap().unwrap().0
     }
 
+    fn hard_failures(ds: &Value) -> Vec<String> {
+        ds.pointer("/quality/hardFailures")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn managed_audio_reason(ds: &Value, asset_id: &str) -> Option<String> {
+        ds.pointer("/quality/issues")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|issue| issue.get("targetId").and_then(Value::as_str) == Some(asset_id))
+            .and_then(|issue| {
+                issue
+                    .pointer("/details/managedAudioReason")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+    }
+
+    /// 真的绑好音频的听力条目：质量重算**不得**再报音频资产不存在。
+    ///
+    /// 这条是端到端的那一条：走真实台账（`bind_audio` 落盘 + 建行）、真实编辑事务里那次
+    /// `refresh_quality_report`，再看落库的质量块。纯门禁单测证明不了「台账真的被读到了」。
+    ///
+    /// 反过来，受管文件被删掉之后必须如实失败——这才说明它不是「看见 user_upload 就放行」。
+    #[test]
+    fn a_bound_part_clears_the_asset_gate_and_a_deleted_file_blocks_it_again() {
+        let root = temp_root();
+        seed_listening_item(&root, "item-gate");
+        // 四个 part 全绑（真实听力卷的样子），这样逐 part 的 LISTENING_AUDIO_MISSING 不会
+        // 混进来干扰判断，剩下的差异只可能来自资产核对本身。
+        for ordinal in 1..=4 {
+            let source = root.join(format!("section-{ordinal}.wav"));
+            tone(&source, 300.0 + ordinal as f64 * 60.0);
+            bind_audio(&root, "item-gate", ordinal, &source).unwrap();
+        }
+        let bound = crate::listening_audio::store::list_bindings(&root, "item-gate")
+            .unwrap()
+            .into_iter()
+            .find(|binding| binding.part_ordinal == 1)
+            .expect("part 1 is bound");
+        let asset_id = audio_asset_id(&bound.sha256);
+
+        let sync = sync_item_audio_media(&root, "item-gate").unwrap();
+        assert!(sync.updated_parts.contains(&"part-1".to_string()));
+
+        let ds = canonical(&root, "item-gate");
+        assert!(
+            ds["assets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|asset| asset["assetId"] == json!(asset_id)),
+            "绑定后音频必须进资产列表：{ds}"
+        );
+        let hard = hard_failures(&ds);
+        assert!(
+            !hard.contains(&"ASSET_REFERENCE_MISSING".to_string()),
+            "已经绑好并核对通过的音频不该报资产不存在（reason={:?}）：{hard:?}",
+            managed_audio_reason(&ds, &asset_id)
+        );
+        assert!(
+            !hard.contains(&"ASSET_HASH_MISMATCH".to_string()),
+            "{hard:?}"
+        );
+        assert!(
+            !hard.contains(&"LISTENING_AUDIO_PROBE_BLOCKED".to_string()),
+            "{hard:?}"
+        );
+        assert!(
+            !hard.contains(&"LISTENING_AUDIO_MISSING".to_string()),
+            "四个 part 都绑了，不该还有 part 缺音频：{hard:?}"
+        );
+
+        // 磁盘上的受管文件被删掉：核对要如实失败，并指出是「受管文件不在」。
+        std::fs::remove_file(&bound.managed_path).unwrap();
+        let mut ds = canonical(&root, "item-gate");
+        refresh_quality_report(&root, "item-gate", &mut ds).unwrap();
+        assert!(
+            hard_failures(&ds).contains(&"ASSET_REFERENCE_MISSING".to_string()),
+            "受管文件没了还报通过就是假绿：{ds}"
+        );
+        assert_eq!(
+            managed_audio_reason(&ds, &asset_id).as_deref(),
+            Some("managed_file_missing"),
+            "{ds}"
+        );
+
+        // 文件放回去（内容一字不差）：又回到通过——不是「一旦红就永远红」。
+        let source = root.join("section-1.wav");
+        tone(&source, 360.0);
+        let again = bind_audio(&root, "item-gate", 1, &source).unwrap();
+        assert_eq!(again.sha256, bound.sha256, "同一段音频必须算出同一个 sha");
+        let mut ds = canonical(&root, "item-gate");
+        refresh_quality_report(&root, "item-gate", &mut ds).unwrap();
+        assert!(
+            !hard_failures(&ds).contains(&"ASSET_REFERENCE_MISSING".to_string()),
+            "reason={:?} : {ds}",
+            managed_audio_reason(&ds, &asset_id)
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 受管音频被人改坏（内容变了）之后，凭台账记录的那个 sha 必须报哈希不一致。
+    ///
+    /// 这条盯的是「表里存的探测结论是上次绑定时写的」：不现场重跑探针，改坏的文件照样显示
+    /// `passed`。
+    #[test]
+    fn a_tampered_managed_file_is_reported_as_a_hash_mismatch() {
+        let root = temp_root();
+        seed_listening_item(&root, "item-tamper");
+        let source = root.join("section-1.wav");
+        tone(&source, 440.0);
+        let bound = bind_audio(&root, "item-tamper", 1, &source).unwrap();
+        sync_item_audio_media(&root, "item-tamper").unwrap();
+
+        std::fs::write(&bound.managed_path, b"not the audio you bound").unwrap();
+
+        let mut ds = canonical(&root, "item-tamper");
+        refresh_quality_report(&root, "item-tamper", &mut ds).unwrap();
+        let hard = hard_failures(&ds);
+        assert!(
+            hard.contains(&"ASSET_HASH_MISMATCH".to_string()),
+            "{hard:?} / {ds}"
+        );
+        assert_eq!(
+            managed_audio_reason(&ds, &audio_asset_id(&bound.sha256)).as_deref(),
+            Some("hash_mismatch"),
+            "{ds}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn binding_audio_mirrors_onto_the_draft_through_the_edit_transaction() {
         let root = temp_root();

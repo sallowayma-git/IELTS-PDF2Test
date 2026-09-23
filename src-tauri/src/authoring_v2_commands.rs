@@ -11,7 +11,6 @@ use crate::artifact_store::{
     recover_current_revision, write_artifact_json, write_canonical_json_atomic,
     write_js_canonical_json_atomic, RevisionSourceV2,
 };
-use crate::ielts_grammar::evaluate_quality;
 use crate::ielts_grammar::quality::derive_instruction_signature_for_group;
 use crate::listening_source_v1::compile_exam_source_v2;
 use crate::schema::common::{AssetDescriptorV2, AssetKindV2};
@@ -1238,15 +1237,36 @@ pub(crate) fn refresh_quality_report_for_targets(
     let previous_quality = authoring.get("quality").cloned();
     let physical_shadow = read_json_opt(&job_dir(root, job_id).join(DOCUMENT_V2_SHADOW_FILE))?
         .filter(|shadow| physical_shadow_matches_authoring(shadow, authoring));
+    // 听力稿上的音频是**用户上传**的：它从来没进过 PDF，所以它的资产判据来自受管音频台账
+    // （`listening_audio_assets_v1` + 磁盘文件），不是 physical shadow。台账只读一次，
+    // 并且只在听力稿上读——阅读稿里不存在这类资产。台账读不到就是 `None`，门禁对
+    // `user_upload` 资产一律按不通过处理，绝不静默放过（见 `validate_assets`）。
+    let managed_audio = (authoring.get("modality").and_then(Value::as_str) == Some("listening"))
+        .then(|| crate::listening_audio::store::managed_audio_facts(root, job_id).ok())
+        .flatten();
     // 「题库保存」：发布后原文件与 shadow 被删除的条目改用发布时冻结的证据。
     // 只有**确实被清理过**的条目才有冻结证据；非清理条目缺 shadow 与今天完全一样。
     let mut quality = match physical_shadow.as_ref() {
-        Some(shadow) => evaluate_quality(authoring, Some(shadow)),
+        Some(shadow) => {
+            crate::ielts_grammar::quality::evaluate_quality_with_managed_audio(
+                authoring,
+                Some(shadow),
+                managed_audio.as_ref(),
+            )
+        }
         None => match crate::library::final_version::load_purged_evidence(root, job_id) {
             Some(frozen) => {
-                crate::ielts_grammar::quality::evaluate_quality_with_frozen_evidence(authoring, &frozen)
+                crate::ielts_grammar::quality::evaluate_quality_with_frozen_evidence_and_managed_audio(
+                    authoring,
+                    &frozen,
+                    managed_audio.as_ref(),
+                )
             }
-            None => evaluate_quality(authoring, None),
+            None => crate::ielts_grammar::quality::evaluate_quality_with_managed_audio(
+                authoring,
+                None,
+                managed_audio.as_ref(),
+            ),
         },
     };
     preserve_issue_resolutions(&mut quality, previous_quality.as_ref(), affected_targets);

@@ -106,24 +106,112 @@ pub(crate) fn publish_evidence_summary(authoring: &Value, physical_shadow: Optio
     })
 }
 
+/// 一个 `extractionMode == "user_upload"` 资产的核对结论。
+///
+/// 用户上传的听力音频**不在** PDF 的 physical shadow 里——它根本没进过 PDF。拿它去和
+/// shadow 比对必然对不上，那是把「用户上传的资产」当成「PDF 里抽出来的资产」。它的权威
+/// 依据是受管音频台账 `listening_audio_assets_v1` 加上磁盘上的那份文件。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ManagedAudioCheckV1 {
+    /// 台账有行、受管文件在、sha256 与资产声明一致、探测通过。四条全中才是它。
+    Verified,
+    /// 台账里没有这个 assetId 的行。
+    NoRecord,
+    /// 台账有行，但受管文件不在磁盘上。
+    FileMissing,
+    /// 受管文件的内容哈希与声明不一致（换过文件、或文件被改过）。
+    HashMismatch,
+    /// 探测没有通过（解码失败 / 近静音 / 编码不支持……）。
+    ProbeBlocked,
+}
+
+/// 受管音频核对事实：由 `listening_audio` 读台账 + 文件系统产出，质量门禁只消费。
+///
+/// 刻意做成**纯数据**：门禁不开连接、不碰文件系统（`evaluate_quality` 能在纯单测里跑
+/// 全靠这一点），IO 留给唯一的产出方。**缺项按 [`ManagedAudioCheckV1::NoRecord`] 处理**
+/// ——「查不到」不等于「没问题」。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct ManagedAudioFactsV1 {
+    checks: BTreeMap<String, ManagedAudioCheckV1>,
+}
+
+impl ManagedAudioFactsV1 {
+    pub(crate) fn new(checks: BTreeMap<String, ManagedAudioCheckV1>) -> Self {
+        Self { checks }
+    }
+
+    /// 一个 assetId 的结论。没记过的资产一律 `NoRecord`，绝不默认通过。
+    pub(crate) fn check(&self, asset_id: &str) -> ManagedAudioCheckV1 {
+        self.checks
+            .get(asset_id)
+            .copied()
+            .unwrap_or(ManagedAudioCheckV1::NoRecord)
+    }
+}
+
+/// `user_upload` 资产的核对结论 → 硬失败码。`Verified` 没有码（它不阻断）。
+fn managed_audio_failure_code(check: ManagedAudioCheckV1) -> Option<&'static str> {
+    match check {
+        ManagedAudioCheckV1::Verified => None,
+        ManagedAudioCheckV1::NoRecord | ManagedAudioCheckV1::FileMissing => {
+            Some(ASSET_REFERENCE_MISSING)
+        }
+        ManagedAudioCheckV1::HashMismatch => Some(ASSET_HASH_MISMATCH),
+        ManagedAudioCheckV1::ProbeBlocked => Some(LISTENING_AUDIO_PROBE_BLOCKED),
+    }
+}
+
 /// 原文件已在发布后删除的条目：题号覆盖按冻结声明核对，节点覆盖报告为
 /// `verified_at_publish_source_purged`（非阻断），不再因缺 shadow 报 0.0。
 pub(crate) fn evaluate_quality_with_frozen_evidence(
     authoring: &Value,
     frozen: &FrozenSourceEvidence,
 ) -> Value {
-    evaluate_quality_inner(
-        authoring,
-        None,
-        Some(frozen),
-        recognition_blockers_gate_enabled(),
-    )
+    evaluate_quality_with_evidence(authoring, None, Some(frozen), None)
+}
+
+/// 同上，但把受管音频事实一并带进来。已发布条目改档时影子证据在、音频也在，
+/// 两个依据都得能用；只给冻结节证据会让一次「保存」把音频判成不存在。
+pub(crate) fn evaluate_quality_with_frozen_evidence_and_managed_audio(
+    authoring: &Value,
+    frozen: &FrozenSourceEvidence,
+    managed_audio: Option<&ManagedAudioFactsV1>,
+) -> Value {
+    evaluate_quality_with_evidence(authoring, None, Some(frozen), managed_audio)
 }
 
 pub(crate) fn evaluate_quality(authoring: &Value, physical_shadow: Option<&Value>) -> Value {
     evaluate_quality_with_gate(
         authoring,
         physical_shadow,
+        recognition_blockers_gate_enabled(),
+    )
+}
+
+/// `evaluate_quality`，并带上受管音频核对事实。
+///
+/// `managed_audio == None` 且稿里**确实**有 `user_upload` 资产时按不通过处理（见
+/// `validate_assets`）：读不到台账就不能声称音频没问题。稿里没有这类资产时两边等价。
+pub(crate) fn evaluate_quality_with_managed_audio(
+    authoring: &Value,
+    physical_shadow: Option<&Value>,
+    managed_audio: Option<&ManagedAudioFactsV1>,
+) -> Value {
+    evaluate_quality_with_evidence(authoring, physical_shadow, None, managed_audio)
+}
+
+/// 唯一实现：物理影子 / 冻结证据 / 受管音频事实三路依据在这里合流。
+fn evaluate_quality_with_evidence(
+    authoring: &Value,
+    physical_shadow: Option<&Value>,
+    frozen: Option<&FrozenSourceEvidence>,
+    managed_audio: Option<&ManagedAudioFactsV1>,
+) -> Value {
+    evaluate_quality_inner(
+        authoring,
+        physical_shadow,
+        frozen,
+        managed_audio,
         recognition_blockers_gate_enabled(),
     )
 }
@@ -247,13 +335,20 @@ pub(crate) fn evaluate_quality_with_gate(
     physical_shadow: Option<&Value>,
     recognition_gate_enabled: bool,
 ) -> Value {
-    evaluate_quality_inner(authoring, physical_shadow, None, recognition_gate_enabled)
+    evaluate_quality_inner(
+        authoring,
+        physical_shadow,
+        None,
+        None,
+        recognition_gate_enabled,
+    )
 }
 
 fn evaluate_quality_inner(
     authoring: &Value,
     physical_shadow: Option<&Value>,
     frozen: Option<&FrozenSourceEvidence>,
+    managed_audio: Option<&ManagedAudioFactsV1>,
     recognition_gate_enabled: bool,
 ) -> Value {
     // 冻结证据只在「确实没有 physical shadow」时生效；有 shadow 就按事实重算。
@@ -328,7 +423,13 @@ fn evaluate_quality_inner(
     validate_passage(authoring, &mut issues, &mut hard_failures);
     validate_listening_parts(authoring, physical_shadow, &mut issues, &mut hard_failures);
     validate_listening_media(authoring, &mut issues, &mut hard_failures);
-    validate_assets(authoring, physical_shadow, &mut issues, &mut hard_failures);
+    validate_assets(
+        authoring,
+        physical_shadow,
+        managed_audio,
+        &mut issues,
+        &mut hard_failures,
+    );
     validate_identifier_and_reference_closure(authoring, &mut issues, &mut hard_failures);
     validate_provenance(authoring, &mut issues, &mut hard_failures);
     validate_scoring_semantics(authoring, &mut issues, &mut hard_failures);
@@ -3047,9 +3148,105 @@ fn node_contains_type(node: &Value, expected: &str) -> bool {
         .any(|child| node_contains_type(child, expected))
 }
 
+/// `user_upload` 资产的四种核对里，`Verified` 还差最后一道：part media 的引用。
+///
+/// 台账核的是「磁盘上那份文件」；`listening.parts[].media` 才是学生端会去取的那条引用。
+/// 两边指的不是同一份音频时，播放出来的就不是这一节的内容——不报出来等于让学生听着
+/// 第二节的音频答第一节的题。返回第一个不一致的 partId。
+fn user_upload_part_media_hash_conflict(
+    authoring: &Value,
+    asset_id: &str,
+    declared_hash: &str,
+) -> Option<String> {
+    authoring
+        .pointer("/listening/parts")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|part| {
+            part.pointer("/media/assetId").and_then(Value::as_str) == Some(asset_id)
+        })
+        .find(|part| {
+            part.pointer("/media/sha256").and_then(Value::as_str) != Some(declared_hash)
+        })
+        .and_then(|part| part.get("partId").and_then(Value::as_str))
+        .map(ToString::to_string)
+}
+
+/// `extractionMode == "user_upload"` 资产的核对：台账有行、受管文件在磁盘上、内容哈希与
+/// 声明一致、探测通过，且 part media 引用的是同一份音频。
+///
+/// **任一条不符都是硬失败，包括「拿不到台账事实」**。把「读不到台账」当成通过，就是那条
+/// 让一切看起来都是绿的、学生端却打不开的老路；宁可如实报「无法核对」。判定依据全部来自
+/// 调用方传进来的 [`ManagedAudioFactsV1`]，这里不开连接、不碰文件系统。
+fn validate_user_upload_asset(
+    authoring: &Value,
+    asset_id: &str,
+    declared_hash: &str,
+    managed_audio: Option<&ManagedAudioFactsV1>,
+    issues: &mut Vec<Value>,
+    hard_failures: &mut Vec<String>,
+) {
+    let check = managed_audio.map(|facts| facts.check(asset_id));
+    let (code, message, reason) = match check {
+        // 台账四条全中：再核 part media 指向的是不是同一份音频。
+        Some(ManagedAudioCheckV1::Verified) => {
+            match user_upload_part_media_hash_conflict(authoring, asset_id, declared_hash) {
+                Some(part_id) => (
+                    ASSET_HASH_MISMATCH,
+                    "听力 part 的 media 引用的不是这份音频（sha256 不一致）。",
+                    format!("part_media_hash_conflict:{part_id}"),
+                ),
+                None => return,
+            }
+        }
+        Some(ManagedAudioCheckV1::HashMismatch) => (
+            ASSET_HASH_MISMATCH,
+            "受管音频文件的内容与声明的 sha256 不一致。",
+            "hash_mismatch".to_string(),
+        ),
+        Some(ManagedAudioCheckV1::ProbeBlocked) => (
+            LISTENING_AUDIO_PROBE_BLOCKED,
+            "受管音频没有通过探测，播放或判分可能不可用。",
+            "probe_blocked".to_string(),
+        ),
+        Some(ManagedAudioCheckV1::NoRecord) => (
+            ASSET_REFERENCE_MISSING,
+            "受管音频台账里没有这条资产的记录。",
+            "no_ledger_record".to_string(),
+        ),
+        Some(ManagedAudioCheckV1::FileMissing) => (
+            ASSET_REFERENCE_MISSING,
+            "受管音频台账有记录，但文件不在磁盘上。",
+            "managed_file_missing".to_string(),
+        ),
+        // 稿里有用户上传的资产却拿不到台账事实：核对不了 == 不通过。
+        None => (
+            ASSET_REFERENCE_MISSING,
+            "无法核对这份用户上传的音频（受管音频台账不可用）。",
+            "managed_audio_facts_unavailable".to_string(),
+        ),
+    };
+    let mut audio_issue = issue(
+        code,
+        "blocking",
+        message,
+        "asset",
+        asset_id,
+        Vec::new(),
+        vec!["replace_asset"],
+    );
+    audio_issue["details"] = json!({
+        "assetId": asset_id,
+        "managedAudioReason": reason,
+    });
+    push_issue(issues, hard_failures, audio_issue);
+}
+
 fn validate_assets(
     authoring: &Value,
     physical_shadow: Option<&Value>,
+    managed_audio: Option<&ManagedAudioFactsV1>,
     issues: &mut Vec<Value>,
     hard_failures: &mut Vec<String>,
 ) {
@@ -3191,7 +3388,22 @@ fn validate_assets(
                 ),
             );
         }
-        if let Some(physical_assets) = &physical_assets {
+        // 用户上传的资产（听力音频）**不**走 physical shadow。
+        //
+        // 音频从来没进过 PDF，拿它去和 shadow 的资产表按 assetId 比对必然对不上：用户按
+        // 界面提示把四段音频绑好了，门禁却逐段报「这个资产在原文里不存在」。它的权威依据
+        // 是受管音频台账 `listening_audio_assets_v1` 加上磁盘上那份文件，见
+        // `validate_user_upload_asset`。逐 part 的 `LISTENING_AUDIO_*` 另有一条判据。
+        if asset.get("extractionMode").and_then(Value::as_str) == Some("user_upload") {
+            validate_user_upload_asset(
+                authoring,
+                asset_id,
+                hash,
+                managed_audio,
+                issues,
+                hard_failures,
+            );
+        } else if let Some(physical_assets) = &physical_assets {
             match physical_assets.get(asset_id) {
                 None => push_issue(
                     issues,
@@ -4758,6 +4970,223 @@ mod tests {
                         && issue.get("targetId").and_then(Value::as_str) == Some(target_id)
                 })
             })
+    }
+
+    fn hard_failures_of(report: &Value) -> Vec<String> {
+        report
+            .get("hardFailures")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// 一份带受管音频的听力稿：一个 part、一条 `user_upload` 音频资产、part media 指向它。
+    ///
+    /// 直接复用 `test_support::listening_exam`（它按真实上传规则从字节算 sha，并写出
+    /// `extractionMode:"user_upload"` 的描述符与「探测通过」的 part media），保证这段夹具
+    /// 不会和产品的音频契约脱节。
+    fn listening_authoring_with_bound_audio() -> (Value, String) {
+        let authoring = serde_json::to_value(crate::test_support::listening_exam(vec![
+            crate::test_support::ListeningPartSpec::range(1, 1, 10),
+        ]))
+        .expect("listening fixture serialises");
+        let asset_id = authoring["assets"][0]["assetId"]
+            .as_str()
+            .expect("fixture carries one audio asset")
+            .to_string();
+        (authoring, asset_id)
+    }
+
+    /// PDF 的 physical shadow：它**没有**这段音频（音频从来不在 PDF 里）。
+    fn shadow_without_the_audio() -> Value {
+        json!({"schemaVersion":"DocumentIRV2","documentId":"doc-listening","jobId":"job-1","sourceFiles":[],"pages":[],"assets":[]})
+    }
+
+    fn facts(entries: &[(&str, ManagedAudioCheckV1)]) -> ManagedAudioFactsV1 {
+        ManagedAudioFactsV1::new(
+            entries
+                .iter()
+                .map(|(asset_id, check)| ((*asset_id).to_string(), *check))
+                .collect(),
+        )
+    }
+
+    /// 该资产上「受管音频核对」给出的理由。
+    ///
+    /// 断言必须走这个字段，不能只断言硬失败码在不在：旧的「拿资产去比 PDF shadow」也会
+    /// 报同一个 `ASSET_REFERENCE_MISSING`，只按码断言的话两边都能过——等于没测。
+    fn managed_audio_reason(report: &Value, asset_id: &str) -> Option<String> {
+        report
+            .get("issues")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|issue| {
+                issue.get("targetId").and_then(Value::as_str) == Some(asset_id)
+                    && issue
+                        .pointer("/details/managedAudioReason")
+                        .and_then(Value::as_str)
+                        .is_some()
+            })
+            .and_then(|issue| {
+                issue
+                    .pointer("/details/managedAudioReason")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+    }
+
+    /// 已绑定的用户上传音频**不得**再拿去和 PDF 的 physical shadow 比对。
+    ///
+    /// 旧实现把 `user_upload` 资产和 shadow 里的资产一视同仁地按 assetId 查，音频在 shadow
+    /// 里当然不存在，于是每一段音频都报一条 `ASSET_REFERENCE_MISSING`——用户按提示绑好了
+    /// 音频，门禁却说他没绑。逐 part 的 `LISTENING_AUDIO_MISSING` / `_PROBE_BLOCKED` 才是
+    /// 音频该走的那条判据。
+    #[test]
+    fn a_bound_user_upload_audio_is_not_compared_against_the_pdf_shadow() {
+        let (authoring, asset_id) = listening_authoring_with_bound_audio();
+        let report = evaluate_quality_with_managed_audio(
+            &authoring,
+            Some(&shadow_without_the_audio()),
+            Some(&facts(&[(&asset_id, ManagedAudioCheckV1::Verified)])),
+        );
+        assert!(
+            !hard_failures_of(&report).contains(&ASSET_REFERENCE_MISSING.to_string()),
+            "已绑定且核对通过的音频不该报 ASSET_REFERENCE_MISSING：{:?}",
+            hard_failures_of(&report)
+        );
+        assert!(
+            !hard_failures_of(&report).contains(&ASSET_HASH_MISMATCH.to_string()),
+            "sha 一致时不该报 ASSET_HASH_MISMATCH：{:?}",
+            hard_failures_of(&report)
+        );
+    }
+
+    /// 台账里查不到记录 ⇒ 硬失败，且原因要能看出来是「台账里没有」。
+    #[test]
+    fn an_audio_asset_with_no_ledger_row_is_a_hard_failure() {
+        let (authoring, asset_id) = listening_authoring_with_bound_audio();
+        let report = evaluate_quality_with_managed_audio(
+            &authoring,
+            Some(&shadow_without_the_audio()),
+            Some(&facts(&[(&asset_id, ManagedAudioCheckV1::NoRecord)])),
+        );
+        assert!(
+            hard_failures_of(&report).contains(&ASSET_REFERENCE_MISSING.to_string()),
+            "{report:#}"
+        );
+        assert_eq!(
+            managed_audio_reason(&report, &asset_id).as_deref(),
+            Some("no_ledger_record"),
+            "必须是受管音频核对给出的结论，不是拿资产去比 PDF shadow：{report:#}"
+        );
+    }
+
+    /// 台账有行但受管文件不在磁盘上 ⇒ 硬失败（不是「跳过检查」）。
+    #[test]
+    fn a_missing_managed_audio_file_is_a_hard_failure() {
+        let (authoring, asset_id) = listening_authoring_with_bound_audio();
+        let report = evaluate_quality_with_managed_audio(
+            &authoring,
+            Some(&shadow_without_the_audio()),
+            Some(&facts(&[(&asset_id, ManagedAudioCheckV1::FileMissing)])),
+        );
+        assert!(
+            hard_failures_of(&report).contains(&ASSET_REFERENCE_MISSING.to_string()),
+            "{report:#}"
+        );
+        assert_eq!(
+            managed_audio_reason(&report, &asset_id).as_deref(),
+            Some("managed_file_missing"),
+            "{report:#}"
+        );
+    }
+
+    /// 受管文件内容哈希与声明不一致 ⇒ `ASSET_HASH_MISMATCH`。
+    #[test]
+    fn a_managed_audio_hash_mismatch_is_a_hard_failure() {
+        let (authoring, asset_id) = listening_authoring_with_bound_audio();
+        let report = evaluate_quality_with_managed_audio(
+            &authoring,
+            Some(&shadow_without_the_audio()),
+            Some(&facts(&[(&asset_id, ManagedAudioCheckV1::HashMismatch)])),
+        );
+        assert!(
+            hard_failures_of(&report).contains(&ASSET_HASH_MISMATCH.to_string()),
+            "{report:#}"
+        );
+        assert_eq!(
+            managed_audio_reason(&report, &asset_id).as_deref(),
+            Some("hash_mismatch"),
+            "{report:#}"
+        );
+    }
+
+    /// 探测没通过 ⇒ 硬失败（复用逐 part 音频那一条码，不另造词汇）。
+    #[test]
+    fn a_managed_audio_probe_failure_is_a_hard_failure() {
+        let (authoring, asset_id) = listening_authoring_with_bound_audio();
+        let report = evaluate_quality_with_managed_audio(
+            &authoring,
+            Some(&shadow_without_the_audio()),
+            Some(&facts(&[(&asset_id, ManagedAudioCheckV1::ProbeBlocked)])),
+        );
+        assert!(
+            hard_failures_of(&report).contains(&LISTENING_AUDIO_PROBE_BLOCKED.to_string()),
+            "{report:#}"
+        );
+        assert_eq!(
+            managed_audio_reason(&report, &asset_id).as_deref(),
+            Some("probe_blocked"),
+            "{report:#}"
+        );
+    }
+
+    /// 稿里有 `user_upload` 资产却拿不到台账事实 ⇒ 硬失败。
+    ///
+    /// 「读不到台账」不能等价于「音频没问题」：那正是让一切看起来通过、学生端却打不开的
+    /// 那条捷径。宁可如实报「无法核对」，也不给一次假通过。
+    #[test]
+    fn a_user_upload_asset_without_ledger_facts_fails_closed() {
+        let (authoring, asset_id) = listening_authoring_with_bound_audio();
+        let report =
+            evaluate_quality_with_managed_audio(&authoring, Some(&shadow_without_the_audio()), None);
+        assert!(
+            hard_failures_of(&report).contains(&ASSET_REFERENCE_MISSING.to_string()),
+            "{report:#}"
+        );
+        assert_eq!(
+            managed_audio_reason(&report, &asset_id).as_deref(),
+            Some("managed_audio_facts_unavailable"),
+            "{report:#}"
+        );
+    }
+
+    /// part media 声明的 sha 与资产描述符不一致 ⇒ 硬失败（台账说通过也不行）。
+    ///
+    /// 台账核的是「磁盘上那份文件」，part media 才是学生端会去取的那条引用；两边指的不是
+    /// 同一份音频时，播放出来的就不是这一节的内容。
+    #[test]
+    fn an_audio_asset_whose_part_media_disagrees_on_the_hash_is_a_hard_failure() {
+        let (mut authoring, asset_id) = listening_authoring_with_bound_audio();
+        authoring["listening"]["parts"][0]["media"]["sha256"] = json!("b".repeat(64));
+        let report = evaluate_quality_with_managed_audio(
+            &authoring,
+            Some(&shadow_without_the_audio()),
+            Some(&facts(&[(&asset_id, ManagedAudioCheckV1::Verified)])),
+        );
+        assert!(
+            hard_failures_of(&report).contains(&ASSET_HASH_MISMATCH.to_string()),
+            "{report:#}"
+        );
+        assert!(
+            managed_audio_reason(&report, &asset_id)
+                .is_some_and(|reason| reason.starts_with("part_media_hash_conflict:")),
+            "{report:#}"
+        );
     }
 
     #[test]
