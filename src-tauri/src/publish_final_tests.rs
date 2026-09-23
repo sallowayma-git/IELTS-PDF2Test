@@ -851,3 +851,130 @@ fn forced_publish_of_a_complete_listening_paper_reaches_the_student_manifest() {
     assert_eq!(records[0].student_loadable, 1);
     let _ = fs::remove_dir_all(root);
 }
+
+// ───────────────── 放行发布：某一条打包失败不该拖垮整批 ─────────────────
+
+/// 让一道题**通过门禁与导出、但在包检查处失败**：把资产声明成一个不在学生端离线
+/// 运行时 allowlist 里的 MIME（`allowed_asset_mime` 只收 `image/*`、`audio/*`、
+/// `application/octet-stream`）。
+///
+/// 刻意不用「删掉资源文件」制造失败：那是 IO 类硬错误，任务书要求它继续中断整批
+/// （见 `force_never_bypasses_unsafe_exam_ids_asset_io_or_duplicate_exam_ids`）。
+/// 这里要的是「这条题自己组装出来的包，学生端读不了」——门禁、导出、资源复制都照常
+/// 通过，是学生加载器探针在包组装**之后**判定它不可加载。
+fn seed_item_with_an_unloadable_asset_mime(root: &Path, exam_id: &str) -> String {
+    seed_item(root, exam_id, true, |authoring| {
+        authoring["assets"][0]["mime"] = json!("text/plain");
+    })
+}
+
+/// 放行发布（用户已明确点击「就这样发」）时，某一条的**包检查**失败必须只降级这一条，
+/// 整批继续。
+///
+/// 旧行为：`stage_package_files` 的 `?` 直接把错误冒到批次外层闭包，于是整批回滚、
+/// staging/release 被删、manifest 不替换——用户点了「放行」，结果**一条都没发出去**，
+/// 而且失败原因与他刚才确认的问题毫无关系。
+///
+/// 降级后的语义与「授权快照不进学生清单」完全一致：授权快照照发（用户能继续编辑/导出），
+/// 只是这一条不进学生端清单。IO / 安全类硬错误**不**降级，仍中断整批。
+#[test]
+fn forced_publish_degrades_one_unpackageable_item_and_publishes_the_rest() {
+    let root = temp_root("publish-forced-partial-package");
+    ensure_app_dirs(&root).unwrap();
+    let good = seed_item(&root, "final-good", false, |_| {});
+    let bad = seed_item_with_an_unloadable_asset_mime(&root, "final-bad");
+
+    let result = publish(&root, &[&good, &bad], force_now())
+        .expect("放行发布时一条打不了包不该让整批失败");
+
+    let good_outcome = outcome_for(&result, &good);
+    assert_eq!(good_outcome["ok"], json!(true));
+    assert_eq!(
+        good_outcome["studentLoadable"],
+        json!(true),
+        "好的一条必须照常发布：{good_outcome}"
+    );
+    let bad_outcome = outcome_for(&result, &bad);
+    assert_eq!(bad_outcome["ok"], json!(true), "{bad_outcome}");
+    assert_eq!(
+        bad_outcome["studentLoadable"],
+        json!(false),
+        "打不了包的那条必须降级成 authoring-only：{bad_outcome}"
+    );
+    assert!(
+        bad_outcome["packageError"]
+            .as_str()
+            .is_some_and(|error| error.starts_with("nas_package_v2_probe_failed")),
+        "降级必须如实带上原因码：{bad_outcome}"
+    );
+
+    // 磁盘事实：学生清单里只有好的那条；坏的那条不能留下半成品条目。
+    let manifest = manifest(&root);
+    assert!(
+        manifest["final-good"].is_object(),
+        "整批没有被回滚，好的一条真的进了清单：{manifest}"
+    );
+    assert!(
+        manifest["final-bad"].is_null(),
+        "打不了包的那条绝不能进学生清单：{manifest}"
+    );
+
+    // 授权快照仍然为两条都产出（用户能继续编辑/导出），只是坏的那条标为不可加载。
+    // 这也是「降级发生在包检查、而不是导出」的判据：导出让了快照，包检查才失败。
+    let receipts = snapshot_receipts(&root);
+    assert_eq!(receipts.len(), 2, "两条都该有授权快照：{receipts:?}");
+
+    // 打了一半的包不留：坏的那条的资源目录与脚本不能出现在 release 里。
+    for batch in fs::read_dir(reading_root(&root).join("releases")).unwrap().flatten() {
+        assert!(
+            !batch.path().join("resources").join("final-bad").exists(),
+            "降级条目不该留下资源目录：{}",
+            batch.path().display()
+        );
+        assert!(
+            !batch.path().join("final-bad.js").exists(),
+            "降级条目不该留下脚本：{}",
+            batch.path().display()
+        );
+    }
+
+    // 发布记录如实区分两条。
+    let records = publish_records(&root, &bad);
+    assert_eq!(records.len(), 1, "{}", records.len());
+    assert_eq!(records[0].student_loadable, 0);
+    assert_eq!(
+        records[0].verdict["ready"],
+        json!(true),
+        "门禁结论是**真实**的那份，没被这次打包失败改写：{:?}",
+        records[0].verdict
+    );
+    assert_eq!(item_status(&root, &good), "published");
+    let bad_status = item_status(&root, &bad);
+    assert!(
+        bad_status == "published" || bad_status == "published_forced",
+        "降级仍是「已发布（authoring-only）」，不是失败：{bad_status}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// 严格发布（没有放行）时，包检查失败仍然如实让整批失败——用户没有说「就这样发」，
+/// 后端不该替他决定「发一半也行」。
+#[test]
+fn strict_publish_still_fails_the_batch_when_one_item_cannot_be_packaged() {
+    let root = temp_root("publish-strict-partial-package");
+    ensure_app_dirs(&root).unwrap();
+    let good = seed_item(&root, "strict-good", false, |_| {});
+    let bad = seed_item_with_an_unloadable_asset_mime(&root, "strict-bad");
+
+    let error = publish(&root, &[&good, &bad], None).expect_err("严格发布必须如实失败");
+    assert!(
+        error.contains("nas_package_v2_probe_failed"),
+        "失败原因必须指向真正的问题：{error}"
+    );
+    assert!(
+        !reading_root(&root).join("manifest.js").exists(),
+        "严格发布失败时不得留下清单"
+    );
+    let _ = fs::remove_dir_all(root);
+}

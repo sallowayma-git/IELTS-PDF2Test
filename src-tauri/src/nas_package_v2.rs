@@ -341,6 +341,12 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
         let mut loadable_exam_ids = BTreeSet::new();
         let mut forced_items = Vec::new();
         for (index, (item_id, ds, version)) in snapshots.iter().enumerate() {
+            // ── 导出 ──────────────────────────────────────────────────────
+            // 导出自己的失败**一律中断整批**，放行也不例外。门禁不是 Ready 的稿在这里
+            // 已经由 `export_authoring_snapshot_with_mode` 自己降级成 `studentLoadable=false`
+            // （编译不过、答案没闭合同理），所以走到 `?` 的只剩 IO 与安全类硬错误：
+            // 资产缺失/越界、examId 路径不安全、目录不可写、清单 CAS、锁。把这类错误吞成
+            // 「这条没发出去」，等于替用户接受环境故障——而他要的是「发布」。
             let materialized = crate::authoring_v2_commands::export_authoring_snapshot_with_mode(root,
                 crate::authoring_v2_commands::ExportAuthoringV2Input {
                     job_id: item_id.clone(), export_dir: staging.join("snapshots").to_string_lossy().into_owned(),
@@ -348,65 +354,115 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
                 }, &mode)?;
             let receipt = materialized.get("receipt").cloned().unwrap_or(Value::Null);
             let publish_override = receipt.get("publishOverride").cloned();
-            let forced = publish_override.is_some();
             let student_loadable = receipt.get("studentLoadable").and_then(Value::as_bool).unwrap_or(false);
             let verdict = receipt.get("publishVerdict").cloned().ok_or("PUBLISH_VERDICT_MISSING")?;
             let reasons = publish_override
                 .as_ref()
                 .and_then(|value| value.get("reasons").cloned())
                 .unwrap_or_else(|| json!([]));
-            let record_id = Uuid::new_v4().simple().to_string();
-            if !student_loadable {
-                // 授权快照已写在 staging/snapshots（随 release 一起提交）；不进学生清单。
-                let exam_id = safe_exam_id(&json!({"examId": materialized.get("examId").cloned().unwrap_or(Value::Null)}))?;
-                if !exam_ids.insert(exam_id.clone()) { return Err(format!("PUBLISH_DUPLICATE_EXAM_ID:{exam_id}")); }
-                forced_items.push(json!({"itemId": item_id, "examId": exam_id, "studentLoadable": false,
-                    "verdictStatus": verdict.get("status").cloned().unwrap_or(Value::Null),
-                    "confirmedAt": publish_override.as_ref().and_then(|value| value.get("confirmedAt").cloned())}));
-                outcomes.push(json!({"itemId": item_id, "ok": true, "examId": exam_id, "editVersion": version,
-                    "forced": forced, "studentLoadable": false, "publishRecordId": record_id,
-                    "verdictStatus": verdict.get("status").cloned().unwrap_or(Value::Null)}));
-                publications.push(ItemPublication { item_id: item_id.clone(), edit_version: *version, record_id,
-                    forced, student_loadable: false, verdict, reasons });
-                if input.fault.as_deref() == Some(&format!("after_item_{}", index + 1)) {
-                    return Err("PUBLISH_BATCH_INTERRUPTED".to_string());
-                }
-                continue;
-            }
-            let source_path = PathBuf::from(receipt.get("runtimePath").and_then(Value::as_str).ok_or("PUBLISH_RUNTIME_MISSING")?);
-            let source_value: Value = crate::util::read_json(&source_path)?;
-            let source = CompiledExamSourceV2::parse(&source_value).map_err(|error| error.to_string())?;
-            let exam_id = safe_exam_id(&source_value)?;
-            if !exam_ids.insert(exam_id.clone()) { return Err(format!("PUBLISH_DUPLICATE_EXAM_ID:{exam_id}")); }
-            loadable_exam_ids.insert(exam_id.clone());
-            let mut staged_paths = paths.clone();
-            staged_paths.staging_root = staging.clone();
-            staged_paths.staging_exam_path = staging.join(format!("{exam_id}.js"));
-            staged_paths.staging_resource_path = staging.join("resources").join(&exam_id);
-            let package_input = NasPackagePublishInput {
-                library_root: input.destination.clone(), source_path: source_path.to_string_lossy().into_owned(),
-                asset_root: None, exam_id: Some(exam_id.clone()), minimum_runtime_version: None,
-                expected_manifest_sha256: None, fault: None, job_id: None, revision: None,
+            // 这条题的 examId：取授权快照 receipt 里那份。它与编译出来的 runtime、
+            // 清单条目共用同一个身份，所以降级与正常发布用同一个值，不做二次推导。
+            let exam_id = safe_exam_id(&json!({
+                "examId": materialized.get("examId").cloned().unwrap_or(Value::Null)
+            }))?;
+            // ── 包检查（组装 + 学生加载器探针）──────────────────────────────
+            // 这是唯一在放行模式下允许「只降级这一条」的失败面：包组装出来学生端读不了，
+            // 是**这条题自己的内容问题**，不是环境故障。判据是白名单（见
+            // `is_degradable_package_check_failure`），未知错误码默认中断整批。
+            // 严格发布不降级——用户没说「发一半也行」，后端不该替他决定。
+            let package_check: CommandResult<Option<(StagedPackage, usize)>> = if student_loadable {
+                (|| {
+                    let source_path = PathBuf::from(receipt.get("runtimePath").and_then(Value::as_str).ok_or("PUBLISH_RUNTIME_MISSING")?);
+                    let source_value: Value = crate::util::read_json(&source_path)?;
+                    let source = CompiledExamSourceV2::parse(&source_value).map_err(|error| error.to_string())?;
+                    let mut staged_paths = paths.clone();
+                    staged_paths.staging_root = staging.clone();
+                    staged_paths.staging_exam_path = staging.join(format!("{exam_id}.js"));
+                    staged_paths.staging_resource_path = staging.join("resources").join(&exam_id);
+                    let package_input = NasPackagePublishInput {
+                        library_root: input.destination.clone(), source_path: source_path.to_string_lossy().into_owned(),
+                        asset_root: None, exam_id: Some(exam_id.clone()), minimum_runtime_version: None,
+                        expected_manifest_sha256: None, fault: None, job_id: None, revision: None,
+                    };
+                    let staged = stage_package_files(&package_input, &source, &source_value, &source_path, &staged_paths)?;
+                    Ok(Some((staged, source.assets().len())))
+                })()
+            } else {
+                // 门禁（或编译、答案闭合）已经判定这条进不了学生端：不碰包，
+                // 直接走 authoring-only。这不是失败，没有 packageError。
+                Ok(None)
             };
-            let mut staged = stage_package_files(&package_input, &source, &source_value, &source_path, &staged_paths)?;
-            // 脚本放进不可变的 releases/ 目录；资源路径保持根级 `resources/<examId>/`，
-            // 因为学生端 resolver 固定从 reading 根解析 `resources/${examId}`，不消费 resourcesBase。
-            let script_relative = staged.entry["script"].as_str().ok_or("PUBLISH_PATH_MISSING")?.trim_start_matches("./");
-            staged.entry["script"] = json!(format!("./releases/{batch_id}/{script_relative}"));
-            // 学生端忽略未知的清单条目字段；放行标记留在条目上供审计。
-            if let Some(publish_override) = publish_override.as_ref() {
-                staged.entry["publishOverride"] = publish_override.clone();
-                forced_items.push(json!({"itemId": item_id, "examId": exam_id, "studentLoadable": true,
-                    "verdictStatus": verdict.get("status").cloned().unwrap_or(Value::Null),
-                    "confirmedAt": publish_override.get("confirmedAt").cloned()}));
+            let record_id = Uuid::new_v4().simple().to_string();
+            let attempt = match package_check {
+                Ok(None) => ItemAttempt::AuthoringOnly {
+                    publish_override, verdict, reasons, package_error: None,
+                },
+                Ok(Some((staged, asset_count))) => ItemAttempt::Packaged {
+                    staged, exam_id: exam_id.clone(), asset_count, publish_override, verdict, reasons,
+                },
+                Err(error)
+                    if matches!(mode, PublishMode::Forced { .. })
+                        && is_degradable_package_check_failure(&error) =>
+                {
+                    // 包检查没过：这条降级为 authoring-only。授权快照**已经**写进
+                    // staging/snapshots（随 release 一起提交），用户能继续编辑/导出；
+                    // 只是不进学生清单——绝不把一个学生端会拒绝的 runtime 发出去。
+                    // 门禁结论用 receipt 里那份真实的，不重算也不改写。
+                    // 打了一半的包不留：它不属于任何清单条目。
+                    let _ = fs::remove_dir_all(staging.join("resources").join(&exam_id));
+                    let _ = fs::remove_file(staging.join(format!("{exam_id}.js")));
+                    ItemAttempt::AuthoringOnly {
+                        publish_override, verdict, reasons, package_error: Some(error),
+                    }
+                }
+                Err(error) => return Err(error),
+            };
+            match attempt {
+                ItemAttempt::AuthoringOnly { publish_override, verdict, reasons, package_error } => {
+                    let forced = publish_override.is_some();
+                    // 授权快照已写在 staging/snapshots（随 release 一起提交）；不进学生清单。
+                    if !exam_ids.insert(exam_id.clone()) { return Err(format!("PUBLISH_DUPLICATE_EXAM_ID:{exam_id}")); }
+                    let mut entry = json!({"itemId": item_id, "examId": exam_id, "studentLoadable": false,
+                        "verdictStatus": verdict.get("status").cloned().unwrap_or(Value::Null),
+                        "confirmedAt": publish_override.as_ref().and_then(|value| value.get("confirmedAt").cloned())});
+                    let mut outcome = json!({"itemId": item_id, "ok": true, "examId": exam_id, "editVersion": version,
+                        "forced": forced, "studentLoadable": false, "publishRecordId": record_id,
+                        "verdictStatus": verdict.get("status").cloned().unwrap_or(Value::Null)});
+                    if let Some(package_error) = package_error.as_ref() {
+                        // 审计要能分清「门禁放行」（用户确认过的问题）与「包检查没过」
+                        // （这条题根本装不进学生包）。原因码原样带上，不做人话化。
+                        entry["packageError"] = json!(package_error);
+                        outcome["packageError"] = json!(package_error);
+                    }
+                    forced_items.push(entry);
+                    outcomes.push(outcome);
+                    publications.push(ItemPublication { item_id: item_id.clone(), edit_version: *version, record_id,
+                        forced, student_loadable: false, verdict, reasons });
+                }
+                ItemAttempt::Packaged { mut staged, exam_id, asset_count, publish_override, verdict, reasons } => {
+                    let forced = publish_override.is_some();
+                    if !exam_ids.insert(exam_id.clone()) { return Err(format!("PUBLISH_DUPLICATE_EXAM_ID:{exam_id}")); }
+                    loadable_exam_ids.insert(exam_id.clone());
+                    // 脚本放进不可变的 releases/ 目录；资源路径保持根级 `resources/<examId>/`，
+                    // 因为学生端 resolver 固定从 reading 根解析 `resources/${examId}`，不消费 resourcesBase。
+                    let script_relative = staged.entry["script"].as_str().ok_or("PUBLISH_PATH_MISSING")?.trim_start_matches("./");
+                    staged.entry["script"] = json!(format!("./releases/{batch_id}/{script_relative}"));
+                    // 学生端忽略未知的清单条目字段；放行标记留在条目上供审计。
+                    if let Some(publish_override) = publish_override.as_ref() {
+                        staged.entry["publishOverride"] = publish_override.clone();
+                        forced_items.push(json!({"itemId": item_id, "examId": exam_id, "studentLoadable": true,
+                            "verdictStatus": verdict.get("status").cloned().unwrap_or(Value::Null),
+                            "confirmedAt": publish_override.get("confirmedAt").cloned()}));
+                    }
+                    manifest.insert(exam_id.clone(), staged.entry);
+                    outcomes.push(json!({"itemId": item_id, "ok": true, "examId": exam_id,
+                        "editVersion": version, "manifestPath": paths.manifest_path, "assetCount": asset_count,
+                        "forced": forced, "studentLoadable": true, "publishRecordId": record_id,
+                        "verdictStatus": verdict.get("status").cloned().unwrap_or(Value::Null)}));
+                    publications.push(ItemPublication { item_id: item_id.clone(), edit_version: *version, record_id,
+                        forced, student_loadable: true, verdict, reasons });
+                }
             }
-            manifest.insert(exam_id.clone(), staged.entry);
-            outcomes.push(json!({"itemId": item_id, "ok": true, "examId": exam_id,
-                "editVersion": version, "manifestPath": paths.manifest_path, "assetCount": source.assets().len(),
-                "forced": forced, "studentLoadable": true, "publishRecordId": record_id,
-                "verdictStatus": verdict.get("status").cloned().unwrap_or(Value::Null)}));
-            publications.push(ItemPublication { item_id: item_id.clone(), edit_version: *version, record_id,
-                forced, student_loadable: true, verdict, reasons });
             if input.fault.as_deref() == Some(&format!("after_item_{}", index + 1)) {
                 return Err("PUBLISH_BATCH_INTERRUPTED".to_string());
             }
@@ -604,6 +660,44 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
 /// 判据用**读回校验**而不是 `execute` 的受影响行数：行数是"匹配到"还是"真的改了"
 /// 属于驱动层语义，不该成为发布判据的一部分。直接查 `status` + `current_edit_version`，
 /// 后置条件成立与否一目了然。
+/// 一道题在本批中的**打包尝试**结果。
+///
+/// 分成两支是因为「能不能进学生清单」在放行模式下不再是硬失败：
+/// - `Packaged`：脚本 + 资源都已就位，清单里会有这条。
+/// - `AuthoringOnly`：授权快照照发（用户仍可编辑/导出/继续修），但不进学生清单。
+///   两种来源都会走到这里：门禁结论本身不允许进（`studentLoadable == false`），
+///   以及放行模式下包检查失败后的降级（`package_error` 记下原因码）。
+enum ItemAttempt {
+    AuthoringOnly {
+        publish_override: Option<Value>,
+        /// 门禁原样结论，从不被改写成 Ready。
+        verdict: Value,
+        reasons: Value,
+        /// 包检查（组装 + 学生加载器探针）的失败原因码。门禁降级时为 `None`。
+        package_error: Option<String>,
+    },
+    Packaged {
+        staged: StagedPackage,
+        exam_id: String,
+        asset_count: usize,
+        publish_override: Option<Value>,
+        verdict: Value,
+        reasons: Value,
+    },
+}
+
+/// 放行模式下「只降级这一条、继续整批」的失败面：**包检查**没过
+/// （`stage_package_files` 组装出包之后，学生加载器探针判定它读不了）。
+///
+/// 判据刻意写成**白名单**：新增的错误码默认中断整批。理由——放行发布是「用户接受
+/// 这条题的内容质量缺陷」，不是「用户接受后端替他吞掉环境故障」。IO 类
+/// （资产缺失/复制失败、staging 目录不可写）、安全类（资产相对路径越界、examId
+/// 非法）、以及清单 CAS / 锁的失败都必须继续中断：把它们降级成一条静默的
+/// authoring-only 记录，用户会以为「发布成功了」，而磁盘上少了一整个资源目录。
+fn is_degradable_package_check_failure(error: &str) -> bool {
+    error.starts_with("nas_package_v2_probe_failed:")
+}
+
 /// 一道题在本批中的发布结果（清单提交后写状态与发布记录用）。
 struct ItemPublication {
     item_id: String,

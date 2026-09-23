@@ -12,6 +12,11 @@ export interface PublishItemOutcome {
   forced?: boolean;
   /** 学生端能否打开这道题（未解析答案或编译不过时为 false，只写了授权快照）。 */
   studentLoadable?: boolean;
+  /**
+   * 包检查（组装 + 学生加载器探针）失败的原因码。只有放行发布时这一条装不进学生包
+   * 才会有——整批照常发布，这一条降级为 authoring-only。原始机器码只供审计，不渲染。
+   */
+  packageError?: string;
   publishRecordId?: string;
 }
 
