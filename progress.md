@@ -1933,6 +1933,47 @@ UI / 学生端）尚未跑**，属于 T6。
   T7（被外部资源阻塞项）未开始。
 - 听力页在真实 Electron App 里的端到端验收未做（T6）。
 
+### 2026-09-23 复核返工（R2 / F2）：听力卷曾泄露进学生端「阅读」目录
+
+**缺陷（复核方 F2，即 T3 交付物 3 漏项）**：`NasJsDirectReadingAssetProvider.listAssets()`
+只按 `schemaVersion !== READING_V2_SCHEMA_VERSION` 过滤，**完全不看 `modality`**。
+listening 卷的 `schemaVersion` 是 `ListeningExamSourceV1`，恰好「不等于阅读 V2 版本」，
+于是被当成「非 V2 的阅读条目」**放行** —— 听力卷出现在学生的「阅读练习」目录里。
+
+**先红**（把新用例加在未修的 provider 上跑，亲眼看到红）：
+
+```
+❌ FAIL: reading library: 混合清单里听力卷不进阅读目录 -
+   expected=["p1-high-01","reading-v2-01"] actual=["listening-v1-01","p1-high-01","reading-v2-01"]
+```
+
+听力条目 `listening-v1-01` 真的混进了阅读目录（原文见 `_r2_red.log`）。
+
+**修法**：把「是不是阅读条目」提成显式判据 `isReadingEntry(entry)`：`modality` 存在且
+不等于 `reading` → **直接否**（这条优先）；没有 `schemaVersion` → 视为阅读（兼容老式 IIFE
+manifest）；否则只认阅读 schema 白名单 `{ReadingExamSourceV1, ReadingExamSourceV2}`。
+`listAssets()` 与 `getStatus().assetCount` 共用同一个 `readingEntries(index)`，
+避免「列表已过滤、计数没过滤」的二次不一致。
+
+**改动前后数字（学生端 worktree，分支 `feat-listening-per-part-media`）**：
+
+| 项目 | 改动前 | 改动后 |
+| --- | --- | --- |
+| `node developer/tests/exam/run-all.cjs` | 15 files / 15 passed | **15 files / 15 passed** |
+| `developer/tests/exam/reading-library.test.cjs` | 1 passed | **3 passed**（+2 新用例） |
+| exam 套件断言合计 | 49 | **51** |
+| `py developer/tests/ci/run_static_suite.py` | pass，19 项（18 pass + 1 skip） | **pass，19 项（18 pass + 1 skip）** |
+| `npx tsc --noEmit`（server） | 干净 | **干净** |
+
+- 两条新用例：**「混合清单里听力卷不进阅读目录」**（红 → 绿）与
+  **「纯阅读清单输出与改前逐字一致」**（用手写字面量深比较，守住零回归）。
+- 阅读链路零回归：13 个既有 exam 测试文件全部仍通过；静态套件 19 项逐项与改动前同值。
+- **`server/dist` 未被本次改动触碰**：它是 gitignore 的构建产物（`.gitignore:11:/server/dist/`），
+  不参与提交；**主检出** `F:/workspace/IELTS-NASfor-WenDao/server/dist` 的 mtime 仍是
+  `2026-09-17T16:49`（未改动）。本 worktree 内的 `server/dist` 由静态套件自带的构建步骤重生成，
+  已与修好的 `server/src` 一致。
+- 修复落在**另一仓库**工作区，与作者端仓库分开提交。
+
 ---
 
 ## 2026-09-22 第三波 T4：云端候选应用听力结构
@@ -2077,10 +2118,15 @@ UI / 学生端）尚未跑**，属于 T6。
    结果一条都没发出去，还得自己去猜是哪一条。现在这一条降级成 authoring-only
    （`studentLoadable=false`）留在库里，其余照常发布；**严格发布（`Strict`）仍然整批失败**；
    导出、越界路径、重复 examId 这类 IO/安全硬错误照旧中断整批。
-2. **永久删除一个条目时，它的受管音频跟着走。** 以前删掉题库行，`<appData>/audio/<itemId>/`
+2. **（后端命令层）永久删除一个条目时，它的受管音频跟着走。**
+   以前删掉题库行，`<appData>/audio/<itemId>/`
    目录和 `listening_audio_assets_v1` 里那一行都留着——永久泄漏，删掉的条目音频仍躺在磁盘上。
    现在在同一逻辑操作里：事务删表行 → 删该条目的音频目录；目录删失败**只报告不致命**；
    **永不触碰其他条目的音频**。
+   **更正（2026-09-23 复核）：这条目前只在后端命令层成立，不是「用户现在能做到」的事。**
+   前端 `deleteJob` **没有任何调用方**——界面上只有回收站（软删除），没有「永久删除」入口，
+   所以用户当前**无法从界面触发**这条清理路径。正确表述是
+   「后端永久删除命令已覆盖音频清理，**当前无 UI 入口**」。
 3. **解析缓存的清理只删自己那一条。** 以前按 `job_id` **前缀**匹配，`job-1` 会把
    `job-10-document-ir.json` 一起删掉——相似 id 的另一条遭殃。现在按**精确身份**匹配
    （等于 `job_id`，或以 `<job_id>-` 开头，且身份里含该条目**自己**源文件的 sha256）。
@@ -2208,9 +2254,11 @@ T5-4 是脚本改动，没有 Rust/Vitest 先红；红/绿只能靠 CDP 实跑�
   + 真实 SQLite 断言）、T5-3 缓存清理（真实 `cleanup_parser_cache_for_job` + 真实磁盘）、
   T5-5 单文件导入（真实 `automation_source_files_from_env` + 真实 `list_pdf_files_in_dir`
   + 真实 `import_files_at_root` + 真实磁盘）。
-- **产品端到端（T5-4、T5-5 的 CDP 链）：本轮未取得。** 原因见「偏离」第 2 条：
-  本机 WebView2 调试端点当前无法建立，仓库自带的 `tauri-cdp-smoke.mjs` 同样失败，
-  故 T5-4 的 7 个脚本与 T5-5 的 CDP 链**只做到语法检查**，待环境恢复后补跑。
+- **产品端到端（T5-4、T5-5 的 CDP 链）：本轮未取得。**
+  原因见「偏离」第 2 条：**当时判定的「本机 WebView2 调试端点无法建立」是错的**（2026-09-23 已更正），
+  真实原因是启动 App 时**进程环境被污染**，不是机器或产品退化。环境修正后同一台机器、
+  同一分支、新构建**已实测通过**：`tauri-cdp-smoke.mjs` 5/5、阅读链 13/13。
+  故 T5-4 的 7 个脚本与 T5-5 的 CDP 链当时**只做到语法检查**，现已可补跑（见文末 09-23 返工轮）。
 - **仅单元 / schema**：无新增。
 
 ### 偏离任务书之处及理由
@@ -2218,28 +2266,41 @@ T5-4 是脚本改动，没有 Rust/Vitest 先红；红/绿只能靠 CDP 实跑�
 1. **T5-4 任务书点了 8 个脚本，我只改了 7 个。** `tauri-cdp-workspace-layout.mjs` 未改：
    grep 确认它只用了仍然有效的钩子，改它属于无谓改动。其余 7 个按任务书要求改到位，
    并额外 grep 了仓库内其它用法（无遗漏）。
-2. **T5-5 的证据等级从「产品端到端」降为「命令处理器层」。** 本机 WebView2 调试端点
-   当前**完全无法建立**，已用四种方式交叉验证：
+2. **T5-5 的证据等级从「产品端到端」降为「命令处理器层」。**
+   当时的判断理由是「本机 WebView2 调试端点**完全无法建立**」，四种方式交叉验证：
    (a) 新建的 CDP 脚本报 `CANNOT-RUN WebView2 DevTools 端点未在 90000ms 内就绪`；
    (b) **仓库自带的 `tauri-cdp-smoke.mjs` 报同样的错** → 与我的脚本无关；
    (c) `env -i` 干净环境直接启动 exe：`DevToolsActivePort` 文件从未生成、
    `netstat` 无 `639xx` 监听、`curl --noproxy '*'` 返回 exit 7；
    (d) 对照实验证明机器本身正常：`msedge.exe --headless=new --remote-debugging-port=63980`
    **3 秒内**就绪，`/json/version` 正常返回。
-   历史事实：`artifacts/e2e-cdp/run-cloud-repair-chain-2026-09-21T18-51-21-267Z` 的 CDP 链
-   真的跑通过（`verdict=passed`、`scenarioFacts.total=13`），所以是**本机当前状态退化**，
-   不是文档造假、也不是代码回归。CDP 脚本作为**待环境恢复执行的产品端到端挂件**留在仓库，
-   提交信息里写明「当前跑不了，仓库自带 smoke 同样失败」。**不以此冒报通过。**
+   **更正（2026-09-23 复核）：由 (a)–(d) 推出的结论「本机 CDP 退化」是错的。**
+   真实原因是**交给 App 的进程环境被污染**：`PATH` 首项损坏、`HTTP_PROXY`/`HTTPS_PROXY`
+   指向本机未监听的代理、`__COMPAT_LAYER=Installer`。被污染的环境下 WebView2 起不来
+   调试端点，看起来就像「机器不行了」，连仓库自带 smoke 也一起失败，所以当时无法排除。
+   修正方式是把**子进程环境**清洗后再启动（`sanitizedAppEnv()`：剥离代理变量、
+   `__COMPAT_LAYER`、空/不存在的 `PATH` 项）。修正后同一台机器、同一分支、**新构建**
+   实测：`tauri-cdp-smoke.mjs` **5/5 通过**、阅读链 **13/13 通过**。
+   历史事实佐证：`artifacts/e2e-cdp/run-cloud-repair-chain-2026-09-21T18-51-21-267Z`
+   的 CDP 链早就跑通过（`verdict=passed`、`scenarioFacts.total=13`）。
+   所以既不是机器退化，也不是代码回归，而是**执行侧环境问题**。
+   教训：`env -i` 只清到「我这一层」，Tauri/WebView2 子进程仍会继承外层被污染的环境；
+   对照实验 (d) 用 `msedge.exe` 起得来，恰恰说明问题不在系统，而在**传给子进程的环境**。
 3. **T5-2 顺带发现但未修**：`delete_exam_by_id` 不动 `library_items_v2`，9 张子表外键会让
    题库行留孤儿。任务书 T5-2 只要求「永久删除时清理受管音频」，未要求修这个删除路径，
    故只记录不扩面。
 
 ### 未完成项
 
-- **T6**（真实 App 听力端到端 CDP 验收）——被同一个 CDP 环境阻塞。弹窗、拖拽、
-  asset 协议播放**至今从未在真实 App 里跑过**，这是 T6 的核心价值，本轮无法取得。
+- **T6**（真实 App 听力端到端 CDP 验收）——本轮当时记为「被 CDP 环境阻塞」。
+  **2026-09-23 更正：阻塞不成立**（是执行侧环境问题，不是机器），已重新列入返工轮执行；
+  弹窗、拖拽、asset 协议播放仍未在真实 App 里跑过，这一点当时的事实描述成立。
 - **T7**（被外部资源阻塞项：真实模型额度、28 份答案页、DOCX 样本）——未拿到资源，
   如实报「未执行」，不报通过。
-- **环境恢复后可补跑**：`scripts/e2e/tauri-cdp-single-file-import.mjs`（T5-5 产品端到端确认）、
-  `scripts/e2e/tauri-cdp-smoke.mjs`（先确认 CDP 通道本身可用）、以及 T5-4 改过的 7 个脚本。
-- **T5-2 的孤儿行问题**（`delete_exam_by_id` 不动 `library_items_v2`）留作独立待办。
+- **当时记为「环境恢复后可补跑」的**：`scripts/e2e/tauri-cdp-single-file-import.mjs`
+  （T5-5 产品端到端确认）、`scripts/e2e/tauri-cdp-smoke.mjs`（先确认 CDP 通道本身可用）、
+  以及 T5-4 改过的 7 个脚本。**现已可跑**，见文末 09-23 返工轮。
+- **已登记的已知缺陷（当时发现、未修，留作独立待办）**：
+  `delete_exam_by_id` 只删旧 `exams` 表，不动 `library_items_v2`，而后者有 9 张子表外键
+  引用它 → **题库行会留孤儿**。任务书 T5-2 只要求「永久删除时清理受管音频」，
+  未要求修这条删除路径，故当时只记录、未擅自扩大改动面。**复核后维持「不修」，作为已知缺陷登记。**
