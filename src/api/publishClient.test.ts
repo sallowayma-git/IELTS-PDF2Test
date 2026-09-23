@@ -118,6 +118,14 @@ describe("publishOutcomeKind — 只给验收脚本读的机器分类", () => {
       .toBe("published_forced_not_loadable");
   });
 
+  it("门禁 Ready、只是包检查没过的条目：不是 published，也不叫「放行」", () => {
+    // 这一条没有任何东西被放行（forced=false），却装不进学生包。旧实现把它归成
+    // published_forced_not_loadable，等于对用户和验收脚本都说「用户点过放行」。
+    const kind = publishOutcomeKind({ ...base, forced: false, studentLoadable: false });
+    expect(kind).toBe("published_not_loadable");
+    expect(kind).not.toBe("published");
+  });
+
   it("失败就是失败，不被任何字段改判成已发布", () => {
     expect(publishOutcomeKind({ ...base, ok: false, forced: false, studentLoadable: true })).toBe("failed");
   });

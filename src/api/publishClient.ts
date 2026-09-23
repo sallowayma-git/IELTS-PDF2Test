@@ -49,11 +49,24 @@ export function describePublishOutcome(outcome: PublishItemOutcome): string {
  * 不渲染成文字（产品决策：不向用户展示放行与否）。脚本据此区分干净发布与放行发布，
  * 而不是去匹配提示文案。
  */
-export type PublishOutcomeKind = "published" | "published_forced" | "published_forced_not_loadable" | "failed";
+export type PublishOutcomeKind =
+  | "published"
+  | "published_forced"
+  | "published_not_loadable"
+  | "published_forced_not_loadable"
+  | "failed";
 
+/**
+ * 与后端 `ItemPublication::item_status()` **同构**：同时说出「门禁是否被放行」与
+ * 「学生端能不能打开」。`studentLoadable === false` 时永远不是 `published`——
+ * 门禁 Ready、只是包检查没过的条目走 `published_not_loadable`（没有任何东西被放行），
+ * 别把它叫成 `published_forced_not_loadable` 而掩盖「用户根本没点放行」这件事。
+ */
 export function publishOutcomeKind(outcome: PublishItemOutcome): PublishOutcomeKind {
   if (!outcome.ok) return "failed";
-  if (outcome.studentLoadable === false) return "published_forced_not_loadable";
+  if (outcome.studentLoadable === false) {
+    return outcome.forced ? "published_forced_not_loadable" : "published_not_loadable";
+  }
   return outcome.forced ? "published_forced" : "published";
 }
 

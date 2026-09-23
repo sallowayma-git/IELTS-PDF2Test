@@ -318,7 +318,11 @@ fn forced_publish_with_an_unresolved_answer_is_authoring_only_and_invents_nothin
     let records = publish_records(&root, &item);
     assert_eq!(records[0].forced, 1);
     assert_eq!(records[0].student_loadable, 0);
-    assert_eq!(item_status(&root, &item), "published_forced");
+    assert_eq!(
+        item_status(&root, &item),
+        "published_forced_not_loadable",
+        "放行了、但学生端打不开：状态必须同时说出这两件事，不能只说「已发布」"
+    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -359,7 +363,11 @@ fn a_forced_item_does_not_abort_a_batch_with_a_ready_item() {
     assert!(manifest["final-batch-ready"].is_object());
     assert!(manifest.get("final-batch-unresolved").is_none());
     assert_eq!(item_status(&root, &ready), "published");
-    assert_eq!(item_status(&root, &blocked), "published_forced");
+    assert_eq!(
+        item_status(&root, &blocked),
+        "published_forced_not_loadable",
+        "答案没闭合的那条放行后仍打不开，状态要如实说"
+    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -811,7 +819,11 @@ fn forced_publish_of_a_listening_paper_missing_section_audio_is_authoring_only()
     let records = publish_records(&root, &item);
     assert_eq!(records[0].forced, 1);
     assert_eq!(records[0].student_loadable, 0);
-    assert_eq!(item_status(&root, &item), "published_forced");
+    assert_eq!(
+        item_status(&root, &item),
+        "published_forced_not_loadable",
+        "缺音频的听力卷放行后学生端打不开，状态要如实说"
+    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -949,10 +961,21 @@ fn forced_publish_degrades_one_unpackageable_item_and_publishes_the_rest() {
         records[0].verdict
     );
     assert_eq!(item_status(&root, &good), "published");
+    // 坏的那条：门禁是 Ready、没有任何东西被放行（`forced == false`），但它装不进学生包。
+    // 状态必须**如实说出学生端打不开**——旧断言写成 `published || published_forced`
+    // 两边都能过，于是「门禁 Ready + 包检查失败 → 状态 published」这个错误永远测不出来。
     let bad_status = item_status(&root, &bad);
-    assert!(
-        bad_status == "published" || bad_status == "published_forced",
-        "降级仍是「已发布（authoring-only）」，不是失败：{bad_status}"
+    assert_eq!(
+        bad_status, "published_not_loadable",
+        "门禁 Ready 但装不进学生包的条目，状态不能是 published：{bad_status}"
+    );
+    assert_ne!(
+        bad_status, "published",
+        "`published` 是「学生能打开」的同义词，学生打不开就不能用它"
+    );
+    assert_eq!(
+        records[0].status, "published_not_loadable",
+        "发布记录里的状态必须和题库行一致"
     );
 
     let _ = fs::remove_dir_all(root);

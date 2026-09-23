@@ -48,7 +48,27 @@ describe("buildRow 已发布 / 放行发布展示", () => {
     const row = buildRow("item-1", undefined, undefined, {}, v2WithStatus("published_forced"));
     expect(row.stage).toBe("published");
     expect(row.publishedForced).toBe(true);
+    expect(row.publishedNotLoadable).toBe(false);
     expect(row.detail).toBe("已发布（强制发布）");
+  });
+
+  // F1：门禁 Ready、只是包检查没过的条目（`published_not_loadable`）在旧实现里
+  // 根本没进 `itemStage` 映射表，会掉到 `deriveStage` 默认分支显示成「排队中」——
+  // 用户看到一条永远排不完队的已发布稿件。而且它必须说清「学生端打不开」。
+  it("门禁 Ready 但装不进学生包的条目：仍是已发布阶段，但明确说学生端打不开", () => {
+    const row = buildRow("item-1", undefined, undefined, {}, v2WithStatus("published_not_loadable"));
+    expect(row.stage).toBe("published");
+    expect(row.publishedForced).toBe(false);
+    expect(row.publishedNotLoadable).toBe(true);
+    expect(row.detail).toBe("已发布，但学生端暂时无法打开");
+  });
+
+  it("放行发布且学生端打不开：两件事都要说", () => {
+    const row = buildRow("item-1", undefined, undefined, {}, v2WithStatus("published_forced_not_loadable"));
+    expect(row.stage).toBe("published");
+    expect(row.publishedForced).toBe(true);
+    expect(row.publishedNotLoadable).toBe(true);
+    expect(row.detail).toBe("已发布（强制发布），但学生端暂时无法打开");
   });
 });
 

@@ -68,6 +68,12 @@ export interface LibraryRowV1 {
   inTrash: boolean;
   /** 已发布，且那次发布时检查没有全部通过、由用户点击发布放行（后端 `published_forced`）。 */
   publishedForced: boolean;
+  /**
+   * 已发布，但**学生端打不开这道题**（后端 `published_not_loadable` /
+   * `published_forced_not_loadable`）：授权快照发出去了，包却没装进学生清单。
+   * 题库行必须让用户看出这件事，否则他会以为学生已经能做了。
+   */
+  publishedNotLoadable: boolean;
   /** 仅供开发者排查，不渲染在行上。 */
   raw: {
     jobStatus?: JobStatus;
@@ -161,6 +167,9 @@ function detailFor(
     return "识别失败，可以重试";
   }
   if (stage === "published") {
+    // 打不开这件事必须先说：光说「已发布」会让用户在题库里以为学生已经能做这道题。
+    if (v2?.status === "published_not_loadable") return "已发布，但学生端暂时无法打开";
+    if (v2?.status === "published_forced_not_loadable") return "已发布（强制发布），但学生端暂时无法打开";
     if (v2?.status === "published_forced") return "已发布（强制发布）";
     return job?.status === "Cleaned" ? "已发布并清理过程文件" : "已发布";
   }
@@ -179,8 +188,11 @@ export function buildRow(
     reconciling: "reconciling", failed: "failed", cancelled: "failed"
   };
   const itemStage: Record<string, LibraryStageV1> = {
-    ready: "ready", action_required: "action_required", published: "published", published_forced: "published", failed: "failed",
-    processing: "queued", migration_required: "action_required"
+    ready: "ready", action_required: "action_required", published: "published", published_forced: "published",
+    // 打不开的两个状态仍然属于「已发布」阶段（用户确实发布过），差别在 detail 与
+    // publishedNotLoadable 上如实说出来，而不是把它降级成失败。
+    published_not_loadable: "published", published_forced_not_loadable: "published",
+    failed: "failed", processing: "queued", migration_required: "action_required"
   };
   // G1/A4-F03：重启恢复把任务停在 ready_for_review + action_required，但
   // library_items_v2.status 仍是 processing；不识别这个组合会把重试耗尽的
@@ -205,7 +217,12 @@ export function buildRow(
     category: summary?.category ?? job?.category,
     updatedAt: v2?.updatedAt ?? job?.updatedAt ?? summary?.updatedAt ?? "",
     inTrash: Boolean(options.inTrash),
-    publishedForced: stage === "published" && v2?.status === "published_forced",
+    publishedForced:
+      stage === "published" &&
+      (v2?.status === "published_forced" || v2?.status === "published_forced_not_loadable"),
+    publishedNotLoadable:
+      stage === "published" &&
+      (v2?.status === "published_not_loadable" || v2?.status === "published_forced_not_loadable"),
     raw: {
       jobStatus: job?.status,
       currentStep: job?.currentStep,

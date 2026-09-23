@@ -41,6 +41,7 @@ export function LibraryItemRow({
       data-testid="library-row"
       data-item-id={row.id}
       data-published-forced={row.publishedForced ? "true" : "false"}
+      data-published-not-loadable={row.publishedNotLoadable ? "true" : "false"}
     >
       {row.inTrash ? (
         <span className="library-row-check" aria-hidden="true" />

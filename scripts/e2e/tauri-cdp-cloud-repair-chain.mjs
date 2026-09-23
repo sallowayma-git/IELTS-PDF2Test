@@ -1472,6 +1472,8 @@ async function main() {
     await session.screenshot("after-export-attempt");
     // 只认**干净**发布：放行发布（`published_forced`）在界面上同样显示「已发布」，
     // 但对这条验收链不算通过。判据是库里的条目状态，不是提示文案。
+    // 学生端打不开的两种状态（`published_not_loadable` / `published_forced_not_loadable`）
+    // 同样不算——它们按定义不在这里的 `=== "published"` 里。
     report.observed.publish.outcome = await session.evaluate(
       `(() => { const el = document.querySelector('.workspace-notice'); return el ? el.getAttribute('data-publish-outcome') : null; })()`,
     );

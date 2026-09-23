@@ -712,11 +712,25 @@ struct ItemPublication {
 }
 
 impl ItemPublication {
+    /// 发布后写进 `library_items_v2.status` / `publish_records_v2.status` 的结论。
+    ///
+    /// **`published` 是「学生能打开」的同义词**：`student_loadable == false` 的条目
+    /// 永远不能叫 `published`，无论门禁是否被放行。旧实现只看 `forced`，于是
+    /// 「门禁 Ready、但包检查失败降级成 authoring-only」这一条（`forced == false`、
+    /// `student_loadable == false`）被记成 `published`——题库显示「已发布」，
+    /// 学生端点开却打不开，而按 `status === "published"` 判干净通过的验收链会假绿。
+    ///
+    /// 两个维度都要有确切名字，别让「放行」掩盖「打不开」：
+    /// - `(forced=false, loadable=true)`  → `published`
+    /// - `(forced=true,  loadable=true)`  → `published_forced`
+    /// - `(forced=false, loadable=false)` → `published_not_loadable`
+    /// - `(forced=true,  loadable=false)` → `published_forced_not_loadable`
     fn item_status(&self) -> &'static str {
-        if self.forced {
-            "published_forced"
-        } else {
-            "published"
+        match (self.forced, self.student_loadable) {
+            (false, true) => "published",
+            (true, true) => "published_forced",
+            (false, false) => "published_not_loadable",
+            (true, false) => "published_forced_not_loadable",
         }
     }
 }
@@ -2226,6 +2240,36 @@ mod tests {
             student_loadable: true,
             verdict: json!({"status": "ready"}),
             reasons: json!([]),
+        }
+    }
+
+    /// 状态名必须同时说出「门禁是否被放行」与「学生端能不能打开」这两件事。
+    ///
+    /// 旧实现只看 `forced`，于是 `(forced=false, student_loadable=false)`——门禁 Ready、
+    /// 但包检查失败被降级成 authoring-only——被记成 `published`：题库显示「已发布」，
+    /// 学生端点开却打不开，而按 `status === "published"` 判干净通过的验收链会假绿。
+    #[test]
+    fn published_status_never_hides_that_students_cannot_open_the_item() {
+        let make = |forced: bool, student_loadable: bool| ItemPublication {
+            item_id: "item-status".to_string(),
+            edit_version: 1,
+            record_id: "record-test".to_string(),
+            forced,
+            student_loadable,
+            verdict: json!({"status": "ready"}),
+            reasons: json!([]),
+        };
+        assert_eq!(make(false, true).item_status(), "published");
+        assert_eq!(make(true, true).item_status(), "published_forced");
+        assert_eq!(make(false, false).item_status(), "published_not_loadable");
+        assert_eq!(make(true, false).item_status(), "published_forced_not_loadable");
+        // 不变式：学生端打不开的条目永远不是 `published`，放行与否都一样。
+        for forced in [false, true] {
+            assert_ne!(
+                make(forced, false).item_status(),
+                "published",
+                "student_loadable=false 永远不能叫 published（forced={forced}）"
+            );
         }
     }
 
