@@ -323,6 +323,77 @@ pub(crate) fn unbind_audio(root: &Path, item_id: &str, part_ordinal: i64) -> Com
     Ok(true)
 }
 
+/// 永久删除一个条目时，连它自己的受管音频一起清掉。
+///
+/// 音频刻意不在 job 目录里（job 目录装过程产物、发布后会被清理；音频是最终版的一部分），
+/// 所以「删掉 job 目录」永远带不走它。不显式清理就是**永久泄漏**：文件躺在磁盘上、
+/// 表里留着行，用户既看不到也删不掉。
+///
+/// 边界只有一个条目，两层都按它收窄：
+/// - 表：事务内只删 `item_id = ?` 的行；
+/// - 文件：只删 `<appData>/audio/<itemId>/` 这一层目录，且先确认它**确实**落在音频根之下、
+///   是一个**真实目录**（不是指向别处的联接）——否则一个被换掉的目录会让
+///   「删除这一个条目」删掉别的条目。
+///
+/// 不返回 `Err` 除非 `item_id` 本身不安全：用户要求的是删除，清理音频失败不该让删除失败，
+/// 那些失败如实进 `issues`。
+pub(crate) fn purge_item_audio(root: &Path, item_id: &str) -> CommandResult<Value> {
+    let dir = item_audio_dir(root, item_id)?;
+    let mut issues: Vec<String> = Vec::new();
+
+    let mut conn = open_library_connection(root)?;
+    let rows_removed = {
+        let transaction = conn
+            .transaction()
+            .map_err(|error| format!("listening_audio_purge_tx:{error}"))?;
+        let affected = transaction
+            .execute(
+                "DELETE FROM listening_audio_assets_v1 WHERE item_id = ?1",
+                params![item_id],
+            )
+            .map_err(|error| format!("listening_audio_purge_rows:{error}"))?;
+        transaction
+            .commit()
+            .map_err(|error| format!("listening_audio_purge_commit:{error}"))?;
+        affected
+    };
+    drop(conn);
+
+    let mut directory_removed = false;
+    match fs::symlink_metadata(&dir) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            // 一个指向别处的联接：删它可能连带删掉别人。只摘掉链接本身，绝不下钻。
+            match fs::remove_file(&dir) {
+                Ok(()) => directory_removed = true,
+                Err(error) => issues.push(format!("listening_audio_purge_link:{}:{error}", dir.display())),
+            }
+        }
+        Ok(metadata) if metadata.is_dir() => {
+            if !dir.starts_with(audio_root(root)) {
+                issues.push(format!("listening_audio_purge_outside_root:{}", dir.display()));
+            } else {
+                match fs::remove_dir_all(&dir) {
+                    Ok(()) => directory_removed = true,
+                    Err(error) => {
+                        issues.push(format!("listening_audio_purge_dir:{}:{error}", dir.display()))
+                    }
+                }
+            }
+        }
+        // 没有目录：没有音频，空操作。
+        Ok(_) => issues.push(format!("listening_audio_purge_not_a_directory:{}", dir.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => issues.push(format!("listening_audio_purge_stat:{}:{error}", dir.display())),
+    }
+
+    Ok(serde_json::json!({
+        "itemId": item_id,
+        "rowsRemoved": rows_removed,
+        "directoryRemoved": directory_removed,
+        "issues": issues,
+    }))
+}
+
 /// Re-probes every managed file against its recorded hash and stores the fresh result.
 /// Used when a workspace opens so a managed file that went missing or was altered shows up
 /// as blocked instead of silently failing at playback.
@@ -627,5 +698,77 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    /// 永久删除一个条目时必须连它自己的受管音频一起清掉，且**只**清它自己的。
+    ///
+    /// 音频刻意不在 job 目录里（job 目录装过程产物、发布后会被清理；音频是最终版的一部分），
+    /// 所以「删掉 job 目录」永远带不走它。不显式清理就是永久泄漏：文件躺在磁盘上、
+    /// 表里留着行，用户既看不到也删不掉——一个被删掉的条目会永久占着磁盘。
+    #[test]
+    fn permanent_delete_purges_only_this_items_audio() {
+        let root = temp_root();
+        seed_item(&root, "item-keep");
+        seed_item(&root, "item-gone");
+        let outside = std::env::temp_dir().join(format!("user-audio-{}", Uuid::new_v4().simple()));
+        fs::create_dir_all(&outside).unwrap();
+        let kept = outside.join("keep.wav");
+        tone(&kept, 440.0);
+        let doomed = outside.join("doomed.wav");
+        tone(&doomed, 880.0);
+        bind_audio(&root, "item-keep", 1, &kept).unwrap();
+        // 同一个文件被两个 part 共用：两行，一份文件。
+        bind_audio(&root, "item-gone", 1, &doomed).unwrap();
+        bind_audio(&root, "item-gone", 2, &doomed).unwrap();
+
+        let gone_dir = root.join("audio").join("item-gone");
+        let keep_dir = root.join("audio").join("item-keep");
+        assert!(gone_dir.is_dir() && keep_dir.is_dir(), "夹具必须真的落了两份受管音频");
+
+        let report = purge_item_audio(&root, "item-gone").unwrap();
+        assert_eq!(report["rowsRemoved"], serde_json::json!(2), "{report}");
+        assert_eq!(report["directoryRemoved"], serde_json::json!(true), "{report}");
+        assert!(report["issues"].as_array().is_some_and(Vec::is_empty), "{report}");
+        assert!(!gone_dir.exists(), "被永久删除的条目不该留下音频目录");
+
+        // 另一个条目一个字都不许动：目录、文件、表行、可用性全部照旧。
+        assert!(keep_dir.is_dir(), "永久删除一个条目不能碰别的条目");
+        let status = audio_status(&root, "item-keep").unwrap();
+        assert!(status.audio_ready, "{:?}", status.blockers);
+        assert_eq!(status.bindings.len(), 1);
+        let conn = open_library_connection(&root).unwrap();
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM listening_audio_assets_v1", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(remaining, 1, "表里只该剩下另一个条目的那一行");
+        drop(conn);
+
+        // 幂等：重复删除不报错，也不会顺手带走别的条目。
+        let again = purge_item_audio(&root, "item-gone").unwrap();
+        assert_eq!(again["rowsRemoved"], serde_json::json!(0), "{again}");
+        assert_eq!(again["directoryRemoved"], serde_json::json!(false), "{again}");
+        assert!(keep_dir.is_dir());
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    /// 没有音频的条目：清理是空操作，不是错误；不安全的 id 直接拒绝。
+    #[test]
+    fn purging_an_item_with_no_audio_is_a_no_op_and_rejects_unsafe_ids() {
+        let root = temp_root();
+        seed_item(&root, "item-none");
+        let report = purge_item_audio(&root, "item-none").unwrap();
+        assert_eq!(report["rowsRemoved"], serde_json::json!(0), "{report}");
+        assert_eq!(report["directoryRemoved"], serde_json::json!(false), "{report}");
+        assert!(
+            purge_item_audio(&root, "../escape").is_err(),
+            "路径穿越必须被拒绝，而不是删掉音频根之外的东西"
+        );
+        assert!(
+            !root.join("audio").join("item-none").exists(),
+            "空操作不该凭空造出一个音频目录"
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 }

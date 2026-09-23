@@ -244,20 +244,36 @@ pub(crate) async fn update_job_meta_core(
     })
 }
 
-pub(crate) async fn delete_job_core(job_id: String, app: AppHandle) -> CommandResult<()> {
-    let root = app_root(&app)?;
-    let dir = job_dir(&root, &job_id);
+/// 永久删除一个 job 的全部落盘产物与题库行。
+///
+/// 从 `delete_job_core` 里抽出来只为了可测：删除的**完整性**（job 目录 + 受管音频 +
+/// 题库行）是产品语义，不该只有拿得到 `AppHandle` 才能验。
+///
+/// 顺序与容错是刻意的：
+/// - job 目录删失败 ⇒ 如实失败（用户要删的东西还在）；
+/// - 受管音频 / 题库行删失败 ⇒ 只记日志。它们不在 job 目录里，用户看不到，
+///   为了它们让「删除」整体失败只会让用户以为没删掉，从而反复点击。
+pub(crate) fn delete_job_artifacts(root: &std::path::Path, job_id: &str) -> CommandResult<()> {
+    let dir = job_dir(root, job_id);
     if dir.exists() {
         fs::remove_dir_all(dir).map_err(|error| error.to_string())?;
     }
+    // 受管音频**不在** job 目录里（音频是最终版的一部分，job 目录只是过程产物），
+    // 所以上面那句删不掉它。不在这里显式清理就是永久泄漏：文件躺在磁盘上、表里留着行，
+    // 用户既看不到也删不掉。
+    if let Err(error) = crate::listening_audio::store::purge_item_audio(root, job_id) {
+        eprintln!("[listening_audio] purge failed for {}: {}", job_id, error);
+    }
     // 同步删除题库 DB 中的记录（失败记日志但不阻断文件删除——文件已删，DB 孤儿可被迁移/重试清理）。
-    if let Err(error) = crate::db::delete_exam_by_id(&root, &job_id) {
-        eprintln!(
-            "[library] delete_exam_by_id failed for {}: {}",
-            job_id, error
-        );
+    if let Err(error) = crate::db::delete_exam_by_id(root, job_id) {
+        eprintln!("[library] delete_exam_by_id failed for {}: {}", job_id, error);
     }
     Ok(())
+}
+
+pub(crate) async fn delete_job_core(job_id: String, app: AppHandle) -> CommandResult<()> {
+    let root = app_root(&app)?;
+    delete_job_artifacts(&root, &job_id)
 }
 
 pub(crate) async fn import_source_file_core(
@@ -470,6 +486,78 @@ mod tests {
         assert!(fresh.exists(), "新 staged 文件不得误删");
         assert!(kept.exists(), "非 staging 产物不得误删");
         assert!(stray.exists(), "uploads 之外的文件不在清理范围");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// 永久删除一个条目 = job 目录 + **受管音频** + 题库行，一样都不能留。
+    ///
+    /// 受管音频刻意不在 job 目录里（job 目录装过程产物、发布后会被清理；音频是最终版
+    /// 的一部分），所以只删 job 目录就是永久泄漏：文件躺在磁盘上、表里留着行，
+    /// 用户既看不到也删不掉。而「顺手多删一点」的代价更大——删掉别人的音频是不可逆的。
+    #[test]
+    fn permanent_delete_takes_the_managed_audio_with_it_and_nothing_else() {
+        use crate::library::repository::{open_library_connection, upsert_item_shell, UpsertItemInput};
+        use crate::listening_audio::store::{audio_status, bind_audio};
+
+        let root = temp_root();
+        crate::util::ensure_app_dirs(&root).unwrap();
+        let conn = open_library_connection(&root).unwrap();
+        for id in ["job-doomed", "job-kept"] {
+            upsert_item_shell(
+                &conn,
+                &UpsertItemInput {
+                    id,
+                    modality: "listening",
+                    title: "L",
+                    status: "ready",
+                    source_asset_id: None,
+                },
+            )
+            .unwrap();
+        }
+        drop(conn);
+
+        let outside = root.join("user-audio");
+        fs::create_dir_all(&outside).unwrap();
+        let doomed = outside.join("Section 1.wav");
+        crate::test_support::write_audio_fixture(&doomed, 440.0);
+        let kept = outside.join("Section 2.wav");
+        crate::test_support::write_audio_fixture(&kept, 880.0);
+        bind_audio(&root, "job-doomed", 1, &doomed).unwrap();
+        bind_audio(&root, "job-kept", 1, &kept).unwrap();
+
+        let doomed_job_dir = crate::util::job_dir(&root, "job-doomed");
+        fs::create_dir_all(&doomed_job_dir).unwrap();
+        fs::write(doomed_job_dir.join("job.json"), b"{}").unwrap();
+        let doomed_audio_dir = root.join("audio").join("job-doomed");
+        let kept_audio_dir = root.join("audio").join("job-kept");
+        assert!(doomed_audio_dir.is_dir() && kept_audio_dir.is_dir());
+
+        delete_job_artifacts(&root, "job-doomed").unwrap();
+
+        assert!(!doomed_job_dir.exists(), "job 目录必须删掉");
+        assert!(
+            !doomed_audio_dir.exists(),
+            "被永久删除的条目不该留下受管音频——那是永久泄漏"
+        );
+        let conn = open_library_connection(&root).unwrap();
+        let doomed_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM listening_audio_assets_v1 WHERE item_id = 'job-doomed'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(doomed_rows, 0, "表行必须跟着删");
+        drop(conn);
+
+        // 另一个条目一个字都不许动。
+        assert!(kept_audio_dir.is_dir(), "永久删除一个条目不能碰别的条目");
+        assert!(
+            audio_status(&root, "job-kept").unwrap().audio_ready,
+            "另一个条目的音频必须仍然可用"
+        );
+
         let _ = fs::remove_dir_all(&root);
     }
 }
