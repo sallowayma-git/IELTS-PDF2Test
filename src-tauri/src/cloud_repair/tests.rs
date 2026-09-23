@@ -3084,3 +3084,225 @@ fn a_difference_task_carries_the_current_and_the_cloud_value() {
     assert_eq!(diff["field"], "answer");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ── 听力 Part 边界 ────────────────────────────────────────────────────────────
+//
+// 音频是**每段一条**的（Section 1..4 各一个文件）。模型只被问结构（标签、题号、
+// 题组归属），但它可以改分界：把两段并成一段、或把一段拆开。那种改动会换掉
+// 考生听到的音频切分，属于**必须让用户看见**的差异——悄悄应用等于替用户重排了
+// 一份已经绑定音频的卷子。
+
+fn listening_numbers(range: std::ops::RangeInclusive<u32>) -> Vec<u32> {
+    range.collect()
+}
+
+/// 把一份听力稿件的 Part 结构换成模型给的那份（其余字段原样），返回原始候选 JSON。
+///
+/// 走的是**真实**的 `normalize_cloud_authoring`：模型输出里的 `listeningParts` 是外层
+/// 键，与 `authoring` 并列——正是网关真实转发的形状。
+fn listening_cloud_raw(canonical: &Value, model_parts: Value) -> Value {
+    let mut draft = canonical.clone();
+    draft["listening"]["parts"] = json!([]);
+    json!({"authoring": draft, "listeningParts": model_parts})
+}
+
+fn listening_identity<'a>(canonical: &'a Value) -> CloudAuthoringIdentity<'a> {
+    CloudAuthoringIdentity {
+        job_id: ITEM_ID,
+        item_id: ITEM_ID,
+        batch_id: BATCH_ID,
+        source_file_id: "listening-audio-source",
+        source_sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        base_edit_version: 1,
+        generated_at: "2026-09-22T00:00:00Z",
+        exam: canonical.get("exam").cloned().unwrap_or(Value::Null),
+        modality: "listening",
+        source_document_id: "listening-document",
+        extraction_mode: "pdf_native",
+    }
+}
+
+/// 模型把 Section 3 与 Section 4 并成一段：用户的任务清单里必须出现分段范围差异，
+/// 且**既有音频不会被抹掉**（part-1 / part-2 原样保留、并出来的新段不带音频）。
+#[test]
+fn a_listening_part_boundary_change_reaches_the_users_task_list() {
+    let root = temp_root();
+    ensure_app_dirs(&root).expect("ensure_app_dirs");
+    let canonical_value =
+        serde_json::to_value(crate::test_support::complete_listening_exam()).expect("听力夹具");
+    {
+        let conn = open_library_connection(&root).expect("打开库连接");
+        upsert_item_shell(
+            &conn,
+            &UpsertItemInput {
+                id: ITEM_ID,
+                modality: "listening",
+                title: "Listening Paper",
+                status: "action_required",
+                source_asset_id: None,
+            },
+        )
+        .expect("upsert_item_shell");
+        seed_canonical_ds(
+            &conn,
+            ITEM_ID,
+            &serde_json::to_string(&canonical_value).expect("序列化稿件"),
+            "action_required",
+        )
+        .expect("seed_canonical_ds");
+    }
+
+    let model_parts = json!([
+        {"displayLabel": "SECTION 1", "expectedQuestionNumbers": listening_numbers(1..=10), "taskIds": ["task-1"]},
+        {"displayLabel": "SECTION 2", "expectedQuestionNumbers": listening_numbers(11..=20), "taskIds": ["task-2"]},
+        {"displayLabel": "SECTION 3", "expectedQuestionNumbers": listening_numbers(21..=40), "taskIds": ["task-3", "task-4"]},
+    ]);
+    let raw = listening_cloud_raw(&canonical_value, model_parts);
+    let identity = listening_identity(&canonical_value);
+    let normalized = normalize_cloud_authoring(&identity, Some(&canonical_value), &raw)
+        .expect("听力候选必须能标准化");
+    let candidate =
+        cloud_authoring_candidate_from_normalized(&identity, normalized).expect("必须可装配");
+    let candidate_value = serde_json::to_value(&candidate.authoring).expect("候选可序列化");
+
+    // 归一化后的候选必须真的带上了听力结构（这正是 T4 要修的那件事）。
+    let candidate_parts = candidate_value
+        .pointer("/listening/parts")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("候选必须带 listening.parts：{candidate_value}"));
+    assert_eq!(candidate_parts.len(), 3, "模型给了三段，候选就必须是三段");
+
+    // 既有分段：身份与音频原样保留。
+    for ordinal in 1..=2 {
+        let part = candidate_parts
+            .iter()
+            .find(|part| part["partId"] == format!("part-{ordinal}"))
+            .unwrap_or_else(|| panic!("part-{ordinal} 必须被复用：{candidate_parts:?}"));
+        assert!(
+            !part["media"].is_null(),
+            "复用的 Part 必须带着用户已经绑好的音频：{part}"
+        );
+        assert_eq!(part["media"]["sha256"], canonical_value["listening"]["parts"][ordinal - 1]["media"]["sha256"]);
+    }
+    // 并出来的新段：后端分配身份，且**不带**音频（模型无权给音频事实）。
+    let merged = candidate_parts
+        .iter()
+        .find(|part| part["expectedQuestionNumbers"] == json!(listening_numbers(21..=40)))
+        .unwrap_or_else(|| panic!("必须有一段覆盖 21-40：{candidate_parts:?}"));
+    assert!(
+        merged["media"].is_null() || merged.get("media").is_none(),
+        "新分段不能凭空带上音频：{merged}"
+    );
+    let merged_id = merged["partId"].as_str().expect("新分段必须有身份").to_string();
+    assert!(
+        !canonical_value["listening"]["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|part| part["partId"] == json!(merged_id.clone())),
+        "新分段必须拿到一个未被占用的 id，不能借用既有分段：{merged_id}"
+    );
+
+    // 存盘，然后走用户真正看到的「剩余问题」重算。
+    store::write_cloud_authoring_candidate(&root, BATCH_ID, &candidate).expect("落盘候选");
+    let tasks =
+        remaining_tasks(&root, ITEM_ID, ITEM_ID, BATCH_ID, &[], &[]).expect("重算剩余任务");
+
+    let boundary_ids: Vec<String> = tasks
+        .iter()
+        .filter(|task| task["field"] == "part_boundary")
+        .filter_map(|task| task["userTaskId"].as_str().map(str::to_string))
+        .collect();
+    assert!(
+        boundary_ids.contains(&format!("cloud-diff:part:{merged_id}:part_boundary")),
+        "模型新加的分段必须出现在用户清单里：{boundary_ids:?}"
+    );
+    for removed in ["part-3", "part-4"] {
+        assert!(
+            boundary_ids.contains(&format!("cloud-diff:part:{removed}:part_boundary")),
+            "被并掉的 {removed} 必须出现在用户清单里：{boundary_ids:?}"
+        );
+    }
+    // 没变的分段不该冒出来打扰用户。
+    for unchanged in ["part-1", "part-2"] {
+        assert!(
+            !boundary_ids.contains(&format!("cloud-diff:part:{unchanged}:part_boundary")),
+            "{unchanged} 没变，不该产生分段差异：{boundary_ids:?}"
+        );
+    }
+
+    // 人话说明必须能落地：任务要能让用户看懂「哪一段的分段范围对不上」。
+    let task = tasks
+        .iter()
+        .find(|task| task["userTaskId"] == format!("cloud-diff:part:{merged_id}:part_boundary"))
+        .expect("新分段的差异任务");
+    let message = task["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("听力 Part") && message.contains("分段范围"),
+        "任务说明必须指出是哪一段、差在什么上：{message}"
+    );
+    assert!(!task["cloudValue"].is_null(), "{task}");
+    assert_eq!(task["action"], "review_difference");
+
+    // 给模型看的上下文里**不能**出现音频指纹：模型无权也无法核对它。
+    let serialized = serde_json::to_string(&tasks).expect("任务可序列化");
+    assert!(
+        !serialized.contains(&canonical_value["listening"]["parts"][0]["media"]["sha256"]
+            .as_str()
+            .unwrap()
+            .to_string()),
+        "音频哈希不得进入用户任务 / 模型上下文"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 分段裁定必须绑定**这一段的身份与范围**，而不只是差异两侧的字面值。
+///
+/// 复现：模型对 `part-3` 的标签差异裁定「当前稿对」。随后该段的 `cue`（这一段音频的
+/// 起止边界）被改写——分段没变、标签差异两侧也没变，旧代码于是继续压住这条差异。
+#[test]
+fn a_part_ruling_dies_when_the_boundary_it_depended_on_changes() {
+    let mut canonical_value =
+        serde_json::to_value(crate::test_support::complete_listening_exam()).expect("听力夹具");
+    let candidate_value = {
+        let mut value = canonical_value.clone();
+        value["listening"]["parts"][2]["displayLabel"] = json!("SECTION THREE");
+        value
+    };
+
+    let differences = candidate_differences(&canonical_value, &candidate_value);
+    let label_diff = differences
+        .iter()
+        .find(|difference| {
+            difference["targetType"] == "part"
+                && difference["targetId"] == "part-3"
+                && difference["field"] == "part_label"
+        })
+        .unwrap_or_else(|| panic!("夹具必须先产生 part-3 的标签差异：{differences:?}"));
+    let (canonical_digest, candidate_digest, context_digest) = difference_digests(label_diff);
+    let ruling = json!({
+        "targetType": "part",
+        "targetId": "part-3",
+        "field": "part_label",
+        "ruling": crate::schema::cloud_repair_v1::CLOUD_RULING_CURRENT_IS_CORRECT,
+        "canonicalDigest": canonical_digest,
+        "candidateDigest": candidate_digest,
+        "contextDigest": context_digest,
+    });
+    let rulings = vec![ruling];
+    assert_eq!(
+        effective_adjudicated_count(&canonical_value, &candidate_value, &rulings),
+        1,
+        "裁定在前提未变时必须生效"
+    );
+
+    // 只改这一段音频的起止边界：标签差异两侧一个字没变。
+    canonical_value["listening"]["parts"][2]["cue"] = json!({
+        "startMs": 0, "endMs": 240000, "confidence": 1.0, "confirmed": true
+    });
+    assert_eq!(
+        effective_adjudicated_count(&canonical_value, &candidate_value, &rulings),
+        0,
+        "分段边界变了，基于旧边界的裁定必须失效重评"
+    );
+}

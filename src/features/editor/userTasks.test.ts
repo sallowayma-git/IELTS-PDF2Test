@@ -380,3 +380,90 @@ describe("唯一一份编辑辅助清单：本地 + 发布前检查 + 云端剩�
     expect(text).not.toMatch(/导出|阻断|发不出去|重新识别/);
   });
 });
+
+// 听力分段差异：云端可以改分界（把两段并成一段、或拆开），但用户必须看懂**哪一段**
+// 差在哪、能去核对原文。后端给的 `part-5` / `part_boundary` 是内部身份，不进界面。
+const LISTENING_DS = {
+  ...makeDs({
+    taskGroups: [task("task-3", [group("rg-3", ["q21", "q22", "q23"])])],
+    answerSlots: { q21: slot("q21", 21), q22: slot("q22", 22), q23: slot("q23", 23) }
+  }),
+  modality: "listening",
+  listening: {
+    scope: "complete_exam",
+    media: null,
+    parts: [
+      { partId: "part-3", displayLabel: "SECTION 3", expectedQuestionNumbers: [21, 22, 23], taskIds: ["task-3"] },
+      { partId: "part-4", displayLabel: "SECTION 4", expectedQuestionNumbers: [31, 32, 33], taskIds: ["task-4"] }
+    ],
+    playbackPolicy: { mode: "practice" },
+    transcript: null
+  }
+} as unknown as IeltsAuthoringIRV2;
+
+describe("听力分段差异：说得出是哪一段、差在哪", () => {
+  it("云端新加了一段 → 标题里有那一段的名字与题号范围", () => {
+    const summary = buildEditingAids(LISTENING_DS, [], [
+      {
+        userTaskId: "cloud-diff:part:part-5:part_boundary",
+        targetIds: ["part-5"],
+        message: "听力 Part part-5的分段范围与云端识别结果不一致",
+        field: "part_boundary",
+        currentValue: null,
+        cloudValue: {
+          partId: "part-5",
+          displayLabel: "SECTION 3",
+          expectedQuestionNumbers: [21, 22, 23],
+          taskIds: ["task-3", "task-4"]
+        }
+      }
+    ]);
+    expect(summary.tasks).toHaveLength(1);
+    const [row] = summary.tasks;
+    expect(row.kind).toBe("cloud-difference");
+    expect(row.title).toContain("分段");
+    expect(row.title).toContain("SECTION 3");
+    expect(row.title).toContain("第 21–23 题");
+    const text = row.title + " " + (row.detail ?? "");
+    expect(text).not.toMatch(/part-5|part_boundary|targetType|cloud-diff|task-3/);
+    expect(row.actions.map((action) => action.id)).toEqual(["view-source"]);
+  });
+
+  it("被并掉的那一段（当前稿里还在）也说得出是哪一段", () => {
+    const summary = buildEditingAids(LISTENING_DS, [], [
+      {
+        userTaskId: "cloud-diff:part:part-4:part_boundary",
+        targetIds: ["part-4"],
+        message: "听力 Part part-4的分段范围与云端识别结果不一致",
+        field: "part_boundary",
+        currentValue: {
+          partId: "part-4",
+          displayLabel: "SECTION 4",
+          expectedQuestionNumbers: [31, 32, 33],
+          taskIds: ["task-4"]
+        },
+        cloudValue: null
+      }
+    ]);
+    expect(summary.tasks).toHaveLength(1);
+    expect(summary.tasks[0].title).toContain("SECTION 4");
+    expect(summary.tasks[0].title).toContain("第 31–33 题");
+  });
+
+  it("分段的名称变了也走分段话术，而不是「这一处的内容」", () => {
+    const summary = buildEditingAids(LISTENING_DS, [], [
+      {
+        userTaskId: "cloud-diff:part:part-3:part_label",
+        targetIds: ["part-3"],
+        message: "听力 Part part-3的段落标签与云端识别结果不一致",
+        field: "part_label",
+        currentValue: "SECTION 3",
+        cloudValue: "SECTION THREE"
+      }
+    ]);
+    expect(summary.tasks).toHaveLength(1);
+    const [row] = summary.tasks;
+    expect(row.title).toContain("SECTION 3（第 21–23 题）");
+    expect(row.title).toContain("分段名称");
+  });
+});

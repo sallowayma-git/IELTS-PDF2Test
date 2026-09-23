@@ -592,10 +592,46 @@ const FIELD_LABEL: Record<string, string> = {
   instructions: "作答说明",
   stimulus: "材料",
   option_bank: "选项",
-  task_group: "整组题"
+  task_group: "整组题",
+  part_boundary: "分段范围",
+  part_label: "分段名称",
+  part_tasks: "分段归属"
 };
 
+/**
+ * 一个听力分段在界面上的名字：「SECTION 3（第 21–30 题）」。
+ *
+ * 刻意**不用** `partId`：`part-5` 是后端分配的内部身份，用户认不出，也不该看到。
+ * 名字取用户自己看得到的那两样——段落标签与题号范围。
+ */
+function partRangeLabel(value: unknown): string {
+  if (!value || typeof value !== "object") return "没有这一段";
+  const entry = value as { displayLabel?: unknown; expectedQuestionNumbers?: unknown };
+  const label =
+    typeof entry.displayLabel === "string" && entry.displayLabel.trim()
+      ? entry.displayLabel.trim()
+      : "未命名分段";
+  const numbers = Array.isArray(entry.expectedQuestionNumbers)
+    ? entry.expectedQuestionNumbers.filter((number): number is number => typeof number === "number")
+    : [];
+  const range = questionRangeLabel(numbers);
+  return range ? `${label}（${range}）` : label;
+}
+
+/** 按 `partId` 在当前稿里找到那一段，给出它的界面名字。 */
+function partLabelOf(ds: IeltsAuthoringIRV2 | undefined, partId: string): string | undefined {
+  const parts = ds?.listening?.parts;
+  if (!Array.isArray(parts)) return undefined;
+  const part = parts.find((candidate) => candidate.partId === partId);
+  if (!part) return undefined;
+  const label = part.displayLabel?.trim() ? part.displayLabel.trim() : "未命名分段";
+  const range = questionRangeLabel(part.expectedQuestionNumbers ?? []);
+  return range ? `${label}（${range}）` : label;
+}
+
 function placeLabel(ds: IeltsAuthoringIRV2, targetId: string): string {
+  const part = partLabelOf(ds, targetId);
+  if (part) return part;
   const number = numberOf(ds, targetId);
   if (number !== undefined) return `第 ${number} 题`;
   const slots = slotIdsOfTarget(ds, targetId)
@@ -657,13 +693,16 @@ export function buildEditingAids(
       const where = placeLabel(ds, target);
       const label = FIELD_LABEL[field] ?? "内容";
       const isAnswer = field === "answer";
+      const isPartBoundary = field === "part_boundary";
       tasks.push({
         taskId: id,
         kind: "cloud-difference",
         severity: "warning",
-        title: isAnswer
-          ? `${where}的答案：现在是「${formatDecisionValue(task.currentValue)}」，云端读到的是「${formatDecisionValue(task.cloudValue)}」`
-          : `${where}的${label}和云端读到的不一样`,
+        title: isPartBoundary
+          ? `听力分段对不上：现在是「${partRangeLabel(task.currentValue)}」，云端读到的是「${partRangeLabel(task.cloudValue)}」`
+          : isAnswer
+            ? `${where}的答案：现在是「${formatDecisionValue(task.currentValue)}」，云端读到的是「${formatDecisionValue(task.cloudValue)}」`
+            : `${where}的${label}和云端读到的不一样`,
         detail: "云端对照原文件后没能定论，看一眼原文再决定保留哪个。",
         actions: isAnswer && target
           ? [{ id: "fill-answer", label: "去看看", targetId: target }, { id: "view-source", label: "查看原文", targetId: target }]

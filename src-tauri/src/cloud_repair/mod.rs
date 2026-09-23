@@ -217,6 +217,55 @@ fn group_index_entry(group: &Value) -> Value {
     })
 }
 
+/// 听力 Part 按 `partId` 建索引。阅读卷、或候选没带听力结构时是空表。
+fn listening_parts_by_id(document: &Value) -> BTreeMap<String, &Value> {
+    document
+        .get("listening")
+        .and_then(|listening| listening.get("parts"))
+        .and_then(Value::as_array)
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| {
+                    let part_id = part.get("partId").and_then(Value::as_str)?;
+                    Some((part_id.to_string(), part))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 一个听力 Part 在差异报告里的摘要。
+///
+/// **刻意不含 `media`**：音频是内容寻址的后端事实（`assetId` 就是哈希），把哈希抄进
+/// 给模型看的上下文既没用又等于泄题——模型无权也无法核对它。
+fn part_index_entry(part: &Value) -> Value {
+    json!({
+        "partId": part.get("partId").cloned().unwrap_or(Value::Null),
+        "displayLabel": part.get("displayLabel").cloned().unwrap_or(Value::Null),
+        "expectedQuestionNumbers": part
+            .get("expectedQuestionNumbers")
+            .cloned()
+            .unwrap_or_else(|| json!([])),
+        "taskIds": part.get("taskIds").cloned().unwrap_or_else(|| json!([])),
+    })
+}
+
+/// Part 裁定所依赖的内容：这一段的身份与范围（同样排除 `media`）。
+///
+/// 排除的理由和 `part_index_entry` 一致，但这里还多一层：把音频指纹算进裁定前提，
+/// 会让「用户重新绑定音频」无端作废一条本来有效的分段裁定，白跑一轮模型。
+fn part_context(document: &Value, part_id: &str) -> Value {
+    let mut entry = listening_parts_by_id(document)
+        .get(part_id)
+        .map(|part| (*part).clone())
+        .unwrap_or(Value::Null);
+    if let Some(object) = entry.as_object_mut() {
+        object.remove("media");
+    }
+    entry
+}
+
 /// 当前稿件里需要处理的诊断（阻断与警告分开标注，模型必须知道哪些是硬问题）。
 fn quality_issues(document: &Value) -> Vec<Value> {
     document
@@ -413,6 +462,8 @@ fn target_context_fingerprint(canonical: &Value, target_type: &str, target_id: &
             });
             canonical_json(&owning)
         }
+        // 听力 Part 的裁定前提就是这一段的身份与范围（不含音频事实）。
+        "part" => canonical_json(&part_context(canonical, target_id)),
         // `task_group` 与其余：**整组内容**。刻意比 `group_index_entry` 宽——
         // 索引摘要是给模型看的概览，不是裁定的依据。
         _ => {
@@ -472,12 +523,16 @@ fn describe_difference(difference: &Value) -> String {
         "stimulus" => "材料",
         "option_bank" => "选项库",
         "task_group" => "整组",
+        "part_boundary" => "分段范围",
+        "part_label" => "段落标签",
+        "part_tasks" => "所属题组",
         _ => "内容",
     };
     let where_ = match target_type.as_str() {
         "slot" => format!("第 {target_id} 题"),
         "response_group" => format!("题组内的作答区（{target_id}）"),
         "task_group" => format!("题组 {target_id}"),
+        "part" => format!("听力 Part {target_id}"),
         other => format!("{other} {target_id}"),
     };
     format!("{where_}的{label}与云端识别结果不一致")
@@ -712,6 +767,58 @@ pub(crate) fn candidate_differences(canonical: &Value, candidate: &Value) -> Vec
                 "canonical": group_index_entry(current_group),
                 "candidate": Value::Null,
             }));
+        }
+    }
+
+    // ── 听力 Part 边界 ────────────────────────────────────────────────
+    // Part 的身份由后端分配、按**题号集合**复用（见 `apply_cloud_listening_parts`），
+    // 所以「同一个 partId」就等于「同一段音频范围」。模型把题号重新切段时会产出新的
+    // id：旧的消失、新的出现。这正是要报出来的边界变化——不报，修复模型就看不见
+    // 自己动了分界，用户也看不到「云端把 Section 3 拆成了两段」。
+    let current_parts = listening_parts_by_id(canonical);
+    let candidate_parts = listening_parts_by_id(candidate);
+    for (part_id, candidate_part) in &candidate_parts {
+        match current_parts.get(part_id) {
+            Some(current_part) => {
+                for (field, pointer) in [("part_label", "/displayLabel"), ("part_tasks", "/taskIds")]
+                {
+                    let current_value = current_part.pointer(pointer).cloned().unwrap_or(Value::Null);
+                    let candidate_value =
+                        candidate_part.pointer(pointer).cloned().unwrap_or(Value::Null);
+                    if current_value != candidate_value {
+                        push_difference(
+                            &mut out,
+                            "part",
+                            part_id,
+                            field,
+                            current_value,
+                            candidate_value,
+                        );
+                    }
+                }
+            }
+            // 当前稿里没有这一段：候选新增了一个分段。
+            None => push_difference(
+                &mut out,
+                "part",
+                part_id,
+                "part_boundary",
+                Value::Null,
+                part_index_entry(candidate_part),
+            ),
+        }
+    }
+    for (part_id, current_part) in &current_parts {
+        if !candidate_parts.contains_key(part_id) {
+            // 候选里没有这一段：模型把它并进了别的分段，或整个丢了。
+            push_difference(
+                &mut out,
+                "part",
+                part_id,
+                "part_boundary",
+                part_index_entry(current_part),
+                Value::Null,
+            );
         }
     }
 

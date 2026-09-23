@@ -621,7 +621,7 @@ pub(crate) fn make_repair_authoring_step_input(
 Use it when you have checked the original file and the difference does not need the user.",
                 "arguments": {
                     "rulings": [{
-                        "targetType": "slot | task_group | response_group",
+                        "targetType": "slot | task_group | response_group | part",
                         "targetId": "the targetId exactly as listed in differences",
                         "field": "the field exactly as listed in differences",
                         "ruling": "current_is_correct | cannot_resolve",
