@@ -1208,6 +1208,8 @@ fn detect_dynamic_group_kind(text: &str) -> &'static str {
         "true_false_not_given"
     } else if lower.contains("yes") && lower.contains("no") && lower.contains("not given") {
         "yes_no_not_given"
+    } else if is_dynamic_shared_letter_bank_choice_text(text) {
+        "matching"
     } else if is_dynamic_multi_choice_text(text) {
         "multi_choice"
     } else if lower.contains("complete the table")
@@ -1294,6 +1296,28 @@ fn is_dynamic_multi_choice_text(text: &str) -> bool {
         || normalized.contains("choose three letters")
         || normalized.contains("choose two correct letters")
         || normalized.contains("choose three correct letters")
+}
+
+/// `Choose FOUR correct answers, A-F, next to questions 17-20` — and the
+/// `FIVE`/`A-G` variant. The paper declares one letter box that several numbered
+/// rows draw from, so this is a feature match against a **shared bank**, not a
+/// multiple choice.
+///
+/// The V1.5 classifier used to fall through to its generic `short_answer`
+/// fallback here. That value is a structure hint, so the instruction signature
+/// then read it as a competing claim and the quality gate blocked the paper with
+/// `TASK_TYPE_CONFLICT`; and because the group never looked like a matching task,
+/// `mod.rs` never ran the bank detector for it either, leaving q17-q25 with no
+/// option list at all. Requiring the declared letter range keeps ordinary
+/// `Choose TWO letters, A-E` cues on the `multi_choice` path above.
+fn is_dynamic_shared_letter_bank_choice_text(text: &str) -> bool {
+    let normalized = normalized_dynamic_instruction_text(text);
+    has_dynamic_letter_option_span(&normalized)
+        && ["four", "five", "six"].iter().any(|count| {
+            normalized.contains(&format!("choose {count} correct"))
+                || normalized.contains(&format!("choose {count} letters"))
+                || normalized.contains(&format!("choose {count} answers"))
+        })
 }
 
 fn has_dynamic_letter_option_span(normalized: &str) -> bool {

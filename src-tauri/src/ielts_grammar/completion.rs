@@ -3,7 +3,9 @@ use serde_json::{json, Value};
 use crate::schema::ielts_authoring_v2::TaskTypeV2;
 
 use super::instruction_signature::is_completion_task;
-use super::instruction_zone::{normalize_instruction_text, SemanticLine};
+use super::instruction_zone::{
+    normalize_instruction_text, semantic_lines_from_v2_shadow, SemanticLine,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CompletionContainerKind {
@@ -25,7 +27,14 @@ pub(crate) struct CompletionStructureCandidate {
     /// text and its inline slots without making a slot row look like a second
     /// piece of context.
     pub slot_lines: Vec<SemanticLine>,
+    /// Inline slot spans recovered from the page's *drawn* blanks, keyed by the
+    /// line that hosts them.  These are only produced for numbers the printed
+    /// marker scan could not close, so they never override text evidence.
+    pub blank_slots: BlankSlotSpans,
 }
+
+/// `line id -> (char start, char end, question number)` insertion spans.
+pub(crate) type BlankSlotSpans = std::collections::BTreeMap<String, Vec<(usize, usize, u32)>>;
 
 impl CompletionStructureCandidate {
     pub(crate) fn closes_slots(&self, expected_numbers: &[u32]) -> bool {
@@ -35,11 +44,159 @@ impl CompletionStructureCandidate {
     }
 }
 
+/// One answer blank the source draws as page *geometry* rather than as text: a
+/// short horizontal rule on the writing line.
+///
+/// A listening form prints its blanks this way — there is no underscore glyph
+/// anywhere in the text layer, and one blank per field is exactly one rule of
+/// 60-71pt.  Without this evidence the whole section looks like plain prose and
+/// the completion task has nowhere to host its slots.
+///
+/// A rule's page coordinates cannot be compared with the coordinates of the
+/// rows the grammar works on: those rows are rebuilt from the V1 document, whose
+/// block boxes live in a different vertical space than the physical shadow's
+/// rule geometry.  Each rule is therefore resolved here, against the physical
+/// shadow's *own* rows, into a row identity plus a position inside that row, so
+/// the grammar can act on it without ever mixing the two coordinate systems.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CompletionBlank {
+    /// The row the rule sits under with every whitespace run removed.  Both
+    /// text layers print the same ink, so this key survives one of them
+    /// splitting words at glyph gaps and the other leaving them joined.
+    pub line_key: String,
+    /// Reading order of the rule: page, then vertical, then horizontal.
+    pub page_index: i32,
+    pub y: f64,
+    /// Where the rule starts *within* the row, as a count of non-whitespace
+    /// characters.  `None` means the rule sits past the row's last character,
+    /// which is where a form puts a blank after a printed label.
+    pub non_space_offset: Option<usize>,
+}
+
+/// A rule this short is a bullet leader or a table hairline, not a writing
+/// line.  The corpus draws blanks at 60.5-71.5pt; the guard arms keep both a
+/// short dash and a long table border out of the blank set.
+const MIN_BLANK_RULE_PT: f64 = 30.0;
+const MAX_BLANK_RULE_PT: f64 = 120.0;
+/// An underline is a flat rule: anything thicker is a box edge or a bar.
+const MAX_BLANK_RULE_THICKNESS_PT: f64 = 2.6;
+
+/// Collect the answer blanks a physical `DocumentIRV2` shadow exposes, each one
+/// already bound to the shadow row it is drawn under.
+///
+/// Only axis-aligned flat rules of writing-line length are taken; everything
+/// else on the page (borders, separators, rules) is left alone.  The result is
+/// sorted by reading order so callers can hand unnumbered blanks to the
+/// remaining questions in the order the paper prints them.
+pub(crate) fn completion_blanks_from_shadow(shadow: &Value) -> Vec<CompletionBlank> {
+    let lines = semantic_lines_from_v2_shadow(shadow);
+    if lines.is_empty() {
+        return Vec::new();
+    }
+    let mut blanks = Vec::new();
+    for page in shadow
+        .get("pages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let page_index = page
+            .get("pageIndex")
+            .and_then(Value::as_i64)
+            .unwrap_or_default() as i32;
+        for path in page
+            .get("vectorPaths")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if path.get("isAxisAlignedRule").and_then(Value::as_bool) != Some(true) {
+                continue;
+            }
+            let Some(bbox) = path.get("bbox").and_then(Value::as_object) else {
+                continue;
+            };
+            let (Some(x), Some(y), Some(width), Some(height)) = (
+                bbox.get("x").and_then(Value::as_f64),
+                bbox.get("y").and_then(Value::as_f64),
+                bbox.get("width").and_then(Value::as_f64),
+                bbox.get("height").and_then(Value::as_f64),
+            ) else {
+                continue;
+            };
+            if height > MAX_BLANK_RULE_THICKNESS_PT
+                || width <= MIN_BLANK_RULE_PT
+                || width > MAX_BLANK_RULE_PT
+            {
+                continue;
+            }
+            let Some(host) = blank_host_line(&lines, page_index, x, width, y) else {
+                continue;
+            };
+            blanks.push(CompletionBlank {
+                line_key: strip_whitespace(&host.text),
+                page_index,
+                y,
+                non_space_offset: blank_non_space_offset(host, x),
+            });
+        }
+    }
+    blanks.sort_by(|left, right| {
+        left.page_index
+            .cmp(&right.page_index)
+            .then_with(|| left.y.total_cmp(&right.y))
+            .then_with(|| left.line_key.cmp(&right.line_key))
+    });
+    blanks
+}
+
+/// The shadow row a rule is drawn under: same page, and the closest row bottom.
+fn blank_host_line<'a>(
+    lines: &'a [SemanticLine],
+    page_index: i32,
+    x: f64,
+    width: f64,
+    y: f64,
+) -> Option<&'a SemanticLine> {
+    lines
+        .iter()
+        .filter(|line| blank_hosts_line(line, page_index, y))
+        // The rule has to at least reach the row's left edge; a rule that ends
+        // before the row starts belongs to something else on the line above.
+        .filter(|line| line_box(line).is_some_and(|(x0, _, _, _)| x + width > x0))
+        .min_by(|left, right| {
+            blank_line_distance(left, y).total_cmp(&blank_line_distance(right, y))
+        })
+}
+
 pub(crate) fn recover_completion_structure(
     task_type: &TaskTypeV2,
     lines: &[SemanticLine],
     instruction_line_ids: &[String],
     expected_numbers: &[u32],
+) -> CompletionStructureCandidate {
+    recover_completion_structure_with_blanks(
+        task_type,
+        lines,
+        instruction_line_ids,
+        expected_numbers,
+        &[],
+    )
+}
+
+/// Same recovery, but the caller also supplies the page's *drawn* blanks.
+///
+/// The drawn blanks are consulted only for numbers the printed-marker scan
+/// could not close.  A paper whose blanks are glyph runs (`___`, `…`, `□`) or
+/// whose numbers are all printed therefore produces byte-identical output to
+/// [`recover_completion_structure`]; the extra evidence is a fallback, never a
+/// replacement.
+pub(crate) fn recover_completion_structure_with_blanks(
+    task_type: &TaskTypeV2,
+    lines: &[SemanticLine],
+    instruction_line_ids: &[String],
+    expected_numbers: &[u32],
+    blanks: &[CompletionBlank],
 ) -> CompletionStructureCandidate {
     let container_kind = match task_type {
         TaskTypeV2::NoteCompletion => CompletionContainerKind::Note,
@@ -56,6 +213,7 @@ pub(crate) fn recover_completion_structure(
         .map(String::as_str)
         .collect::<std::collections::BTreeSet<_>>();
     let mut slot_line_ids = std::collections::BTreeMap::new();
+    let mut blank_slots = BlankSlotSpans::new();
     for line in lines {
         // A physical question row can remain inside the instruction zone when
         // its number is embedded after a bullet (for example, `• ... 7 ___`).
@@ -78,6 +236,13 @@ pub(crate) fn recover_completion_structure(
             }
         }
     }
+    assign_drawn_blank_slots(
+        lines,
+        expected_numbers,
+        blanks,
+        &mut slot_line_ids,
+        &mut blank_slots,
+    );
     let slot_source_ids = slot_line_ids
         .values()
         .cloned()
@@ -119,7 +284,192 @@ pub(crate) fn recover_completion_structure(
         context_lines,
         slot_line_ids,
         slot_lines,
+        blank_slots,
     }
+}
+
+/// Attach the page's drawn blanks to the numbers still missing a host.
+///
+/// Two shapes occur in the listening corpus and both end up here:
+///
+/// * the blank sits next to a *printed* number (`Two 2 ____ bedrooms`), in
+///   which case that number owns it and the slot consumes the number token;
+/// * the paper prints no number on the field at all (`Day of job: ____`), in
+///   which case the blanks are handed to the remaining expected numbers in
+///   reading order — the same order the paper numbers them.
+///
+/// Blanks arrive bound to the *shadow* row they were drawn under; a blank only
+/// counts here when that row is one of the rows this group actually owns, which
+/// is what keeps a rule belonging to another column or another group out.
+fn assign_drawn_blank_slots(
+    lines: &[SemanticLine],
+    expected_numbers: &[u32],
+    blanks: &[CompletionBlank],
+    slot_line_ids: &mut std::collections::BTreeMap<u32, String>,
+    blank_slots: &mut BlankSlotSpans,
+) {
+    if blanks.is_empty() || expected_numbers.is_empty() {
+        return;
+    }
+    let mut by_key = std::collections::BTreeMap::new();
+    for (index, line) in lines.iter().enumerate() {
+        by_key.entry(strip_whitespace(&line.text)).or_insert(index);
+    }
+    let mut unowned = expected_numbers
+        .iter()
+        .copied()
+        .filter(|number| !slot_line_ids.contains_key(number))
+        .collect::<Vec<_>>();
+    let mut claimed_lines = std::collections::BTreeSet::new();
+    let mut pending = Vec::new();
+    for blank in blanks {
+        let Some(index) = by_key.get(&blank.line_key).copied() else {
+            continue;
+        };
+        let line = &lines[index];
+        if claimed_lines.contains(&line.id) {
+            continue;
+        }
+        // A printed expected number on the host row that the glyph scan could
+        // not close owns this blank: the blank *is* its missing blank run.
+        let printed = unowned
+            .iter()
+            .copied()
+            .find(|number| !completion_number_marker_spans(&line.text, *number).is_empty());
+        match printed {
+            Some(number) => {
+                let Some((start, end)) = completion_number_marker_spans(&line.text, number)
+                    .into_iter()
+                    .next()
+                else {
+                    continue;
+                };
+                unowned.retain(|candidate| *candidate != number);
+                claimed_lines.insert(line.id.clone());
+                slot_line_ids
+                    .entry(number)
+                    .or_insert_with(|| line.id.clone());
+                blank_slots
+                    .entry(line.id.clone())
+                    .or_default()
+                    .push((start, end, number));
+            }
+            // No printed number: defer so the blanks keep their reading order
+            // against the remaining questions.
+            None => pending.push((line.id.clone(), blank.non_space_offset)),
+        }
+    }
+    for (line_id, non_space_offset) in pending {
+        let Some(number) = unowned.first().copied() else {
+            break;
+        };
+        let Some(line) = lines.iter().find(|line| line.id == line_id) else {
+            continue;
+        };
+        let offset = match non_space_offset {
+            Some(index) => offset_of_non_space(&line.text, index),
+            None => line.text.len(),
+        };
+        unowned.retain(|candidate| *candidate != number);
+        slot_line_ids
+            .entry(number)
+            .or_insert_with(|| line_id.clone());
+        blank_slots
+            .entry(line_id)
+            .or_default()
+            .push((offset, offset, number));
+    }
+    for spans in blank_slots.values_mut() {
+        spans.sort_by_key(|(start, _, _)| *start);
+    }
+}
+
+/// Row identity that survives the two text layers disagreeing about spaces.
+fn strip_whitespace(text: &str) -> String {
+    text.chars().filter(|ch| !ch.is_whitespace()).collect()
+}
+
+/// Character offset after the `index`-th non-whitespace character of `text`.
+fn offset_of_non_space(text: &str, index: usize) -> usize {
+    if index == 0 {
+        return 0;
+    }
+    let mut seen = 0usize;
+    for (offset, ch) in text.char_indices() {
+        if ch.is_whitespace() {
+            continue;
+        }
+        seen += 1;
+        if seen == index {
+            return offset + ch.len_utf8();
+        }
+    }
+    text.len()
+}
+
+/// Whether `line` is a row the rule could be drawn under: same page, and close
+/// enough to the row's box bottom.
+fn blank_hosts_line(line: &SemanticLine, page_index: i32, y: f64) -> bool {
+    line.page_index == page_index && blank_line_distance(line, y) <= BLANK_LINE_BAND_PT
+}
+
+/// Distance from the rule's `y` to the bottom of the row's text box.  A written
+/// blank is drawn just under the baseline, so the owning row is the one whose
+/// box bottom the rule sits closest to.
+fn blank_line_distance(line: &SemanticLine, y: f64) -> f64 {
+    match line_box(line) {
+        Some((_, _, _, bottom)) => (y - bottom).abs(),
+        None => f64::INFINITY,
+    }
+}
+
+/// Rows further than this from a rule are not its owner.  Row pitch on the
+/// corpus is ~38pt, so half a pitch cannot reach a neighbouring field.
+const BLANK_LINE_BAND_PT: f64 = 18.0;
+
+/// `(x0, top, x1, bottom)` from a shadow row's `[x, y, width, height]` box.
+///
+/// Only physical-shadow rows reach this helper, and that layer always emits the
+/// corner-plus-extent form with a top-left origin, so no guessing is needed
+/// between the two encodings the older V1 documents used.
+fn line_box(line: &SemanticLine) -> Option<(f64, f64, f64, f64)> {
+    let [x, y, width, height] = line.bbox?;
+    Some((x, y, x + width.max(0.0), y + height.max(0.0)))
+}
+
+/// Where a drawn blank interrupts its row's text: the character whose
+/// interpolated horizontal position best matches the rule's left edge, counted
+/// as non-whitespace characters so a caller holding a differently spaced copy of
+/// the same row can land on the same place.
+///
+/// `None` means "past the row's text" — either the rule is drawn beyond the last
+/// character (the usual form shape, `Day of job: ____`) or the row's own box is
+/// left of the rule's start.  A caller turns that into "append at the end".
+fn blank_non_space_offset(line: &SemanticLine, blank_x: f64) -> Option<usize> {
+    let text = &line.text;
+    if text.is_empty() {
+        return None;
+    }
+    let (x0, _, x1, _) = line_box(line)?;
+    if blank_x >= x1 || x0 >= blank_x {
+        return None;
+    }
+    let width = (x1 - x0).max(1.0);
+    let length = text.len().max(1);
+    let mut best: Option<(f64, usize)> = None;
+    for (offset, _) in text.char_indices() {
+        let estimated = x0 + (offset as f64 / length as f64) * width;
+        let distance = (estimated - blank_x).abs();
+        if best.is_none_or(|(best_distance, _)| distance < best_distance) {
+            best = Some((distance, offset));
+        }
+    }
+    best.map(|(_, offset)| {
+        text[..offset]
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .count()
+    })
 }
 
 fn completion_control_line(text: &str) -> bool {
@@ -491,6 +841,52 @@ fn completion_slot_marker_spans(text: &str, expected_numbers: &[u32]) -> Vec<(us
         .collect()
 }
 
+/// Combine printed-marker spans with the spans recovered from drawn blanks.
+///
+/// A printed marker is stronger evidence — it carries the number's own glyphs —
+/// so it wins whenever both describe the same question, and numbers are never
+/// rendered twice (the quality gate counts one inline host per slot).
+fn merge_slot_spans(
+    printed: Vec<(usize, usize, u32)>,
+    from_blanks: Vec<(usize, usize, u32)>,
+) -> Vec<(usize, usize, u32)> {
+    let mut merged = printed;
+    let mut seen = merged
+        .iter()
+        .map(|(_, _, number)| *number)
+        .collect::<std::collections::BTreeSet<_>>();
+    for span in from_blanks {
+        if seen.insert(span.2) {
+            merged.push(span);
+        }
+    }
+    merged.sort_by_key(|(start, end, _)| (*start, *end));
+    merged
+}
+
+/// The blank spans that apply to `line`, translated into offsets of `body`
+/// (the row text with any leading bullet removed).
+fn blank_spans_for_line(
+    blank_slots: &BlankSlotSpans,
+    line: &SemanticLine,
+    bullet_start: usize,
+    body_len: usize,
+    expected_numbers: &[u32],
+) -> Vec<(usize, usize, u32)> {
+    let Some(spans) = blank_slots.get(&line.id) else {
+        return Vec::new();
+    };
+    spans
+        .iter()
+        .filter(|(_, _, number)| expected_numbers.contains(number))
+        .map(|(start, end, number)| {
+            let start = start.saturating_sub(bullet_start).min(body_len);
+            let end = end.saturating_sub(bullet_start).max(start).min(body_len);
+            (start, end, *number)
+        })
+        .collect()
+}
+
 pub(crate) fn completion_host_type(task_type: &TaskTypeV2) -> &'static str {
     match task_type {
         TaskTypeV2::TableCompletion => "table_cell",
@@ -534,7 +930,15 @@ pub(crate) fn completion_context_nodes(
     container_kind: CompletionContainerKind,
     lines: &[SemanticLine],
 ) -> Vec<Value> {
-    completion_context_nodes_with_slots(task_id, container_kind, lines, &[], &[], "answer")
+    completion_context_nodes_with_slots(
+        task_id,
+        container_kind,
+        lines,
+        &[],
+        &[],
+        "answer",
+        &BlankSlotSpans::new(),
+    )
 }
 
 /// Build completion stimulus nodes while retaining physical rows that carry
@@ -549,6 +953,7 @@ pub(crate) fn completion_context_nodes_with_slots(
     slot_lines: &[SemanticLine],
     expected_numbers: &[u32],
     placeholder: &str,
+    blank_slots: &BlankSlotSpans,
 ) -> Vec<Value> {
     let mut ordered_lines = context_lines
         .iter()
@@ -617,9 +1022,14 @@ pub(crate) fn completion_context_nodes_with_slots(
         if text.trim().is_empty() {
             continue;
         }
-        if let Some(slot_node) =
-            completion_slot_line_node(task_id, container_kind, line, expected_numbers, placeholder)
-        {
+        if let Some(slot_node) = completion_slot_line_node(
+            task_id,
+            container_kind,
+            line,
+            expected_numbers,
+            placeholder,
+            blank_slots,
+        ) {
             let can_merge = completion_should_merge_continuation(previous_line, line, &text);
             flush_bullets(&mut nodes, &mut pending_bullets);
             if !can_merge || !append_completion_continuation(&mut nodes, &slot_node) {
@@ -890,11 +1300,15 @@ fn completion_slot_line_node(
     line: &SemanticLine,
     expected_numbers: &[u32],
     placeholder: &str,
+    blank_slots: &BlankSlotSpans,
 ) -> Option<Value> {
     let text = normalize_instruction_text(&line.text);
     let bullet_start = completion_bullet_body_start(&text).unwrap_or(0);
     let body = &text[bullet_start..];
-    let spans = completion_slot_marker_spans(body, expected_numbers);
+    let spans = merge_slot_spans(
+        completion_slot_marker_spans(body, expected_numbers),
+        blank_spans_for_line(blank_slots, line, bullet_start, body.len(), expected_numbers),
+    );
     if spans.is_empty() {
         return None;
     }
@@ -1154,6 +1568,7 @@ pub(crate) fn completion_flowchart_node(
             line,
             expected_numbers,
             placeholder,
+            &structure.blank_slots,
         )
         .map(|node| vec![node])
         .unwrap_or_default();
@@ -1314,6 +1729,7 @@ mod tests {
             &candidate.slot_lines,
             &[31, 32],
             "answer",
+            &candidate.blank_slots,
         );
         assert_eq!(nodes.len(), 3);
         assert_eq!(nodes[0]["type"], json!("heading"));
@@ -1361,6 +1777,7 @@ mod tests {
             &bullet_candidate.slot_lines,
             &[7],
             "answer",
+            &bullet_candidate.blank_slots,
         );
         assert_eq!(bullet_nodes.len(), 1);
         assert_eq!(bullet_nodes[0]["type"], json!("bullet_list"));
@@ -1384,6 +1801,7 @@ mod tests {
             &ellipsis_candidate.slot_lines,
             &[24],
             "answer",
+            &ellipsis_candidate.blank_slots,
         );
         assert_eq!(ellipsis_nodes.len(), 1);
         assert_eq!(ellipsis_nodes[0]["children"][1]["slotId"], json!("q24"));
@@ -1406,6 +1824,7 @@ mod tests {
             &candidate.slot_lines,
             &[1, 2, 3],
             "answer",
+            &candidate.blank_slots,
         );
         let slots = nodes
             .iter()
@@ -1437,6 +1856,7 @@ mod tests {
             &candidate.slot_lines,
             &[1],
             "answer",
+            &candidate.blank_slots,
         );
         let text = nodes[0]["children"]
             .as_array()
@@ -1535,6 +1955,7 @@ mod tests {
             &[],
             &[],
             "answer",
+            &BlankSlotSpans::new(),
         );
         assert_eq!(nodes.len(), 1);
         assert_eq!(
@@ -1680,5 +2101,521 @@ mod tests {
             nodes[0]["items"][1]["sourceAnchors"][0]["nodeIds"],
             json!(["b"])
         );
+    }
+    // ---------------------------------------------------------------------
+    // The drawn-blank channel (F-Q2-1).
+    //
+    // A listening form prints its blanks as page geometry: the text layer
+    // carries the printed question number but no underscore glyph anywhere, so
+    // the marker scan finds no host row and every completion group reports
+    // `SLOT_HOST_MISSING` with nowhere for the student to type.  These tests
+    // cover the fallback evidence and the real paper's product chain.
+    // ---------------------------------------------------------------------
+
+    /// A physical-shadow row: corner plus extent, top-left origin.
+    fn shadow_row(id: &str, text: &str, x: f64, y: f64, width: f64) -> Value {
+        json!({
+            "id": id,
+            "text": text,
+            "bbox": {
+                "x": x, "y": y, "width": width, "height": 21.95,
+                "unit": "pt", "origin": "top-left", "pageRotation": 0
+            }
+        })
+    }
+
+    fn shadow_rule(x: f64, y: f64, width: f64, height: f64) -> Value {
+        json!({
+            "isAxisAlignedRule": true,
+            "bbox": {"x": x, "y": y, "width": width, "height": height}
+        })
+    }
+
+    fn shadow_page(page_index: i64, lines: Vec<Value>, rules: Vec<Value>) -> Value {
+        json!({"pageIndex": page_index, "lines": lines, "vectorPaths": rules})
+    }
+
+    fn count_slot_nodes(value: &Value, slot_id: &str) -> usize {
+        match value {
+            Value::Array(items) => items
+                .iter()
+                .map(|item| count_slot_nodes(item, slot_id))
+                .sum(),
+            Value::Object(object) => {
+                let here = usize::from(
+                    object.get("type").and_then(Value::as_str) == Some("answer_slot")
+                        && object.get("slotId").and_then(Value::as_str) == Some(slot_id),
+                );
+                here + object
+                    .values()
+                    .map(|child| count_slot_nodes(child, slot_id))
+                    .sum::<usize>()
+            }
+            _ => 0,
+        }
+    }
+
+    #[test]
+    fn drawn_blank_rules_close_numbers_the_text_layer_cannot() {
+        // `Location: in the 1` — the form prints the number and *draws* the
+        // blank, so the text layer carries the number but no marker to close it.
+        let shadow = json!({"pages": [shadow_page(
+            0,
+            vec![shadow_row("p001-l0010", "Location:inthe1", 92.04, 527.46, 161.82)],
+            vec![shadow_rule(259.4, 552.2, 66.0, 0.01)],
+        )]});
+        let blanks = completion_blanks_from_shadow(&shadow);
+        assert_eq!(blanks.len(), 1, "one writing-line rule, one blank");
+        assert_eq!(blanks[0].line_key, "Location:inthe1");
+        assert_eq!(blanks[0].page_index, 0);
+        assert_eq!(
+            blanks[0].non_space_offset, None,
+            "the rule is drawn past the row's last character"
+        );
+
+        // The grammar's own copy of that row: the same ink, split at word gaps,
+        // and deliberately declared on a *different* page number so a coordinate
+        // comparison between the two layers could never pass this test.
+        let mut row = line("b039", "Location: in the 1");
+        row.page_index = 7;
+        row.bbox = Some([92.04, 992.47, 368.8, 8.4]);
+
+        let without = recover_completion_structure(
+            &TaskTypeV2::FormCompletion,
+            std::slice::from_ref(&row),
+            &[],
+            &[1],
+        );
+        assert!(
+            !without.closes_slots(&[1]),
+            "the text-marker scan alone cannot host this blank"
+        );
+
+        let with = recover_completion_structure_with_blanks(
+            &TaskTypeV2::FormCompletion,
+            std::slice::from_ref(&row),
+            &[],
+            &[1],
+            &blanks,
+        );
+        assert!(with.closes_slots(&[1]), "the drawn blank hosts it");
+        assert_eq!(
+            with.slot_line_ids.get(&1).map(String::as_str),
+            Some("b039")
+        );
+
+        let nodes = completion_context_nodes_with_slots(
+            "task-drawn",
+            with.container_kind,
+            &with.context_lines,
+            &with.slot_lines,
+            &[1],
+            "answer",
+            &with.blank_slots,
+        );
+        assert_eq!(nodes.len(), 1, "{nodes:#?}");
+        let children = nodes[0]["children"].as_array().expect("row children");
+        assert_eq!(children.len(), 2, "{nodes:#?}");
+        assert_eq!(children[0]["text"], json!("Location: in the "));
+        assert_eq!(children[1]["type"], json!("answer_slot"));
+        assert_eq!(children[1]["slotId"], json!("q1"));
+        assert_eq!(count_slot_nodes(&nodes[0], "q1"), 1);
+    }
+
+    #[test]
+    fn a_printed_glyph_blank_is_never_replaced_by_a_drawn_one() {
+        // Reading papers print the blank as an underscore run.  A rule can run
+        // beside such a row too; the printed marker must keep owning the slot,
+        // and the row must not gain a second one.
+        let shadow = json!({"pages": [shadow_page(
+            0,
+            vec![shadow_row("p001-l0001", "Theresultwas31___", 92.0, 300.0, 200.0)],
+            vec![shadow_rule(92.0, 324.0, 66.0, 0.01)],
+        )]});
+        let blanks = completion_blanks_from_shadow(&shadow);
+        assert_eq!(blanks.len(), 1, "{blanks:#?}");
+
+        let row = line("b001", "The result was 31 ___");
+        let plain = recover_completion_structure(
+            &TaskTypeV2::SummaryCompletion,
+            std::slice::from_ref(&row),
+            &[],
+            &[31],
+        );
+        assert!(plain.closes_slots(&[31]), "glyph marker closes it");
+        let with_rule = recover_completion_structure_with_blanks(
+            &TaskTypeV2::SummaryCompletion,
+            std::slice::from_ref(&row),
+            &[],
+            &[31],
+            &blanks,
+        );
+        assert!(
+            with_rule.blank_slots.is_empty(),
+            "printed evidence owns the row"
+        );
+        assert_eq!(with_rule.slot_line_ids, plain.slot_line_ids);
+        assert_eq!(with_rule.slot_lines, plain.slot_lines);
+
+        let render = |structure: &CompletionStructureCandidate| {
+            completion_context_nodes_with_slots(
+                "task-glyph",
+                structure.container_kind,
+                &structure.context_lines,
+                &structure.slot_lines,
+                &[31],
+                "answer",
+                &structure.blank_slots,
+            )
+        };
+        assert_eq!(
+            render(&with_rule),
+            render(&plain),
+            "a rule must not perturb a row the glyph scan already closed"
+        );
+        assert_eq!(count_slot_nodes(&render(&with_rule)[0], "q31"), 1);
+    }
+
+    #[test]
+    fn only_writing_line_rules_become_answer_blanks() {
+        let shadow = json!({"pages": [
+            shadow_page(
+                0,
+                vec![
+                    shadow_row("p002-l0013", "Dayofjob:", 92.0, 500.0, 130.0),
+                    shadow_row("p002-l0016", "Maximumlengthofjob:10", 105.0, 600.0, 203.0),
+                ],
+                vec![
+                    // A bar, not an underline.
+                    shadow_rule(92.0, 524.0, 66.0, 6.0),
+                    // A short leader.
+                    shadow_rule(92.0, 524.0, 20.0, 0.01),
+                    // A table border, far wider than a writing line.
+                    shadow_rule(92.0, 524.0, 200.0, 0.01),
+                    // A rule that stops before the row it would sit near.
+                    shadow_rule(5.0, 524.0, 40.0, 0.01),
+                    // A rule with no row inside the band.
+                    shadow_rule(92.0, 5.0, 66.0, 0.01),
+                    // The one real blank.
+                    shadow_rule(225.0, 524.0, 66.0, 0.01),
+                ],
+            ),
+            // A rule on a page with no rows cannot be attached to anything.
+            shadow_page(1, Vec::new(), vec![shadow_rule(92.0, 10.0, 66.0, 0.01)]),
+        ]});
+        let blanks = completion_blanks_from_shadow(&shadow);
+        assert_eq!(blanks.len(), 1, "{blanks:#?}");
+        assert_eq!(blanks[0].line_key, "Dayofjob:");
+        assert_eq!(blanks[0].page_index, 0);
+        assert_eq!(blanks[0].non_space_offset, None, "rule past the row's text");
+        assert!(
+            blanks.iter().all(|blank| blank.line_key != "Maximumlengthofjob:10"),
+            "the neighbouring row is not this rule's owner"
+        );
+    }
+
+    /// Runs the real listening paper through the product chain and returns the
+    /// built authoring document, or `None` when the private fixture or pdfium is
+    /// unavailable (the other real-paper probes in this crate skip the same way).
+    fn build_real_listening_shadow() -> Option<Value> {
+        let pdf = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/golden/private-real/listening-vol7-t9.pdf");
+        if !pdf.exists() || crate::pdf_geometry::pdfium_library_path().is_none() {
+            return None;
+        }
+        let work_dir =
+            std::env::temp_dir().join(format!("pdf2test-listening-blanks-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&work_dir);
+        let mut job = crate::job_store::make_job(crate::CreateJobInput {
+            title: Some("Listening drawn-blank acceptance".to_string()),
+            ..Default::default()
+        });
+        let source = crate::SourceFile {
+            file_id: "listening-vol7-t9".to_string(),
+            original_name: "listening-vol7-t9.pdf".to_string(),
+            stored_name: "listening-vol7-t9.pdf".to_string(),
+            file_type: "pdf".to_string(),
+            sha256: "fixture".to_string(),
+            size_bytes: std::fs::metadata(&pdf).map(|meta| meta.len()).unwrap_or(0),
+            role: "MainQuestion".to_string(),
+            imported_at: chrono::Utc::now(),
+        };
+        job.source_files = vec![source.clone()];
+        let document = crate::parser::parse_source_document(
+            &job,
+            &source,
+            &pdf,
+            &work_dir.join("document-ir.json"),
+            "auto",
+        )
+        .ok()?;
+        let split = crate::authoring_pipeline::make_dynamic_split_candidates(
+            &job.job_id,
+            &job,
+            Some(&document),
+        );
+        let v1 = crate::authoring_pipeline::make_dynamic_authoring_ir(&job, &split, Some(&document));
+        let physical = crate::pdf_facts_shadow::write_pdf_facts_shadow_with_v1(
+            &job,
+            &source,
+            &pdf,
+            &work_dir.join("document-ir-v2.shadow.json"),
+            Some(&document),
+        )
+        .ok()?;
+        crate::ielts_grammar::build_authoring_v2_shadow_for_modality(
+            &job,
+            &v1,
+            &split,
+            Some(&document),
+            Some(&physical),
+            crate::schema::ielts_authoring_v2::ExamModalityV2::Listening,
+        )
+        .ok()
+    }
+
+    /// Real-paper acceptance for the drawn-blank channel: through the product
+    /// chain, every completion row of the listening form must host exactly one
+    /// inline answer slot, so a student can answer all forty questions.
+    ///
+    /// Skips when the private fixture or pdfium is unavailable, like the other
+    /// real-paper probes in this crate.
+    #[test]
+    fn real_listening_form_rows_host_their_answer_slots() {
+        let Some(authoring) = build_real_listening_shadow() else {
+            return;
+        };
+        let groups = authoring
+            .get("taskGroups")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let slot_ids_of = |group: &Value| {
+            group
+                .get("responseGroups")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .flat_map(|response| {
+                    response
+                        .get("slotIds")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                })
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        };
+        let mut detail = Vec::new();
+        let mut violations = Vec::new();
+        let mut hosted = std::collections::BTreeSet::new();
+        for group in &groups {
+            let task_id = group
+                .get("taskId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let task_type = group
+                .get("taskType")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let slot_ids = slot_ids_of(group);
+            hosted.extend(slot_ids.iter().cloned());
+            let stimulus = group.get("stimulus").cloned().unwrap_or(Value::Null);
+            let misses = if task_type.ends_with("_completion") {
+                slot_ids
+                    .iter()
+                    .filter(|slot_id| count_slot_nodes(&stimulus, slot_id) != 1)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            detail.push(json!({
+                "taskId": task_id,
+                "taskType": task_type,
+                "slotIds": slot_ids,
+                "inlineSlotMisses": misses
+            }));
+            if !misses.is_empty() {
+                violations.push(json!({"taskId": task_id, "missingInlineSlots": misses}));
+            }
+        }
+
+        assert!(
+            violations.is_empty(),
+            "every completion row needs its own inline answer slot: {}",
+            serde_json::to_string_pretty(&json!({
+                "violations": violations,
+                "groups": detail
+            }))
+            .unwrap_or_default()
+        );
+
+        let expected_all = (1..=40).map(|number| format!("q{number}")).collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            hosted, expected_all,
+            "the paper declares forty answerable questions"
+        );
+
+        let hard_failures = authoring
+            .pointer("/quality/hardFailures")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        eprintln!(
+            "listening-vol7-t9 inline slots: {} groups, {} completion groups, {} misses; hard failures {:?}",
+            groups.len(),
+            detail
+                .iter()
+                .filter(|entry| entry["taskType"]
+                    .as_str()
+                    .is_some_and(|kind| kind.ends_with("_completion")))
+                .count(),
+            violations.len(),
+            hard_failures
+        );
+        assert!(
+            !hard_failures
+                .iter()
+                .any(|code| code.as_str() == Some("SLOT_HOST_MISSING")),
+            "drawn blanks must clear SLOT_HOST_MISSING; remaining failures: {hard_failures:?}"
+        );
+    }
+
+    /// `Questions 17-20 Choose FOUR correct answers, A-F` and `Questions 21-25
+    /// Choose FIVE correct letters, A-G` are feature matches against one shared
+    /// bank. Through the product chain each of those groups must
+    ///   * be typed `matching_features`,
+    ///   * carry one option bank whose labels are exactly the declared alphabet,
+    ///   * bind every response group to that bank, and
+    ///   * leave no option- or type-related blocker behind.
+    ///
+    /// Without it q17-q25 render no control at all, so the paper can never be
+    /// published no matter how many answers the user types.
+    #[test]
+    fn real_listening_choose_n_groups_bind_their_shared_option_bank() {
+        let Some(authoring) = build_real_listening_shadow() else {
+            return;
+        };
+        let groups = authoring
+            .get("taskGroups")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        let mut observed = Vec::new();
+        let mut violations = Vec::new();
+        for group in &groups {
+            let start = group
+                .pointer("/displayRange/start")
+                .and_then(Value::as_u64);
+            let end = group.pointer("/displayRange/end").and_then(Value::as_u64);
+            let declared = match (start, end) {
+                (Some(17), Some(20)) => "A-F",
+                (Some(21), Some(25)) => "A-G",
+                _ => continue,
+            };
+            let task_id = group
+                .get("taskId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let task_type = group
+                .get("taskType")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let labels = group
+                .pointer("/optionBank/options")
+                .and_then(Value::as_array)
+                .map(|options| {
+                    options
+                        .iter()
+                        .filter_map(|option| option.get("label").and_then(Value::as_str))
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let option_texts = group
+                .pointer("/optionBank/options")
+                .and_then(Value::as_array)
+                .map(|options| {
+                    options
+                        .iter()
+                        .filter_map(|option| {
+                            let label = option.get("label").and_then(Value::as_str)?;
+                            let text = option
+                                .pointer("/content/0/text")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default();
+                            Some(format!("{label}={text}"))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let expected_labels = ('A'..=declared.chars().last().unwrap())
+                .map(|label| label.to_string())
+                .collect::<Vec<_>>();
+            let responses = group
+                .get("responseGroups")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let bank_bound = !responses.is_empty()
+                && responses
+                    .iter()
+                    .all(|response| response.get("optionBankRef").is_some());
+            let shown = json!({
+                "taskId": task_id,
+                "taskType": task_type,
+                "expectedLabels": expected_labels,
+                "optionLabels": labels,
+                "optionTexts": option_texts,
+                "bankBound": bank_bound
+            });
+            observed.push(shown.clone());
+            if task_type != "matching_features" || labels != expected_labels || !bank_bound {
+                violations.push(shown);
+            }
+        }
+
+        assert_eq!(
+            observed.len(),
+            2,
+            "the paper has exactly two choose-N groups: {observed:?}"
+        );
+        assert!(
+            violations.is_empty(),
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "violations": violations,
+                "observed": observed
+            }))
+            .unwrap_or_default()
+        );
+
+        let codes = authoring
+            .pointer("/quality/hardFailures")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        for blocked in [
+            "TASK_TYPE_CONFLICT",
+            "OPTION_RUN_INCOMPLETE",
+            "OPTION_BANK_MISSING",
+            "OPTION_ALPHABET_MISMATCH",
+            "RESPONSE_GROUP_POLICY_MISMATCH",
+        ] {
+            assert!(
+                !codes.contains(&blocked),
+                "{blocked} still blocks the paper: {codes:?}"
+            );
+        }
+        eprintln!("listening-vol7-t9 choose-N groups: {observed:?}; hard failures {codes:?}");
     }
 }

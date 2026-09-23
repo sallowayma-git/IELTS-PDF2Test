@@ -59,9 +59,17 @@ pub(crate) fn infer_instruction_signature(
     if is_completion_task(&task_type) && word_limit.is_none() && option_alphabet.is_none() {
         warnings.push("completion_word_limit_not_found".to_string());
     }
+    // `short_answer` is the V1.5 classifier's **fallback**, not a positive
+    // finding: it means "no specific structure signal was recognised". Reading it
+    // as a competing claim made the gate fire on the classifier's ignorance —
+    // `Choose FOUR correct answers, A-F` came back as
+    // `task_type_conflict:instruction=multiple_choice;structure_hint=short_answer`
+    // and the quality gate blocked the whole paper with `TASK_TYPE_CONFLICT`.
+    // Only a hint that names a concrete structure counts as evidence.
+    let structure_hint = kind_hint.filter(|hint| !hint.eq_ignore_ascii_case("short_answer"));
     if let (Some(instruction_type), Some(structure_type)) = (
         infer_task_type_from_cues(&lower),
-        task_type_from_kind_hint(kind_hint),
+        task_type_from_kind_hint(structure_hint),
     ) {
         if !task_types_structurally_compatible(&instruction_type, &structure_type) {
             warnings.push(format!(
@@ -221,12 +229,23 @@ fn infer_task_type_from_cues(lower: &str) -> Option<TaskTypeV2> {
     }
     // Listening papers select four or five labels from one shared bank:
     // `Choose FOUR correct answers, A-F`, `Choose FIVE correct letters, A-G`.
+    //
+    // This is a **feature match against a shared bank**, not a multiple-choice
+    // question: several numbered rows each take one letter from a single printed
+    // box. Typing it `multiple_choice` closed the bank gate in `mod.rs`
+    // (`detect_option_bank` runs only for matching-family tasks), so those rows
+    // came out with an empty option list — nothing to click in the UI, plus
+    // `OPTION_RUN_INCOMPLETE` and `RESPONSE_GROUP_POLICY_MISMATCH`.
+    //
+    // The declared letter range keeps this branch from swallowing the ordinary
+    // `Choose TWO letters, A-E` cue above, which really is a multiple choice.
     if ["four", "five", "six"].iter().any(|count| {
         lower.contains(&format!("choose {count} correct"))
             || lower.contains(&format!("choose {count} letters"))
             || lower.contains(&format!("choose {count} answers"))
-    }) {
-        return Some(TaskTypeV2::MultipleChoice);
+    }) && infer_option_alphabet(lower).is_some()
+    {
+        return Some(TaskTypeV2::MatchingFeatures);
     }
     if lower.contains("choose the correct letter")
         || lower.contains("choose the correct answer")
@@ -776,8 +795,17 @@ mod tests {
         }
     }
 
+    /// `Choose FOUR/FIVE correct answers/letters, A-X, next to questions N-M` is a
+    /// **feature match against one shared bank**, not a multiple-choice question:
+    /// each numbered row takes a single letter from the box A-X, so the task has a
+    /// bank (and therefore matching semantics) rather than per-question options.
+    ///
+    /// Tagging it `multiple_choice` closed the bank gate in `mod.rs`
+    /// (`detect_option_bank` only runs for matching-family tasks), which left
+    /// q17-q25 with an empty option list: no controls in the UI, plus
+    /// `OPTION_RUN_INCOMPLETE` / `RESPONSE_GROUP_POLICY_MISMATCH`.
     #[test]
-    fn choose_four_and_five_are_multiple_choice_with_declared_alphabets() {
+    fn choose_four_and_five_are_feature_matches_with_declared_alphabets() {
         let four = infer_instruction_signature(
             "Questions 17-20 Choose FOUR correct answers, A-F, next to questions 17-20.",
             &QuestionNumberExpressionV2::Range { start: 17, end: 20 },
@@ -785,9 +813,15 @@ mod tests {
             Vec::new(),
         )
         .signature;
-        assert_eq!(four.task_type, TaskTypeV2::MultipleChoice);
+        assert_eq!(four.task_type, TaskTypeV2::MatchingFeatures);
         assert_eq!(four.option_alphabet.as_deref(), Some("A-F"));
         assert_eq!(four.selection_cardinality.and_then(|c| c.exact), Some(4));
+        // One shared label pool for the whole group, scored per slot.
+        assert_eq!(
+            four.answer_assignment,
+            Some(AssignmentV2::UnorderedSet),
+            "four rows draw from one pool, so the assignment stays group-wide"
+        );
 
         let five = infer_instruction_signature(
             "Questions 21-25 Choose FIVE correct letters, A-G, next to questions 21-25.",
@@ -796,9 +830,32 @@ mod tests {
             Vec::new(),
         )
         .signature;
-        assert_eq!(five.task_type, TaskTypeV2::MultipleChoice);
+        assert_eq!(five.task_type, TaskTypeV2::MatchingFeatures);
         assert_eq!(five.option_alphabet.as_deref(), Some("A-G"));
         assert_eq!(five.selection_cardinality.and_then(|c| c.exact), Some(5));
+    }
+
+    /// The V1.5 structure hint for these rows is the generic `short_answer`
+    /// fallback. It must not be read as a competing structural claim, or the
+    /// group carries `task_type_conflict:` and the quality gate blocks it with
+    /// `TASK_TYPE_CONFLICT`.
+    #[test]
+    fn choose_four_reads_a_generic_structure_hint_as_no_claim() {
+        let result = infer_instruction_signature(
+            "Questions 17-20 What information does the guide give about each of the following collections? Choose FOUR correct answers, A-F, next to questions 17-20.",
+            &QuestionNumberExpressionV2::Range { start: 17, end: 20 },
+            Some("short_answer"),
+            Vec::new(),
+        );
+        assert_eq!(result.signature.task_type, TaskTypeV2::MatchingFeatures);
+        assert!(
+            !result
+                .warnings
+                .iter()
+                .any(|warning| warning.starts_with("task_type_conflict:")),
+            "a generic fallback hint is not evidence of a conflict: {:?}",
+            result.warnings
+        );
     }
 
     #[test]

@@ -41,9 +41,9 @@ use std::path::Path;
 use anchors::{detect_question_anchors, QuestionAnchor};
 use answer_key::{answer_key_from_v1, answer_value_for_slot};
 use completion::{
-    answer_slot_node, completion_context_nodes_with_slots, completion_flowchart_node,
-    completion_host_type, completion_placeholder, completion_table_node,
-    recover_completion_structure, CompletionStructureCandidate,
+    answer_slot_node, completion_blanks_from_shadow, completion_context_nodes_with_slots,
+    completion_flowchart_node, completion_host_type, completion_placeholder, completion_table_node,
+    recover_completion_structure_with_blanks, CompletionStructureCandidate,
 };
 use diagram::diagram_candidate;
 use evidence::{anchor_from_value, source_anchor_from_job};
@@ -176,6 +176,15 @@ pub(crate) fn build_authoring_v2_shadow_for_modality(
         .and_then(|value| value.get("assets"))
         .and_then(Value::as_array)
         .cloned()
+        .unwrap_or_default();
+    // Answer blanks the source draws as page geometry rather than text.  A
+    // listening form prints its blanks as short horizontal rules and the text
+    // layer carries no underscore glyph at all, so a marker scan alone finds
+    // no host line and the whole completion group recovers zero slots.  The
+    // drawn rules are the only evidence those pages give; hand them to the
+    // recovery step so it can close the gaps it could not see in the text.
+    let completion_blanks = physical_shadow
+        .map(completion_blanks_from_shadow)
         .unwrap_or_default();
     let passage = if listening {
         Value::Null
@@ -336,11 +345,12 @@ pub(crate) fn build_authoring_v2_shadow_for_modality(
                     .unwrap_or(false)
             });
         let completion_structure = is_completion_task(&task_type).then(|| {
-            recover_completion_structure(
+            recover_completion_structure_with_blanks(
                 &task_type,
                 &group_lines,
                 &zone.line_ids,
                 &expected_numbers,
+                &completion_blanks,
             )
         });
         let structured_completion_slots = completion_structure
@@ -1677,6 +1687,7 @@ fn build_stimulus(
         &structure.slot_lines,
         expected_numbers,
         completion_placeholder(task_type),
+        &structure.blank_slots,
     );
     if matches!(task_type, TaskTypeV2::TableCompletion) {
         if structure.closes_slots(expected_numbers) {
