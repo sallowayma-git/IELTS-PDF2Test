@@ -48,6 +48,7 @@ import {
   CDP_CHANNEL_LABEL,
   CDP_CHANNEL_NOTE,
   CannotRunError,
+  applyReattachPolicy,
   assertBuildFresh,
   buildFreshReport,
   gitHead,
@@ -56,6 +57,7 @@ import {
   repoRoot,
   sha256File,
   sleep,
+  summarizeReattaches,
   writeReport,
 } from "./lib/tauri-cdp-harness.mjs";
 import { computeScenarioVerdict, SCENARIO_STATUS } from "./lib/chain-verdict.mjs";
@@ -73,6 +75,8 @@ const portIdx = process.argv.indexOf("--port");
 const servicePort = portIdx >= 0 ? Number(process.argv[portIdx + 1]) : 11455;
 const isPdf = /\.pdf$/i.test(fixturePath);
 const extraArgs = process.argv.includes("--no-diagnostic-args") ? "" : "--no-sandbox --disable-gpu";
+/** 显式声明「本轮接受 CDP 重连」；默认不接受（见报告 `cdpReattaches`）。 */
+const acceptReattaches = process.argv.includes("--accept-reattaches");
 
 const serviceScript = path.join(repoRoot, "scripts", "controlled-llm-service.mjs");
 const PROFILE_ID = "controlled-repair-chain";
@@ -172,6 +176,12 @@ function writeFinalReport() {
   const verdict = computeScenarioVerdict({ scenarios: report.scenarios });
   report.verdict = verdict.verdict;
   report.exitCode = verdict.exitCode;
+  // 断线重连必须可见（F3）：默认「发生过重连就不算干净通过」，要接受得显式声明。
+  report.cdpReattaches = summarizeReattaches(session, { acceptReattaches });
+  const reattach = applyReattachPolicy(verdict.verdict, report.cdpReattaches.entries, { acceptReattaches });
+  report.verdict = reattach.verdict;
+  report.reattachWarning = reattach.warning;
+  if (reattach.downgraded) report.exitCode = 0;
   report.scenarioFacts = {
     passed: verdict.passed,
     failed: verdict.failed,
@@ -182,8 +192,11 @@ function writeFinalReport() {
   };
   writeReport(runDir, report);
   console.log(`[cloud-repair-chain] scenarios: ${report.scenarios.map((s) => `${s.name}:${s.status}`).join(" | ")}`);
-  console.log(`[cloud-repair-chain] verdict: ${verdict.verdict} (${verdict.reason})`);
-  process.exitCode = verdict.exitCode;
+  console.log(`[cloud-repair-chain] verdict: ${report.verdict} (${verdict.reason})`);
+  if (report.reattachWarning) console.log(`[cloud-repair-chain] ${report.reattachWarning}`);
+  // 退出码与报告里的 verdict 必须同源：用 `report.exitCode`（已被重连策略改过），
+  // 不要用局部 `verdict.exitCode`（那是降级前的值），否则报告写着警告、退出码却是另一回事。
+  process.exitCode = report.exitCode;
   return verdict;
 }
 

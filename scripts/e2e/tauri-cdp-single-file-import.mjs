@@ -27,7 +27,10 @@
  *
  * 用法：
  *   node scripts/e2e/tauri-cdp-single-file-import.mjs [--keep] [--run-dir <dir>]
- *        [--diagnostic-args] [--tolerate-concurrent-edits]
+ *        [--diagnostic-args] [--tolerate-concurrent-edits] [--accept-reattaches]
+ *
+ * `--accept-reattaches`：显式声明本脚本接受 CDP 断线重连。默认不接受——发生过重连的
+ * 运行 verdict 会降为 `passed_with_warnings`（记录写在报告 `cdpReattaches` 里）。
  *
  * 运行档案：默认**不带**测试专用安全参数（`runProfile=cdp-default`）；
  * 传 `--diagnostic-args` 才加 `--no-sandbox --disable-gpu`（`runProfile=cdp-diagnostic`）。
@@ -43,6 +46,7 @@ import {
   CDP_CHANNEL_LABEL,
   CDP_CHANNEL_NOTE,
   CannotRunError,
+  applyReattachPolicy,
   assertBuildFresh,
   buildFreshReport,
   createStepRecorder,
@@ -52,6 +56,7 @@ import {
   repoRoot,
   sha256File,
   sleep,
+  summarizeReattaches,
   writeReport,
 } from "./lib/tauri-cdp-harness.mjs";
 
@@ -65,6 +70,8 @@ const runDir = runDirIdx >= 0
 const diagnosticArgsRequested = process.argv.includes("--diagnostic-args");
 const extraArgs = diagnosticArgsRequested ? "--no-sandbox --disable-gpu" : "";
 const tolerateConcurrentEdits = process.argv.includes("--tolerate-concurrent-edits");
+/** 显式声明「本轮接受 CDP 重连」；默认不接受（见报告 `cdpReattaches`）。 */
+const acceptReattaches = process.argv.includes("--accept-reattaches");
 
 // 三份同目录 PDF，用**受控文件名**（不用夹具原名）：这样「只处理被选中的那一份」
 // 可以按文件名精确断言，也不会跟别的运行目录里的同名文件混淆。
@@ -365,10 +372,21 @@ try {
   };
   // 判定无条件执行：CANNOT-RUN 时 recorder 为 null，若把判定关在 `if (recorder)` 里，
   // 这种运行会退回初始的 `verdict="failed"`，看起来像跑过且失败。
-  report.verdict = report.cannotRun ? "cannot-run" : failed.length ? "failed" : "passed";
+  const baseVerdict = report.cannotRun ? "cannot-run" : failed.length ? "failed" : "passed";
+  // 断线重连必须可见（F3）：默认「发生过重连就不算干净通过」，要接受得显式声明。
+  report.cdpReattaches = summarizeReattaches(session, { acceptReattaches });
+  const reattach = applyReattachPolicy(baseVerdict, report.cdpReattaches.entries, { acceptReattaches });
+  report.verdict = reattach.verdict;
+  report.reattachWarning = reattach.warning;
   const file = writeReport(runDir, report);
   console.log(`[single-file-import] verdict=${report.verdict} report=${file}`);
   console.log(`[single-file-import] steps: ${report.steps.map((s) => `${s.name}:${s.status}`).join(" | ")}`);
+  console.log(
+    `[single-file-import] cdpReattaches=${report.cdpReattaches.count}（策略 ${report.cdpReattaches.policy}）`
+    + `${report.reattachWarning ? ` — ${report.reattachWarning}` : ""}`,
+  );
   if (report.fatal) console.log(`[single-file-import] fatal=${report.fatal.message}`);
-  process.exit(report.verdict === "passed" ? 0 : report.verdict === "cannot-run" ? 3 : 1);
+  process.exit(report.verdict === "passed" || report.verdict === "passed_with_warnings"
+    ? 0
+    : report.verdict === "cannot-run" ? 3 : 1);
 }

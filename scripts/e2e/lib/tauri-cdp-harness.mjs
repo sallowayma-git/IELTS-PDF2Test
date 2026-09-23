@@ -515,6 +515,29 @@ export class TauriCdpSession {
     this.screenshotErrors = [];
     this.pageErrors = [];
     this.consoleErrors = [];
+    /**
+     * 断线重连的**记录**（本轮 F3 修复点）。
+     *
+     * 重连本身是对的（WebView2 会重建 page target，不重连就只能把一次瞬时重建报成
+     * 「页面没渲染」），但**静默**重连等于把 renderer 崩溃洗成正常：脚本接到一个刚
+     * 重载的页面上继续跑，断言照样全过。所以每次重连都往这里记一条，由脚本写进报告，
+     * 并让 verdict 至少降成「通过但有警告」。
+     */
+    this.reattaches = [];
+    /** 当前正在跑的步骤名，由 `createStepRecorder` 维护；步骤之外为 `null`。 */
+    this.currentStep = null;
+  }
+
+  /** 记一次重连。`reason` 原样保留，不截断成「连接断了」这种看不出原因的话。 */
+  _recordReattach(reason) {
+    const entry = {
+      at: new Date().toISOString(),
+      step: this.currentStep,
+      reason: String(reason ?? "").slice(0, 300),
+    };
+    this.reattaches.push(entry);
+    this.log(`CDP 重连 #${this.reattaches.length}（step=${entry.step ?? "(steps 之外)"}）：${entry.reason.slice(0, 96)}`);
+    return entry;
   }
 
   /**
@@ -585,7 +608,7 @@ export class TauriCdpSession {
         message.includes("CDP 连接已关闭") ||
         message.includes("WebSocket is not open");
       if (!reattach || !disconnected) throw error;
-      this.log(`CDP 会话已断（${message.slice(0, 72)}），重新附着 page target 后重试`);
+      this._recordReattach(message);
       await this.attachToPageTarget();
       return await this._evaluateOnce(expression, { timeoutMs, awaitPromise });
     }
@@ -911,13 +934,19 @@ export class TauriCdpSession {
   }
 }
 
-/** 步骤记录器：blocked_by_quality_gate 记为 blocked，而不是 pass/fail。 */
+/**
+ * 步骤记录器：blocked_by_quality_gate 记为 blocked，而不是 pass/fail。
+ *
+ * 同时把当前步骤名写给 `session.currentStep`——重连记录要靠它回答「这次断线发生在
+ * 哪一步」（见 `_recordReattach`）。步骤之外发生的断线记为 `step: null`，不丢。
+ */
 export function createStepRecorder({ session, artifactsDir }) {
   const steps = [];
   return {
     steps,
     async run(name, fn) {
       const started = Date.now();
+      if (session) session.currentStep = name;
       try {
         const value = await fn();
         if (value && value.outcome === "blocked_by_quality_gate") {
@@ -934,11 +963,64 @@ export function createStepRecorder({ session, artifactsDir }) {
           screenshot: shot,
           ms: Date.now() - started,
         });
+      } finally {
+        if (session) session.currentStep = null;
       }
       const last = steps[steps.length - 1];
       console.log(`[step] ${last.status.toUpperCase()} ${name}${last.error ? ` :: ${last.error}` : ""}`);
       return last;
     },
+  };
+}
+
+/** 重连策略取值。只有显式声明 `acceptReattaches` 的脚本才配得上干净 `passed`。 */
+export const REATTACH_POLICY = Object.freeze({
+  /** 默认：重连要报出来，verdict 至少降为 `passed_with_warnings`。 */
+  WARN: "warn-on-reattach",
+  /** 显式声明：这份脚本接受重连（例如它单独断言了页面重载后的行为）。 */
+  ACCEPTED: "accepted",
+});
+
+/**
+ * 把会话上的重连记录规范成报告字段（写在每个脚本的 `report.cdpReattaches` 上）。
+ *
+ * `count: 0` 也必须写出来——「这次一个重连都没有」跟「这个字段根本不存在」是两件事，
+ * 报告读者要能区分。
+ */
+export function summarizeReattaches(session, { acceptReattaches = false } = {}) {
+  const entries = (session?.reattaches ?? []).map((entry) => ({ ...entry }));
+  return {
+    policy: acceptReattaches ? REATTACH_POLICY.ACCEPTED : REATTACH_POLICY.WARN,
+    acceptReattaches: Boolean(acceptReattaches),
+    count: entries.length,
+    steps: [...new Set(entries.map((entry) => entry.step).filter(Boolean))],
+    entries,
+  };
+}
+
+/**
+ * 按重连记录决定最终 verdict。
+ *
+ * 规则：**发生重连的运行 verdict 至少降为 `passed_with_warnings`**——重连过的运行
+ * 不是「同样的运行」，读者必须看见这一点。要把它当成可接受的脚本得显式声明
+ * `acceptReattaches`（`--accept-reattaches`）。
+ *
+ * 反向不成立：已经 failed / cannot-run 的运行不会因为「有重连」被降级成警告。
+ * 重连只影响「本来是 passed」的那一档，绝不把失败洗成通过。
+ */
+export function applyReattachPolicy(verdict, reattaches, { acceptReattaches = false } = {}) {
+  const count = (reattaches ?? []).length;
+  if (verdict !== "passed" || count === 0 || acceptReattaches) {
+    return { verdict, downgraded: false, warning: null };
+  }
+  const steps = [...new Set((reattaches ?? []).map((entry) => entry.step).filter(Boolean))];
+  return {
+    verdict: "passed_with_warnings",
+    downgraded: true,
+    warning:
+      `本次运行发生 ${count} 次 CDP 断线重连（步骤：${steps.join(", ") || "步骤之外"}）：`
+      + "重连可能掩盖 renderer 崩溃重建，按默认策略降级为「通过但有警告」。"
+      + "若该脚本确实接受重连，请显式声明 --accept-reattaches。",
   };
 }
 
