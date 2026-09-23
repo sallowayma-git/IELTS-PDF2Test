@@ -2493,6 +2493,9 @@ exe `f4032d9399739d0a…`，commit `be1147f`，`runProfile=cdp-diagnostic`，7 �
 `chain-verdict.test.mjs` 一起跑 **39 passed / 2 files**。三条链都接上同一份策略，
 报告里出 `report.cdpReattaches`，出过重连的运行**默认不低于** `passed_with_warnings`。
 
+`npx vitest run` 全套 **405 passed / 28 files**（基线 400 / 27 files，+5 = 新增的 harness 自测）。
+本轮**没有改任何 Rust 代码**，`cargo test --lib` 不受影响（未在 CI 里复跑）。
+
 ### Q2 未达成：`published` 在这份夹具上不可达（三条真实阻塞）
 
 第 9 步填了 **31/40**，q17–q25 在**界面上没有可作答控件**；第 10 步得以
