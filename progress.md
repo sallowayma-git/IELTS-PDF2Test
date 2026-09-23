@@ -2415,13 +2415,22 @@ exe `f4032d9399739d0a…`，commit `be1147f`，`runProfile=cdp-diagnostic`，7 �
 | `confirm-imports-the-listening-item` | 建立 1 个条目 `import-20260923182921-6ff62c41` |
 | `publish-reports-a-machine-readable-outcome` | `kind=published_forced_not_loadable` |
 
-**这一跑同时把 R1（F1）在真实 App 里证到了**：发布结论是
-`published_forced_not_loadable`，界面提示「**已发布，但学生端暂时无法打开这道题**」——
-即「学生打不开的卷子不再被记成干净发布」。它也顺带解释了 R6 末端那一环
-（学生端 provider 逐 Part 加载音频）**为什么在这份夹具上不可达**：
-`listening-vol7-t9.pdf` 没有答案 key，教材不完整 ⇒ 永远不是学生可加载的卷子，
-**App 自己如实说了**。用断言强行要求「必须干净发布」，只会把「数据不全」伪装成「App 链路失败」，
-所以该步骤只断言「必须给出机器可读结论」，不断言结论是哪一个。
+**2026-09-23 第二轮复核更正（这一段的结论必须收回两条）**：
+
+1. **末步（第 7 步）不能算「发布结论」的证据。** 它当时只断言「必须给出机器可读结论」
+   ——**任何 kind 都满足**，包括 `kind:"failed"`。质量方用**默认档**实跑
+   `artifacts/e2e-cdp/run-listening-chain-2026-09-23T20-19-54-516Z`：识别尚未完成就点了发布，
+   得到 `kind:"failed"`（「这道题还没有生成可编辑的题稿」），**末步照样 PASS**。
+   这是恒过断言，不是判据。⇒ 那一步已按 Q1 重写：**先等识别真正结束**，再断言确定的草稿结构。
+2. **「这份夹具没有答案 key ⇒ 学生端那一跳不可达」这个理由不成立。**
+   产品流程本来就是**用户补原文缺失的答案**（这是用户唯一要做的决策），测试可以扮演用户
+   填完 40 个答案。所以「不可达」不是产品事实，而是当时脚本没走到那一步。⇒ 由 Q2 补上。
+
+因此这次 7/7 的**有效证据收窄为**：真实 App 的「导入 → 认出听力卷 → 弹窗 → 真实 picker 绑定
+4 个 Part（顺序 = Part 顺序）→ 探针全过 → 建立条目」这**六步**；
+第 7 步只证明「发布路径会给出机器可读结论」，**不构成任何发布结论的证据**。
+**R1 的真实 App 证据以 Q2（干净发布 `data-publish-outcome="published"` + 学生端真实 provider
+逐 Part 取音频）为准**，不再引用这里的 `published_forced_not_loadable`。
 
 另记两个真实竞态，已修但如实留痕：点开条目在工作区就绪前有竞态，该步允许**重试一次点开**并把
 `workspaceOpenRetried` 写进证据；判定改为**由 steps 派生**（`recorder.run` 会吞掉异常并记 failed，
@@ -2446,11 +2455,56 @@ exe `f4032d9399739d0a…`，commit `be1147f`，`runProfile=cdp-diagnostic`，7 �
 
 ### 仍未完成 / 需要质量方或后续轮次
 
-- **R6 末端**：学生端逐 Part 音频的 provider 加载，**不能**用 `listening-vol7-t9.pdf` 验收
-  （无答案 key ⇒ App 判定 `published_forced_not_loadable`）。需要一份**教材完整、能干净发布**
-  的听力稿（或合成稿）才能把这一环跑通。
+- **R6 末端（Q2 已补做，实测仍未达成，见下节）**：当时「这份夹具不可达」的**理由**（无答案 key）
+  确实与产品流程相悖 —— Q2 已让测试扮演用户补答案。但补完答案**仍到不了** `published`，
+  真实原因换成了另外三条（F-Q2-1/2/3）。**不得**再用「无答案 key」当结论，也**不得**
+  把这三条读成「脚本没走到」。
 - **拖动（drag & drop）音频**仍未在真实 App 里跑过：CDP 无法合成操作系统级文件拖放事件，
   本轮走的是「选择音频文件」这条真实 button → 真实 picker 路径。**如实记录，不冒充已覆盖。**
-- **`cdp-default`（不带诊断参数）档在本沙箱仍跑不通**，原因已定位到 WebView2 renderer 需要
-  `--no-sandbox --disable-gpu`（环境约束，非产品）。质量方若在干净环境跑默认档，可据此对照。
+- **`cdp-default`（不带诊断参数）档在「执行方沙箱」跑不通**，原因已定位到 WebView2 renderer
+  需要 `--no-sandbox --disable-gpu`。**这不能写成机器结论**：质量方在**同一台机器**用默认档实跑
+  `single-file-import` 6/6、`cloud-repair-chain` 13/13 全部通过。所以默认档的通过与否
+  **只与进程环境有关**，执行方一侧仍用诊断档取证并标注 `runProfile=cdp-diagnostic`。
 - **`delete_exam_by_id` 孤儿行**（`library_items_v2` 及其 9 张子表外键）仍未修，维持登记。
+
+---
+
+## 2026-09-23 第二轮复核返工（Q1–Q4）实测
+
+本轮提交（留在 `wave3-listening`，未 push）：
+
+| 提交 | 内容 |
+| --- | --- |
+| `48367ac` | Q3：CDP 断线重连可见化（harness 记 `{at,step,reason}`、默认降级 `passed_with_warnings`、自测 5 条）；顺带修 `cloud-repair-chain` 退出码取降级前 verdict 的真缺陷 |
+| `015688c` | Q1：听力链第 7/8 步改成「先等识别结束再断言草稿结构与逐 Part 播放」，删掉恒过断言；第 9/10 步补精确归因 |
+| `2e000ab` | Q2：学生端真实 provider 逐 Part 取音频（`lib/student-listening-provider.mjs`，独立进程 require R2 worktree 编译产物） |
+
+### Q1 已达成（真实 App 实测）
+
+`artifacts/e2e-cdp/run-listening-chain-2026-09-23T21-01-27-046Z`，`runProfile=cdp-diagnostic`，
+`cdpReattaches=0`：**1–8 步全过**。第 7 步在识别结束后断言 `modality=listening`、4 个 part、
+题号 1–40 各一次、每个 part 的 `media.sha256` 等于用户刚绑的那段文件；
+第 8 步逐个 part 读到 `src=…/audio/<itemId>/<sha256>.wav`、`readyState=4`、时长 6/7/8/9 s。
+旧的「任何 kind 都算通过」恒过断言已删除。
+
+### Q3 已达成
+
+`scripts/e2e/lib/tauri-cdp-harness.test.mjs`（新增）**5/5 通过**；连同既有
+`chain-verdict.test.mjs` 一起跑 **39 passed / 2 files**。三条链都接上同一份策略，
+报告里出 `report.cdpReattaches`，出过重连的运行**默认不低于** `passed_with_warnings`。
+
+### Q2 未达成：`published` 在这份夹具上不可达（三条真实阻塞）
+
+第 9 步填了 **31/40**，q17–q25 在**界面上没有可作答控件**；第 10 步得以
+`published_forced_not_loadable`、门禁 `PublishVerdictV1.status=blocked`（34 条 reasons）；
+第 11 步因此没有真实发布包可读（`manifest.js` 零条目）。逐条根因见
+`findings.md` 的 `F-Q2-1`（completion 的 canonical stimulus 里没有 inline 填空位，
+stimulus 里连 `"q1"` 都不出现）、`F-Q2-2`（用户上传音频永远过不了 physical shadow 比对，
+建议改判据，**本轮不改**）、`F-Q2-3`（matching/select 被识别成 `options=0` 的
+`unordered_set`，前端不渲染 checkbox）。第 11 步的失败已与「环境缺件」分开报
+（`cause="no-listening-package"` ≠ cannot-run）。
+
+### 本轮未做（避免误读）
+
+- **没改门禁**、**没换夹具绕过**（仓库只有一份听力 PDF，合成 ListeningExamSourceV1 喂不进「真实一键发布」）。
+- 学生端那一跳的代码已就绪，缺的是**一个能干净发布的听力卷**；等 F-Q2-1/2/3 有产品结论后可直接复跑。

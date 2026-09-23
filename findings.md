@@ -3741,13 +3741,130 @@ exe `5603565241050210…`，commit `816bdd3`）。
   `http://tauri.localhost/#/library`；但 WebView2 的 DevTools HTTP 端点会在启动后
   **约 7.4 秒**彻底消失（`fetch /json/list` 从此一直 `fetch failed`），且**永不回来**。
   带 / 不带 `PDF2TEST_AUTOMATION_SOURCE_FILES` 两次对照**逐行同形** —— 排除该变量是诱因。
-- 因此 `tauri-cdp-single-file-import.mjs` 的**默认档（`cdp-default`，不带诊断参数）在本机跑不通**。
-  这**不是产品缺陷、也不是本轮改动引入**，而是本沙箱环境的既有约束；
+- 因此 `tauri-cdp-single-file-import.mjs` 的**默认档（`cdp-default`，不带诊断参数）在执行方沙箱里跑不通**。
+  这**不是产品缺陷、也不是本轮改动引入**，而是**执行方沙箱**的既有约束；
   诊断档 6/6 是**可复现的真实 App 产品链**证据，但必须标注为**诊断参数运行**，
   不得写成「默认产品路径通过」。
 
-**结论**：R4 的验收判据（真实 App 里 6/6）在诊断档下达成；默认档的阻塞已定位到
-「WebView2 renderer 需要 `--no-sandbox --disable-gpu`」这一条环境约束，与产品无关。
+#### 2026-09-23 第二轮复核：口径必须再收窄一次（「默认档跑不通」只限执行方沙箱）
+
+上一条的「默认档在本机跑不通」**不能读成「机器上默认档跑不通」**。质量方在**同一台机器、同一分支**
+用**默认档**（`cdp-default`，不带 `--no-sandbox --disable-gpu`）实跑，全部正常：
+
+| 脚本 | 默认档结果 | 运行档案 |
+| --- | --- | --- |
+| `tauri-cdp-single-file-import.mjs` | 6/6 | （质量方环境） |
+| `tauri-cdp-cloud-repair-chain.mjs` | 13/13 | （质量方环境） |
+| `tauri-cdp-listening-chain.mjs` | 走过前 6 步；第 7 步是当时的**恒过断言** | `artifacts/e2e-cdp/run-listening-chain-2026-09-23T20-19-54-516Z` |
+
+所以「默认档能不能起来」是**进程环境相关**的，不是机器属性、更不是产品属性。执行方一侧的正确口径是：
+
+- 默认档通过与否**不作为产品结论**；
+- 需要真实 App 证据时用**诊断档**，并在报告里如实写 `runProfile=cdp-diagnostic`、
+  在结论里标注「诊断参数运行」；
+- 不再写成「默认档在本机跑不通」这种会被读成机器结论的句子。
+
+**结论**：R4 的验收判据（真实 App 里 6/6）在诊断档下达成；默认档的阻塞只定位到
+**执行方沙箱**这一层（「WebView2 renderer 需要 `--no-sandbox --disable-gpu`」），与产品、与机器都无关。
 另外，`launchTauriAppCdp` 现在会在 CDP 会话断开时**自动重新附着 page target**，
 把「页面 90000ms 内未渲染出可见文本」这种误导性报错收敛成精确原因；它**不**会把
 上面这种 renderer 崩溃伪装成成功（此时 `attachToPageTarget` 会因端点消失而如实失败）。
+
+## 2026-09-23 第二轮复核返工（Q1–Q4）：听力链的真实现状
+
+运行档案 `artifacts/e2e-cdp/run-listening-chain-2026-09-23T21-01-27-046Z`
+（`runProfile=cdp-diagnostic`，`cdpReattaches=0`）。11 步 **8 passed / 3 failed**：
+
+| 步骤 | 结果 |
+| --- | --- |
+| 1–6（导入 → 弹窗 → 真实 picker 绑 4 Part → 探针 → 建条目） | passed |
+| 7 `listening-draft-is-ready-and-structured`（**Q1 新增**：等识别结束 + 草稿结构） | passed |
+| 8 `listening-header-plays-each-part-from-its-own-file`（**Q1 新增**：4 页签 + 4 播放器） | passed |
+| 9 `user-fills-forty-answers`（**Q2**） | **failed**：填了 31 个，q17–q25 填不了 |
+| 10 `publish-reports-published`（**Q2**） | **failed**：`published_forced_not_loadable` |
+| 11 `student-app-loads-each-part-audio`（**Q2**） | **failed**：发布没产出听力条目，无包可读 |
+
+Q1 改写后的第 7/8 步这次实打实跑过：第 7 步等到识别结束才断言（`modality=listening`、
+4 个 part、题号 1–40 各一次、每个 part 的 media sha256 等于刚绑的那段音频）；
+第 8 步逐个 part 读到播放器 `src=…/audio/<itemId>/<sha256>.wav`、`readyState=4`、
+时长 6/7/8/9 s。**旧的恒过断言（任何 kind 都算通过）已被替换。**
+
+### F-Q2-1（P0，识别/授权稿，**未修**）：`form_completion` / `note_completion` 的 canonical stimulus 里根本没有填空位
+
+门禁判据在 `quality.rs:2493-2513`：文本 completion 的 **canonical stimulus** 必须为每个题号
+提供唯一 inline answer slot。实测该稿的 stimulus **只有 `heading` / `paragraph` / `text` 三种节点**，
+连题目字符串 `"q1"` 都**一次都没出现**（Python 直接读 `canonical_ds_json` 统计）：
+
+```
+group-1 stimulus nodeTypes= ['heading', 'paragraph', 'text']   q hits {'q1':0,'q2':0,'q3':0,'q4':0}
+group-3 stimulus nodeTypes= ['heading', 'paragraph', 'text']   q hits 全 0
+group-8 stimulus nodeTypes= ['heading', 'paragraph', 'text']   q hits 全 0
+```
+
+而槽位自己的宿主指向的是 **response prompt**：`q1: hostType=paragraph hostNodeId=group-1-prompt-1`。
+这正是门禁注释里点名要拒的形状——「slot 只存在于 response prompt 里，会让破碎/空的 stimulus
+看起来可发布」。后果有两层：**门禁拦（`SLOT_HOST_MISSING` ×3，blocking）**，
+而且就算强行发布，**学生端读到的题干里也没有可填空的位置**。
+门禁给的动作是 `["edit_text","split_prompt"]`，其中 `edit_text` 已有运行时证据是死路（F-R9-6）。
+
+### F-Q2-2（P0，门禁规则，**未修**，建议改判据）：用户上传的听力音频永远过不了 physical shadow 比对
+
+`validate_assets`（`quality.rs:3194-3212`）把 authoring 里的**每个** asset 都拿去和
+physical shadow（`document-ir-v2.shadow.json`，由 PDF 解析产出）按 `assetId` 比对，
+不区分 kind。听力音频是**用户上传**的（`canonical_media.rs:129` 写 `extractionMode: "user_upload"`），
+PDF 里不可能有它 ⇒ **四个 Part 各一条 `ASSET_REFERENCE_MISSING`（blocking）**，
+**任何**「PDF 题面 + 用户上传音频」的听力卷都发不出去。
+门禁建议动作是 `replace_asset` —— 用户没有任何办法让一个外部音频进入 PDF shadow，
+所以这条对用户是「可见、可点、不可解决」，与 F-R9-2 同类。
+**建议**：shadow 比对只适用于有 physical 来源的资产（`extractionMode != "user_upload"`）。
+按质量方要求，**本轮不改门禁**，只报原因。
+
+### F-Q2-3（P0，识别，**未修**）：matching/select 被识别成空选项库的 `unordered_set`，界面上没有可作答控件
+
+`group-5`（q17–q20）、`group-6`（q21–q25）识别产出：
+`taskType=multiple_choice`、`responseGroups[].assignment=unordered_set`、
+**`options=0`**、`optionBankRef=None`、组上也没有 `optionBank`。
+前端因此不为这 9 个槽渲染任何 checkbox —— 用户**在界面上无法作答**，
+第 9 步的归因（报告里 `postCheck.name="unfilled-slots"`）已经把这一点写死：
+
+```json
+{"taskId":"group-5","taskType":"multiple_choice","assignment":"unordered_set",
+ "slotIds":["q17","q18","q19","q20"],"responseOptionCount":0,"optionBankCount":0,"interactions":["checkbox"]}
+```
+
+连带门禁报 `TASK_TYPE_CONFLICT` / `OPTION_RUN_INCOMPLETE` / `RESPONSE_GROUP_POLICY_MISMATCH`
+以及 `ANSWER_KEY_MISSING_SLOT`（q17–q25 没有答案 key —— 因为根本没有选项可选）。
+夹具元数据 `fixtures/golden/metadata/listening-vol7-t9.json` 自己也写着这几题
+「canonical task type still to be decided」，期望是 `select`/`matching_features` + 选项库 A–F/A–G。
+
+### F-Q2-4（结论，Q2 未达成）：`published` 在这份夹具上不可达，且不是「脚本没走到」
+
+门禁权威结论 `PublishVerdictV1.status=blocked`、`ready=false`，34 条 reasons，构成为：
+
+| reasons 码 | 条数 | 归因 |
+| --- | --- | --- |
+| `ANSWER_MISSING` | 9 | q17–q25（= F-Q2-3，界面无可作答控件） |
+| `ISSUE_UNRESOLVED`：`计分 slot 没有可验证的答案 key` | 9 | 同上 |
+| `ISSUE_UNRESOLVED`：`authoring asset 在 physical shadow 中不存在` | 4 | **F-Q2-2** |
+| `ISSUE_UNRESOLVED`：`文本 completion 的 canonical stimulus 必须为每个题号提供唯一的 inline answer slot` | 3 | **F-Q2-1** |
+| `ISSUE_UNRESOLVED`：`题型指令与恢复出的结构证据冲突` / `选项或公共 option bank` / `response group policy` | 2 + 2 + 2 | F-Q2-3 |
+| `SIGNIFICANT_REGION_UNASSIGNED`、`V1_COMPATIBILITY_COMPILER_FAILED` | 1 + 1 | document 级，未单独归因 |
+| `QUALITY_NOT_READY` | 1 | 上面这些的汇总 |
+
+⇒ **Q2 的两个前置事实要分清**：
+（a）质量方说「无答案 key 故不可达」不成立 **是对的** —— 产品流程本来就由用户补答案，
+测试这次扮演用户补了 **31/40**；
+（b）但补完答案也**到不了** `published`，因为剩下的 9 个槽**在界面上没有控件**（F-Q2-3），
+另有 F-Q2-1 / F-Q2-2 两条结构性阻断。第 11 步（学生端真实 provider 逐 part 取音频）
+因此**没有真实发布包可读**：`manifest.js` 存在但**零条目**（`total=0 listening=0`）。
+它的代码已就绪并被端到端接上，缺的是**一个能干净发布的听力卷**。
+
+### 本轮明确没有做的事（避免被读成已解决）
+
+- **没有改门禁**（质量方要求：报原因、不改判据）。
+- **没有换夹具绕过**：仓库里只有一份听力 PDF（`fixtures/golden/private-real/listening-vol7-t9.pdf`，
+  private-real 未跟踪），没有第二份可替代品；合成 `ListeningExamSourceV1` 夹具
+  （`phase7-listening-four-part-media-source-v1.json`）只能喂学生端 provider，
+  喂不进「真实 App 一键发布」，用它顶替就是偷换验收通道。
+- **没有把第 11 步的失败写成环境问题**：`cause="no-listening-package"` 与「学生端没构建」
+  是两种结论，报告里已分开（前者是链条失败，后者才是 cannot-run）。
