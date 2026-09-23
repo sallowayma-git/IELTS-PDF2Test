@@ -560,4 +560,121 @@ mod tests {
 
         let _ = fs::remove_dir_all(&root);
     }
+
+    /// T5-e：同目录放 3 份 PDF，只用「选择文件」选 1 份 ⇒ 恰好 1 个条目、只处理这一份。
+    ///
+    /// 为什么必须把两条入口放在**同一个目录**上对照：「恰好 1 份」本身无法排除
+    /// 「目录里本来就只有 1 份」这种平凡解释。而两条入口的选择语义本来就不同：
+    ///   - 「选择文件」  → `automation_source_files_from_env`：**只**返回清单里那几份，
+    ///     目录里多出来的文件与它无关（用户在系统对话框里逐份挑过）；
+    ///   - 「选择 PDF 文件夹」→ `list_pdf_files_in_dir`：把目录里的 PDF **全列出来**，
+    ///     用户没有逐份挑过。
+    /// 所以这里同时断言「文件入口 1 份」与「目录入口 3 份」，两者在同一次运行里互证。
+    ///
+    /// 而且不止断言钩子返回了什么：把钩子的返回值直接喂给真实导入命令
+    /// `import_files_at_root`（UI 点「开始导入」走的就是它），再断言题库只多出 1 行、
+    /// job 目录只多出 1 个、落地文件只有被选中的那一份 ——「只处理这一份」说的是
+    /// **真的没有去落地/解析另外两份**，而不是「钩子少返回了两份」。
+    #[test]
+    fn choosing_one_file_imports_only_that_file_even_though_the_directory_holds_three() {
+        use crate::processing::commands::{import_files_at_root, ImportFileInput, ImportFilesInput};
+
+        // 环境变量是进程级的，而测试默认并行。本文件里目前只有这一条测试碰这对钩子变量，
+        // 但仍加锁：将来有人给「目录入口」也写测试时会用同一个进程的同一片环境。
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        let root = temp_root();
+        crate::util::ensure_app_dirs(&root).unwrap();
+        let source_dir = root.join("incoming");
+        fs::create_dir_all(&source_dir).unwrap();
+
+        // 三份 PDF 放同一个目录。选**中间**那一份：选第一份时「只导入 1 份」与
+        // 「只导入了排在最前的」无法区分，中间那份才能排除「按顺序只取第一个」。
+        let names = ["alpha.pdf", "bravo.pdf", "charlie.pdf"];
+        for name in names {
+            fs::write(source_dir.join(name), format!("%PDF-1.4 {name}")).unwrap();
+        }
+        let chosen = source_dir.join("bravo.pdf");
+
+        let hook_key = "PDF2TEST_AUTOMATION_SOURCE_FILES";
+        let previous = env::var_os(hook_key);
+        // 「选择文件」钩子只拿到被选中的那一份。
+        env::set_var(hook_key, env::join_paths([&chosen]).unwrap());
+
+        let picked = automation_source_files_from_env()
+            .unwrap()
+            .expect("设置了钩子就必须返回清单，而不是回落到原生对话框");
+        assert_eq!(
+            picked.iter().map(|file| file.name.as_str()).collect::<Vec<_>>(),
+            vec!["bravo.pdf"],
+            "「选择文件」只能带进被选中的那一份"
+        );
+        assert_eq!(Path::new(&picked[0].path), chosen.as_path());
+
+        // 对照：同一个目录走「选择 PDF 文件夹」，三份都会被列出来。
+        // 这一条不是「顺手多验一个功能」——它是上面「恰好 1 份」的反平凡证据。
+        let via_folder = list_pdf_files_in_dir(source_dir.clone()).unwrap();
+        assert_eq!(
+            via_folder.iter().map(|file| file.name.as_str()).collect::<Vec<_>>(),
+            names.to_vec(),
+            "目录入口本来就该把三份都列出来；列不出来说明这次对照不成立"
+        );
+
+        // 把钩子的返回值原样喂给真实导入命令（UI「开始导入」走的就是它）。
+        let input = ImportFilesInput {
+            files: picked
+                .iter()
+                .map(|file| ImportFileInput {
+                    path: file.path.clone(),
+                    name: file.name.clone(),
+                    size_bytes: file.size_bytes,
+                    title_hint: Some(file.title_hint.clone()),
+                })
+                .collect(),
+            cloud_enabled: Some(false),
+            cloud_profile_id: None,
+            modality: None,
+        };
+        let result = import_files_at_root(&root, input).unwrap();
+        // 立刻还原环境变量：后面的断言失败也不该把钩子留给别的测试。
+        match previous {
+            Some(value) => env::set_var(hook_key, value),
+            None => env::remove_var(hook_key),
+        }
+
+        assert!(
+            result.rejected.is_empty(),
+            "不该有被拒的文件：{:?}",
+            result.rejected.iter().map(|r| &r.reason).collect::<Vec<_>>()
+        );
+        assert_eq!(result.created.len(), 1, "选 1 份就只能建立 1 个条目");
+        assert_eq!(result.created[0].title, "bravo");
+
+        // 磁盘事实：恰好 1 个 job 目录，且只落地了被选中的那一份。
+        let job_dirs: Vec<PathBuf> = fs::read_dir(root.join("jobs"))
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .collect();
+        assert_eq!(job_dirs.len(), 1, "只处理 1 份文件就只能有 1 个 job 目录");
+        let uploads: Vec<String> = fs::read_dir(job_dirs[0].join("uploads"))
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(uploads.len(), 1, "只该落地 1 份文件，实际 {uploads:?}");
+        assert!(
+            uploads[0].ends_with("bravo.pdf"),
+            "落地的必须是被选中的那一份，实际 {uploads:?}"
+        );
+        for other in ["alpha", "charlie"] {
+            assert!(
+                !uploads.iter().any(|name| name.contains(other)),
+                "没被选中的 {other} 不该出现在任何 job 目录里：{uploads:?}"
+            );
+        }
+
+        let _ = fs::remove_dir_all(&root);
+    }
 }
