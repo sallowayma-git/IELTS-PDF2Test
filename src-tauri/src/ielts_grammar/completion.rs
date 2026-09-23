@@ -2708,4 +2708,169 @@ mod tests {
         eprintln!("listening-vol7-t9 choose-N groups: {observed:?}; hard failures {codes:?}");
     }
 
+    /// Task-book §1.3 rule 4 settles these two groups: "Choose FOUR correct
+    /// answers, A-F, next to questions 17-20" and "Choose FIVE correct letters,
+    /// A-G, next to questions 21-25" are one slot per question over one shared
+    /// bank, i.e. the same `unordered_set` model as a reading multi-select. The
+    /// paper ships no answer key, so the golden metadata was the only thing
+    /// calling them `per_slot` and left the task type "still to be decided".
+    ///
+    /// This pins what the product must derive from the instruction instead of
+    /// from that metadata: the declaration, and the scoring semantics that
+    /// follow from it — the same letters in any order score full marks, and
+    /// repeating one letter scores nothing.
+    #[test]
+    fn real_listening_choose_n_groups_score_as_an_unordered_set() {
+        use crate::reading_source_v2::score_response_group;
+        use crate::schema::ielts_authoring_v2::{
+            AnswerAssignmentV2, AnswerValueV2, ResponseGroupV2,
+        };
+
+        let Some(authoring) = build_real_listening_shadow() else {
+            return;
+        };
+        let groups = authoring
+            .get("taskGroups")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        let mut observed = Vec::new();
+        for group in &groups {
+            let range = (
+                group.pointer("/displayRange/start").and_then(Value::as_u64),
+                group.pointer("/displayRange/end").and_then(Value::as_u64),
+            );
+            // Two letters per slot: enough to shuffle without needing the paper's
+            // own key, which does not exist.
+            let declared_letters: Vec<String> = match range {
+                (Some(17), Some(20)) => &["A", "B", "C", "D"][..],
+                (Some(21), Some(25)) => &["A", "B", "C", "D", "E"][..],
+                _ => continue,
+            }
+            .iter()
+            .map(|label| (*label).to_string())
+            .collect();
+
+            let responses = group
+                .get("responseGroups")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            assert_eq!(
+                responses.len(),
+                1,
+                "each choose-N group has exactly one response group"
+            );
+            let declared = responses[0].clone();
+            let response: ResponseGroupV2 = serde_json::from_value(declared.clone())
+                .unwrap_or_else(|error| {
+                    panic!("the response group must be a valid ResponseGroupV2: {error}")
+                });
+            let slot_ids = response.slot_ids.clone();
+            assert_eq!(
+                slot_ids.len(),
+                declared_letters.len(),
+                "one slot per numbered question"
+            );
+
+            let option_value = |label: &str| AnswerValueV2::Option {
+                labels: vec![label.to_string()],
+                assignment: AnswerAssignmentV2::UnorderedSet,
+            };
+            // The key is the paper's letters in slot order; the submission is the
+            // same letters rotated by one, so every slot still carries a letter
+            // the key expects.
+            let answer_key = slot_ids
+                .iter()
+                .zip(declared_letters.iter())
+                .map(|(slot_id, label)| (slot_id.clone(), option_value(label)))
+                .collect::<std::collections::BTreeMap<_, _>>();
+            let shuffled = slot_ids
+                .iter()
+                .enumerate()
+                .map(|(index, slot_id)| {
+                    (
+                        slot_id.clone(),
+                        option_value(
+                            &declared_letters[(index + 1) % declared_letters.len()],
+                        ),
+                    )
+                })
+                .collect::<std::collections::BTreeMap<_, _>>();
+            let repeated = slot_ids
+                .iter()
+                .map(|slot_id| (slot_id.clone(), option_value(&declared_letters[0])))
+                .collect::<std::collections::BTreeMap<_, _>>();
+
+            let shuffled_score = score_response_group(&response, &shuffled, &answer_key);
+            let repeated_score = score_response_group(&response, &repeated, &answer_key);
+            let shown = json!({
+                "range": range,
+                "assignment": declared.get("assignment").cloned().unwrap_or(Value::Null),
+                "scoringPolicy": declared.get("scoringPolicy").cloned().unwrap_or(Value::Null),
+                "duplicatePolicy": declared.get("duplicatePolicy").cloned().unwrap_or(Value::Null),
+                "allowOptionReuse": declared.get("allowOptionReuse").cloned().unwrap_or(Value::Null),
+                "optionBankRef": declared.get("optionBankRef").cloned().unwrap_or(Value::Null),
+                "shuffled": {
+                    "earned": shuffled_score.earned_points,
+                    "possible": shuffled_score.possible_points,
+                    "correct": shuffled_score.correct
+                },
+                "repeated": {
+                    "earned": repeated_score.earned_points,
+                    "possible": repeated_score.possible_points,
+                    "correct": repeated_score.correct
+                }
+            });
+            observed.push(shown.clone());
+
+            assert_eq!(
+                declared.get("assignment").and_then(Value::as_str),
+                Some("unordered_set"),
+                "task-book §1.3 rule 4: {shown:?}"
+            );
+            assert_eq!(
+                declared.get("scoringPolicy").and_then(Value::as_str),
+                Some("per_slot_ielts_normalized"),
+                "{shown:?}"
+            );
+            assert_eq!(
+                declared.get("duplicatePolicy").and_then(Value::as_str),
+                Some("reject_submission"),
+                "{shown:?}"
+            );
+            assert_eq!(
+                declared.get("allowOptionReuse").and_then(Value::as_bool),
+                Some(false),
+                "the shared bank may not be reused: {shown:?}"
+            );
+            assert!(
+                declared.get("optionBankRef").and_then(Value::as_str).is_some(),
+                "the group must be bound to its shared bank: {shown:?}"
+            );
+            assert_eq!(
+                shuffled_score.earned_points, shuffled_score.possible_points,
+                "the same letters in any order are a full-marks answer: {shown:?}"
+            );
+            assert!(
+                shuffled_score.correct,
+                "a shuffled exact set is correct: {shown:?}"
+            );
+            assert_eq!(
+                repeated_score.earned_points, 0,
+                "repeating one letter must not score: {shown:?}"
+            );
+            assert!(
+                !repeated_score.correct,
+                "a submission with duplicates is never correct: {shown:?}"
+            );
+        }
+
+        assert_eq!(
+            observed.len(),
+            2,
+            "the paper has exactly two choose-N groups: {observed:?}"
+        );
+    }
 }
