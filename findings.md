@@ -3643,13 +3643,27 @@ cloud_usable
    若将来有人把它改成 blocking，这条测试**仍会通过**。补一句
    `assert_ne!(report["state"], "blocked")` 就能封住。
 
-## F-WEBVIEW2-CDP-UNAVAILABLE-2026-09-22（环境事实，进行中）
+## F-WEBVIEW2-CDP-UNAVAILABLE-2026-09-22（**已更正：执行环境问题，非机器**）
 
-**结论**：2026-09-22 本轮，本机 **Tauri App 的 WebView2 DevTools 远程调试端点完全无法建立**，
-所有 CDP 端到端链（阅读链、听力链、T5-4/T5-5 新脚本）都无法运行。这是**环境状态退化**，
-不是代码回归，也不是文档造假。
+> **2026-09-23 复核更正。** 本条原结论「本机 WebView2 DevTools 远程调试端点完全无法建立 /
+> 本机当前状态退化」**不成立，已推翻**。质量方在**同一台机器、同一分支（`wave3-listening`）
+> 的新构建**上实跑：`scripts/e2e/tauri-cdp-smoke.mjs` **5/5 通过**、
+> `scripts/e2e/tauri-cdp-cloud-repair-chain.mjs` **13/13 通过**（阅读无回退）。
+> 所以 CDP 通道本身是好的：**不是机器、不是代码回归**。
+> 同理，当时的 T5-5 与 T6 **不是被机器阻塞**，只是当时的执行环境起不来端点。
 
-### 取证（四路交叉，互相独立）
+**真实原因（执行进程环境被污染）**，当时启动 App 的进程里带着：
+
+- `PATH` 首项被写坏——`dirname`/`cd` 等基础命令直接 `command not found`，子进程查找同样受影响；
+- `HTTP_PROXY` / `HTTPS_PROXY` 指向宿主代理，使**本地探测给出假阳性**（见下「配套的坑」第 1 条）；
+- `__COMPAT_LAYER=Installer`。
+
+处置办法：用**干净的进程环境**启动 App（去掉被写坏的 `PATH` 首项、代理变量、`__COMPAT_LAYER`），
+并用 `curl --noproxy '*'` 验证端点（带代理的 `curl` 会给出假阳性，不可信）；
+环境无法修复时，把 CDP 类验收**写好脚本交质量方实跑**，并在回报里标注
+「产品端到端待质量方执行」——**不要写成「机器不可用」**。
+
+### 当时的取证与误判路径（保留，作为环境踩坑记录）
 
 1. **新建脚本**：`scripts/e2e/tauri-cdp-single-file-import.mjs` 报
    `CANNOT-RUN WebView2 DevTools 端点未在 90000ms 内就绪`。
@@ -3662,7 +3676,9 @@ cloud_usable
 4. **对照实验（证明机器本身没封远程调试）**：
    `msedge.exe --headless=new --remote-debugging-port=63980` **3 秒内**就绪，
    `/json/version` 返回 `{"Browser":"Edg/153.0.4234.48", …}`。
-   → 操作系统/安全策略**没有**封禁 remote debugging；问题出在 WebView2/App 侧。
+   → 操作系统/安全策略**没有**封禁 remote debugging。
+   ⚠️ 当时由此推断「问题出在 WebView2/App 侧」是**错的**：真正原因是**启动 App 的那个进程环境**
+   被污染（见上「真实原因」），而不是 WebView2 或 App 本身。
 
 ### 逐一排除的「非原因」
 
@@ -3680,8 +3696,8 @@ cloud_usable
 
 `artifacts/e2e-cdp/run-cloud-repair-chain-2026-09-21T18-51-21-267Z` 的 CDP 链**真的跑通过**：
 `verdict=passed`、`exitCode=0`、`scenarioFacts.total=13`、`identity.buildFresh.mode=manifest`、
-commit `67f271b`。同一个 exe 在 2026-09-22 11:49 那次也能起来。
-⇒ 是**本机当前状态**退化。
+   commit `67f271b`。同一个 exe 在 2026-09-22 11:49 那次也能起来。
+   ⇒ 该次失败是**当时的进程环境**造成的，不是机器状态退化，也不是「一直如此」。
 
 ### 配套的坑（本轮踩到，记下来备用）
 
@@ -3697,10 +3713,41 @@ commit `67f271b`。同一个 exe 在 2026-09-22 11:49 那次也能起来。
 5. **误建的 `%SystemDrive%/` 目录**：某次 `env -i` 实验里 `SystemRoot="C:\\windows"` 被解释成
    字面路径 `%SystemDrive%/ProgramData/...`，在仓库根建出 6 个 Windows 缓存文件。已清理。
 
-### 对任务的影响
+### 对任务的影响（已随结论更正）
 
-- **T5-4 / T5-5**：CDP 链降级为「待环境恢复执行」的挂件；核心断言改到**命令处理器层**并
-  做了两次独立先红（`job_commands.rs:608`、`job_commands.rs:651`）。
-- **T6**：核心价值（弹窗、拖拽、asset 协议播放）依赖真实 App，**本轮无法取得**，如实报未完成。
+- **T5-4 / T5-5**：当时 CDP 链未取得，核心断言改到**命令处理器层**并做了两次独立先红
+  （`job_commands.rs:608`、`job_commands.rs:651`）——这部分工作有效、保留。
+  但「降级为待环境恢复执行」的定性要改：CDP 通道在质量方环境里可用，
+  脚本与命令处理器层证据齐备后应**交质量方实跑**，而不是等机器恢复。
+- **T6**：核心价值（弹窗、拖拽、asset 协议播放）依赖真实 App，当时未取得。
+  它**不是被机器阻塞**——见 2026-09-23 返工任务 R6。
 - **质量把关方**：复核 §6「重建 App 跑 `tauri-cdp-cloud-repair-chain.mjs` 必须保持 13/13」
-  这一条，在当前机器上**同样会失败**；需先确认 CDP 通道恢复再判定阅读链是否回退。
+  这一条，在质量方环境里**已经跑通（13/13）**；当时判断「在当前机器上同样会失败」是错的。
+
+### 2026-09-23 返工实测：R4 已通过（含一条必须标清的口径）
+
+修好环境后，`scripts/e2e/tauri-cdp-single-file-import.mjs` **6/6 通过**
+（`verdict=passed`，run dir `artifacts/e2e-cdp/run-single-file-import-2026-09-23T18-19-48-637Z`，
+exe `5603565241050210…`，commit `816bdd3`）。
+
+**但这条证据有一个必须写明的口径**：该次运行带 `--no-sandbox --disable-gpu`，
+即 `runProfile=cdp-diagnostic`、`report.diagnosticRun=true`。原因是**本仓库脚本自己早就写明的约束**：
+
+- `scripts/e2e/tauri-cdp-smoke.mjs:33-40` 注释原文：「本沙箱环境下 WebView2 的 renderer
+  **在不加这两个开关时会中途崩溃（`CDP 连接已关闭`）**」——所以它的**默认值**就是这两个开关，
+  并明确要求「以此运行得到的结论必须标注『诊断参数运行』」。
+- 我用受控探测复现了这一点（`tmp/probe-app-exit.mjs`，直接 spawn exe，不建任何 CDP WebSocket）：
+  不加这两个开关时，App 进程**一直活着**（50s 内无退出），页面也已导航到
+  `http://tauri.localhost/#/library`；但 WebView2 的 DevTools HTTP 端点会在启动后
+  **约 7.4 秒**彻底消失（`fetch /json/list` 从此一直 `fetch failed`），且**永不回来**。
+  带 / 不带 `PDF2TEST_AUTOMATION_SOURCE_FILES` 两次对照**逐行同形** —— 排除该变量是诱因。
+- 因此 `tauri-cdp-single-file-import.mjs` 的**默认档（`cdp-default`，不带诊断参数）在本机跑不通**。
+  这**不是产品缺陷、也不是本轮改动引入**，而是本沙箱环境的既有约束；
+  诊断档 6/6 是**可复现的真实 App 产品链**证据，但必须标注为**诊断参数运行**，
+  不得写成「默认产品路径通过」。
+
+**结论**：R4 的验收判据（真实 App 里 6/6）在诊断档下达成；默认档的阻塞已定位到
+「WebView2 renderer 需要 `--no-sandbox --disable-gpu`」这一条环境约束，与产品无关。
+另外，`launchTauriAppCdp` 现在会在 CDP 会话断开时**自动重新附着 page target**，
+把「页面 90000ms 内未渲染出可见文本」这种误导性报错收敛成精确原因；它**不**会把
+上面这种 renderer 崩溃伪装成成功（此时 `attachToPageTarget` 会因端点消失而如实失败）。

@@ -341,6 +341,39 @@ class CdpConnection {
 }
 
 /**
+ * 把宿主进程环境里**已知会毒化 App 启动**的项清掉，再交给真实 exe。
+ *
+ * 为什么需要：2026-09-22 那次「WebView2 DevTools 端点完全起不来」的根因就是**执行环境**
+ * 而不是机器（结论已更正，见 `findings.md` F-WEBVIEW2-CDP-UNAVAILABLE-2026-09-22`）：
+ * 同一台机器、同一分支的新构建上，清掉这些项之后冒烟 5/5、阅读链 13/13 都过。
+ *
+ * 清三类：
+ *  - `PATH` 里空项 / 不存在的目录（被写坏的首项会让子进程的查找行为变得不可预测）；
+ *  - `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`（含小写）：本机回环请求会被宿主代理劫持——
+ *    连 `curl` 都会给出**假阳性**（代理错误页被当成响应体却 exit 0），受控模型服务的
+ *    loopback stub 也会被绕过；
+ *  - `__COMPAT_LAYER=Installer`：兼容性垫片会改变 WebView2 的进程启动行为。
+ *
+ * 只做减法，其余变量原样保留：产品测试环境要尽量贴近真实使用环境。
+ */
+export function sanitizedAppEnv(base = process.env) {
+  const env = { ...base };
+  for (const key of [
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+    "http_proxy", "https_proxy", "all_proxy",
+  ]) {
+    delete env[key];
+  }
+  delete env.__COMPAT_LAYER;
+  if (typeof env.PATH === "string") {
+    // 保留原顺序（不重排），只丢掉空项与不存在的目录。
+    const kept = env.PATH.split(path.delimiter).filter((entry) => entry && fs.existsSync(entry));
+    if (kept.length) env.PATH = kept.join(path.delimiter);
+  }
+  return env;
+}
+
+/**
  * 启动真实 exe 并建立 CDP 会话。
  * @param {object} opts
  * @param {string} opts.exePath
@@ -376,7 +409,9 @@ export async function launchTauriAppCdp({
     .join(" ");
 
   const env = {
-    ...process.env,
+    // 先清掉会毒化 App 启动的宿主环境残留（代理 / __COMPAT_LAYER / 坏掉的 PATH 项），
+    // 再叠加本条的自动化变量。
+    ...sanitizedAppEnv(process.env),
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: browserArgs,
     PDF2TEST_AUTOMATION_DATA_DIR: path.join(runDir, "appdata", "data"),
     WEBVIEW2_USER_DATA_FOLDER: path.join(runDir, "appdata", "webview"),
@@ -482,8 +517,81 @@ export class TauriCdpSession {
     this.consoleErrors = [];
   }
 
-  /** 底层求值：异常会抛出，返回 by-value。 */
-  async evaluate(expression, { timeoutMs = 60000, awaitPromise = true } = {}) {
+  /**
+   * 连到当前 App 的 page target（可重复调用：会用新连接替换旧连接）。
+   *
+   * WebView2 在启动阶段会**重建 page target**，旧 WebSocket 随之关闭。仓库里早有记录：
+   * 重建之后 `Runtime.evaluate` 一律报「CDP 连接已关闭」。所以「发现 target → 建 WS」
+   * 不能只做一次 —— 必须能在会话中途重新附着，否则一次瞬时的 target 重建会被报成
+   * 「页面 90000ms 内未渲染出可见文本」，把人往「前端没渲染」的方向带偏。
+   */
+  async attachToPageTarget({ timeoutMs = 20000, settleMs = 400 } = {}) {
+    const deadline = Date.now() + timeoutMs;
+    let lastError = null;
+    while (Date.now() < deadline) {
+      if (this.exitCode() !== null) {
+        throw new CannotRunError(`应用进程已退出（code=${this.exitCode()}），无法重新附着 page target`);
+      }
+      try {
+        const res = await fetch(`http://127.0.0.1:${this.devtoolsPort}/json/list`);
+        if (res.ok) {
+          const list = await res.json();
+          const target = list.find((t) => t.type === "page" && t.webSocketDebuggerUrl);
+          if (target) {
+            // 刚重建出来的 target 立刻连往往连到一个马上又被换掉的文档上，
+            // 稍等一拍再连，避免刚连上就再断一次。
+            await sleep(settleMs);
+            return await this._connectPageTarget(target);
+          }
+        }
+      } catch (error) {
+        lastError = error;
+      }
+      await sleep(250);
+    }
+    throw new CannotRunError(
+      `重新附着 page target 失败（${timeoutMs}ms）：${lastError?.message ?? "未发现 page target"}`
+    );
+  }
+
+  async _connectPageTarget(target) {
+    const ws = new WebSocket(target.webSocketDebuggerUrl, {
+      perMessageDeflate: false,
+      maxPayload: 256 * 1024 * 1024,
+    });
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new CannotRunError("CDP WebSocket 重连超时")), 20000);
+      ws.once("open", () => { clearTimeout(timer); resolve(); });
+      ws.once("error", (e) => { clearTimeout(timer); reject(e); });
+    });
+    const connection = new CdpConnection(ws);
+    await connection.send("Runtime.enable", {}, 30000);
+    await connection.send("Page.enable", {}, 30000);
+    const previous = this.cdp;
+    this.cdp = connection;
+    this.ws = ws;
+    try { previous?.close(); } catch {}
+    return connection;
+  }
+
+  /** 底层求值：异常会抛出，返回 by-value；连接断了会自动重新附着再重试一次。 */
+  async evaluate(expression, { timeoutMs = 60000, awaitPromise = true, reattach = true } = {}) {
+    try {
+      return await this._evaluateOnce(expression, { timeoutMs, awaitPromise });
+    } catch (error) {
+      const message = String(error?.message ?? error);
+      const disconnected =
+        this.cdp?.closed === true ||
+        message.includes("CDP 连接已关闭") ||
+        message.includes("WebSocket is not open");
+      if (!reattach || !disconnected) throw error;
+      this.log(`CDP 会话已断（${message.slice(0, 72)}），重新附着 page target 后重试`);
+      await this.attachToPageTarget();
+      return await this._evaluateOnce(expression, { timeoutMs, awaitPromise });
+    }
+  }
+
+  async _evaluateOnce(expression, { timeoutMs, awaitPromise }) {
     const r = await this.cdp.send(
       "Runtime.evaluate",
       { expression, returnByValue: true, awaitPromise },
@@ -593,6 +701,54 @@ export class TauriCdpSession {
     await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none", clickCount: 0 });
     await this.cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
     await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+  }
+
+  /**
+   * 点一个**布局可能还在动**的元素：先等它连续若干次读到同一个中心点，再用真实鼠标事件点击。
+   *
+   * 为什么需要单独一个方法：`clickSelector` 只量**一次**坐标。抽屉打开后有一行提示
+   * （「未连接云端，仅本地识别 · 去连接」）要等 profile 列表异步返回才插入，插入后把
+   * 「选择文件」按钮**下推约 49px**。量在位移之前、点在后头，就点在空白处——
+   * 真机上表现为「点了没反应」，脚本里表现为这一步超时、后续级联失败。
+   * 真实用户手快抢在异步返回之前点，也会点空，所以这不是脚本独有的问题。
+   *
+   * **刻意不退回 `element.click()`**：那会绕过真实鼠标事件（命中测试、遮挡、`disabled`
+   * 全都验不到），等于把被测行为换掉。这里等的是坐标稳定，而不是换一种点击方式。
+   *
+   * 一直等不到稳定就**如实抛错**（带上最后一次坐标），不猜一个位置点下去。
+   */
+  async clickSelectorWhenStable(selector, { timeoutMs = 20000, settleReads = 3, intervalMs = 120 } = {}) {
+    const expr = `(() => {
+      const el = document.querySelector(${JSON.stringify(selector)});
+      if (!el) return null;
+      el.scrollIntoView({ block: 'center', inline: 'center' });
+      const r = el.getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height, tag: el.tagName };
+    })()`;
+    const deadline = Date.now() + timeoutMs;
+    let previous = null;
+    let stable = 0;
+    let last = null;
+    while (Date.now() < deadline) {
+      const box = await this.evaluate(expr, { timeoutMs: 15000 }).catch(() => null);
+      if (box) {
+        last = box;
+        stable = previous && previous.x === box.x && previous.y === box.y
+          && previous.w === box.w && previous.h === box.h
+          ? stable + 1
+          : 1;
+        previous = box;
+        if (stable >= settleReads) {
+          if (box.w === 0 || box.h === 0) throw new Error(`目标元素尺寸为 0，无法点击：${selector}`);
+          await this.clickAt(box.x, box.y);
+          return { ...box, settleReads: stable };
+        }
+      }
+      await sleep(intervalMs);
+    }
+    throw new Error(
+      `等待「${selector}」位置稳定超时（${timeoutMs}ms，需要连续 ${settleReads} 次读到同一坐标），最后一次坐标=${JSON.stringify(last)}`
+    );
   }
 
   /**

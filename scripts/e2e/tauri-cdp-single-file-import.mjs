@@ -193,7 +193,18 @@ async function main() {
     beforeRows = await session.evaluate(rowIdsExpr);
     await session.clickSelector('[data-testid="library-import"]');
     await session.waitFor(`!!document.querySelector('[data-testid="import-drawer"]')`, { timeoutMs: 15000, label: "import-drawer" });
-    await session.clickSelector('[data-testid="import-pick-files"]');
+    // 等抽屉里的布局**定形**再点按钮。抽屉一打开就异步查 profile 列表，查到「未连接云端」
+    // 才把那一行插进 DOM，插入后会把「选择文件」按钮下推约 49px（真机 y 138 → 187）。
+    // 量坐标在位移之前、点击在后，就会点在空白处：脚本这一步超时，手快的真实用户也会点空。
+    // 本条链的运行目录是全新的、没有任何 LLM profile，所以这一行**必然**会出现；
+    // 但仍然只等有限时间，并如实记录它到底出现没有——不靠「猜它一定在」。
+    const cloudHintAppeared = await session
+      .waitFor(`!!document.querySelector('[data-testid="import-cloud-offline"]')`, { timeoutMs: 15000, label: "cloud-offline-hint" })
+      .then(() => true)
+      .catch(() => false);
+    // 主保障：等按钮中心点**连续读到同一坐标**再点（仍是真实鼠标事件，不退化成 element.click()）。
+    // 这一层不依赖「位移一定来自云端那一行」这个假设，将来多出别的位移来源也照样兜住。
+    const pickedButtonSettle = await session.clickSelectorWhenStable('[data-testid="import-pick-files"]');
     await session.waitFor(`!!document.querySelector('[data-testid="import-picked-files"] li')`, { timeoutMs: 20000, label: "picked-files" });
     const picked = (await session.evaluate(pickedNamesExpr)) ?? [];
     await session.screenshot("02-picked-files");
@@ -207,9 +218,9 @@ async function main() {
       picked,
       beforeRows: (beforeRows ?? []).length,
       // 如实记录云端状态：全新运行目录里没有 LLM profile，导入抽屉应显示「未连接云端」。
-      cloudOfflineHint: Boolean(await session.evaluate(
-        `!!document.querySelector('[data-testid="import-cloud-offline"]')`
-      )),
+      // 取的是上面那次等待的结果，不重复查一遍 DOM（两次查询之间状态可能又变）。
+      cloudOfflineHint: cloudHintAppeared,
+      pickedButtonSettle: pickedButtonSettle,
     };
   });
 
@@ -288,7 +299,8 @@ async function main() {
   await recorder.run("folder-entry-in-the-same-directory-takes-all-three", async () => {
     await session.clickSelector('[data-testid="library-import"]');
     await session.waitFor(`!!document.querySelector('[data-testid="import-drawer"]')`, { timeoutMs: 15000, label: "import-drawer-again" });
-    await session.clickSelector('[data-testid="import-pick-folder"]');
+    // 同第 2 步：抽屉主体是异步定形的，点之前先等坐标稳定。
+    await session.clickSelectorWhenStable('[data-testid="import-pick-folder"]');
     await session.waitFor(
       `(() => { const items = document.querySelectorAll('[data-testid="import-picked-files"] li'); return items.length >= ${STAGED_FILES.length}; })()`,
       { timeoutMs: 20000, label: "folder-picked-files" }
