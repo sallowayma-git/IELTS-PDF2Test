@@ -1725,6 +1725,7 @@ pub fn run() {
             listening_audio::commands::get_listening_audio,
             listening_audio::commands::list_listening_audio_folder,
             listening_audio::commands::probe_listening_audio_files,
+            listening_audio::commands::automation_audio_selection_from_env,
             publish_items,
             open_source_file,
             cancel_processing,

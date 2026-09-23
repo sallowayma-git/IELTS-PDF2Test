@@ -1,4 +1,14 @@
 import type { DocumentIr } from "../types";
+import { command } from "./tauriCommands";
+
+/**
+ * 自动化钩子的返回体。`null` 字段 = 该选择器**没有装钩子**，必须弹真实对话框
+ * （而不是返回空清单把对话框悄悄跳过去）。
+ */
+interface AutomationAudioSelection {
+  files: string[] | null;
+  folder: string | null;
+}
 
 const isTauriRuntime = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 // 与 tauriCommands 同款：devFallback 只在显式开启时按需加载（计划 §16.15）。
@@ -167,6 +177,8 @@ export async function choosePdfFolderSources(): Promise<PickedPath[]> {
 /** Listening audio files (MP3 first; M4A/WAV also probe-supported). Desktop only. */
 export async function chooseAudioFiles(): Promise<string[]> {
   if (!isTauriRuntime()) return [];
+  const automated = await command<AutomationAudioSelection>("automation_audio_selection_from_env");
+  if (automated.files?.length) return automated.files;
   const { open } = await import("@tauri-apps/plugin-dialog");
   const selected = await open({
     multiple: true,
@@ -180,6 +192,8 @@ export async function chooseAudioFiles(): Promise<string[]> {
 /** A folder whose MP3 files become Part 1..n in natural name order. Desktop only. */
 export async function chooseAudioFolder(): Promise<string | null> {
   if (!isTauriRuntime()) return null;
+  const automated = await command<AutomationAudioSelection>("automation_audio_selection_from_env");
+  if (automated.folder) return automated.folder;
   const { open } = await import("@tauri-apps/plugin-dialog");
   const selected = await open({ multiple: false, directory: true });
   if (!selected) return null;
