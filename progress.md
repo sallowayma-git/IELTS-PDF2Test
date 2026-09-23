@@ -2351,6 +2351,9 @@ T5-4 是脚本改动，没有 Rust/Vitest 先红；红/绿只能靠 CDP 实跑�
   已改为断言 `published_not_loadable` 且 `assert_ne!(bad_status, "published")`。
 - `816bdd3`：`purge_source_artifacts` 现在确实调用 `cleanup_parser_cache_for_job`。
 - 基线佐证：`cargo test --lib` 由 T5 报告的 1023 升到 **1025**，+2 正是这两条各自的护栏测试。
+- **R1 的验收判据「不存在 `student_loadable=0` 却记成 `published` 的行」在真实 App 里也成立**：
+  R6 跑出的发布结论是 `published_forced_not_loadable`（界面文案「已发布，但学生端暂时无法打开这道题」），
+  而不是 `published`。这是真实产品路径上的复证，不是只靠单测。
 
 ### R2：学生端「阅读」目录泄漏听力卷
 
@@ -2431,11 +2434,15 @@ exe `f4032d9399739d0a…`，commit `be1147f`，`runProfile=cdp-diagnostic`，7 �
 | `cargo test --lib` | 1023 / 0 / 11 | **1027 / 0 / 11** |
 | `npx vitest run` | 397 | **400 passed / 27 files** |
 | `npx tsc --noEmit` | 干净 | **干净** |
-| 阅读链 `tauri-cdp-cloud-repair-chain.mjs` | 13/13 | 13/13（质量方环境） |
+| 阅读链 `tauri-cdp-cloud-repair-chain.mjs` | 13/13 | **13/13（本轮自行复跑，非引用质量方数字）** |
 | 学生端 `run-all` / 静态套件 | 15/15、18 pass + 1 skip | **同值** |
 
 （1023 → 1025 是 R1/R3 的护栏；1025 → 1027 是 R6 音频钩子的 2 条。
 397 → 400 全部来自 R1 的 `publishClient.test.ts` / `libraryTypes.test.ts`；R6 未加前端用例。）
+
+阅读链这一跑还有一层意义：本轮改了 `launchTauriAppCdp`（`sanitizedAppEnv` + 断线重连），
+它**影响仓库里所有 CDP 脚本**。自行复跑 13/13 说明这次改动**没有把别的链接带坏**，
+而不是只保住自己新写的那条。
 
 ### 仍未完成 / 需要质量方或后续轮次
 
