@@ -3642,3 +3642,65 @@ cloud_usable
 2. `undetermined` 的那条单测只断言"不在 hardFailures 里"，没有断言 `state` 仍未被阻断。
    若将来有人把它改成 blocking，这条测试**仍会通过**。补一句
    `assert_ne!(report["state"], "blocked")` 就能封住。
+
+## F-WEBVIEW2-CDP-UNAVAILABLE-2026-09-22（环境事实，进行中）
+
+**结论**：2026-09-22 本轮，本机 **Tauri App 的 WebView2 DevTools 远程调试端点完全无法建立**，
+所有 CDP 端到端链（阅读链、听力链、T5-4/T5-5 新脚本）都无法运行。这是**环境状态退化**，
+不是代码回归，也不是文档造假。
+
+### 取证（四路交叉，互相独立）
+
+1. **新建脚本**：`scripts/e2e/tauri-cdp-single-file-import.mjs` 报
+   `CANNOT-RUN WebView2 DevTools 端点未在 90000ms 内就绪`。
+2. **仓库自带脚本**：`scripts/e2e/tauri-cdp-smoke.mjs` 报**同一句话**
+   → 排除了「是我新写的脚本有问题」。
+3. **直接启动 exe（`env -i` 干净环境）**：
+   - `DevToolsActivePort` 文件**从未生成**（`--remote-debugging-port=0` 也不生成）；
+   - `netstat` 里没有任何 `639xx` 监听；
+   - `curl --noproxy '*' http://127.0.0.1:<port>/json/version` 返回 **exit 7**（连接被拒）。
+4. **对照实验（证明机器本身没封远程调试）**：
+   `msedge.exe --headless=new --remote-debugging-port=63980` **3 秒内**就绪，
+   `/json/version` 返回 `{"Browser":"Edg/153.0.4234.48", …}`。
+   → 操作系统/安全策略**没有**封禁 remote debugging；问题出在 WebView2/App 侧。
+
+### 逐一排除的「非原因」
+
+- 宿主代理与 `__COMPAT_LAYER`（只导致 DB 写失败 `library_v2_migrate_begin:attempt to write a
+  readonly database`，不影响端口）；
+- `tasklist /FI` 计数假象（`MSYS_NO_PATHCONV=1` 后确认计数真实）；
+- `Page.reload` 打断 CDP 会话（那是另一个坑，见下）；
+- 环境变量白名单/黑名单、`stdio` 配置、窗口可见性、`--no-sandbox --disable-gpu`；
+- `wry`/`tauri` 的 `additional_browser_args` 接线（读源码 294–327 行确认：有值就**只**用该值，
+  而我们设的值正是它）；
+- `WEBVIEW2_USER_DATA_FOLDER`（`webview/EBWebView/` 确实被创建，含
+  `Last Version = 153.0.4234.48`）。
+
+### 历史事实（说明不是「一直如此」）
+
+`artifacts/e2e-cdp/run-cloud-repair-chain-2026-09-21T18-51-21-267Z` 的 CDP 链**真的跑通过**：
+`verdict=passed`、`exitCode=0`、`scenarioFacts.total=13`、`identity.buildFresh.mode=manifest`、
+commit `67f271b`。同一个 exe 在 2026-09-22 11:49 那次也能起来。
+⇒ 是**本机当前状态**退化。
+
+### 配套的坑（本轮踩到，记下来备用）
+
+1. **`curl` 被宿主 HTTP 代理劫持造成假阳性**：`HTTP_PROXY=http://127.0.0.1:49812` 会让 curl
+   把对 127.0.0.1 的请求也发给代理，代理返回错误页被当成响应体，
+   **`upstream connect failed: … (os error 10061)` 却仍 exit 0**。
+   所有本地探测必须 `curl --noproxy '*'`（此后 `exit 7` / `http_code=000` 才可信）。
+2. **`tasklist /FI` 在 Git Bash 下被路径转换破坏**：过滤器静默返回空。需 `export MSYS_NO_PATHCONV=1`。
+3. **`Page.reload` 会打断 CDP 会话**：重载后 WebView2 的 page target 重建，
+   `Runtime.evaluate` 一律报「CDP 连接已关闭」。`tauri-cdp-issue-list.mjs:253` 早有记录。
+   新增的 T5-5 脚本曾误抄 `Page.reload`，已删。
+4. **`reg.exe` 被宿主安全策略封锁**（Program Blacklist），不能用来查 Edge 策略。
+5. **误建的 `%SystemDrive%/` 目录**：某次 `env -i` 实验里 `SystemRoot="C:\\windows"` 被解释成
+   字面路径 `%SystemDrive%/ProgramData/...`，在仓库根建出 6 个 Windows 缓存文件。已清理。
+
+### 对任务的影响
+
+- **T5-4 / T5-5**：CDP 链降级为「待环境恢复执行」的挂件；核心断言改到**命令处理器层**并
+  做了两次独立先红（`job_commands.rs:608`、`job_commands.rs:651`）。
+- **T6**：核心价值（弹窗、拖拽、asset 协议播放）依赖真实 App，**本轮无法取得**，如实报未完成。
+- **质量把关方**：复核 §6「重建 App 跑 `tauri-cdp-cloud-repair-chain.mjs` 必须保持 13/13」
+  这一条，在当前机器上**同样会失败**；需先确认 CDP 通道恢复再判定阅读链是否回退。

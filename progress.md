@@ -2063,3 +2063,183 @@ UI / 学生端）尚未跑**，属于 T6。
 ### 未完成项
 
 - T5（收尾小项）、T6（真实 App 听力 CDP 验收）、T7（被外部资源阻塞项）未开始。
+
+---
+
+## 2026-09-22 第三波 T5：收尾小项
+
+### 用户现在能做到而以前做不到的事
+
+五个「小口子」一起补上，都是用户会直接撞到的：
+
+1. **点「放行发布」不会因为批里一条打不了包就整批白干。** 以前只要有一条条目的资产打包
+   失败（例如某资产的 MIME 学生端不认），`Forced` 发布**整批中断**——用户点了「放行」，
+   结果一条都没发出去，还得自己去猜是哪一条。现在这一条降级成 authoring-only
+   （`studentLoadable=false`）留在库里，其余照常发布；**严格发布（`Strict`）仍然整批失败**；
+   导出、越界路径、重复 examId 这类 IO/安全硬错误照旧中断整批。
+2. **永久删除一个条目时，它的受管音频跟着走。** 以前删掉题库行，`<appData>/audio/<itemId>/`
+   目录和 `listening_audio_assets_v1` 里那一行都留着——永久泄漏，删掉的条目音频仍躺在磁盘上。
+   现在在同一逻辑操作里：事务删表行 → 删该条目的音频目录；目录删失败**只报告不致命**；
+   **永不触碰其他条目的音频**。
+3. **解析缓存的清理只删自己那一条。** 以前按 `job_id` **前缀**匹配，`job-1` 会把
+   `job-10-document-ir.json` 一起删掉——相似 id 的另一条遭殃。现在按**精确身份**匹配
+   （等于 `job_id`，或以 `<job_id>-` 开头，且身份里含该条目**自己**源文件的 sha256）。
+4. **8 个旧 e2e 辅助脚本重新对上产品钩子。** 它们匹配的「发布完成」/`data-can-export`/
+   「可以导出」/`workspace-recognition-repair-task`/`workspace-preflight-error`/
+   `workspace-preview-runtime-*` 早从产品删掉了，断言全是假绿或假红。现在统一读
+   `.workspace-notice[data-publish-outcome]`（取值 `published` / `published_forced` /
+   `published_forced_not_loadable` / `failed`，**只有 `published` 算干净通过**）与新的
+   编辑辅助清单钩子，不再匹配可见文案。
+5. **「选择文件」选 1 份就只导入 1 份。** 同目录放 3 份 PDF，用「选择文件」选**中间**那份，
+   产品链（文件清单钩子 → 真实导入命令）恰好建 1 个条目、磁盘上恰好 1 个 job 目录、
+   只落地这一份；同一目录走「选择 PDF 文件夹」则三份都列出来（对照组，证明不是「反正只认一份」）。
+
+### 提交列表
+
+分支 `wave3-listening`（未 push）。
+
+| hash | message |
+| --- | --- |
+| `8c52b6a` | `fix(delete): take a permanently deleted item's managed audio with it` |
+| `459d583` | `fix(cleanup): match parser cache by exact identity, never by prefix` |
+| `72adcf7` | `fix(publish): one unpackageable item degrades instead of failing the batch` |
+| `2150b3b` | `test(e2e): read publish results from the hook, not the notice text` |
+| `1009411` | `test(import): prove one picked file imports one item, not the whole folder` |
+
+### 改动清单
+
+**T5-1 放行发布批内降级**（`src-tauri/src/nas_package_v2.rs`、`publish_final_tests.rs`、
+`src/api/publishClient.ts`）
+
+核心是把「导出」和「包检查」**分开**，可降级面收窄到白名单：
+
+- 新增 `enum ItemAttempt { AuthoringOnly { … package_error: Option<String> }, Packaged { … } }`。
+  导出失败一律 `?` 冒泡——**导出不是可降级项**；
+- `is_degradable_package_check_failure(error)` 只认 `nas_package_v2_probe_failed:` 前缀
+  （学生加载器探针失败）。IO/安全类错误不在白名单内，仍然中断整批；
+- 降级分支还会清掉已写一半的 staging 产物（`resources/<examId>/` 与 `<examId>.js`），
+  不留半成品；
+- 降级条目**仍参与**重复 examId 检查；
+- `packageError` 原始原因码写进 outcome 与 `_meta.forcedItems` 供审计；
+- 顺带删掉了上一波临时加入、已被本实现取代的 `publish_verdict_for_snapshot`。
+
+**T5-2 永久删除清理受管音频**（`src-tauri/src/listening_audio/store.rs`、`src-tauri/src/job_commands.rs`）
+
+- 新增 `pub(crate) fn purge_item_audio(root, item_id)`：先 `validate_path_segment`，
+  事务内 `DELETE FROM listening_audio_assets_v1 WHERE item_id = ?1`，再删
+  `<appData>/audio/<itemId>/`。目录删之前做两道守卫——**符号链接只删链接本身**、
+  **路径必须落在 `audio_root` 之内**（越界只报告不删）；
+- 从 `delete_job_core` 抽出可测接缝 `delete_job_artifacts(root, job_id)`：
+  job 目录删失败**如实失败**；音频/DB 行删失败**只记日志**（删除已生效，不该因清理失败回滚）；
+- 发现（**未修，超出 T5 范围**）：`delete_exam_by_id` 只删旧 `exams` 表，不动 `library_items_v2`，
+  后者有 9 张子表外键引用它 → 题库行会留孤儿。已在回报里点出，未擅自扩大改动面。
+
+**T5-3 解析缓存精确匹配**（`src-tauri/src/cleanup.rs`）
+
+```rust
+fn cache_entry_belongs_to(name: &str, identities: &[String]) -> bool {
+    identities.iter().any(|identity| {
+        !identity.is_empty()
+            && (name == identity.as_str() || name.starts_with(&format!("{identity}-")))
+    })
+}
+```
+
+归属身份 = `job_id` + 该条目**自己**源文件的 sha256。`starts_with(job_id)` 换成
+「等于身份或以 `<身份>-` 开头」，`job-1` 不再吃掉 `job-10-*`。
+
+**T5-4 e2e 脚本改用产品钩子**（`scripts/e2e/lib/tauri-cdp-harness.mjs`、`lib/tauri-harness.mjs`
++ 7 个脚本）
+
+- lib 新增 `readPublishNotice()` / `publishAndReadOutcome({timeoutMs})`：点发布前先读提示文字，
+  等它**变成别的文字**再取 `data-publish-outcome`（每次轮询重新查 DOM，不用缓存节点）；
+- lib 新增 `readTaskList({timeoutMs, settleTimeoutMs})`：展开 `workspace-issues` → 等
+  `workspace-processing-note` 消失（如实返回 `settled`）→ 点 `workspace-tasks-more` → 读全部
+  条目与容器属性；
+- 导出 `isCleanPublishOutcome(kind)` → `kind === "published"`，共用逻辑只留一份；
+- WebDriver 侧 `tauri-harness.mjs` 加同名函数；
+- 改脚本：`tauri-publish.mjs`、`tauri-publish-ready.mjs`、`tauri-cdp-publish-ready.mjs`、
+  `tauri-cdp-product-chain.mjs`、`tauri-cdp-issue-list.mjs`、`tauri-import-edit-publish.mjs`、
+  `tauri-direct-canonical.mjs`。
+
+**T5-5 单文件导入端到端**（`src-tauri/src/job_commands.rs` 新增测试、
+`scripts/e2e/tauri-cdp-single-file-import.mjs` 新建）
+
+命令处理器层测试：3 份 PDF 同目录，环境变量钩子只交中间那份 → 断言钩子返回恰好 1 份、
+真实 `import_files_at_root` 恰好建 1 个条目、磁盘恰好 1 个 job 目录且只落地 `bravo.pdf`；
+对照组走真实 `list_pdf_files_in_dir` 把三份都列出来（反平凡证据）。
+
+CDP 脚本（产品端到端，**当前环境跑不了**，见下）6 步：
+`library-page-loads` → `pick-files-brings-exactly-the-chosen-file` →
+`import-creates-exactly-one-item` → `only-the-chosen-file-reached-the-jobs-directory` →
+`folder-entry-in-the-same-directory-takes-all-three` → `cancelling-the-folder-pick-imports-nothing`。
+
+### 先红后绿
+
+| 测试 | 先红于 |
+| --- | --- |
+| `forced_publish_degrades_one_unpackageable_item_and_publishes_the_rest` | 整批失败 `nas_package_v2_probe_failed:…ASSET_MIME_UNSUPPORTED`（T5-1） |
+| `strict_publish_still_fails_the_batch_when_one_item_cannot_be_packaged` | 同上（守住「严格不降级」这条边界） |
+| `permanent_delete_purges_only_this_items_audio` | 音频目录与表行都残留（T5-2） |
+| `purging_an_item_with_no_audio_is_a_no_op_and_rejects_unsafe_ids` | 无音频条目不该报错、不安全 id 必须拒（T5-2） |
+| `permanent_delete_takes_the_managed_audio_with_it_and_nothing_else` | 只删自己那份，别人不动（T5-2） |
+| `parser_cache_cleanup_matches_exact_job_identity_and_never_a_prefix` | `job-10-document-ir.json` 被 `job-1` 一起删（T5-3） |
+| `parser_cache_cleanup_matches_the_jobs_own_source_sha_exactly` | 同名不同 sha 的条目被误删（T5-3） |
+| `choosing_one_file_imports_only_that_file_even_though_the_directory_holds_three` | 两次独立先红：`job_commands.rs:608` 钩子返回 3 份；`job_commands.rs:651` 建了 3 个条目（T5-5） |
+
+T5-4 是脚本改动，没有 Rust/Vitest 先红；红/绿只能靠 CDP 实跑，而本轮 CDP 通道不可用
+（见下），所以只做到 `node --check` 语法过。**如实记录，不以语法检查冒充实跑。**
+
+### 测试数字
+
+| 项目 | 任务书基线 | 本批 |
+| --- | --- | --- |
+| `cargo test --lib` | 973 / 0 / 11 | **1023 / 0 / 11** |
+| `npx vitest run` | 390 | **397 passed / 27 files** |
+| `npx tsc --noEmit` | 干净 | 干净 |
+
+（T5 段内 Rust 新增：T5-1 两条 + T5-2 三条 + T5-3 两条 + T5-5 一条 = 8 条。
+973 → 1023 的 +50 是 T1–T5 累计；T4 段单独记过 1008 → 1015。）
+
+### 证据等级
+
+- **命令处理器层**：T5-1 降级发布（真实 `export_authoring_snapshot_with_mode` +
+  真实包组装与加载器探针）、T5-2 永久删除（真实 `delete_job_artifacts` + 真实 `purge_item_audio`
+  + 真实 SQLite 断言）、T5-3 缓存清理（真实 `cleanup_parser_cache_for_job` + 真实磁盘）、
+  T5-5 单文件导入（真实 `automation_source_files_from_env` + 真实 `list_pdf_files_in_dir`
+  + 真实 `import_files_at_root` + 真实磁盘）。
+- **产品端到端（T5-4、T5-5 的 CDP 链）：本轮未取得。** 原因见「偏离」第 2 条：
+  本机 WebView2 调试端点当前无法建立，仓库自带的 `tauri-cdp-smoke.mjs` 同样失败，
+  故 T5-4 的 7 个脚本与 T5-5 的 CDP 链**只做到语法检查**，待环境恢复后补跑。
+- **仅单元 / schema**：无新增。
+
+### 偏离任务书之处及理由
+
+1. **T5-4 任务书点了 8 个脚本，我只改了 7 个。** `tauri-cdp-workspace-layout.mjs` 未改：
+   grep 确认它只用了仍然有效的钩子，改它属于无谓改动。其余 7 个按任务书要求改到位，
+   并额外 grep 了仓库内其它用法（无遗漏）。
+2. **T5-5 的证据等级从「产品端到端」降为「命令处理器层」。** 本机 WebView2 调试端点
+   当前**完全无法建立**，已用四种方式交叉验证：
+   (a) 新建的 CDP 脚本报 `CANNOT-RUN WebView2 DevTools 端点未在 90000ms 内就绪`；
+   (b) **仓库自带的 `tauri-cdp-smoke.mjs` 报同样的错** → 与我的脚本无关；
+   (c) `env -i` 干净环境直接启动 exe：`DevToolsActivePort` 文件从未生成、
+   `netstat` 无 `639xx` 监听、`curl --noproxy '*'` 返回 exit 7；
+   (d) 对照实验证明机器本身正常：`msedge.exe --headless=new --remote-debugging-port=63980`
+   **3 秒内**就绪，`/json/version` 正常返回。
+   历史事实：`artifacts/e2e-cdp/run-cloud-repair-chain-2026-09-21T18-51-21-267Z` 的 CDP 链
+   真的跑通过（`verdict=passed`、`scenarioFacts.total=13`），所以是**本机当前状态退化**，
+   不是文档造假、也不是代码回归。CDP 脚本作为**待环境恢复执行的产品端到端挂件**留在仓库，
+   提交信息里写明「当前跑不了，仓库自带 smoke 同样失败」。**不以此冒报通过。**
+3. **T5-2 顺带发现但未修**：`delete_exam_by_id` 不动 `library_items_v2`，9 张子表外键会让
+   题库行留孤儿。任务书 T5-2 只要求「永久删除时清理受管音频」，未要求修这个删除路径，
+   故只记录不扩面。
+
+### 未完成项
+
+- **T6**（真实 App 听力端到端 CDP 验收）——被同一个 CDP 环境阻塞。弹窗、拖拽、
+  asset 协议播放**至今从未在真实 App 里跑过**，这是 T6 的核心价值，本轮无法取得。
+- **T7**（被外部资源阻塞项：真实模型额度、28 份答案页、DOCX 样本）——未拿到资源，
+  如实报「未执行」，不报通过。
+- **环境恢复后可补跑**：`scripts/e2e/tauri-cdp-single-file-import.mjs`（T5-5 产品端到端确认）、
+  `scripts/e2e/tauri-cdp-smoke.mjs`（先确认 CDP 通道本身可用）、以及 T5-4 改过的 7 个脚本。
+- **T5-2 的孤儿行问题**（`delete_exam_by_id` 不动 `library_items_v2`）留作独立待办。
