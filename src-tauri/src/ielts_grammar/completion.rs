@@ -2314,20 +2314,29 @@ mod tests {
         );
     }
 
-    /// Runs the real listening paper through the product chain and returns the
-    /// built authoring document, or `None` when the private fixture or pdfium is
-    /// unavailable (the other real-paper probes in this crate skip the same way).
-    fn build_real_listening_shadow() -> Option<Value> {
+    /// The real private listening paper after parse + split, plus the handles the
+    /// later stages need. `None` when the fixture or pdfium is unavailable, which
+    /// is the skip contract the other real-paper probes in this crate use.
+    struct RealListeningPaper {
+        job: crate::ImportJob,
+        source: crate::SourceFile,
+        pdf: std::path::PathBuf,
+        work_dir: std::path::PathBuf,
+        document: Value,
+        split: Value,
+    }
+
+    fn real_listening_paper() -> Option<RealListeningPaper> {
         let pdf = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../fixtures/golden/private-real/listening-vol7-t9.pdf");
         if !pdf.exists() || crate::pdf_geometry::pdfium_library_path().is_none() {
             return None;
         }
         let work_dir =
-            std::env::temp_dir().join(format!("pdf2test-listening-blanks-{}", std::process::id()));
+            std::env::temp_dir().join(format!("pdf2test-listening-paper-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&work_dir);
         let mut job = crate::job_store::make_job(crate::CreateJobInput {
-            title: Some("Listening drawn-blank acceptance".to_string()),
+            title: Some("Listening real-paper probe".to_string()),
             ..Default::default()
         });
         let source = crate::SourceFile {
@@ -2354,6 +2363,86 @@ mod tests {
             &job,
             Some(&document),
         );
+        Some(RealListeningPaper {
+            job,
+            source,
+            pdf,
+            work_dir,
+            document,
+            split,
+        })
+    }
+
+    /// A split candidate must own exactly the source region it claims. The
+    /// option-run recovery passes graft blocks onto `block_ids` *after* the
+    /// evidence snapshot, so a candidate whose `sectionEvidence` does not cover
+    /// its `block_ids` silently drops those rows: the group reads as a truncated
+    /// option bank (group-6 lost E-G and group-5 lost six rows) and the dropped
+    /// rows then count as unassigned source.
+    #[test]
+    fn real_listening_split_evidence_covers_every_claimed_block() {
+        let Some(paper) = real_listening_paper() else {
+            return;
+        };
+        let candidates = paper
+            .split
+            .get("questionGroupCandidates")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(!candidates.is_empty(), "the paper splits into question groups");
+        let mut violations = Vec::new();
+        for candidate in &candidates {
+            let block_ids = candidate
+                .get("blockIds")
+                .and_then(Value::as_array)
+                .map(|ids| {
+                    ids.iter()
+                        .filter_map(Value::as_str)
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let covered = candidate
+                .get("sectionEvidence")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|evidence| evidence.get("blockId").and_then(Value::as_str))
+                .collect::<std::collections::BTreeSet<_>>();
+            let missing = block_ids
+                .iter()
+                .filter(|id| !covered.contains(id.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !missing.is_empty() {
+                violations.push(json!({
+                    "range": candidate.get("questionRange").cloned().unwrap_or(Value::Null),
+                    "kindHint": candidate.get("kindHint").cloned().unwrap_or(Value::Null),
+                    "missingFromSectionEvidence": missing
+                }));
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "{}",
+            serde_json::to_string_pretty(&violations).unwrap_or_default()
+        );
+    }
+
+
+    /// Runs the real listening paper through the product chain and returns the
+    /// built authoring document, or `None` when the private fixture or pdfium is
+    /// unavailable (the other real-paper probes in this crate skip the same way).
+    fn build_real_listening_shadow() -> Option<Value> {
+        let RealListeningPaper {
+            job,
+            source,
+            pdf,
+            work_dir,
+            document,
+            split,
+        } = real_listening_paper()?;
         let v1 = crate::authoring_pipeline::make_dynamic_authoring_ir(&job, &split, Some(&document));
         let physical = crate::pdf_facts_shadow::write_pdf_facts_shadow_with_v1(
             &job,
@@ -2618,4 +2707,5 @@ mod tests {
         }
         eprintln!("listening-vol7-t9 choose-N groups: {observed:?}; hard failures {codes:?}");
     }
+
 }

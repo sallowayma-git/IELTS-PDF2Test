@@ -540,42 +540,83 @@ fn table_merge_summary(block: &Value) -> (Option<bool>, Option<bool>, Option<u64
     )
 }
 
+fn split_section_evidence_for_block(block: &Value) -> SplitSectionEvidenceV1 {
+    let (table_has_col_spans, table_has_vertical_merges, table_merged_cell_count) =
+        table_merge_summary(block);
+    SplitSectionEvidenceV1 {
+        block_id: dynamic_block_id(block),
+        page_index: dynamic_block_page_index(block),
+        column: dynamic_block_column(block),
+        role: dynamic_block_role(block).to_string(),
+        text_preview: dynamic_block_text_preview(block),
+        bbox: dynamic_block_bbox(block),
+        normalized_bbox: dynamic_block_normalized_bbox(block),
+        page_rotation: Some(dynamic_block_page_rotation(block)),
+        table_rows: block.pointer("/table/rows").and_then(Value::as_u64),
+        table_cols: block.pointer("/table/cols").and_then(Value::as_u64),
+        table_has_col_spans,
+        table_has_vertical_merges,
+        table_merged_cell_count,
+        heading_level: block
+            .pointer("/layoutHints/headingLevel")
+            .and_then(Value::as_u64),
+        numbering_level: block
+            .pointer("/layoutHints/numbering/level")
+            .and_then(Value::as_u64),
+        numbering_id: block
+            .pointer("/layoutHints/numbering/id")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        section_column_count: block
+            .pointer("/layoutHints/section/columns/count")
+            .and_then(Value::as_u64),
+    }
+}
+
 fn split_section_evidence_for_blocks(blocks: &[Value]) -> Vec<SplitSectionEvidenceV1> {
-    blocks
-        .iter()
-        .map(|block| {
-            let (table_has_col_spans, table_has_vertical_merges, table_merged_cell_count) =
-                table_merge_summary(block);
-            SplitSectionEvidenceV1 {
-                block_id: dynamic_block_id(block),
-                page_index: dynamic_block_page_index(block),
-                column: dynamic_block_column(block),
-                role: dynamic_block_role(block).to_string(),
-                text_preview: dynamic_block_text_preview(block),
-                bbox: dynamic_block_bbox(block),
-                normalized_bbox: dynamic_block_normalized_bbox(block),
-                page_rotation: Some(dynamic_block_page_rotation(block)),
-                table_rows: block.pointer("/table/rows").and_then(Value::as_u64),
-                table_cols: block.pointer("/table/cols").and_then(Value::as_u64),
-                table_has_col_spans,
-                table_has_vertical_merges,
-                table_merged_cell_count,
-                heading_level: block
-                    .pointer("/layoutHints/headingLevel")
-                    .and_then(Value::as_u64),
-                numbering_level: block
-                    .pointer("/layoutHints/numbering/level")
-                    .and_then(Value::as_u64),
-                numbering_id: block
-                    .pointer("/layoutHints/numbering/id")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string),
-                section_column_count: block
-                    .pointer("/layoutHints/section/columns/count")
-                    .and_then(Value::as_u64),
-            }
-        })
-        .collect()
+    blocks.iter().map(split_section_evidence_for_block).collect()
+}
+
+/// Every candidate is built with `block_ids` and `section_evidence` derived from
+/// the same `included` slice, so the two start out identical. The option-run
+/// recovery passes (`extend_dynamic_choice_option_blocks`,
+/// `extend_dynamic_matching_option_blocks`) then graft blocks onto `block_ids`
+/// only, which silently breaks the invariant `block_ids ⊆ section_evidence`.
+///
+/// Downstream the group's own lines are read from `section_evidence`, so a
+/// grafted row (for example option E-G of a shared bank that sits after the
+/// last attached row) becomes invisible: the option run reads as truncated, the
+/// bank materializes short, and the group's declared region no longer covers the
+/// source it claims. Rebuild both evidence and continuation edges from the final
+/// `block_ids` so a group's region always covers every block it owns.
+fn sync_dynamic_group_evidence_with_block_ids(
+    groups: &mut [SplitGroupCandidateV1],
+    blocks: &[Value],
+) {
+    for group in groups.iter_mut() {
+        let declared: std::collections::BTreeSet<&str> =
+            group.block_ids.iter().map(String::as_str).collect();
+        let already_covered = group.section_evidence.len() == group.block_ids.len()
+            && group
+                .section_evidence
+                .iter()
+                .all(|evidence| declared.contains(evidence.block_id.as_str()));
+        if already_covered {
+            continue;
+        }
+        let owned = group
+            .block_ids
+            .iter()
+            .filter_map(|id| {
+                blocks
+                    .iter()
+                    .find(|block| dynamic_block_id(block) == *id)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        group.section_evidence = split_section_evidence_for_blocks(&owned);
+        group.continuation_edges = split_continuation_edges_for_blocks(&owned);
+    }
 }
 
 fn split_continuation_edges_for_blocks(blocks: &[Value]) -> Vec<SplitContinuationEdgeV1> {
@@ -4659,6 +4700,7 @@ pub(crate) fn make_dynamic_split_candidates(
     }
     extend_dynamic_choice_option_blocks(&mut group_candidates, &blocks);
     extend_dynamic_matching_option_blocks(&mut group_candidates, &blocks);
+    sync_dynamic_group_evidence_with_block_ids(&mut group_candidates, &blocks);
     normalize_dynamic_group_ranges(&mut group_candidates, &blocks);
 
     if !deferred_passage_blocks.is_empty() {
