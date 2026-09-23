@@ -595,6 +595,112 @@ export class TauriCdpSession {
     await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
   }
 
+  /**
+   * 打开顶栏「待补充」侧栏，等处理真正结束，读回全部编辑辅助条目。
+   *
+   * 三件事都必须做，少一件就会读到**假清单**：
+   * - **先展开**：清单是顶栏 `[data-testid="workspace-issues"]` 开合的侧栏，默认收起，
+   *   收起时条目根本不在 DOM 里。而且它只在编辑模式渲染（`mode === "edit"`）——
+   *   学生预览里没有这份清单。
+   * - **等处理结束**：处理没跑完之前，云端剩余条目还没并进清单，此时数出来的是
+   *   一份不完整的清单。判据是标题下的处理副标题
+   *   `[data-testid="workspace-processing-note"]` 消失（一直不消失本身就是要报出来的问题，
+   *   所以如实返回 `settled: false` 而不是抛错）。
+   * - **再展开分组**：条目多时清单会折叠，不点开只能读到前几组。
+   *
+   * 条目钩子：`[data-task-id]` / `[data-task-kind]` / `[data-severity]` /
+   * `[data-task-covers]`（合并后仍保留的底层问题关联）/ `[data-action-id]` / `[data-action-target]`。
+   */
+  async readTaskList({ timeoutMs = 30000, settleTimeoutMs = 90000 } = {}) {
+    await this.evaluate(`(() => {
+      const toggle = document.querySelector('[data-testid="workspace-issues"]');
+      if (toggle && toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
+      return true;
+    })()`);
+    await this.waitFor(
+      `(() => Boolean(document.querySelector('[data-testid="workspace-tasks-headline"], [data-testid="workspace-tasks-clear"]')))()`,
+      { timeoutMs, intervalMs: 500, label: "task-list-rendered" },
+    ).catch(() => null);
+    const settled = await this.waitFor(
+      `(() => !document.querySelector('[data-testid="workspace-processing-note"]'))()`,
+      { timeoutMs: settleTimeoutMs, intervalMs: 1000, label: "processing-settled" },
+    )
+      .then(() => true)
+      .catch(() => false);
+    await this.evaluate(
+      `(() => { const more = document.querySelector('[data-testid="workspace-tasks-more"]'); if (more) more.click(); return true; })()`,
+    );
+    const panel = await this.evaluate(`(() => {
+      const entries = [...document.querySelectorAll('[data-task-id]')].map((el) => ({
+        taskId: el.getAttribute('data-task-id'),
+        kind: el.getAttribute('data-task-kind'),
+        severity: el.getAttribute('data-severity'),
+        covers: (el.getAttribute('data-task-covers') ?? '').split(',').filter(Boolean),
+        targets: [...el.querySelectorAll('[data-action-target]')].map((b) => b.getAttribute('data-action-target')),
+        actions: [...el.querySelectorAll('[data-action-id]')].map((b) => b.getAttribute('data-action-id')),
+        text: el.innerText.replace(/\\s+/g,' ').trim().slice(0, 160)
+      }));
+      const clear = document.querySelector('[data-testid="workspace-tasks-clear"]');
+      const root = document.querySelector('[data-testid="workspace-issue-list"]');
+      return {
+        entryCount: entries.length,
+        entries,
+        clearText: clear ? clear.innerText.replace(/\\s+/g,' ').trim() : null,
+        taskCount: root ? Number(root.getAttribute('data-task-count') ?? 0) : null,
+        preflightState: root ? root.getAttribute('data-preflight-state') : null,
+        tasksReady: root ? root.getAttribute('data-tasks-ready') : null,
+        legacyCardCount: document.querySelectorAll('[data-decision-id]').length
+      };
+    })()`);
+    return { ...panel, settled };
+  }
+
+  /** 读当前工作区提示元素上的发布结论（`{ text, kind }`，没有则 `kind: null`）。 */
+  async readPublishNotice() {
+    return this.evaluate(`(() => {
+      const el = document.querySelector('.workspace-notice[data-publish-outcome]')
+        ?? document.querySelector('.workspace-notice');
+      if (!el) return { text: null, kind: null };
+      return {
+        text: el.innerText.replace(/\\s+/g,' ').trim() || null,
+        kind: el.getAttribute('data-publish-outcome')
+      };
+    })()`);
+  }
+
+  /**
+   * 点「发布」并读回**机器可读**的发布结论。
+   *
+   * 为什么不能匹配提示文案：产品决策是「不向用户展示放行与否」，放行发布与干净发布
+   * 显示的是同一句「已发布」。所以「文案里有『已发布』」既认不出干净发布、也认不出
+   * 学生端打不开的那一条。唯一的机器可读出口是 `.workspace-notice[data-publish-outcome]`，
+   * 取值 `published | published_forced | published_forced_not_loadable | failed`——
+   * **只有 `published` 算干净通过**（见 `isCleanPublishOutcome`）。
+   *
+   * 点之前先读一次提示：界面上可能已经挂着一条**无关**的提示（例如「识别建议已过期」），
+   * 直接读 `.workspace-notice` 会把它当成这次点击的结论。要等它**变成别的文字**。
+   */
+  async publishAndReadOutcome({ timeoutMs = 120000 } = {}) {
+    const before = await this.readPublishNotice();
+    await this.clickSelector('[data-testid="workspace-publish"]');
+    const settled = await this.waitFor(
+      `(() => {
+         const el = document.querySelector('.workspace-notice[data-publish-outcome]');
+         if (!el) return null;
+         const text = el.innerText.replace(/\\s+/g,' ').trim() || null;
+         const kind = el.getAttribute('data-publish-outcome');
+         return kind && text && text !== ${JSON.stringify(before.text)} ? { text, kind } : null;
+       })()`,
+      { timeoutMs, intervalMs: 1000, label: "publish-outcome" },
+    ).catch(() => null);
+    return {
+      noticeBefore: before.text,
+      text: settled?.text ?? null,
+      kind: settled?.kind ?? null,
+      timedOut: settled === null,
+    };
+  }
+
   /** 真实键盘输入：先聚焦元素，再用 Input.insertText。 */
   async typeInto(selector, text) {
     await this.clickSelector(selector);
@@ -678,6 +784,17 @@ export function createStepRecorder({ session, artifactsDir }) {
       return last;
     },
   };
+}
+
+/**
+ * 发布结论是否算**干净**通过。
+ *
+ * 只有 `published` 是。`published_forced`（用户放行了门禁）与
+ * `published_forced_not_loadable`（学生端暂时打不开这道题）都不算——产品上它们是
+ * 「已发布」，但验收链要证明的是**干净**发布这一跳真的走通了，所以一律按 blocked 报。
+ */
+export function isCleanPublishOutcome(kind) {
+  return kind === "published";
 }
 
 export function writeReport(runDir, report) {

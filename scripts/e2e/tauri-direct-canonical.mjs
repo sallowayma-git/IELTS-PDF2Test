@@ -11,8 +11,8 @@ import { Key } from "selenium-webdriver";
 import {
   DEFAULT_EXE, By, CannotRunError, assertFreshBuild, assertPrerequisites, buildFreshness,
   buildIdentity, createStepRecorder, exitCodeForVerdict, importSourceViaFileHook,
-  launchTauriApp, logCannotRun, logHarnessError, openWorkspaceForItem, parseArgs,
-  repoRoot, sleep, until, waitForRowStage, writeReport
+  isCleanPublishOutcome, launchTauriApp, logCannotRun, logHarnessError, openWorkspaceForItem, parseArgs,
+  publishAndReadOutcome, repoRoot, sleep, until, waitForRowStage, writeReport
 } from "./lib/tauri-harness.mjs";
 
 const DIRECT_AUDIT_NOTE = "Direct canonical from QuestionLayoutGraphV1 (G2-T04); no V1 authoring input.";
@@ -130,19 +130,20 @@ async function verifyIssueTarget(driver) {
 }
 
 async function publishOrBlock(driver, publishDir) {
-  await driver.findElement(By.css('[data-testid="workspace-publish"]')).click();
-  let noticeText = "";
-  await driver.wait(async () => {
-    const notices = await driver.findElements(By.css(".workspace-notice"));
-    noticeText = notices.length ? (await notices[notices.length - 1].getText()).replace(/\s+/g, " ").trim() : "";
-    return /发布完成|失败|未完成|补齐|还没有|请先|待确认|需要确认/.test(noticeText);
-  }, 60000);
-  if (!noticeText.includes("发布完成")) {
-    return { outcome: "blocked_by_quality_gate", notice: noticeText, countedAsPass: false };
+  // 判据是**机器可读**的发布结论（`.workspace-notice[data-publish-outcome]`），
+  // 不是提示文案：放行发布与干净发布显示的是同一句「已发布」，匹配「发布完成」既
+  // 认不出干净发布、也认不出学生端打不开的那一条。只有 `published` 算干净通过。
+  const published = await publishAndReadOutcome(driver);
+  const noticeText = published.text ?? published.noticeBefore ?? "";
+  if (published.timedOut) {
+    throw new Error(`点发布后 120000ms 内没有出现发布结论（提示=${JSON.stringify(noticeText)}）`);
+  }
+  if (!isCleanPublishOutcome(published.kind)) {
+    return { outcome: "blocked_by_quality_gate", publishOutcome: published.kind, notice: noticeText, countedAsPass: false };
   }
   const publishedFiles = walkFiles(publishDir);
   if (!publishedFiles.length) throw new Error(`发布显示成功但 NAS 目录为空：${publishDir}`);
-  return { outcome: "published", notice: noticeText, publishedFiles: publishedFiles.slice(0, 30) };
+  return { outcome: "published", publishOutcome: published.kind, notice: noticeText, publishedFiles: publishedFiles.slice(0, 30) };
 }
 
 async function runCase(testCase, identity, freshness) {

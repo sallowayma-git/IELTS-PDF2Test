@@ -31,6 +31,7 @@ import {
   createStepRecorder,
   gitHead,
   gitWorktreeClean,
+  isCleanPublishOutcome,
   launchTauriAppCdp,
   sha256File,
   sleep,
@@ -206,19 +207,12 @@ async function main() {
     // 发布**前**读一次门禁：它是「为什么发得出去 / 发不出去」的权威依据。
     const gateBefore = await readPreflight();
 
-    await session.clickSelector('[data-testid="workspace-publish"]');
-    const outcome = await session.waitFor(
-      `(() => {
-        const notices = [...document.querySelectorAll('.workspace-notice')].map(n => n.innerText.replace(/\\s+/g,' ').trim());
-        const joined = notices.join(' || ');
-        if (/发布完成|发布失败|不能发布|问题|拦/.test(joined)) return { notices };
-        return null;
-      })()`,
-      { timeoutMs: 180000, label: "publish-outcome" }
-    );
+    // 判据是**机器可读**的发布结论（`.workspace-notice[data-publish-outcome]`），
+    // 不是提示文案：放行发布与干净发布显示的是同一句「已发布」，匹配「发布完成」既
+    // 认不出干净发布、也认不出学生端打不开的那一条。只有 `published` 算干净通过。
+    const published = await session.publishAndReadOutcome({ timeoutMs: 180000 });
     await session.screenshot("03-publish-outcome");
-    const joined = (outcome.notices ?? []).join(" || ");
-    const blocked = !/发布完成/.test(joined);
+    const blocked = !isCleanPublishOutcome(published.kind);
     // 发布**后**再读一次门禁。
     //
     // 为什么必须两次：实测出现过「发布前 `passed=false`（`QUALITY_NOT_READY /
@@ -229,7 +223,9 @@ async function main() {
     const gateAfter = await readPreflight();
     return {
       outcome: blocked ? "blocked_by_quality_gate" : "published",
-      notices: outcome.notices ?? [],
+      publishOutcome: published.kind,
+      publishTimedOut: published.timedOut,
+      notices: [published.noticeBefore, published.text].filter(Boolean),
       nasDestination,
       manifestExists: fs.existsSync(path.join(nasDestination, "manifest.js")),
       preflightBefore: gateBefore,

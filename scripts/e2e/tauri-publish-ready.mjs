@@ -21,8 +21,8 @@ import crypto from "node:crypto";
 import { By, until } from "selenium-webdriver";
 import {
   DEFAULT_EXE, DEFAULT_PDF, repoRoot, CannotRunError, assertPrerequisites, assertFreshBuild,
-  buildFreshness, buildIdentity, launchTauriApp, createStepRecorder, openWorkspaceForItem,
-  writeReport, exitCodeForVerdict, logCannotRun, logHarnessError, sleep
+  buildFreshness, buildIdentity, isCleanPublishOutcome, launchTauriApp, createStepRecorder, openWorkspaceForItem,
+  publishAndReadOutcome, writeReport, exitCodeForVerdict, logCannotRun, logHarnessError, sleep
 } from "./lib/tauri-harness.mjs";
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((all, arg, index, list) => {
@@ -204,15 +204,17 @@ async function main() {
     });
 
     await recordStep(driver, "publish-via-workspace-button", async () => {
-      await driver.findElement(By.css('[data-testid="workspace-publish"]')).click();
-      const notice = await driver.wait(until.elementLocated(By.css(".workspace-notice")), 60000);
-      await driver.wait(async () => {
-        const text = await notice.getText();
-        return /发布完成|失败|未完成|补齐|还没有|请先|待确认|需要确认/.test(text);
-      }, 120000);
-      const noticeText = (await notice.getText()).replace(/\s+/g, " ").trim();
-      if (!noticeText.includes("发布完成")) {
-        throw new Error(`发布未成功（质量门或其他产品门拦截）：${noticeText}`);
+      // 判据是**机器可读**的发布结论（`.workspace-notice[data-publish-outcome]`），
+      // 不是提示文案：放行发布与干净发布显示的是同一句「已发布」。只有 `published` 通过。
+      const published = await publishAndReadOutcome(driver);
+      const noticeText = published.text ?? published.noticeBefore ?? "";
+      if (published.timedOut) {
+        throw new Error(`点发布后 120000ms 内没有出现发布结论（提示=${JSON.stringify(noticeText)}）`);
+      }
+      if (!isCleanPublishOutcome(published.kind)) {
+        throw new Error(
+          `发布不是干净发布（publishOutcome=${published.kind}，质量门或其他产品门拦截）：${noticeText}`
+        );
       }
       // 发布产物递归枚举：manifest / releases / exams 应出现在目标题库根。
       const files = [];
@@ -228,7 +230,7 @@ async function main() {
       if (!files.length) throw new Error(`发布显示成功但导出目录为空：${relaunch.publishDir}`);
       const manifest = files.find((file) => /manifest\.(js|json)$/i.test(file));
       if (!manifest) throw new Error(`发布产物中未见 manifest：${files.slice(0, 20).join(", ")}`);
-      return { outcome: "published", notice: noticeText, publishedFiles: files.slice(0, 30), manifest };
+      return { outcome: "published", publishOutcome: published.kind, notice: noticeText, publishedFiles: files.slice(0, 30), manifest };
     });
 
     const failed = steps.filter((step) => step.status === "failed");

@@ -25,6 +25,9 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { Builder, By, Key, until } from "selenium-webdriver";
+// 发布结论的读取与判据只此一份（`.workspace-notice[data-publish-outcome]`）。
+// 本脚本自带一套启动逻辑，所以只借这两个纯函数，不借整个 harness。
+import { isCleanPublishOutcome, publishAndReadOutcome } from "./lib/tauri-harness.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DRIVER_CACHE_DIR = path.join(process.env.LOCALAPPDATA ?? repoRoot, "pdf2test-e2e-drivers");
@@ -506,24 +509,18 @@ async function main() {
         await driver.executeScript("location.hash = '#/library';");
         await driver.wait(until.elementLocated(By.css('[data-testid="library-page"]')), 15000);
         await openWorkspaceForItem(driver, itemId);
-        await driver.findElement(By.css('[data-testid="workspace-publish"]')).click();
-        const notice = await driver.wait(
-          until.elementLocated(By.css(".workspace-notice")),
-          60000
-        );
-        await driver.wait(async () => {
-          const text = await notice.getText();
-          // GATE_BLOCK_PATTERN 与 tauri-publish.mjs 一致：门禁文案也要能结束等待。
-          return /发布完成|失败|未完成|补齐|还没有|请先|待确认|需要确认/.test(text);
-        }, 60000);
-        // 与 tauri-publish.mjs 的 GATE_BLOCK_PATTERN 保持一致：
-        // 被产品质量门阻止是如实记录的产品行为，不算发布失败也不算通过。
-        const GATE_BLOCK_PATTERN = /补齐|未完成|还没有|请先|待确认|需要确认/;
-        const noticeText = (await notice.getText()).replace(/\s+/g, " ").trim();
-        if (!noticeText.includes("发布完成")) {
+        // 判据是**机器可读**的发布结论（`.workspace-notice[data-publish-outcome]`），
+        // 不是提示文案：放行发布与干净发布显示的是同一句「已发布」，匹配「发布完成」既
+        // 认不出干净发布、也认不出学生端打不开的那一条。只有 `published` 算干净通过。
+        const published = await publishAndReadOutcome(driver);
+        const noticeText = published.text ?? published.noticeBefore ?? "";
+        if (published.timedOut) {
+          throw new Error(`点发布后 120000ms 内没有出现发布结论（提示=${JSON.stringify(noticeText)}）`);
+        }
+        if (!isCleanPublishOutcome(published.kind)) {
           // 仓库现有语料 PDF 达不到 ready 质量门（product_chain.rs 头注释）：
-          // 被门禁阻止是如实记录的产品行为，不计为通过。
-          return { outcome: "blocked_by_quality_gate", notice: noticeText, countedAsPass: false };
+          // 被门禁阻止（或由用户放行）是如实记录的产品行为，不计为通过。
+          return { outcome: "blocked_by_quality_gate", publishOutcome: published.kind, notice: noticeText, countedAsPass: false };
         }
         // 产品把 destination 当题库根，产物落在其 reading-exams 子树；递归枚举。
         const files = [];
@@ -537,7 +534,7 @@ async function main() {
         };
         walk(publishDir);
         if (!files.length) throw new Error(`发布显示成功但导出目录为空：${publishDir}`);
-        return { outcome: "published", notice: noticeText, publishedFiles: files.slice(0, 20) };
+        return { outcome: "published", publishOutcome: published.kind, notice: noticeText, publishedFiles: files.slice(0, 20) };
       });
     }
 

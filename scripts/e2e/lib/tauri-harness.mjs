@@ -504,6 +504,63 @@ export async function openWorkspaceForItem(driver, itemId) {
   throw lastError;
 }
 
+/** 读当前工作区提示元素上的发布结论（`{ text, kind }`，没有则 `kind: null`）。 */
+export async function readPublishNotice(driver) {
+  const found = await driver.findElements(By.css(".workspace-notice"));
+  if (!found.length) return { text: null, kind: null };
+  const text = (await found[0].getText()).replace(/\s+/g, " ").trim() || null;
+  return { text, kind: await found[0].getAttribute("data-publish-outcome") };
+}
+
+/**
+ * 点「发布」并读回**机器可读**的发布结论。
+ *
+ * 为什么不能匹配提示文案：产品决策是「不向用户展示放行与否」，放行发布与干净发布
+ * 显示的是同一句「已发布」。所以「文案里有『已发布』」既认不出干净发布、也认不出
+ * 学生端打不开的那一条。唯一的机器可读出口是 `.workspace-notice[data-publish-outcome]`，
+ * 取值 `published | published_forced | published_forced_not_loadable | failed`——
+ * **只有 `published` 算干净通过**（见 `isCleanPublishOutcome`）。
+ *
+ * 点之前先读一次提示：界面上可能已经挂着一条**无关**的提示（例如「识别建议已过期」），
+ * 直接读 `.workspace-notice` 会把它当成这次点击的结论。要等它**变成别的文字**。
+ *
+ * 每次轮询都重新 `findElements`：React 会用新节点替换这条提示，缓存下来的元素引用会 stale。
+ */
+export async function publishAndReadOutcome(driver, { timeoutMs = 120000 } = {}) {
+  const before = await readPublishNotice(driver);
+  await driver.findElement(By.css('[data-testid="workspace-publish"]')).click();
+  let settled = null;
+  try {
+    await driver.wait(async () => {
+      const now = await readPublishNotice(driver);
+      if (now.kind && now.text && now.text !== before.text) {
+        settled = now;
+        return true;
+      }
+      return false;
+    }, timeoutMs);
+  } catch {
+    settled = null;
+  }
+  return {
+    noticeBefore: before.text,
+    text: settled?.text ?? null,
+    kind: settled?.kind ?? null,
+    timedOut: settled === null,
+  };
+}
+
+/**
+ * 发布结论是否算**干净**通过。
+ *
+ * 只有 `published` 是。`published_forced`（用户放行了门禁）与
+ * `published_forced_not_loadable`（学生端暂时打不开这道题）都不算——产品上它们是
+ * 「已发布」，但验收链要证明的是**干净**发布这一跳真的走通了，所以一律按 blocked 报。
+ */
+export function isCleanPublishOutcome(kind) {
+  return kind === "published";
+}
+
 /** 导入目录内 PDF 并返回新行 id（集合差分，兼容乐观插入与事件刷新两种时序）。 */
 export async function importPdfViaFolderHook(driver, timeoutMs = 30000) {
   const before = new Set(

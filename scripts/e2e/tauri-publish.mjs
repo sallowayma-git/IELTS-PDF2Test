@@ -21,8 +21,8 @@ import path from "node:path";
 import process from "node:process";
 import {
   DEFAULT_EXE, DEFAULT_PDF, By, CannotRunError, assertPrerequisites, buildFreshness, assertFreshBuild, buildIdentity,
-  createStepRecorder, exitCodeForVerdict, importPdfViaFolderHook, launchTauriApp,
-  logCannotRun, logHarnessError, openWorkspaceForItem, parseArgs, until, waitForRowStage, writeReport
+  createStepRecorder, exitCodeForVerdict, importPdfViaFolderHook, isCleanPublishOutcome, launchTauriApp,
+  logCannotRun, logHarnessError, openWorkspaceForItem, parseArgs, publishAndReadOutcome, until, waitForRowStage, writeReport
 } from "./lib/tauri-harness.mjs";
 
 const args = parseArgs(process.argv.slice(2));
@@ -30,9 +30,6 @@ const exePath = path.resolve(args.exe ?? DEFAULT_EXE);
 const pdfPath = path.resolve(args.pdf ?? DEFAULT_PDF);
 const keepRun = Boolean(args.keep);
 const takeScreenshots = args.screenshot !== false;
-
-/** 质量门阻止的文案（经 userFacingError 收敛后的人话）——不计为通过，也不计为缺陷。 */
-const GATE_BLOCK_PATTERN = /补齐|未完成|还没有|请先|待确认|需要确认/;
 
 async function main() {
   assertPrerequisites({ exePath, pdfPath });
@@ -82,15 +79,15 @@ async function main() {
 
     if (!loadErrorText) {
       await recordStep(driver, "publish-via-workspace-button", async () => {
-        await driver.findElement(By.css('[data-testid="workspace-publish"]')).click();
-        const notice = await driver.wait(until.elementLocated(By.css(".workspace-notice")), 60000);
-        await driver.wait(async () => {
-          const text = await notice.getText();
-          return text.includes("发布完成") || text.includes("失败") || text.includes("未完成") || GATE_BLOCK_PATTERN.test(text);
-        }, 60000);
-        const noticeText = (await notice.getText()).replace(/\s+/g, " ").trim();
-
-        if (noticeText.includes("发布完成")) {
+        // 判据是**机器可读**的发布结论（`.workspace-notice[data-publish-outcome]`），
+        // 不是提示文案：放行发布与干净发布显示的是同一句「已发布」，匹配文案既认不出
+        // 干净发布、也认不出学生端打不开的那一条。只有 `published` 算干净通过。
+        const published = await publishAndReadOutcome(driver);
+        const noticeText = published.text ?? published.noticeBefore ?? "";
+        if (published.timedOut) {
+          throw new Error(`点发布后 ${120000}ms 内没有出现发布结论（提示=${JSON.stringify(noticeText)}）`);
+        }
+        if (isCleanPublishOutcome(published.kind)) {
           // 产品把 destination 当题库根，产物落在其 reading-exams 子树；
           // 递归枚举而不是只看一层。
           const files = [];
@@ -104,18 +101,21 @@ async function main() {
           };
           walk(session.publishDir);
           if (!files.length) throw new Error(`发布显示成功但导出目录为空：${session.publishDir}`);
-          return { outcome: "published", notice: noticeText, publishedFiles: files.slice(0, 20), countedAsPass: true };
+          return { outcome: "published", publishOutcome: published.kind, notice: noticeText, publishedFiles: files.slice(0, 20), countedAsPass: true };
         }
-        if (GATE_BLOCK_PATTERN.test(noticeText)) {
+        if (published.kind === "published_forced" || published.kind === "published_forced_not_loadable") {
+          // 产品上这是「已发布」，但对这条验收链不算通过：要证明的是**干净**发布。
+          // 与既有的门禁阻止口径一致（verdict=blocked、退出码 4），不写成 passed。
           return {
             outcome: "blocked_by_quality_gate",
+            publishOutcome: published.kind,
             notice: noticeText,
             countedAsPass: false,
-            note: "产品质量门阻止了发布；发布链未被端到端验证，因此本脚本不判定为 passed。"
+            note: "发布被用户放行（或学生端暂时打不开这道题）：发布链未被端到端干净验证，因此本脚本不判定为 passed。"
           };
         }
-        // 既没成功、也不是门禁阻止——按真实失败处理，不掩盖。
-        throw new Error(`发布既未成功也未被门禁阻止：${noticeText.slice(0, 300)}`);
+        // `failed`：既没成功、也不是放行——按真实失败处理，不掩盖。
+        throw new Error(`发布失败：${noticeText.slice(0, 300)}`);
       });
     }
 

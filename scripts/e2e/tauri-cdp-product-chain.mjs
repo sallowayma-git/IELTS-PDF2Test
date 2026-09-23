@@ -38,6 +38,7 @@ import {
   createStepRecorder,
   gitHead,
   gitWorktreeClean,
+  isCleanPublishOutcome,
   launchTauriAppCdp,
   repoRoot,
   sha256File,
@@ -265,12 +266,14 @@ async function main() {
           textInputs: root.querySelectorAll('input[type=text]').length,
           hotspotCount: root.querySelectorAll('.v2-canvas-hotspot').length,
           slotCount: root.querySelectorAll('[data-question-id]').length,
-          // 预览必须把「能渲染」和「学生端能提交」分开说：答案键类型不匹配时题面照常画出，
-          // 但学生端提交会被拒。这里记录预览是否如实报出了这些答案位。
-          runtimeIssueCount: root.querySelectorAll('[data-testid="workspace-preview-runtime-issues"] li').length,
-          runtimeIssueCodes: [...root.querySelectorAll('[data-testid="workspace-preview-runtime-issues"] li')]
-            .map((li) => li.getAttribute('data-preview-runtime-code'))
-            .filter(Boolean),
+          // 预览必须把「能渲染」和「学生端能提交」分开说。2026-09-21 起这一层不再单独
+          // 列运行时问题（workspace-preview-runtime-issues 已删除）：答案形式不匹配的题
+          // **并进「待补充」清单**（data-task-kind="answer-mismatch"），编译不过则整体
+          // 换成 workspace-preview-error。这里读新钩子，清单计数在 edit 模式下另取
+          // （清单只在编辑模式渲染，见 readTaskList）。
+          previewSummary: (() => { const el = document.querySelector('[data-testid="workspace-preview-summary"]'); return el ? el.innerText.replace(/\\s+/g,' ').trim() : null; })(),
+          previewIssueCode: (() => { const el = document.querySelector('[data-testid="workspace-preview-error"] li[data-preview-issue-code]'); return el ? el.getAttribute('data-preview-issue-code') : null; })(),
+          previewIssueTarget: (() => { const el = document.querySelector('[data-testid="workspace-preview-error"] li[data-preview-issue-target]'); return el ? el.getAttribute('data-preview-issue-target') : null; })(),
           // 学生答案必须从空开始：预览里不得预填任何作者答案。
           checkedAtStart: [...root.querySelectorAll('input[type=radio], input[type=checkbox]')].filter(i => i.checked).length,
           prefilledTextAtStart: [...root.querySelectorAll('input[type=text]')].map(i => i.value).filter(Boolean).length
@@ -478,19 +481,12 @@ async function main() {
         return true;
       })()`
     );
-    await session.clickSelector('[data-testid="workspace-publish"]');
-    const outcome = await session.waitFor(
-      `(() => {
-        const notices = [...document.querySelectorAll('.workspace-notice')].map(n => n.innerText.replace(/\\s+/g,' ').trim());
-        const joined = notices.join(' || ');
-        if (/发布完成|发布失败|问题|不能发布|拦/.test(joined)) return { notices };
-        return null;
-      })()`,
-      { timeoutMs: 120000, label: "publish-outcome" }
-    );
+    // 判据是**机器可读**的发布结论（`.workspace-notice[data-publish-outcome]`），
+    // 不是提示文案：放行发布与干净发布显示的是同一句「已发布」，匹配「发布完成」既
+    // 认不出干净发布、也认不出学生端打不开的那一条。只有 `published` 算干净通过。
+    const published = await session.publishAndReadOutcome({ timeoutMs: 120000 });
     await session.screenshot("09-publish-outcome");
-    const joined = (outcome.notices ?? []).join(" || ");
-    const blocked = /问题|不能发布|拦|阻断/.test(joined) && !/发布完成/.test(joined);
+    const blocked = !isCleanPublishOutcome(published.kind);
     // 结构化门禁详情：走真实 IPC 读 get_publish_preflight。
     // 报告里要留下具体 blocker（code / targetId / internal），而不是一句提示语 ——
     // 否则「为什么发不出去」无法交接，也无法判断是题稿问题还是门禁问题。
@@ -530,8 +526,10 @@ async function main() {
       runtimeProbeDetails = { error: String(error) };
     }
     return {
-      outcome: blocked ? "blocked_by_quality_gate" : (outcome.notices ?? []),
-      notices: outcome.notices ?? [],
+      outcome: blocked ? "blocked_by_quality_gate" : "published",
+      publishOutcome: published.kind,
+      publishTimedOut: published.timedOut,
+      notices: [published.noticeBefore, published.text].filter(Boolean),
       nasDestination,
       manifestExists: fs.existsSync(path.join(nasDestination, "manifest.js")),
       preflight,
@@ -566,14 +564,13 @@ async function main() {
     return state;
   });
 
-  // ---- 12. 一致性：预览不得对「学生端会拒绝的题稿」显示假完成 ----
+  // ---- 12. 一致性：界面不得对「学生端会拒绝的题稿」显示假完成 ----
   // 断言必须精确到「门禁给出的具体原因码」，而不是笼统的 RUNTIME_COMPILER_FAILED：
-  // 该码有多个来源（答案键类型不匹配、答案键缺槽位……），只有前者是预览侧已经能独立判定的。
-  // 否则会把「预览没覆盖的原因」误判成「预览在骗人」。
+  // 该码有多个来源（答案键类型不匹配、答案键缺槽位……），只有前者是前端侧已经能独立判定的。
+  // 否则会把「前端没覆盖的原因」误判成「前端在骗人」。
   await recorder.run("preview-and-gate-agree", async () => {
     const previewStep = recorder.steps.find((s) => s.name === "student-preview-renders");
     const publishStep = recorder.steps.find((s) => s.name === "publish-via-workspace-button");
-    const previewRuntimeIssueCount = previewStep?.detail?.runtimeIssueCount ?? null;
     const probe = publishStep?.detail?.runtimeProbeDetails ?? null;
     const probeCodes = probe?.issueCodes ?? [];
     const gateRuntimeFailure = Boolean(
@@ -581,12 +578,30 @@ async function main() {
         (b) => b.code === "QUALITY_HARD_FAILURE" && b.internal === "RUNTIME_COMPILER_FAILED"
       )
     );
-    // 预览侧目前能独立判定的运行时原因码（见 src/services/readingRuntimeV2.ts）。
+    // 前端目前能独立判定的运行时原因码（见 src/services/readingRuntimeV2.ts）。
     const PREVIEW_COVERED = ["RUNTIME_CHOICE_SLOT_ANSWER_NOT_OPTION", "RUNTIME_TEXT_SLOT_ANSWER_NOT_TEXT"];
     const covered = probeCodes.filter((code) => PREVIEW_COVERED.includes(code));
     const unmapped = probeCodes.filter((code) => !PREVIEW_COVERED.includes(code));
+    // 答案形式不匹配的题**并进「待补充」清单**（`data-task-kind="answer-mismatch"`），
+    // 预览里不再单列一份运行时问题区。所以要回编辑模式读清单才算数——
+    // 清单只在编辑模式渲染，而且要先展开、等处理结束（见 `readTaskList`）。
+    let taskList = null;
+    if (covered.length > 0) {
+      await session.clickSelector('[data-testid="workspace-mode-edit"]');
+      await session.waitFor(`!!document.querySelector('[data-testid="exam-canvas-v2-author"]')`, {
+        timeoutMs: 20000,
+        label: "back-to-author-for-task-list",
+      });
+      taskList = await session.readTaskList();
+    }
+    const answerMismatchTaskCount = taskList
+      ? (taskList.entries ?? []).filter((entry) => entry.kind === "answer-mismatch").length
+      : null;
     const detail = {
-      previewRuntimeIssueCount,
+      previewSummary: previewStep?.detail?.previewSummary ?? null,
+      previewCompileError: previewStep?.detail?.compileError ?? null,
+      answerMismatchTaskCount,
+      taskListSettled: taskList?.settled ?? null,
       gateRuntimeFailure,
       // 专项范围没有发布步骤 ⇒ 没有门禁结论可比。如实记下来，
       // 免得把「没得比」当成「比过且一致」。
@@ -594,18 +609,18 @@ async function main() {
       runtimeProbeStatus: probe?.status ?? null,
       runtimeProbeCodes: probeCodes,
       previewCoveredCodes: covered,
-      // 门禁拦下、但预览侧没有**专门的**运行时呈现区的原因码。这是交接用的覆盖映射记录，
-      // 不等于「预览在骗人」：这些原因仍通过别的前端呈现面暴露（问题列表的 ANSWER_MISSING、
-      // 预览的 answeredSlots 计数、以及预览里的门禁阻断数）。真正算缺陷的是下面的
+      // 门禁拦下、但前端没有**专门的**答案形式呈现的原因码。这是交接用的覆盖映射记录，
+      // 不等于「界面在骗人」：这些原因仍通过别的前端呈现面暴露（问题列表的 ANSWER_MISSING、
+      // 预览的作答位计数、以及清单里的门禁阻断数）。真正算缺陷的是下面的
       // previewFalseCompletion。
       previewUnmappedProbeCodes: unmapped,
       hasUnmappedProbeCodes: unmapped.length > 0,
-      // 只有当「门禁原因确实属于预览已覆盖的那类」而预览却没报出来时，才算假完成。
-      previewFalseCompletion: covered.length > 0 && !(previewRuntimeIssueCount > 0)
+      // 只有当「门禁原因确实属于前端已覆盖的那类」而清单里一条都没接住时，才算假完成。
+      previewFalseCompletion: covered.length > 0 && !(answerMismatchTaskCount > 0)
     };
     if (detail.previewFalseCompletion) {
       throw new Error(
-        `预览与门禁不一致：门禁的编译器探针报出 ${covered.join(",")}，但预览没有报出任何答案键类型问题（预览显示假完成）`
+        `界面与门禁不一致：门禁的编译器探针报出 ${covered.join(",")}，但「待补充」清单里没有任何答案形式不匹配的任务（界面显示假完成）`
       );
     }
     return detail;

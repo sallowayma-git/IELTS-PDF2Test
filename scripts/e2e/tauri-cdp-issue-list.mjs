@@ -206,7 +206,9 @@ const READ_TASKS = `(() => {
   return {
     taskCount: Number(root.getAttribute('data-task-count') || 0),
     mergedRows: Number(root.getAttribute('data-merged-rows') || 0),
-    canExport: root.getAttribute('data-can-export'),
+    // 2026-09-21 起界面不再下「可以导出」这种结论（data-can-export 已删除），
+    // 空清单只留一句安静的「没有需要补充的内容」。要钉住的假完成改由 clearText 判。
+    tasksReady: root.getAttribute('data-tasks-ready'),
     preflightState: root.getAttribute('data-preflight-state'),
     cards,
     hasMore: Boolean(more),
@@ -344,7 +346,7 @@ async function main() {
     snapshot = expanded;
   }
   report.rendered = snapshot;
-  console.log(`[issue-list] rendered cards=${(snapshot?.cards ?? []).length} mergedRows=${snapshot?.mergedRows} canExport=${snapshot?.canExport}`);
+  console.log(`[issue-list] rendered cards=${(snapshot?.cards ?? []).length} mergedRows=${snapshot?.mergedRows} tasksReady=${snapshot?.tasksReady}`);
 
   const cards = snapshot?.cards ?? [];
   const coveredCauses = new Set(cards.flatMap((card) => card.covers));
@@ -352,14 +354,22 @@ async function main() {
   // ---- 断言 0：列表非空（否则下面几条断言会退化成空断言）----
   assert("任务列表确实渲染出了任务卡（非空断言前置）", cards.length > 0, { rendered: cards.length, clearText: snapshot?.clearText ?? null });
 
-  // ---- 断言 0b：门禁还有阻断时，界面绝不说「可以导出」----
-  // 「可以导出」以**当前题稿的后端发布检查**为准（本轮任务书第 5 条）。
-  // 实测撞到过一个假完成：面板挂载即显示「可以导出」，而同一时刻后端门禁报 34 条阻断——
-  // 因为门禁结论还没回来时列表是空的。这条把它钉住。
+  // ---- 断言 0b：门禁还有阻断时，界面绝不说「没有需要补充的内容」----
+  // 旧界面在清单为空时直接写「可以导出」，而门禁结论还没回来时清单也是空的 —— 实测撞到过
+  // 这个假完成：面板挂载即显示「可以导出」，同一时刻后端门禁报 34 条阻断。
+  // 2026-09-21 起界面不再下「可以导出」这种结论（`data-can-export` 已删除，空清单只留一句
+  // 安静的「没有需要补充的内容」），要钉住的是**同一个假完成**：门禁有阻断时这句话绝不能出现。
+  const claimsNothingToAdd = snapshot?.clearText === "没有需要补充的内容";
   assert(
-    "门禁还有阻断时界面不说「可以导出」",
-    !(blockers.length > 0 && snapshot?.canExport === "true"),
-    { canExport: snapshot?.canExport, rawBlockers: blockers.length, clearText: snapshot?.clearText ?? null, preflightState: snapshot?.preflightState ?? null }
+    "门禁还有阻断时界面不说「没有需要补充的内容」",
+    !(blockers.length > 0 && claimsNothingToAdd),
+    {
+      clearText: snapshot?.clearText ?? null,
+      rawBlockers: blockers.length,
+      expectedGateCauses: [...expectedGateCauses].length,
+      tasksReady: snapshot?.tasksReady ?? null,
+      preflightState: snapshot?.preflightState ?? null,
+    }
   );
 
   // ---- 断言 1：合并真的发生了 ----
