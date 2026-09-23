@@ -2304,3 +2304,146 @@ T5-4 是脚本改动，没有 Rust/Vitest 先红；红/绿只能靠 CDP 实跑�
   `delete_exam_by_id` 只删旧 `exams` 表，不动 `library_items_v2`，而后者有 9 张子表外键
   引用它 → **题库行会留孤儿**。任务书 T5-2 只要求「永久删除时清理受管音频」，
   未要求修这条删除路径，故当时只记录、未擅自扩大改动面。**复核后维持「不修」，作为已知缺陷登记。**
+
+---
+
+## 2026-09-23 第三波复核返工（R1–R6）
+
+质量方复核 `wave3-listening`（T1–T5）后的返工轮。原任务书
+`docs/handoff/2026-09-23-wave3-review-and-fixes.md`；工作约定与回报格式沿用
+`docs/handoff/2026-09-22-execution-prompt.md`。**全程未 push。**
+
+### 逐条结论
+
+| 项 | 要求 | 结果 |
+| --- | --- | --- |
+| R1 | 学生打不开的卷子不得记为干净发布 | **分支上已落地**（`8dd3f7a`）；本轮复核 + 真实 App 端到端复证 |
+| R2 | 听力卷不得进学生端「阅读」目录 | **已修**（学生端另一仓库 `6d9519a`），先红后绿 |
+| R3 | 发布后不得残留解析缓存 | **分支上已落地**（`816bdd3`）；本轮复核 |
+| R4 | `tauri-cdp-single-file-import.mjs` 真实 App 跑到过 | **6/6 通过**（诊断档） |
+| R5 | 更正失实报告 | `findings.md` 与 `progress.md` 均已更正 |
+| R6 | 听力真实 App 验收链 | **7/7 通过**（诊断档）；末端一环由夹具数据决定，见下 |
+
+### 本轮提交
+
+作者端（分支 `wave3-listening`，未 push）：
+
+| hash | message |
+| --- | --- |
+| `75a3d9b` | `fix(e2e): run the CDP acceptance in a clean env and survive a target rebuild` |
+| `879fe6e` | `docs(progress): correct the T5 claims and record the R2 reading-directory fix` |
+| `d69e0e3` | `docs(memory): compress the project MEMORY.md back under the injection limit` |
+| `be1147f` | `feat(listening): let end-to-end runs pick Part audio without a native dialog` |
+| `6b7f862` | `test(e2e): drive the listening paper through the real App audio dialog` |
+
+学生端工作区 `F:\workspace\IELTS-NASfor-WenDao-listening`（分支 `feat-listening-per-part-media`，未 push）：
+
+| hash | message |
+| --- | --- |
+| `6d9519a` | `fix(reading-library): keep listening papers out of the student reading list` |
+
+### R1 / R3：缺陷在分支上已经修好，本轮工作是复核而非返工
+
+- `8dd3f7a`：`ItemPublication::item_status` 现在按 `forced` × `student_loadable` 给出**四态**
+  （`published` / `published_forced` / `published_not_loadable` / `published_forced_not_loadable`），
+  `write_publish_records` / `commit_published_status` 都走它；
+  原先那条 `bad_status == "published" || bad_status == "published_forced"` 的「恒真」断言
+  已改为断言 `published_not_loadable` 且 `assert_ne!(bad_status, "published")`。
+- `816bdd3`：`purge_source_artifacts` 现在确实调用 `cleanup_parser_cache_for_job`。
+- 基线佐证：`cargo test --lib` 由 T5 报告的 1023 升到 **1025**，+2 正是这两条各自的护栏测试。
+
+### R2：学生端「阅读」目录泄漏听力卷
+
+详见上文 T3 段内的「2026-09-23 复核返工（R2 / F2）」小节。要点：
+`listAssets()` 原来只比 `schemaVersion`、**不看 `modality`**，而 `ListeningExamSourceV1`
+恰好「不等于阅读 V2 版本」被放行。改为显式 `isReadingEntry()`（modality 优先否 → 无
+`schemaVersion` 视为阅读 → 否则阅读 schema 白名单），并让 `listAssets()` 与
+`getStatus().assetCount` 共用 `readingEntries(index)`。
+
+数字：run-all 15 files/15 passed（前后同）；`reading-library.test.cjs` 1 → **3** 条用例；
+exam 套件断言 49 → **51**；静态套件 19 项（18 pass + 1 skip）前后同；`npx tsc --noEmit` 干净。
+`server/dist` 被 gitignore，不参与提交；**主检出**那份 mtime 仍是 `2026-09-17T16:49`（未动）。
+
+### R4：单文件导入端到端 6/6（真实 App）
+
+run dir `artifacts/e2e-cdp/run-single-file-import-2026-09-23T18-19-48-637Z`，
+exe `5603565241050210…`，commit `816bdd3`，6 步全过。
+
+**口径必须写清**：该次运行带 `--no-sandbox --disable-gpu`，即 `runProfile=cdp-diagnostic`。
+原因是本仓库脚本自己早就写明的环境约束（`tauri-cdp-smoke.mjs:33-40`：
+「本沙箱环境下 WebView2 的 renderer 在不加这两个开关时会中途崩溃」）。
+受控探测（`tmp/probe-app-exit.mjs`，只 spawn exe + HTTP `/json/list`，**不建 WebSocket**）复现了这一点：
+不加这两个开关时 App 进程**一直活着**、页面也已到 `#/library`，但 DevTools HTTP 端点
+在启动约 **7.4s** 后彻底消失且永不回来；带/不带 `PDF2TEST_AUTOMATION_SOURCE_FILES` 两次对照**逐行同形**。
+⇒ `cdp-default`（默认档）在本机**跑不通**，这是环境约束、不是产品缺陷；
+6/6 是**真实产品链**证据，但**只能记作「诊断参数运行」**。
+
+### R5：报告更正
+
+- `findings.md`：`F-WEBVIEW2-CDP-UNAVAILABLE-2026-09-22` 标题改为
+  「**已更正：执行环境问题，非机器**」，原取证保留为「环境踩坑记录」，
+  并补记 R4 的实测与上面那条诊断档口径。
+- `progress.md`：T5-2 的收益表述按 F6 更正——`deleteJob` **没有任何前端调用方**，
+  界面上只有回收站，所以用户**无法从 UI 触发**永久删除；改为
+  「后端永久删除命令已覆盖音频清理，**当前无 UI 入口**」。
+  `delete_exam_by_id` 的孤儿行问题**登记为已知缺陷**（维持不修）。
+  T5-5 / T6 的「被 CDP 环境阻塞」定性一并更正。
+
+### R6：听力真实 App 链 7/7（真实 App）
+
+新增 `scripts/e2e/tauri-cdp-listening-chain.mjs`。先补上缺失的那段基础设施：
+音频选择原本是**前端直接调 dialog 插件**，没有钩子（PDF 选择那条有
+`PDF2TEST_AUTOMATION_SOURCE_FILES`，音频这条没有）——新增
+`automation_audio_selection_from_env`（`listening_audio/commands.rs`）+ lib.rs 注册，
+`desktopDialogs.ts` 的两个选择器改为「先问钩子、没装就弹真对话框」。
+语义要点：**空串 = 没装钩子**（不是「空清单」，否则会静默跳过对话框）；钩子指向不存在的路径
+**直接报错**，不伪装成下游的「音频解码失败 / 文件夹里没有 MP3」。
+
+run dir `artifacts/e2e-cdp/run-listening-chain-2026-09-23T18-29-11-327Z`，
+exe `f4032d9399739d0a…`，commit `be1147f`，`runProfile=cdp-diagnostic`，7 步全过：
+
+| 步骤 | 实测 |
+| --- | --- |
+| `library-page-loads` | 起始 0 行 |
+| `import-drawer-takes-the-listening-paper` | 已选 `["listening-vol7-t9.pdf"]` |
+| `listening-dialog-asks-for-part-audio` | 弹出 `listening-audio-dialog` |
+| `real-picker-binds-four-parts-in-order` | Part 1–4 = `part-1..4.wav`（顺序 = Part 顺序） |
+| `every-part-probe-passes` | 4 段全部通过，时长 0:06 / 0:07 / 0:08 / 0:09 |
+| `confirm-imports-the-listening-item` | 建立 1 个条目 `import-20260923182921-6ff62c41` |
+| `publish-reports-a-machine-readable-outcome` | `kind=published_forced_not_loadable` |
+
+**这一跑同时把 R1（F1）在真实 App 里证到了**：发布结论是
+`published_forced_not_loadable`，界面提示「**已发布，但学生端暂时无法打开这道题**」——
+即「学生打不开的卷子不再被记成干净发布」。它也顺带解释了 R6 末端那一环
+（学生端 provider 逐 Part 加载音频）**为什么在这份夹具上不可达**：
+`listening-vol7-t9.pdf` 没有答案 key，教材不完整 ⇒ 永远不是学生可加载的卷子，
+**App 自己如实说了**。用断言强行要求「必须干净发布」，只会把「数据不全」伪装成「App 链路失败」，
+所以该步骤只断言「必须给出机器可读结论」，不断言结论是哪一个。
+
+另记两个真实竞态，已修但如实留痕：点开条目在工作区就绪前有竞态，该步允许**重试一次点开**并把
+`workspaceOpenRetried` 写进证据；判定改为**由 steps 派生**（`recorder.run` 会吞掉异常并记 failed，
+若按「main() 有没有抛」来判定，会写出 `verdict=passed` 却带一条 failed 的自相矛盾报告）。
+
+### 最终验证（本轮实测，作者端 HEAD）
+
+| 项目 | T5 报告基线 | 本轮 |
+| --- | --- | --- |
+| `cargo test --lib` | 1023 / 0 / 11 | **1027 / 0 / 11** |
+| `npx vitest run` | 397 | **400 passed / 27 files** |
+| `npx tsc --noEmit` | 干净 | **干净** |
+| 阅读链 `tauri-cdp-cloud-repair-chain.mjs` | 13/13 | 13/13（质量方环境） |
+| 学生端 `run-all` / 静态套件 | 15/15、18 pass + 1 skip | **同值** |
+
+（1023 → 1025 是 R1/R3 的护栏；1025 → 1027 是 R6 音频钩子的 2 条。
+397 → 400 全部来自 R1 的 `publishClient.test.ts` / `libraryTypes.test.ts`；R6 未加前端用例。）
+
+### 仍未完成 / 需要质量方或后续轮次
+
+- **R6 末端**：学生端逐 Part 音频的 provider 加载，**不能**用 `listening-vol7-t9.pdf` 验收
+  （无答案 key ⇒ App 判定 `published_forced_not_loadable`）。需要一份**教材完整、能干净发布**
+  的听力稿（或合成稿）才能把这一环跑通。
+- **拖动（drag & drop）音频**仍未在真实 App 里跑过：CDP 无法合成操作系统级文件拖放事件，
+  本轮走的是「选择音频文件」这条真实 button → 真实 picker 路径。**如实记录，不冒充已覆盖。**
+- **`cdp-default`（不带诊断参数）档在本沙箱仍跑不通**，原因已定位到 WebView2 renderer 需要
+  `--no-sandbox --disable-gpu`（环境约束，非产品）。质量方若在干净环境跑默认档，可据此对照。
+- **`delete_exam_by_id` 孤儿行**（`library_items_v2` 及其 9 张子表外键）仍未修，维持登记。
