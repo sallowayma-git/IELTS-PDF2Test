@@ -2672,7 +2672,14 @@ fn indirect_object_offsets(bytes: &[u8]) -> BTreeMap<usize, usize> {
                 .map(|byte| byte.is_ascii_whitespace())
                 .unwrap_or(true)
         {
-            offsets.entry(object_id).or_insert(index);
+            // Incremental updates append a *new* body for an object id that
+            // already exists, and the later definition is the live one. The
+            // canonical xref this repair builds is the only xref the reader
+            // will see, so keeping the first definition silently rolls the
+            // document back to its oldest revision: on the private listening
+            // paper that resurrected the pre-update `/Pages` object, which
+            // listed 7 pages, and dropped the cover page the update had added.
+            offsets.insert(object_id, index);
         }
         index = after_id;
     }
@@ -4094,6 +4101,169 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A classic PDF whose page tree is widened by an incremental update, with a
+    /// deliberately wrong `/Length` so the shadow takes the classic-repair path.
+    ///
+    /// The shape mirrors the private listening paper: the same `/Pages` object id
+    /// is defined twice — first with `/Count 1`, then, in the update, with
+    /// `/Count 2` plus the extra page — so the repair has to decide which
+    /// definition wins. Incremental-update semantics say the later one does.
+    fn incremental_update_pdf_bytes() -> Vec<u8> {
+        let page_one_text = "BT /F1 12 Tf 72 700 Td (Cover question 1) Tj ET\n";
+        let page_two_text = "BT /F1 12 Tf 72 700 Td (Second question 2) Tj ET\n";
+
+        let mut bytes = b"%PDF-1.4\n".to_vec();
+        let mut first = vec![0usize];
+        first.push(bytes.len());
+        bytes.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+        first.push(bytes.len());
+        bytes.extend_from_slice(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+        first.push(bytes.len());
+        bytes.extend_from_slice(
+            b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n",
+        );
+        first.push(bytes.len());
+        // The declared length is wrong on purpose: it is what routes this file
+        // through `repair_classic_pdf_structure`.
+        bytes.extend_from_slice(
+            format!("4 0 obj\n<< /Length {} >>\nstream\n", page_one_text.len() + 17).as_bytes(),
+        );
+        bytes.extend_from_slice(page_one_text.as_bytes());
+        bytes.extend_from_slice(b"endstream\nendobj\n");
+        first.push(bytes.len());
+        bytes.extend_from_slice(
+            b"5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+        );
+        let first_xref = bytes.len();
+        bytes.extend_from_slice(format!("xref\n0 {}\n", first.len()).as_bytes());
+        bytes.extend_from_slice(b"0000000000 65535 f \n");
+        for offset in first.iter().skip(1) {
+            bytes.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        bytes.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{first_xref}\n%%EOF\n",
+                first.len()
+            )
+            .as_bytes(),
+        );
+
+        // ---- incremental update: widen the page tree and add the second page ----
+        let mut updated = Vec::<usize>::new();
+        updated.push(bytes.len());
+        bytes.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+        updated.push(bytes.len());
+        bytes.extend_from_slice(
+            b"2 0 obj\n<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>\nendobj\n",
+        );
+        updated.push(bytes.len());
+        bytes.extend_from_slice(
+            b"6 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n",
+        );
+        updated.push(bytes.len());
+        bytes.extend_from_slice(
+            format!("7 0 obj\n<< /Length {} >>\nstream\n", page_two_text.len()).as_bytes(),
+        );
+        bytes.extend_from_slice(page_two_text.as_bytes());
+        bytes.extend_from_slice(b"endstream\nendobj\n");
+        let second_xref = bytes.len();
+        bytes.extend_from_slice(b"xref\n");
+        bytes.extend_from_slice(
+            format!(
+                "1 2\n{:010} 00000 n \n{:010} 00000 n \n",
+                updated[0], updated[1]
+            )
+            .as_bytes(),
+        );
+        bytes.extend_from_slice(
+            format!(
+                "6 2\n{:010} 00000 n \n{:010} 00000 n \n",
+                updated[2], updated[3]
+            )
+            .as_bytes(),
+        );
+        bytes.extend_from_slice(
+            format!(
+                "trailer\n<< /Size 8 /Root 1 0 R /Prev {first_xref} >>\nstartxref\n{second_xref}\n%%EOF\n"
+            )
+            .as_bytes(),
+        );
+        bytes
+    }
+
+    #[test]
+    fn an_incremental_update_wins_over_the_page_tree_it_replaced() {
+        let bytes = incremental_update_pdf_bytes();
+        assert!(
+            classic_stream_lengths_need_repair(&bytes),
+            "the fixture must take the classic-repair path"
+        );
+        let repaired = repair_classic_pdf_structure(&bytes).expect("repair produces a document");
+        let document = Document::load_mem(&repaired).expect("the repaired document loads");
+        assert_eq!(
+            document.get_pages().len(),
+            2,
+            "the updated /Pages object (Count 2) must win over the one it replaced (Count 1)"
+        );
+    }
+
+    #[test]
+    fn the_shadow_keeps_a_page_that_an_incremental_update_added() {
+        let bytes = incremental_update_pdf_bytes();
+        let (job, source, path) = temporary_pdf_source(
+            &bytes,
+            "incremental-update-page",
+            "incremental-update-page.pdf",
+        );
+        let value = extract_pdf_facts_shadow(&job, &source, &path).expect("shadow extraction");
+        let pages = value["pages"].as_array().expect("shadow pages");
+        assert_eq!(
+            pages.len(),
+            2,
+            "the page the update added must survive into the physical shadow"
+        );
+        let text = pages
+            .iter()
+            .flat_map(|page| page["lines"].as_array().cloned().unwrap_or_default())
+            .filter_map(|line| line["text"].as_str().map(ToString::to_string))
+            .collect::<Vec<_>>()
+            .join(" ");
+        // The extractor emits one span per glyph, so compare without whitespace.
+        let compact = text
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
+        assert!(
+            compact.contains("Secondquestion2"),
+            "the added page's question must be in the shadow: {text:?}"
+        );
+    }
+
+    /// The private listening paper is exactly this shape: an incremental update
+    /// that adds the cover page to the page tree, plus a classic stream-length
+    /// mismatch that routes it through `repair_classic_pdf_structure`. The shadow
+    /// must see all eight pages, not the seven of the revision the update
+    /// replaced.
+    ///
+    /// Skips when the private fixture is absent, like the other private-paper
+    /// probes in this crate.
+    #[test]
+    fn the_private_listening_paper_keeps_the_page_its_last_revision_added() {
+        let relative = "fixtures/golden/private-real/listening-vol7-t9.pdf";
+        if !fixture_path(relative).exists() {
+            return;
+        }
+        let (job, source, input) =
+            fixture_source_named(relative, "listening-vol7-t9-shadow-pages");
+        let value = extract_pdf_facts_shadow(&job, &source, &input).expect("shadow extraction");
+        let pages = value["pages"].as_array().expect("shadow pages");
+        assert_eq!(
+            pages.len(),
+            8,
+            "the last revision of the page tree lists eight pages"
+        );
     }
 
     #[test]

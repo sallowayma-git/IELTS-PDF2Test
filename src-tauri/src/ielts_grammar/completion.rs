@@ -2429,8 +2429,6 @@ mod tests {
             serde_json::to_string_pretty(&violations).unwrap_or_default()
         );
     }
-
-
     /// Runs the real listening paper through the product chain and returns the
     /// built authoring document, or `None` when the private fixture or pdfium is
     /// unavailable (the other real-paper probes in this crate skip the same way).
