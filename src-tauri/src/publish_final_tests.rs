@@ -558,6 +558,55 @@ fn publish_freezes_evidence_and_purges_only_this_items_sources() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// F3：发布后**解析缓存**（`<appData>/cache/parser/`）也要随源产物一起清掉。
+///
+/// 修前 `purge_source_artifacts` 只扫 job 目录，从不碰 `cache/parser/`：发布后
+/// 这道题的原文抽取结果仍留在磁盘上，与「发布后只保留可编辑最终版」相违。
+/// 归属按**精确身份**匹配（T5-b 改好的那条规则），所以 id 相近的另一条不受牵连。
+#[test]
+fn publishing_purges_this_items_parser_cache_and_leaves_a_similar_id_alone() {
+    let root = temp_root("final-parser-cache");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_item(&root, "final-cache", false, |_| {});
+
+    let cache = root.join("cache").join("parser");
+    fs::create_dir_all(&cache).unwrap();
+    // 本条目：按 job id 命名，以及按 `<jobId>-` 前缀命名的答案页产物。
+    let mine = [
+        cache.join(format!("{item}-document-ir.json")),
+        cache.join(format!("{item}-answer-src-2-document-ir.json")),
+    ];
+    for path in &mine {
+        fs::write(path, b"{}").unwrap();
+    }
+    // 另一道题的 id 只比本条目多一个字符——正是 T5-b 那个 `job-1` / `job-10` 陷阱：
+    // 按前缀匹配会把它的缓存一起删掉，按精确身份匹配则不会。
+    let similar = cache.join(format!("{item}0-document-ir.json"));
+    fs::write(&similar, b"{}").unwrap();
+    // 共享资产目录不属于任何单个条目，必须留下。
+    let shared = cache.join("image-assets");
+    fs::create_dir_all(&shared).unwrap();
+
+    let result = publish(&root, &[&item], force_now()).expect("publish must succeed");
+    let outcome = outcome_for(&result, &item);
+    assert_eq!(
+        outcome["finalVersion"]["purge"]["parserCache"]["cleaned"],
+        json!(true),
+        "发布报告要如实说解析缓存被清了：{outcome}"
+    );
+
+    for path in &mine {
+        assert!(
+            !path.exists(),
+            "发布后本条目的解析缓存必须消失：{}",
+            path.display()
+        );
+    }
+    assert!(similar.exists(), "id 相近的另一道题的缓存不得被牵连");
+    assert!(shared.is_dir(), "共享资产目录不属于任何单个条目，不得删除");
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn purged_item_reopens_edits_saves_and_republishes_as_a_normal_publish() {
     let root = temp_root("final-republish");

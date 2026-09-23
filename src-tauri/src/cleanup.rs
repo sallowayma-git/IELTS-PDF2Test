@@ -89,7 +89,12 @@ fn cache_entry_belongs_to(name: &str, identities: &[String]) -> bool {
     })
 }
 
-fn cleanup_parser_cache_for_job(root: &Path, job_id: &str) -> CommandResult<()> {
+/// 删掉 `<appData>/cache/parser/` 里属于这个条目的解析产物（原文抽取结果）。
+///
+/// 调用方有两处：过程产物清理（`cleanup_transient_job_artifacts`）与**发布后**的
+/// 源产物清理（`library::final_version::purge_source_artifacts`）。后者此前漏了，
+/// 于是发布后这道题的解析缓存仍留在磁盘上，与「发布后只保留可编辑最终版」相违。
+pub(crate) fn cleanup_parser_cache_for_job(root: &Path, job_id: &str) -> CommandResult<()> {
     let parser_cache = root.join("cache").join("parser");
     if !parser_cache.exists() {
         return Ok(());

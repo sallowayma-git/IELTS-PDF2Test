@@ -135,9 +135,22 @@ pub(crate) fn purge_source_artifacts(root: &Path, item_id: &str, ds: &Value) -> 
     let mut removed_dirs = 0usize;
     let mut failed = Vec::new();
     purge_dir(&dir, Path::new(""), &kept, &mut removed_files, &mut removed_dirs, &mut failed);
+    // 解析缓存（`<appData>/cache/parser/`）在 job 目录之外，但同样是**本条目**的源产物：
+    // 它是原文抽取的结果，发布后不该留在磁盘上。修前这一步漏了，于是发布后这道题的
+    // 解析产物仍躺在缓存里，与「发布后只保留可编辑最终版」相违。
+    // 归属按精确身份匹配（见 `cleanup::cleanup_parser_cache_for_job`），id 相近的
+    // 另一条不受牵连。失败只记进报告，绝不让发布失败或回滚——包已经对学生可见了。
+    let parser_cache = match crate::cleanup::cleanup_parser_cache_for_job(root, item_id) {
+        Ok(()) => json!({"cleaned": true}),
+        Err(error) => {
+            failed.push(json!({"path": "cache/parser", "error": error}));
+            json!({"cleaned": false})
+        }
+    };
     report["removedFiles"] = json!(removed_files);
     report["removedDirs"] = json!(removed_dirs);
     report["failed"] = json!(failed);
+    report["parserCache"] = parser_cache;
     report["purgedAt"] = json!(Utc::now().to_rfc3339());
     report
 }
