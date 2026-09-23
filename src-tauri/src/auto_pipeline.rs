@@ -2595,16 +2595,18 @@ pub(crate) fn generate_cloud_reading_outline(
 
 /// 云端识别 / 修复的**模态钩子**：决定 prompt 与输出契约按 Reading 还是 Listening 措辞。
 ///
-/// 现在的依据是权威稿已登记的 `modality`（没有权威稿时缺省 `reading`）。听力导入链
-/// 若能在更早的时刻知道模态（例如导入时声明），改这里一处即可，候选与修复同时生效。
+/// 依据是**题库行**的 `modality`（`queue_import` 在导入时就写下了用户确认的模态），
+/// 而不是权威稿里的 `modality` 字段。差别在真实场景里很要紧：听力卷导入后、本地识别
+/// 还没产出权威稿之前，行已经是 `listening` 而稿还不存在 —— 去稿里找只会「找不到」，
+/// 于是退化成 `reading`，云端就会拿阅读的 prompt 与输出契约去识别一份听力卷。
+/// 行的模态也正是 `align_draft_modality` 对齐稿件时的方向，这里必须同源。
 pub(crate) fn cloud_recognition_modality(root: &Path, job_id: &str) -> String {
-    use crate::library::repository::{get_canonical_ds, open_library_connection};
-    let modality = open_library_connection(root)
-        .ok()
-        .and_then(|conn| get_canonical_ds(&conn, job_id).ok().flatten())
-        .and_then(|(ds, _)| ds.get("modality").and_then(Value::as_str).map(str::to_string))
-        .unwrap_or_else(|| "reading".to_string());
-    crate::llm_suggestions::candidate_modality(&modality).to_string()
+    use crate::schema::ielts_authoring_v2::ExamModalityV2;
+    let modality = match crate::library::migration::draft_modality(root, job_id) {
+        ExamModalityV2::Listening => "listening",
+        ExamModalityV2::Reading => "reading",
+    };
+    crate::llm_suggestions::candidate_modality(modality).to_string()
 }
 
 /// 云端**完整候选**识别的第一段：原文件证据面 + 真实网关调用。
@@ -6088,5 +6090,79 @@ mod tests {
             &json!({"schemaVersion": "DocumentIRV2", "jobId": "job-1", "sourceFiles": []}),
             &job
         ));
+    }
+
+    /// 云端识别 / 修复的模态钩子必须读**题库行**的 modality，而不是绕道权威稿。
+    ///
+    /// 真实场景：导入时用户已经确认这是听力卷，题库行写的是 `listening`，但本地识别
+    /// 还没产出权威稿（行仍是 `migration_required` 的空壳）。此时若去权威稿里找
+    /// `modality`，答案是「找不到」，于是缺省成 `reading` —— 云端会拿**阅读**的 prompt
+    /// 与输出契约去识别一份听力卷，候选与修复同时错，而且错得看不出来。
+    #[test]
+    fn cloud_recognition_modality_reads_the_library_row_even_before_a_draft_exists() {
+        use crate::library::repository::{
+            open_library_connection, seed_canonical_ds, upsert_item_shell, UpsertItemInput,
+        };
+
+        let root =
+            std::env::temp_dir().join(format!("pdf2test-modality-{}", Uuid::new_v4().simple()));
+        ensure_app_dirs(&root).unwrap();
+        let conn = open_library_connection(&root).unwrap();
+        upsert_item_shell(
+            &conn,
+            &UpsertItemInput {
+                id: "job-listening",
+                modality: "listening",
+                title: "Listening fixture",
+                status: "migration_required",
+                source_asset_id: None,
+            },
+        )
+        .unwrap();
+        drop(conn);
+
+        // 还没有权威稿：题库行是唯一事实。
+        assert_eq!(
+            cloud_recognition_modality(&root, "job-listening"),
+            "listening",
+            "题库行说这是听力卷，模态钩子就不能退化成 reading"
+        );
+
+        // 行与稿件不一致时以**行**为准 —— `align_draft_modality` 就是照这个方向对齐的，
+        // 模态钩子不能反过来信那份还没对齐的稿。
+        let conn = open_library_connection(&root).unwrap();
+        seed_canonical_ds(
+            &conn,
+            "job-listening",
+            &json!({
+                "schemaVersion": "IeltsAuthoringIRV2",
+                "modality": "reading",
+                "taskGroups": []
+            })
+            .to_string(),
+            "action_required",
+        )
+        .unwrap();
+        upsert_item_shell(
+            &conn,
+            &UpsertItemInput {
+                id: "job-reading",
+                modality: "reading",
+                title: "Reading fixture",
+                status: "action_required",
+                source_asset_id: None,
+            },
+        )
+        .unwrap();
+        drop(conn);
+
+        assert_eq!(
+            cloud_recognition_modality(&root, "job-listening"),
+            "listening",
+            "稿件说 reading、行说 listening，以行为准"
+        );
+        assert_eq!(cloud_recognition_modality(&root, "job-reading"), "reading");
+        // 既没有行也没有稿件：如实退回阅读，不 panic。
+        assert_eq!(cloud_recognition_modality(&root, "job-unknown"), "reading");
     }
 }

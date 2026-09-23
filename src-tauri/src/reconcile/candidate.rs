@@ -2314,6 +2314,272 @@ fn sanitize_cloud_authoring_draft(draft: &mut Value, identity: &CloudAuthoringId
     }
 }
 
+/// 模型给出的听力 Part 结构在模型输出里的键（外层，与 `warnings` 同级）。
+const CLOUD_LISTENING_PARTS_KEY: &str = "listeningParts";
+
+/// 模型**无权提供**的音频事实字段。
+///
+/// 音频是内容寻址的资产：`assetId` 就是它的哈希，文件不在模型手上。模型若「顺手」
+/// 编一个 `media`，抄进稿件就会得到一条指向不存在资产的引用——候选看着完整，
+/// 直到打包/发布时才炸。所以这些字段一律丢弃并留痕，绝不采信。
+const CLOUD_LISTENING_FORBIDDEN_FIELDS: [&str; 8] = [
+    "media",
+    "assets",
+    "assetId",
+    "assetIds",
+    "sha256",
+    "mime",
+    "durationMs",
+    "relativePath",
+];
+
+fn question_number_set(value: &Value) -> BTreeSet<u32> {
+    value
+        .get("expectedQuestionNumbers")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_u64)
+                .filter_map(|number| u32::try_from(number).ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 分配一个未被占用的 Part 稳定 ID（`part-1`、`part-2`、…）。
+///
+/// 从最小可用序号开始取，而不是「已有数量 + 1」：后者在删除过 Part 之后会撞上
+/// 仍然存在的 ID。
+fn allocate_part_id(used: &mut BTreeSet<String>) -> String {
+    let mut ordinal = 1u32;
+    loop {
+        let candidate = format!("part-{ordinal}");
+        if !used.contains(&candidate) {
+            used.insert(candidate.clone());
+            return candidate;
+        }
+        ordinal += 1;
+    }
+}
+
+/// 把模型给的 Part 结构套进 `draft.listening`。
+///
+/// 分工是明确的：**模型给结构**（标签、题号、题组归属），**用户与后端给音频**。
+///
+/// - 题号集合与已有 Part 相同 ⇒ 就是同一个 Part：复用它的稳定 `partId`、标签、`cue`
+///   与 `media`。这样一次云端候选不会把用户绑好的 Section 音频抹掉。
+/// - 真正新增的 Part 才由后端分配身份，且**不带**任何音频。
+/// - 模型给的 `media` / 资产字段一律丢弃并逐条留痕。
+/// - 模型没被问过 `scope` / `playbackPolicy`：已有就沿用；确实没有才给缺省值，
+///   并留下「这是派生/缺省」的说明，让人能看见并改。
+fn apply_cloud_listening_parts(
+    draft: &mut Value,
+    canonical: Option<&Value>,
+    raw: &Value,
+    identity: &CloudAuthoringIdentity<'_>,
+    warnings: &mut Vec<String>,
+) {
+    if identity.modality != "listening" {
+        return;
+    }
+    let canonical_listening = canonical
+        .and_then(|value| value.get("listening"))
+        .filter(|value| value.is_object())
+        .cloned();
+    // `listeningParts` 可能落在模型输出外层（`raw`），也可能已经并进稿（分块合并后）。
+    let model_parts = raw
+        .get(CLOUD_LISTENING_PARTS_KEY)
+        .or_else(|| draft.get(CLOUD_LISTENING_PARTS_KEY))
+        .and_then(Value::as_array)
+        .cloned();
+    if let Some(object) = draft.as_object_mut() {
+        object.remove(CLOUD_LISTENING_PARTS_KEY);
+    }
+
+    let carry_over = |draft: &mut Value, reason: &str, warnings: &mut Vec<String>| {
+        if let Some(listening) = canonical_listening.clone() {
+            if let Some(object) = draft.as_object_mut() {
+                object.insert("listening".to_string(), listening);
+            }
+            warnings.push(format!("cloud_listening_parts_missing:{reason}"));
+        }
+    };
+
+    let Some(model_parts) = model_parts else {
+        // 模型没给结构：已有听力结构（连同用户绑的音频）必须原样保留，绝不能丢。
+        carry_over(draft, "模型未返回 Part 结构", warnings);
+        return;
+    };
+    if model_parts.is_empty() {
+        carry_over(draft, "模型返回了空的 Part 列表", warnings);
+        return;
+    }
+
+    let canonical_parts: Vec<&Value> = canonical_listening
+        .as_ref()
+        .and_then(|value| value.get("parts"))
+        .and_then(Value::as_array)
+        .map(|parts| parts.iter().collect())
+        .unwrap_or_default();
+    let mut used_part_ids: BTreeSet<String> = canonical_parts
+        .iter()
+        .filter_map(|part| part.get("partId").and_then(Value::as_str).map(str::to_string))
+        .collect();
+
+    let mut parts: Vec<Value> = Vec::new();
+    // 已经见过的题号集合。分块识别时同一段可能被不止一块汇报（模型常顺手把别段也
+    // 列一遍），而两条覆盖同一批题号的分段会复用同一个稳定 `partId`——于是
+    // `listening.parts` 里出现两个 `part-3`，下游任何按 partId 建索引的地方互相覆盖。
+    let mut seen_numbers: BTreeSet<Vec<u32>> = BTreeSet::new();
+    for (index, model_part) in model_parts.iter().enumerate() {
+        let Some(object) = model_part.as_object() else {
+            warnings.push(format!("cloud_listening_part_not_object:{}", index + 1));
+            continue;
+        };
+        let display_label = object
+            .get("displayLabel")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if display_label.is_empty() {
+            warnings.push(format!("cloud_listening_part_label_missing:{}", index + 1));
+            continue;
+        }
+        let numbers = question_number_set(model_part);
+        if numbers.is_empty() {
+            warnings.push(format!(
+                "cloud_listening_part_numbers_missing:{display_label}"
+            ));
+            continue;
+        }
+        if !seen_numbers.insert(numbers.iter().copied().collect::<Vec<u32>>()) {
+            warnings.push(format!("cloud_listening_part_duplicate:{display_label}"));
+            continue;
+        }
+        let dropped: Vec<&str> = CLOUD_LISTENING_FORBIDDEN_FIELDS
+            .iter()
+            .copied()
+            .filter(|field| object.contains_key(*field))
+            .collect();
+        if !dropped.is_empty() {
+            warnings.push(format!(
+                "cloud_listening_part_media_dropped:{display_label}:{}",
+                dropped.join(",")
+            ));
+        }
+
+        let existing = canonical_parts
+            .iter()
+            .find(|part| question_number_set(part) == numbers);
+        let mut part = Map::new();
+        match existing {
+            Some(existing) => {
+                // 已存在的 Part：身份、标签、音频、cue 都是既有事实，模型只贡献题组归属。
+                for key in ["partId", "displayLabel", "media", "cue"] {
+                    if let Some(value) = existing.get(key) {
+                        part.insert(key.to_string(), value.clone());
+                    }
+                }
+                part.insert(
+                    "sourceAnchors".to_string(),
+                    existing
+                        .get("sourceAnchors")
+                        .cloned()
+                        .unwrap_or_else(|| json!([])),
+                );
+            }
+            None => {
+                part.insert(
+                    "partId".to_string(),
+                    json!(allocate_part_id(&mut used_part_ids)),
+                );
+                part.insert("displayLabel".to_string(), json!(display_label.clone()));
+                part.insert("sourceAnchors".to_string(), json!([]));
+            }
+        }
+        part.insert(
+            "expectedQuestionNumbers".to_string(),
+            json!(numbers.iter().copied().collect::<Vec<u32>>()),
+        );
+        // `taskIds` 保持模型给的临时引用，交给统一的引用重写接到后端身份上。
+        part.insert(
+            "taskIds".to_string(),
+            Value::Array(
+                object
+                    .get("taskIds")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
+        );
+        parts.push(Value::Object(part));
+    }
+
+    if parts.is_empty() {
+        carry_over(draft, "模型给的 Part 结构无法套用", warnings);
+        return;
+    }
+
+    let scope = match canonical_listening
+        .as_ref()
+        .and_then(|value| value.get("scope"))
+    {
+        Some(scope) => scope.clone(),
+        None => {
+            // 模型没被问过 scope。按 Part 数与题号范围如实派生，并留痕让人复核。
+            let numbers: BTreeSet<u32> = parts
+                .iter()
+                .flat_map(|part| question_number_set(part))
+                .collect();
+            let complete =
+                parts.len() == 4 && numbers.len() == 40 && numbers.iter().copied().eq(1..=40);
+            let derived = if complete {
+                "complete_exam"
+            } else {
+                "partial_practice"
+            };
+            warnings.push(format!("cloud_listening_scope_derived:{derived}"));
+            json!(derived)
+        }
+    };
+    let playback_policy = match canonical_listening
+        .as_ref()
+        .and_then(|value| value.get("playbackPolicy"))
+    {
+        Some(policy) => policy.clone(),
+        None => {
+            warnings.push("cloud_listening_playback_policy_defaulted".to_string());
+            json!({
+                "mode": "practice",
+                "autoplay": false,
+                "allowPause": true,
+                "allowSeek": true,
+                "allowReplay": true,
+                "refreshBehavior": "resume_from_snapshot",
+                "crashRecoveryBehavior": "resume_from_snapshot",
+                "showCurrentTime": true,
+                "showDuration": true
+            })
+        }
+    };
+
+    let mut listening = Map::new();
+    listening.insert("scope".to_string(), scope);
+    listening.insert("parts".to_string(), Value::Array(parts));
+    listening.insert("playbackPolicy".to_string(), playback_policy);
+    if let Some(transcript) = canonical_listening
+        .as_ref()
+        .and_then(|value| value.get("transcript"))
+    {
+        listening.insert("transcript".to_string(), transcript.clone());
+    }
+    if let Some(object) = draft.as_object_mut() {
+        object.insert("listening".to_string(), Value::Object(listening));
+    }
+}
+
 /// 把模型输出标准化成一份**完整**的 `IeltsAuthoringIRV2` 值（含后端身份）。
 ///
 /// 输入 `raw` 是模型原始 JSON：`{"authoring": {...}}` 或直接就是稿件对象。
@@ -2373,11 +2639,10 @@ pub(crate) fn normalize_cloud_authoring(
             format_question_numbers(&uncovered_question_numbers)
         ));
     }
-    // Listening 的部分结构（`ListeningStructureV2`）还需要媒体信息，那是听力导入链的
-    // 事实，模型给不出；这里如实记下「收到了但尚未套用」，不伪造一个听力结构。
-    if let Some(parts) = draft.get("listeningParts").and_then(Value::as_array) {
-        warnings.push(format!("cloud_listening_parts_not_applied:{}", parts.len()));
-    }
+    // Listening 的 Part 结构由模型提供（标签、题号、题组归属），音频事实由后端与
+    // 用户提供。这里把它套进 `draft.listening`，好让后面的引用重写统一处理
+    // `parts[].taskIds`；音频/资产字段一律丢弃并留痕。
+    apply_cloud_listening_parts(&mut draft, canonical, raw, identity, &mut warnings);
 
     let groups: Vec<Value> = draft
         .get("taskGroups")
@@ -2643,6 +2908,13 @@ pub(crate) fn normalize_cloud_authoring(
     if let Some(passage) = draft.get("passage") {
         if passage.is_object() {
             document.insert("passage".to_string(), passage.clone());
+        }
+    }
+    // 听力结构同理：必须取**重写之后**的 `draft.listening`，否则 `parts[].taskIds`
+    // 还是模型的临时引用，候选看着完整、其实一个题组都没接上。
+    if let Some(listening) = draft.get("listening") {
+        if listening.is_object() {
+            document.insert("listening".to_string(), listening.clone());
         }
     }
 
@@ -4601,5 +4873,248 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
         ]);
         let error = all_failed.expect_err("全部失败必须如实失败");
         assert!(error.contains("llm_http_500:a") && error.contains("llm_http_500:b"), "{error}");
+    }
+
+    // ── 听力候选：Part 结构 ────────────────────────────────────────────────
+
+    fn listening_identity() -> CloudAuthoringIdentity<'static> {
+        CloudAuthoringIdentity {
+            modality: "listening",
+            ..identity()
+        }
+    }
+
+    fn listening_canonical() -> Value {
+        serde_json::to_value(crate::test_support::complete_listening_exam())
+            .expect("听力夹具必须可序列化")
+    }
+
+    fn numbers(range: std::ops::RangeInclusive<u32>) -> Vec<u32> {
+        range.collect()
+    }
+
+    /// 模型给不出的音频事实必须被**丢掉**（不是照抄），并如实记 warning。
+    ///
+    /// 模型唯一能提供的是 Part 的**结构**（标签、题号、题组归属）；音频是内容寻址的
+    /// 资产，模型看不到文件也拿不到哈希。若把它给的 `media` 抄进稿件，就会产出
+    /// 一条指向不存在资产的引用——看着完整，打包时才炸。
+    #[test]
+    fn cloud_authoring_applies_the_models_listening_parts_and_drops_media() {
+        let canonical = listening_canonical();
+        let mut raw = json!({"authoring": cloud_draft(&[1, 2], "cloud")});
+        raw["listeningParts"] = json!([{
+            "displayLabel": "Part 1",
+            "expectedQuestionNumbers": [1, 2],
+            "taskIds": ["cloud-tg-1"],
+            // 模型无权提供的音频事实：必须被丢掉并留痕。
+            "media": {
+                "assetId": "audio-model-invented",
+                "mime": "audio/mpeg",
+                "durationMs": 600000,
+                "sha256": "b".repeat(64)
+            },
+            "assets": [{"assetId": "audio-model-invented"}]
+        }]);
+
+        let normalized = normalize_cloud_authoring(&listening_identity(), Some(&canonical), &raw)
+            .expect("标准化必须成功");
+        let document = &normalized.document;
+
+        let parts = document
+            .pointer("/listening/parts")
+            .and_then(Value::as_array)
+            .expect("模型给了 Part 结构，稿件里就必须有 listening.parts");
+        assert_eq!(parts.len(), 1, "只有模型给出的那一个 Part");
+        assert_eq!(parts[0]["displayLabel"], json!("Part 1"));
+        assert_eq!(parts[0]["expectedQuestionNumbers"], json!([1, 2]));
+        assert!(
+            parts[0].get("media").is_none(),
+            "模型给的 media 必须被丢掉，不能进稿件：{}",
+            parts[0]["media"]
+        );
+        assert!(
+            parts[0].get("assets").is_none(),
+            "模型给的 assets 必须被丢掉"
+        );
+        // taskIds 必须接到后端身份上，不能残留临时 ID。
+        let task_ids = parts[0]["taskIds"].as_array().expect("taskIds 必须是数组");
+        assert_eq!(task_ids.len(), 1);
+        assert_ne!(
+            task_ids[0], json!("cloud-tg-1"),
+            "Part 的 taskIds 必须被改写成稳定 ID"
+        );
+        assert!(
+            normalized
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("cloud_listening_part_media_dropped")
+                    && warning.contains("Part 1")),
+            "丢掉模型的音频字段必须留痕：{:?}",
+            normalized.warnings
+        );
+    }
+
+    /// 同一个 Part（题号集合相同）已有音频绑定：**复用**它的身份与音频，只换归属。
+    #[test]
+    fn cloud_authoring_reuses_an_existing_part_identity_and_keeps_its_audio() {
+        let canonical = listening_canonical();
+        let bound_asset_id = canonical
+            .pointer("/listening/parts/0/media/assetId")
+            .and_then(Value::as_str)
+            .expect("夹具的第一个 Part 必须带音频")
+            .to_string();
+        let mut raw = json!({"authoring": cloud_draft(&numbers(1..=10), "cloud")});
+        raw["listeningParts"] = json!([{
+            "displayLabel": "Part 1",
+            "expectedQuestionNumbers": numbers(1..=10),
+            "taskIds": ["cloud-tg-1"]
+        }]);
+
+        let normalized = normalize_cloud_authoring(&listening_identity(), Some(&canonical), &raw)
+            .expect("标准化必须成功");
+        let part = &normalized.document.pointer("/listening/parts/0").expect("必须有 Part");
+
+        assert_eq!(
+            part["partId"],
+            json!("part-1"),
+            "题号集合相同就是同一个 Part，必须复用它的稳定 ID"
+        );
+        assert_eq!(
+            part["media"]["assetId"],
+            json!(bound_asset_id),
+            "用户绑好的 Section 音频不能被云端候选抹掉"
+        );
+        assert_eq!(
+            part["displayLabel"],
+            json!("SECTION 1"),
+            "已存在的 Part 标签属于人工可见内容，模型不得改写"
+        );
+        assert_eq!(
+            part["taskIds"],
+            json!(["task-1"]),
+            "题号集合相同即同一个题组，复用稳定 ID"
+        );
+    }
+
+    /// 模型没给 Part 结构时，**绝不能**把已有听力结构（连同用户绑的音频）丢掉。
+    #[test]
+    fn cloud_authoring_keeps_the_bound_listening_audio_when_the_model_sends_no_parts() {
+        let canonical = listening_canonical();
+        let raw = json!({"authoring": cloud_draft(&numbers(1..=10), "cloud")});
+
+        let normalized = normalize_cloud_authoring(&listening_identity(), Some(&canonical), &raw)
+            .expect("标准化必须成功");
+        let parts = normalized
+            .document
+            .pointer("/listening/parts")
+            .and_then(Value::as_array)
+            .expect("没有新结构时也必须保留既有 Part");
+        assert_eq!(parts.len(), 4, "四个 Section 一个都不能少");
+        for (index, part) in parts.iter().enumerate() {
+            assert!(
+                part.get("media").is_some(),
+                "第 {} 个 Section 的音频被丢掉了",
+                index + 1
+            );
+        }
+        assert_eq!(
+            normalized.document.pointer("/listening/scope"),
+            Some(&json!("complete_exam"))
+        );
+        assert!(
+            normalized
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("cloud_listening_parts_missing")),
+            "模型没给 Part 结构必须留痕：{:?}",
+            normalized.warnings
+        );
+    }
+
+    /// 分块识别时同一段可能被**不止一块**汇报（模型顺手把别段也列了一遍）。
+    ///
+    /// 合并后必须只留一条：两条覆盖同一批题号的分段会各自复用同一个稳定 `partId`，
+    /// 于是 `listening.parts` 里出现两个 `part-3`——下游任何按 partId 建索引的地方
+    /// （打包、学生端播放器、分段裁定）都会互相覆盖，而且没人会察觉。
+    #[test]
+    fn cloud_authoring_dedupes_a_part_reported_by_more_than_one_chunk() {
+        let canonical = listening_canonical();
+        let section = |label: &str, range: std::ops::RangeInclusive<u32>, task: &str| {
+            json!({
+                "displayLabel": label,
+                "expectedQuestionNumbers": numbers(range),
+                "taskIds": [task]
+            })
+        };
+        // 两块各自负责一段；第二块「顺手」把前一段也列了一遍。
+        let merged = merge_candidate_chunks(vec![
+            (
+                chunk(&numbers(21..=30)),
+                Ok(json!({
+                    "authoring": cloud_draft(&numbers(21..=30), "cloud-a"),
+                    "listeningParts": [section("Part 3", 21..=30, "cloud-a-tg-1")],
+                })),
+            ),
+            (
+                chunk(&numbers(31..=40)),
+                Ok(json!({
+                    "authoring": cloud_draft(&numbers(31..=40), "cloud-b"),
+                    "listeningParts": [
+                        section("Part 3", 21..=30, "cloud-b-tg-1"),
+                        section("Part 4", 31..=40, "cloud-b-tg-1"),
+                    ],
+                })),
+            ),
+        ])
+        .expect("两块都成功必须能合并");
+
+        let normalized = normalize_cloud_authoring(&listening_identity(), Some(&canonical), &merged)
+            .expect("标准化必须成功");
+        let parts = normalized
+            .document
+            .pointer("/listening/parts")
+            .and_then(Value::as_array)
+            .expect("合并稿必须带 listening.parts");
+
+        let mut part_ids: Vec<&str> = parts
+            .iter()
+            .filter_map(|part| part["partId"].as_str())
+            .collect();
+        let unique_before = part_ids.len();
+        part_ids.sort_unstable();
+        part_ids.dedup();
+        assert_eq!(
+            part_ids.len(),
+            unique_before,
+            "分段身份必须唯一，不能出现两个同 partId 的分段：{parts:?}"
+        );
+        assert_eq!(parts.len(), 2, "两个不同的题号集合只该产出两个分段：{parts:?}");
+
+        let part_3 = parts
+            .iter()
+            .find(|part| part["expectedQuestionNumbers"] == json!(numbers(21..=30)))
+            .unwrap_or_else(|| panic!("必须有覆盖 21-30 的分段：{parts:?}"));
+        assert_eq!(part_3["partId"], json!("part-3"));
+        assert!(
+            part_3.get("media").is_some(),
+            "复用既有分段必须保留用户绑好的音频：{part_3}"
+        );
+        let part_4 = parts
+            .iter()
+            .find(|part| part["expectedQuestionNumbers"] == json!(numbers(31..=40)))
+            .unwrap_or_else(|| panic!("必须有覆盖 31-40 的分段：{parts:?}"));
+        assert_eq!(part_4["partId"], json!("part-4"));
+        assert!(
+            part_4.get("media").is_some(),
+            "复用既有分段必须保留用户绑好的音频：{part_4}"
+        );
+        assert!(
+            normalized
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("cloud_listening_part_duplicate")),
+            "丢掉重复的分段必须留痕：{:?}",
+            normalized.warnings
+        );
     }
 }
