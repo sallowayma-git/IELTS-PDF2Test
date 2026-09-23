@@ -1932,3 +1932,134 @@ UI / 学生端）尚未跑**，属于 T6。
 - T4（云端候选应用听力结构）、T5（收尾小项）、T6（真实 App 听力 CDP 验收）、
   T7（被外部资源阻塞项）未开始。
 - 听力页在真实 Electron App 里的端到端验收未做（T6）。
+
+---
+
+## 2026-09-22 第三波 T4：云端候选应用听力结构
+
+### 用户现在能做到而以前做不到的事
+
+听力卷走云端识别回来后，**分段结构不再凭空消失**：模型读到的 Section 划分（标签、题号、
+题组归属）会真的进到候选稿里，用户绑好的每段音频原样保留，模型编造的音频引用一律丢掉；
+模型改了分界（把两段并成一段、或拆开）时，用户在「编辑辅助清单」里能直接看到
+**「听力分段对不上：现在是「SECTION 4（第 31–40 题）」，云端读到的是「没有这一段」」**，
+并去核对原文——而不是一个悄悄换掉了考生听到的音频切分的候选。在此之前，听力云端候选
+**根本没有 `listening` 块**，分界改动产生零条差异。
+
+### 提交列表
+
+分支 `wave3-listening`（未 push）。
+
+| hash | message |
+| --- | --- |
+| `2bff2c3` | `feat(cloud): carry the model's listening Part structure into the candidate` |
+| `407d194` | `feat(cloud-repair): compare listening Part boundaries and say them in the user's words` |
+
+### 改动清单
+
+**T4-1 模态钩子读错来源**（`src-tauri/src/auto_pipeline.rs`）
+
+`cloud_recognition_modality(root, job_id)` 原本从**权威稿**里读 `modality`。可是听力卷
+刚导入、云端识别正要产出权威稿的**那一刻，稿还不存在** —— 于是退化成 `reading`，
+网关拿着阅读的 prompt 去识别一份听力卷。改为读**题库行**（`library::migration::draft_modality`），
+与 `align_draft_modality` 同源。
+
+**T4-2 候选装配丢掉整个听力块**（`src-tauri/src/reconcile/candidate.rs`）
+
+`normalize_cloud_authoring` 第 6 步装配 `document` 时只带
+`passage` / `taskGroups` / `answerSlots` / `answerKey`，**从来没带 `draft.listening`**。
+所以听力云端候选是一个「没有听力结构」的稿：看着完整，分段全丢。现在：
+
+- `apply_cloud_listening_parts` 在**引用重写之前**把模型给的 `listeningParts` 套进
+  `draft.listening`，于是 `parts[].taskIds` 与题组一样被接到后端稳定身份上；
+- 题号集合相同的 Part ⇒ 就是同一个 Part：复用它的 `partId` / 标签 / `cue` / **`media`**。
+  一次云端候选不会把用户绑好的 Section 音频抹掉；
+- 真正新增的 Part 才由后端分配 ID（从最小可用序号取，避免删除过 Part 后撞 ID），且**不带**音频；
+- 模型给的 `media` / `assets` / `assetId` / `sha256` / `mime` / `durationMs` / `relativePath`
+  一律丢弃并逐条留痕（`cloud_listening_part_media_dropped:<label>:<fields>`）。音频是内容寻址的：
+  模型看不到文件也拿不到哈希，抄进稿件就是一条指向不存在资产的引用，打包时才炸；
+- 模型没给 Part 结构 ⇒ **原样保留**既有 `listening`（连同用户绑的音频）并留
+  `cloud_listening_parts_missing:*`，绝不静默丢弃；
+- `scope` / `playbackPolicy` 缺失时按 Part 数与题号范围如实派生/给缺省，并留痕。
+
+**T4-3 差异比较看不见分段边界**（`src-tauri/src/cloud_repair/mod.rs`、`llm_suggestions.rs`、
+`src/features/editor/userTasks.ts`）
+
+`candidate_differences` 只比题组 / 作答区 / 选项库 / 答案。一个把 Section 3+4 并成一段的
+候选产生**零条差异**——改动会被直接应用，没有人被告知。
+
+- 两侧都按 `partId` 索引 `listening.parts`。身份由后端分配、按题号集合复用，所以
+  「同一个 partId」就等于「同一段音频范围」：并段/拆段表现为旧 id 消失、新 id 出现；
+  两侧都在的 Part 比标签与题组归属；
+- Part 裁定有了真实的前提指纹（`part_context`）：这一段的身份与范围，**排除 `media`**。
+  排除的理由是内容寻址的音频哈希不是分段裁定所依赖的东西，算进去会让「用户重新绑音频」
+  无端作废一条有效裁定、白跑一轮模型；`cue` **算**进去，那就是边界本身；
+- 给模型看的差异摘要（`part_index_entry`）同样不含 `media`，音频哈希不进模型上下文；
+- `record_ruling` 的工具说明补上 `part`（无需白名单改动：裁定本来就是按「上下文里
+  确实存在的差异」校验的）；
+- 前端按用户看得到的东西称呼那一段——**「SECTION 3（第 21–30 题）」**，
+  而不是漏出 `part-5` / `part_boundary` 再退回「这一处的内容和云端读到的不一样」。
+
+**T4-4 分块合并会产出两条同 ID 的分段**
+
+`MAX_CHUNK_QUESTIONS = 14`，四个十题的 Section ⇒ 分块计划**必然是每段一块**。模型常顺手
+把邻段也列一遍，于是同一段从两块各来一次，两条覆盖同一批题号的分段复用**同一个**稳定
+`partId`，`listening.parts` 里就出现两个 `part-3` —— 下游任何按 partId 建索引的地方
+（打包、学生端播放器、分段裁定）互相覆盖，而且没人会察觉。现在重复的题号集合只留第一条
+并留痕（`cloud_listening_part_duplicate:<label>`）。
+
+### 先红后绿
+
+| 测试 | 先红于 |
+| --- | --- |
+| `cloud_recognition_modality_reads_the_library_row_even_before_a_draft_exists` | `left: "reading", right: "listening"` |
+| `cloud_authoring_applies_the_models_listening_parts_and_drops_media` | `模型给了 Part 结构，稿件里就必须有 listening.parts` |
+| `cloud_authoring_reuses_an_existing_part_identity_and_keeps_its_audio` | `必须有 Part` |
+| `cloud_authoring_keeps_the_bound_listening_audio_when_the_model_sends_no_parts` | `没有新结构时也必须保留既有 Part` |
+| `cloud_authoring_dedupes_a_part_reported_by_more_than_one_chunk` | 两条 `partId: "part-3"`（T4-4） |
+| `a_listening_part_boundary_change_reaches_the_users_task_list` | 任务清单里一条 `part_boundary` 都没有（T4-3；先红由临时把 part 索引打桩成空表复现） |
+| `a_part_ruling_dies_when_the_boundary_it_depended_on_changes` | 同上（`contextDigest` 无视 `cue`） |
+| `userTasks.test.ts` 三条听力分段用例 | 全部得到 `这一处的内容和云端读到的不一样` |
+
+### 测试数字
+
+| 项目 | 基线（本波起点） | 本批 |
+| --- | --- | --- |
+| `cargo test --lib` | 1008 / 0 / 11 | **1015 / 0 / 11** |
+| `npx vitest run` | 394 | **397 passed / 27 files** |
+| `npx tsc --noEmit` | 干净 | 干净 |
+
+（+7 Rust = T4-1 一条 + T4-2 三条 + T4-3 两条 + T4-4 一条；+3 Vitest = 前端分段文案三条。）
+
+### 证据等级
+
+- **命令处理器 / 契约层**：T4-1 模态（题库行 → 网关候选模态）、T4-2 候选装配
+  （真实 `normalize_cloud_authoring` → `cloud_authoring_candidate_from_normalized`）、
+  T4-4 分块合并（真实 `merge_candidate_chunks`）。
+- **命令处理器层 + 用户任务重算**：T4-3 的边界差异走真实
+  `store::write_cloud_authoring_candidate` → `remaining_tasks`，断言用户真的会看到
+  `cloud-diff:part:<id>:part_boundary` 这条任务、说明是人话、且不含音频哈希。
+- **单元**：`candidate_differences` / `effective_adjudicated_count` 的分段裁定失效。
+- **前端单元**：`buildEditingAids` 的分段话术。
+- **仍未做**：真实 App 里走完「弹窗 → 绑 4 个音频 → 4 Parts/40 slots → 各 Part 播放 →
+  发布 → 学生端真实 provider 加载」的端到端（T6）。
+
+### 偏离任务书之处及理由
+
+1. **任务书 T4 只列了 4 条**（模态钩子、应用 part 结构、差异比较、分块合并）。
+   实现时发现 T4-2 的根因比「没应用 part 结构」更深一层：装配 `document` 时
+   **整个 `listening` 块都没带过去**。只做「应用 part 结构」而不补这一步，四条测试
+   一条也不会绿。已按根因修，并在提交信息里写明。
+2. **T4-4 原描述是「分块候选跨块合并 parts」**。`merge_candidate_chunks` 本来就会把
+   `listeningParts` 拼接起来（T1 时已加），所以「合并」本身不缺；缺的是**跨块重复**
+   的处理。按真实缺陷修（去重 + 留痕），而不是重写一个已经正确的拼接。
+3. **多做了前端话术**（`userTasks.ts`）。任务书没点名前端，但差异任务最终是给用户看的：
+   不做这一步，用户看到的是「这一处的内容和云端读到的不一样」——技术上正确、实际上无用。
+   分段差异的价值全在「哪一段差在哪」，所以补了 `FIELD_LABEL` 与 `partRangeLabel`。
+4. **`part_context` 排除 `media` 是一个取舍**。包含它更保守（任何字段变都重评），
+   但会让「重新绑定音频」作废分段裁定。已按「裁定前提 = 边界事实」处理，
+   理由写进了代码注释，需要产品侧确认。
+
+### 未完成项
+
+- T5（收尾小项）、T6（真实 App 听力 CDP 验收）、T7（被外部资源阻塞项）未开始。
