@@ -27,3 +27,8 @@ jobs/
 src-tauri/lib/pdfium-windows/
 src-tauri/lib/pdfium-macos/
 src-tauri/lib/pdfium-linux/
+
+# Agent-tool local data and one-off delivery builds (kept on disk, not in the repo)
+.workbuddy/
+customer-delivery/
+.zcodeignore

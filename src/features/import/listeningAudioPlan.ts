@@ -1,6 +1,9 @@
 // Pure logic for the listening import dialog: which files are audio, how they map to
 // parts, and what the dialog hands back to the importer. Kept free of React/Tauri so the
-// ordering and assignment rules are unit-testable.
+// ordering and assignment rules are unit-testable. (`toUserFacingError` is a pure
+// string-mapping util — no React/Tauri.)
+
+import { toUserFacingError } from "../../utils/userFacingError";
 
 export type ImportModalityChoice = "reading" | "listening";
 
@@ -140,6 +143,36 @@ export function assignmentNotices(entries: readonly AudioEntry[]): AssignmentNot
 
 export function listeningDecision(entries: readonly AudioEntry[]): ListeningImportDecision {
   return { modality: "listening", audio: assignParts(entries) };
+}
+
+/** 一次导入批次里被拒绝的单个文件 / 音频段（LibraryPage 的 rejected 清单渲染它们）。 */
+export interface ImportRejection { name: string; reason: string }
+
+/**
+ * 逐段绑定一份听力卷的音频（导入抽屉的「边导边绑」路径）。
+ *
+ * 任何一段失败都**不得吞掉**：转成 rejected 条目如实上报，绝不显示成「已添加」；
+ * 同时不中断后续段——失败的 part 之后可以在工作区补绑。Rust 侧绑定命令在镜像没落盘时
+ * 也会报错（`LISTENING_AUDIO_MEDIA_NOT_MIRRORED` 等）；这里保证那些错误一定走到界面。
+ */
+export async function bindListeningAssignments(
+  itemId: string,
+  itemTitle: string,
+  assignments: readonly AudioAssignment[],
+  bind: (itemId: string, partOrdinal: number, path: string) => Promise<void>
+): Promise<ImportRejection[]> {
+  const rejected: ImportRejection[] = [];
+  for (const assignment of assignments) {
+    try {
+      await bind(itemId, assignment.partOrdinal, assignment.path);
+    } catch (cause) {
+      rejected.push({
+        name: assignment.name,
+        reason: `音频未能添加到「${itemTitle}」，可在工作区「添加音频」补充。${toUserFacingError(cause, "").userMessage}`
+      });
+    }
+  }
+  return rejected;
 }
 
 export function readingDecision(): ListeningImportDecision {

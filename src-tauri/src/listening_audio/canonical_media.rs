@@ -1144,6 +1144,129 @@ mod media_sync_tests {
         );
     }
 
+    /// 评审指定的反例必须在**命令处理器层**复现：导入听力卷后立即连续绑定 4 段音频，
+    /// 同时让识别侧的写入并发进行，重复 30 次，统计 `listening_audio_assets_v1` 的行数。
+    ///
+    /// 上面那条扫掠直接拼 `bind_audio` + `sync_item_audio_media`；这条走
+    /// `bind_listening_audio` 命令的**同一条写路径**（[`crate::listening_audio::commands::bind_audio_command_path`]：
+    /// bind_audio → 镜像 → 读回确认），并把识别侧的写入做全：播种（`ensure_initial_canonical`）
+    /// 之外，还有调度器在识别前后对同一 DB 的条目状态写。绑定线程的任何一段失败都
+    /// **收集后整条判红**——正如界面对绑定失败的义务：不得吞掉、不得显示成功。
+    #[test]
+    fn the_bind_command_path_never_loses_a_row_while_recognition_writes_run() {
+        let mut ledger_losses: Vec<String> = Vec::new();
+        let mut bind_failures: Vec<String> = Vec::new();
+        let mut mirror_losses: Vec<String> = Vec::new();
+        // 反空转：绑定线程的镜像必须真的往稿里写过东西，扫掠才有效（同上条）。
+        let mut iterations_where_a_mirror_wrote = 0usize;
+
+        for iteration in 0..30usize {
+            let root = temp_root();
+            let item_id = "item-cmd-race";
+            seed_item_awaiting_seed(&root, item_id);
+
+            // 绑定线程：逐字跑命令的写路径，四段连续绑定。
+            let binder_root = root.clone();
+            let binder = std::thread::spawn(move || {
+                let mut log: Vec<String> = Vec::new();
+                for ordinal in 1..=4 {
+                    let source = binder_root.join(format!("section-{ordinal}.wav"));
+                    tone(&source, 300.0 + ordinal as f64 * 60.0);
+                    match crate::listening_audio::commands::bind_audio_command_path(
+                        &binder_root,
+                        item_id,
+                        ordinal,
+                        &source,
+                    ) {
+                        Ok((_, sync)) => log.push(format!(
+                            "part-{ordinal}:ok updated={:?} protected={:?}",
+                            sync.updated_parts, sync.protected_parts
+                        )),
+                        Err(error) => log.push(format!("part-{ordinal}:ERR {error}")),
+                    }
+                }
+                log
+            });
+
+            // 识别线程：播种 + 条目状态写，与调度器在识别完成前后的写入同构；
+            // 启动时机逐次后移，扫掠过整个绑定序列。
+            std::thread::sleep(std::time::Duration::from_micros(iteration as u64 * 1_200));
+            let recognizer_root = root.clone();
+            let recognizer = std::thread::spawn(move || {
+                let mut notes = Vec::new();
+                match crate::library::migration::ensure_initial_canonical(&recognizer_root, item_id)
+                {
+                    Ok(seeded) => notes.push(format!("seeded={seeded}")),
+                    Err(error) => notes.push(format!("seed ERR {error}")),
+                }
+                if let Ok(conn) = open_library_connection(&recognizer_root) {
+                    for status in ["ready_for_review", "processing", "ready_for_review"] {
+                        if crate::library::repository::set_item_status(&conn, item_id, status)
+                            .is_err()
+                        {
+                            notes.push(format!("status {status} ERR"));
+                        }
+                    }
+                }
+                notes
+            });
+
+            let binder_log = binder.join().unwrap();
+            let recognizer_notes = recognizer.join().unwrap();
+            if binder_log.iter().any(|entry| !entry.contains("updated=[]")) {
+                iterations_where_a_mirror_wrote += 1;
+            }
+            for entry in &binder_log {
+                if entry.contains(":ERR") {
+                    bind_failures.push(format!("#{iteration} {entry}"));
+                }
+            }
+            if recognizer_notes
+                .iter()
+                .any(|note| note.contains(" ERR") || note.contains("ERR "))
+            {
+                mirror_losses.push(format!("#{iteration} 识别侧写入失败 {recognizer_notes:?}"));
+            }
+
+            let rows = crate::listening_audio::store::list_bindings(&root, item_id)
+                .unwrap()
+                .len();
+            if rows != 4 {
+                ledger_losses.push(format!("#{iteration} 台账只有 {rows} 行"));
+            }
+            let seeded = recognizer_notes
+                .iter()
+                .any(|note| note.starts_with("seeded=true"));
+            if seeded {
+                let ds = canonical(&root, item_id);
+                let mirrored = mirrored_part_ids(&ds);
+                if mirrored.len() != 4 {
+                    mirror_losses.push(format!(
+                        "#{iteration} 稿里只镜像了 {mirrored:?}（台账 {rows} 行）绑定日志 {binder_log:?}"
+                    ));
+                }
+            }
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        assert!(
+            bind_failures.is_empty(),
+            "绑定命令路径有失败被吞掉（界面不得显示成功）：{bind_failures:#?}"
+        );
+        assert!(
+            ledger_losses.is_empty(),
+            "命令层并发下台账（listening_audio_assets_v1）丢行：{ledger_losses:#?}"
+        );
+        assert!(
+            mirror_losses.is_empty(),
+            "台账有行、权威稿却少了 media 的 part（或识别侧写入失败）：{mirror_losses:#?}"
+        );
+        assert!(
+            iterations_where_a_mirror_wrote > 0,
+            "扫掠空转：30 次里没有任何一次「绑定线程的镜像真的写了稿」，说明播种与绑定的交错已经不存在，这条用例失效了"
+        );
+    }
+
     /// 播种之后必须**对账**：台账里已绑的 part，稿里就得有 media。
     ///
     /// 上面那条是并发扫掠（概率命中）；这条是把同一个契约**确定性地**钉死：
