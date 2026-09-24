@@ -2102,18 +2102,18 @@ fn validate_repair_step_output(output: &mut Value) -> CommandResult<()> {
     if !crate::schema::cloud_repair_v1::CLOUD_REPAIR_TOOLS.contains(&tool) {
         return Err(format!("cloud_repair_step_tool_unknown:{tool}"));
     }
-    let arguments = object.get("arguments").cloned().unwrap_or(Value::Null);
-    if !arguments.is_object() && !arguments.is_null() {
+    let Some(arguments) = object.get("arguments") else {
+        return Err("cloud_repair_step_arguments_missing".to_string());
+    };
+    if !arguments.is_object() {
         return Err("cloud_repair_step_arguments_not_object".to_string());
     }
-    validate_repair_tool_arguments(tool, &arguments)
+    validate_repair_tool_arguments(tool, arguments)
 }
 
 /// 新增工具的信封校验（**与分发器同源**，见 `cloud_repair::grab` 与
 /// `schema::cloud_repair_v1::CloudRepairContextNeedV1`）。
 fn validate_repair_tool_arguments(tool: &str, arguments: &Value) -> CommandResult<()> {
-    let empty = Value::Null;
-    let arguments = if arguments.is_null() { &empty } else { arguments };
     let missing = |detail: &str| Err(format!("cloud_repair_step_tool_arguments_invalid:{tool}:{detail}"));
     let non_empty_list = |key: &str| {
         arguments
@@ -3597,6 +3597,36 @@ mod tests {
             validate_repair_step_output(&mut missing_reason).is_err(),
             "prompt/tools table declare reason, so validator must require it"
         );
+    }
+
+    #[test]
+    fn repair_tool_envelope_requires_arguments_to_be_an_object() {
+        let mut missing_arguments = json!({
+            "callId": "call-1",
+            "tool": "finish_packet"
+        });
+        assert!(
+            validate_repair_step_output(&mut missing_arguments).is_err(),
+            "prompt declares arguments as a required top-level object"
+        );
+
+        let mut null_arguments = json!({
+            "callId": "call-2",
+            "tool": "finish_packet",
+            "arguments": null
+        });
+        assert!(
+            validate_repair_step_output(&mut null_arguments).is_err(),
+            "null is not the object envelope declared by the prompt"
+        );
+
+        let mut empty_arguments = json!({
+            "callId": "call-3",
+            "tool": "finish_packet",
+            "arguments": {}
+        });
+        validate_repair_step_output(&mut empty_arguments)
+            .expect("empty object remains valid for finish_packet");
     }
 
     // ── S1：传输与可观测性（本地假服务，无真实模型）──────────────────────────
