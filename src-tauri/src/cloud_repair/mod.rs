@@ -46,6 +46,33 @@ const REPEAT_LIMIT: u32 = 2;
 const PACKET_MAX_ROUNDS: u32 = 5;
 /// 升级阶梯的最高级别（L4 = 后端代记 `cannot_resolve`，理由码 `CONTEXT_INSUFFICIENT`）。
 const PACKET_MAX_ESCALATION: u32 = 4;
+/// 每多一个校核包，总时限在**基础时限**上再放宽的比例（0.25 = 基础 10 分钟 ⇒ +2.5 分钟/包）。
+///
+/// 真实模型每轮 16–50 秒、每包最多 5 轮：10 个包按旧常数 10 分钟几乎必然
+/// `budget_exhausted`——包是顺序处理的，总时限却是按「整卷一轮」拍的常数。
+const PACKET_DEADLINE_RATE: f64 = 0.25;
+/// 放宽的封顶：总时限最多是基础时限的 3 倍（基础 10 分钟 ⇒ 最多 30 分钟）。
+/// 没有上限的线性放宽等于没有时限。
+const PACKET_DEADLINE_MAX_RATIO: f64 = 3.0;
+
+/// 包模式的总时限：按包数在基础时限上线性放宽，封顶 [`PACKET_DEADLINE_MAX_RATIO`]。
+///
+/// `request.deadline` 是调用方按「整卷一轮」口径给的绝对时刻；这里在**循环开工时**取
+/// 「基础时长 = deadline − now」，乘上比例后从同一时刻起算。单包（比例 1）行为与
+/// 旧常数完全一致；重切出的新包**不再**二次放宽（否则编辑-重切循环可以无限续期，
+/// 时限就名存实亡了）。取消、失败终态、进度上报都不经过它，行为不变。
+fn scaled_packet_deadline(
+    request_deadline: Instant,
+    started_at: Instant,
+    packet_count: usize,
+) -> Instant {
+    let base = request_deadline
+        .checked_duration_since(started_at)
+        .unwrap_or_default();
+    let ratio = 1.0 + PACKET_DEADLINE_RATE * (packet_count.saturating_sub(1)) as f64;
+    let ratio = ratio.min(PACKET_DEADLINE_MAX_RATIO);
+    started_at + base.mul_f64(ratio)
+}
 
 /// 上下文管理方式。
 ///
@@ -2963,6 +2990,10 @@ where
             Ok(packets) => packets.into(),
             Err(error) => return Ok(failure_report(request, error)),
         };
+    // P11：总时限按包数线性放宽（封顶 3× 基础）。循环内所有截止判断都用这个值；
+    // `request.deadline` 保持调用方给的原始值，仅供这里换算。
+    let loop_started = Instant::now();
+    let deadline = scaled_packet_deadline(request.deadline, loop_started, queue.len());
 
     let mut rulings: Vec<Value> = match store::read_repair_rulings(
         request.root,
@@ -3028,7 +3059,7 @@ where
             status = REPAIR_STATUS_CANCELLED;
             break;
         }
-        if Instant::now() >= request.deadline {
+        if Instant::now() >= deadline {
             status = REPAIR_STATUS_BUDGET_EXHAUSTED;
             break;
         }
@@ -3078,7 +3109,7 @@ where
                 stop_all = true;
                 break;
             }
-            if Instant::now() >= request.deadline {
+            if Instant::now() >= deadline {
                 status = REPAIR_STATUS_BUDGET_EXHAUSTED;
                 packet_status = "deadline";
                 stop_all = true;
@@ -3101,7 +3132,7 @@ where
                 // **一次**带原因的受约束重试；传输类错误不重试。
                 Err(error)
                     if is_constrained_retry_rejection(&error)
-                        && Instant::now() < request.deadline
+                        && Instant::now() < deadline
                         && !(request.cancelled)() =>
                 {
                     packet_observations.push(json!({

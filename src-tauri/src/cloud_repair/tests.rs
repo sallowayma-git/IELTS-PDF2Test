@@ -6048,3 +6048,326 @@ fn an_answer_difference_fetches_the_answer_page_through_read_source_before_fixin
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+
+// ── P11：多包顺序处理的总时限 ────────────────────────────────────────────────
+
+/// 生成 `groups` 个**互不相交**的最小题组（结构与 [`cloud_draft_with`] 同源）。
+///
+/// 组 k 的题号是 (14+7k, 15+7k)，选项库 / 节点 / 题组 id 各自独立：切包规则的三条
+/// 合并条件（共用选项库、同 stimulus、题号区间交叉）一条都碰不上，因此
+/// `plan_packets` 必须给出 `groups` 个差异包——这是「多包顺序处理」的最小夹具。
+fn multi_group_draft(groups: usize, first_label: &str, second_label: &str) -> Value {
+    // 以 golden 稿为模板做**结构化克隆**：组 k 的题号是 (14+7k, 15+7k)，选项库 /
+    // 节点 / 题组 / 作答组 id 各自独立。三合一保证：canonical 过 validate_authoring、
+    // 候选过归一化装配、切包规则的三条合并条件一条都碰不上 ⇒ 恰好 `groups` 个差异包。
+    let mut document = golden_authoring();
+    let template_group = document["taskGroups"][0].clone();
+    let template_slot_a = document["answerSlots"]["q14"].clone();
+    let template_slot_b = document["answerSlots"]["q15"].clone();
+    let template_answer = document["answerKey"]["q14"].clone();
+
+    let mut task_groups = Vec::new();
+    let mut answer_slots = serde_json::Map::new();
+    let mut answer_key = serde_json::Map::new();
+    for k in 0..groups {
+        let (first, second) = (14 + 7 * k, 15 + 7 * k);
+        let mut group = template_group.clone();
+        group["taskId"] = json!(format!("early-approaches-q{first}-{second}"));
+        group["displayRange"] = json!({"kind": "set", "values": [first, second]});
+        group["instructionSignature"]["expectedQuestionNumbers"] = json!([first, second]);
+        group["optionBank"]["optionBankId"] = json!(format!("early-approaches-options-{k}"));
+        for (index, label) in ["A", "B", "C", "D", "E"].iter().enumerate() {
+            group["optionBank"]["options"][index]["optionId"] =
+                json!(format!("option-{k}-{}", label.to_lowercase()));
+            group["optionBank"]["options"][index]["content"][0]["id"] =
+                json!(format!("option-{k}-{}-text", label.to_lowercase()));
+        }
+        group["instructions"][0]["id"] = json!(format!("early-approaches-instructions-{k}"));
+        group["instructions"][0]["children"][0]["id"] =
+            json!(format!("early-approaches-instructions-{k}-text"));
+        group["responseGroups"][0]["responseGroupId"] =
+            json!(format!("early-approaches-shared-response-{k}"));
+        group["responseGroups"][0]["optionBankRef"] =
+            json!(format!("early-approaches-options-{k}"));
+        group["responseGroups"][0]["slotIds"] = json!([format!("q{first}"), format!("q{second}")]);
+        group["responseGroups"][0]["prompt"][0]["id"] =
+            json!(format!("early-approaches-shared-prompt-{k}"));
+        group["responseGroups"][0]["prompt"][0]["children"][0]["id"] =
+            json!(format!("early-approaches-shared-prompt-{k}-text"));
+        task_groups.push(group);
+
+        for (number, template_slot) in [(first, &template_slot_a), (second, &template_slot_b)] {
+            let slot_id = format!("q{number}");
+            let mut slot = template_slot.clone();
+            slot["slotId"] = json!(slot_id.clone());
+            slot["questionNumber"] = json!(number);
+            slot["displayLabel"] = json!(number.to_string());
+            slot["hostNodeId"] = json!(format!("early-approaches-shared-prompt-{k}"));
+            slot["sourceAnchors"][0]["nodeIds"] =
+                json!([format!("slot-{slot_id}"), format!("line-shared-prompt-{k}")]);
+            answer_slots.insert(slot_id.clone(), slot);
+            let mut answer = template_answer.clone();
+            answer["labels"] = json!([if number == first { first_label } else { second_label }]);
+            answer_key.insert(slot_id, answer);
+        }
+    }
+    document["taskGroups"] = Value::Array(task_groups);
+    document["answerSlots"] = Value::Object(answer_slots);
+    document["answerKey"] = Value::Object(answer_key);
+    document
+}
+
+/// [`store_candidate_draft`] 的「指定 canonical」版本：候选按**给定的** canonical 对齐。
+/// 多组候选对不上单组 golden——那样归一化会把多出来的组并进文档包，10 个差异包就没了。
+fn store_candidate_for_canonical(root: &Path, canonical: &Value, draft: Value) {
+    use crate::reconcile::candidate::{cloud_authoring_candidate_from_normalized, normalize_cloud_authoring};
+    use crate::reconcile::candidate::CloudAuthoringIdentity;
+
+    let source_sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let identity = CloudAuthoringIdentity {
+        job_id: ITEM_ID,
+        item_id: ITEM_ID,
+        batch_id: BATCH_ID,
+        source_file_id: "early-approaches-pdf",
+        source_sha256,
+        base_edit_version: 1,
+        generated_at: "2026-09-18T00:00:00Z",
+        exam: canonical.get("exam").cloned().unwrap_or(Value::Null),
+        modality: "reading",
+        source_document_id: "early-approaches-document",
+        extraction_mode: "pdf_native",
+    };
+    let raw = json!({"authoring": draft});
+    let normalized =
+        normalize_cloud_authoring(&identity, Some(canonical), &raw).expect("标准化必须成功");
+    let candidate =
+        cloud_authoring_candidate_from_normalized(&identity, normalized).expect("必须可装配");
+    crate::reconcile::store::write_cloud_authoring_candidate(root, BATCH_ID, &candidate)
+        .expect("落盘候选");
+}
+
+/// 十个包、每轮固定延迟、**缩短的时限**：改动前总时限不够用（budget_exhausted），
+/// 改动后总时限按包数线性放宽（上限 = 基础时限 × 3），能在时限内跑完。
+///
+/// 这是 P11 二选一里**方案 b** 的可执行版本：不改调度器阶段顺序、不动 cloud_permits、
+/// 包内仍然严格串行，只把「总时限」从常数改成随包数放宽的值。
+#[test]
+fn ten_packets_with_fixed_round_delay_finish_within_a_deadline_scaled_to_the_packet_count() {
+    let root = temp_root();
+    // canonical 与候选各 10 组；每组只有第一题的答案不同（B→A）⇒ 10 条答案差异 ⇒ 10 包。
+    let canonical = multi_group_draft(10, "B", "D");
+    seed_item(&root, &canonical);
+    store_candidate_for_canonical(&root, &canonical, multi_group_draft(10, "A", "D"));
+    seed_packet_job(&root);
+
+    // 模拟「真实模型每轮要花几十秒」：把总时限缩短到 2.5 秒，同时每轮固定睡 400 毫秒。
+    // 10 个包各走 1 轮 apply + 最后一个收尾包 finish ⇒ 11 轮 ≈ 4.4 秒 + 重切开销：
+    // 按包数放宽后的时限（2.5s × 3 = 7.5s）装得下，未经放宽的 2.5 秒装不下——
+    // 这正是改动前 budget_exhausted、改动后能完成的原因。
+    let base_deadline = std::time::Duration::from_millis(2500);
+    let round_delay = std::time::Duration::from_millis(400);
+
+    let not_cancelled = || false;
+    let repair_request = RepairRunRequest {
+        root: &root,
+        item_id: ITEM_ID,
+        job_id: ITEM_ID,
+        batch_id: BATCH_ID,
+        repair_run_id: "run-scaled-deadline",
+        max_rounds: 6,
+        deadline: Instant::now() + base_deadline,
+        cancelled: &not_cancelled,
+        progress: None,
+    };
+    // 每个包第一轮：把本包的答案改对（editVersion 从包的 draftSlice 里读）；
+    // 重切出的收尾包：finish_packet。每轮睡 200 毫秒模拟真实模型延迟。
+    let mut rounds = 0u32;
+    let report = run_packets(&repair_request, |context: &Value, _observations: &[Value]| {
+        rounds += 1;
+        std::thread::sleep(round_delay);
+        let version = context["draftSlice"]["editVersion"].as_i64().unwrap_or(-1);
+        let task_ids: Vec<String> = context["taskIds"]
+            .as_array()
+            .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .unwrap_or_default();
+        // 本包第一题的槽位：questionNumbers[0]（如 14 ⇒ q14）。**只有包内还有差异时
+        // 才 apply**：编辑重切出的收尾包同样带着 taskIds，但它没有差异——对它再 apply
+        // 是原地打转，正确动作是 finish_packet。
+        let has_differences = context["differences"]
+            .as_array()
+            .is_some_and(|differences| !differences.is_empty());
+        let slot = context["questionNumbers"]
+            .as_array()
+            .and_then(|numbers| numbers.first())
+            .and_then(Value::as_u64)
+            .map(|number| format!("q{number}"));
+        match slot {
+            Some(slot) if version > 0 && has_differences => Ok(json!({
+                "callId": format!("p{rounds}"),
+                "tool": "apply_edits",
+                "arguments": {
+                    "baseVersion": version,
+                    "commands": [{"op": "setAnswer", "slotId": slot,
+                                  "value": {"kind": "option", "labels": ["A"], "assignment": "unordered_set"}}]
+                }
+            })),
+            _ => Ok(json!({"callId": format!("p{rounds}"), "tool": "finish_packet", "arguments": {}})),
+        }
+    })
+    .expect("包模式循环必须返回结果");
+
+    // 全部差异都改对 ⇒ 剩余任务为空 ⇒ completed，而不是 budget_exhausted。
+    // 11 轮 = 10 个 apply + 1 个收尾包（收尾包是整卷一个，不是每包一个）。
+    assert_eq!(report.rounds, 11, "10 个 apply + 1 个收尾包：{:#?}", report.packets);
+    assert_eq!(report.applied_count, 10);
+    assert_eq!(
+        report.status,
+        REPAIR_STATUS_COMPLETED,
+        "放宽后的总时限必须装得下 10 个包的串行处理：{:#?}",
+        report.packets
+    );
+    assert!(
+        report
+            .packets
+            .iter()
+            .all(|packet| matches!(packet["status"].as_str(), Some("finished") | Some("edited"))),
+        "每个包要么被编辑重切、要么收工：{:#?}",
+        report.packets
+    );
+    assert_eq!(
+        read_answer(&root, "q14")["labels"],
+        json!(["A"]),
+        "每个包的编辑都必须真的落库（抽查第一组）"
+    );
+    assert_eq!(read_answer(&root, "q77")["labels"], json!(["A"]), "抽查最后一组");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 两个包改到相关目标时，CAS 仍然串行裁决：后到的包用过期版本提交必须被拒
+/// （EDIT_VERSION_CONFLICT），它改用重切后刷新的版本重新提交才能落地，
+/// 且先到包的修改**不会被覆盖**。
+#[test]
+fn a_conflicting_edit_from_a_later_packet_is_rejected_and_recovers_without_overwriting() {
+    let root = temp_root();
+    // 两组：tg-0（q14/q15）与 tg-1（q21/q22）；每组只有第一题有答案差异（B→A）⇒ 两个包。
+    let canonical = multi_group_draft(2, "B", "D");
+    seed_item(&root, &canonical);
+    store_candidate_for_canonical(&root, &canonical, multi_group_draft(2, "A", "D"));
+    seed_packet_job(&root);
+
+    // 循环开始前的版本：第二个包将拿它提交一个**过期** baseVersion。
+    let stale_version = canonical_version(&root);
+    assert_eq!(stale_version, 1, "前提：种子版本是 1");
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    // 全局：是否已有任何一个包的编辑落地（落地后，其它包手里的版本就过期了）。
+    let any_edit_landed = std::cell::Cell::new(false);
+    // 每包状态：轮数、本包的编辑是否已落地。
+    let packet_state: std::cell::RefCell<std::collections::BTreeMap<String, (u32, bool)>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+    let report = run_packets(&request, |context: &Value, _observations: &[Value]| {
+        let task_ids: Vec<String> = context["taskIds"]
+            .as_array()
+            .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .unwrap_or_default();
+        // 组 k 的 taskId 是 early-approaches-q{14+7k}-{15+7k}；第二组的第一题槽位是 q21。
+        let own_slot = if task_ids.iter().any(|id| id == "early-approaches-q21-22") {
+            "q21"
+        } else {
+            "q14"
+        };
+        let packet_id = context["packetId"].as_str().unwrap_or("pkt-?").to_string();
+        let (round, landed_self) = {
+            let mut map = packet_state.borrow_mut();
+            let entry = map.entry(packet_id).or_insert((0, false));
+            entry.0 += 1;
+            (entry.0, entry.1)
+        };
+        let version = context["draftSlice"]["editVersion"].as_i64().unwrap_or(-1);
+        // 编辑重切出的收尾包（无差异、taskIds 可能为空）必须直接收工——对它 apply
+        // 是无意义的重复写入。
+        let has_differences = context["differences"]
+            .as_array()
+            .is_some_and(|differences| !differences.is_empty());
+        if !has_differences {
+            return Ok(json!({
+                "callId": format!("f-{own_slot}-{round}"),
+                "tool": "finish_packet",
+                "arguments": {"note": "受控剧本：收尾包收工"}
+            }));
+        }
+        let apply = |base_version: i64| {
+            json!({
+                "callId": format!("c-{own_slot}-{round}"),
+                "tool": "apply_edits",
+                "arguments": {
+                    "baseVersion": base_version,
+                    "commands": [set_answer(own_slot, "A")]
+                }
+            })
+        };
+        let mark_landed = |landed_self: bool| -> bool {
+            if !landed_self {
+                any_edit_landed.set(true);
+                true
+            } else {
+                landed_self
+            }
+        };
+        let finish = json!({
+            "callId": format!("f-{own_slot}-{round}"),
+            "tool": "finish_packet",
+            "arguments": {"note": "受控剧本：本包收工"}
+        });
+        // 标记「本包已落地」：apply 的返回在下一轮的观察里，但剧本是串行的——
+        // 第一个包的第一轮 apply 必然成功（版本新鲜），这里按此记账。
+        if landed_self {
+            return Ok(finish);
+        }
+        if !any_edit_landed.get() {
+            // 第一个包：用当前版本正常提交；提交成功后，其它包手里的版本就过期了。
+            any_edit_landed.set(true);
+            let mut map = packet_state.borrow_mut();
+            map.values_mut().for_each(|(_, landed)| *landed = false);
+            if let Some(entry) = map.get_mut(&context["packetId"].as_str().unwrap_or("pkt-?").to_string()) {
+                entry.1 = true;
+            }
+            return Ok(apply(version));
+        }
+        // 后到的包：先拿**过期**版本试一次（必须被 CAS 拒），再用重切后刷新的
+        // `draftSlice.editVersion` 重新提交。
+        if round == 1 {
+            return Ok(apply(stale_version));
+        }
+        let mut map = packet_state.borrow_mut();
+        if let Some(entry) = map.get_mut(&context["packetId"].as_str().unwrap_or("pkt-?").to_string()) {
+            entry.1 = true;
+        }
+        Ok(apply(version))
+    })
+    .expect("包模式循环必须返回结果");
+
+    // 版本冲突真的发生过：后到包的过期提交被 CAS 拒掉。
+    assert!(
+        report.observations.iter().any(|observation| observation["errors"]
+            .as_array()
+            .is_some_and(|errors| errors.iter().any(|error| error
+                .as_str()
+                .is_some_and(|text| text.contains("EDIT_VERSION_CONFLICT"))))),
+        "后到包的过期提交必须收到 EDIT_VERSION_CONFLICT：{:#?}",
+        report.observations
+    );
+    // 先到包的修改没有被覆盖，后到包换新版本后也落地了。
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["A"]), "先到包的修改必须保留");
+    assert_eq!(read_answer(&root, "q21")["labels"], json!(["A"]), "后到包在重试后必须落地");
+    assert_eq!(report.applied_count, 2);
+    assert_eq!(
+        report.status,
+        REPAIR_STATUS_COMPLETED,
+        "两组差异都被改对，剩余任务应为空：{:?}",
+        report.remaining_tasks
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
