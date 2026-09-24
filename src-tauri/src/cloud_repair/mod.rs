@@ -1545,6 +1545,43 @@ fn execute_tool(
                     None,
                 );
             };
+            let reported_packet_id = call
+                .arguments
+                .get("packetId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let active_packet_id = context
+                .get("packetId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if reported_packet_id != active_packet_id {
+                return (
+                    CloudRepairToolResultV1::rejected(
+                        &call.call_id,
+                        vec![format!(
+                            "CLOUD_REPAIR_INSUFFICIENT_CONTEXT_PACKET_MISMATCH: expected active packet {active_packet_id:?}, got {reported_packet_id:?}"
+                        )],
+                    ),
+                    None,
+                );
+            }
+            if call
+                .arguments
+                .get("reason")
+                .and_then(Value::as_str)
+                .is_none_or(|reason| reason.trim().is_empty())
+            {
+                return (
+                    CloudRepairToolResultV1::rejected(
+                        &call.call_id,
+                        vec![
+                            "CLOUD_REPAIR_INSUFFICIENT_CONTEXT_REASON_REQUIRED: explain why the active packet is insufficient"
+                                .to_string(),
+                        ],
+                    ),
+                    None,
+                );
+            }
             let needs = call
                 .arguments
                 .get("needs")
@@ -2983,9 +3020,20 @@ where
             let is_finish = call.tool == "finish";
             let is_insufficient =
                 call.tool == crate::schema::cloud_repair_v1::CLOUD_REPAIR_INSUFFICIENT_CONTEXT_TOOL;
-            // L1 = 模型主动去取材料（抓取工具）或明说不够（`report_insufficient_context`）。
-            // 记进级别是为了让诊断能回答「这一次输入量下降是不是靠模型自己补的」。
-            if is_insufficient
+            let (result, applied) = {
+                let mut tools = PacketTools {
+                    source: &source_index,
+                    budget: &mut budget,
+                    task_ids: task_ids.clone(),
+                    question_numbers: question_numbers.clone(),
+                };
+                execute_tool(request, &call, rounds, &packet, Some(&mut tools))
+            };
+            // 抓取工具的调用本身是 L1 尝试，即使来源不可用；上下文不足则只在调用真的
+            // 被接受时计入 L1。被拒的旧 packetId / malformed need 不是一次有效报告。
+            let valid_insufficient = is_insufficient
+                && result.status == crate::schema::cloud_repair_v1::CloudRepairToolStatusV1::Ok;
+            if valid_insufficient
                 || matches!(
                     call.tool.as_str(),
                     "read_source" | "search_source" | "read_page_region" | "read_passage"
@@ -2998,22 +3046,13 @@ where
             // 读的就是 `context.escalationLevel` 这个字段：不同步的话，「这一轮到底在 L 几」
             // 会有两个答案——诊断说 L1，模型看到的却是 L0。
             packet["escalationLevel"] = json!(level);
-            let (result, applied) = {
-                let mut tools = PacketTools {
-                    source: &source_index,
-                    budget: &mut budget,
-                    task_ids: task_ids.clone(),
-                    question_numbers: question_numbers.clone(),
-                };
-                execute_tool(request, &call, rounds, &packet, Some(&mut tools))
-            };
             if call.tool == "record_ruling" {
                 if let Some(recorded) = result.result.get("recorded").and_then(Value::as_array) {
                     packet_rulings += recorded.len();
                     rulings.extend(recorded.iter().cloned());
                 }
             }
-            if is_insufficient {
+            if valid_insufficient {
                 packet_insufficient += 1;
                 // 取到的证据**并入本包**，下一轮请求就带着它。
                 merge_fetched_evidence(&mut packet, &result);

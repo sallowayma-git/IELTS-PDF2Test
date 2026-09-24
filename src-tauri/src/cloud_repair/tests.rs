@@ -3781,6 +3781,61 @@ fn a_packet_that_lacks_the_answer_page_says_so_and_gets_it_next_round() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+#[test]
+fn insufficient_context_report_must_name_the_active_packet() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+    seed_packet_job(&root);
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let mut calls = 0usize;
+    let report = run_packets(&request, |context: &Value, observations: &[Value]| {
+        calls += 1;
+        match calls {
+            1 => Ok(json!({
+                "callId": "wrong-packet",
+                "tool": "report_insufficient_context",
+                "arguments": {
+                    "packetId": format!("{}-stale", context["packetId"].as_str().unwrap()),
+                    "reason": "the answer page is missing",
+                    "needs": [{"kind": "pages", "from": 3, "to": 3}]
+                }
+            })),
+            2 => {
+                assert_eq!(
+                    observations[0]["status"],
+                    json!("rejected"),
+                    "旧包的上下文不足请求不能作用于当前包：{observations:#?}"
+                );
+                assert!(
+                    observations[0]["errors"].to_string().contains("PACKET_MISMATCH"),
+                    "拒绝原因必须点明 packetId 不匹配：{observations:#?}"
+                );
+                Ok(json!({"callId": "finish", "tool": "finish_packet", "arguments": {}}))
+            }
+            _ => Ok(json!({"callId": "finish-again", "tool": "finish_packet", "arguments": {}})),
+        }
+    })
+    .expect("包模式循环必须返回结果");
+
+    assert_eq!(calls, 2);
+    assert_eq!(report.packets[0]["status"], json!("finished"));
+    assert_eq!(
+        report.packets[0]["insufficientContext"],
+        json!(0),
+        "被拒绝的旧包报告不应计作一次真实的上下文不足报告"
+    );
+    assert_eq!(
+        report.packets[0]["escalationLevel"],
+        json!(0),
+        "被拒绝的旧包报告不应推进 L1"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// 始终拿不到材料 ⇒ 后端**代记** `cannot_resolve`（理由码 `CONTEXT_INSUFFICIENT`），
 /// 差异进用户清单且文案明说「云端没能拿到足够的原文」。
 ///

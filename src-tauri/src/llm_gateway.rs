@@ -1770,6 +1770,45 @@ fn repair_step_prompt(input: &Value) -> String {
         .pointer("/context/contextMode")
         .and_then(Value::as_str)
         == Some("packets");
+    let draft_example = if packet_mode {
+        let task_id = input
+            .pointer("/context/taskIds")
+            .and_then(Value::as_array)
+            .and_then(|items| items.iter().find_map(Value::as_str));
+        let question_number = input
+            .pointer("/context/questionNumbers")
+            .and_then(Value::as_array)
+            .and_then(|items| items.iter().find_map(Value::as_u64));
+        if let Some(task_id) = task_id {
+            json!({
+                "callId": "call-1",
+                "tool": "read_draft",
+                "arguments": {"taskGroupIds": [task_id]}
+            })
+        } else if let Some(question_number) = question_number {
+            json!({
+                "callId": "call-1",
+                "tool": "read_draft",
+                "arguments": {"questionNumbers": [question_number]}
+            })
+        } else {
+            // 文档包没有可读稿件目标，因此用不需要 selector 的包收尾工具展示外层信封。
+            json!({"callId": "call-1", "tool": "finish_packet", "arguments": {}})
+        }
+    } else {
+        json!({"callId": "call-1", "tool": "read_draft", "arguments": {}})
+    };
+    let draft_example = serde_json::to_string(&draft_example).unwrap_or_default();
+    let base_version_rule = if packet_mode {
+        "- apply_edits requires numeric baseVersion: use `draftSlice.editVersion` shown in this packet, or the current editVersion returned by a scoped `read_draft`.\n"
+    } else {
+        "- apply_edits requires numeric baseVersion: call `read_draft` first and pass the editVersion you actually saw.\n"
+    };
+    let document_scope_rule = if packet_mode {
+        "- This request contains only one packet, not the whole paper. Handling its differences does not verify anything outside this packet.\n"
+    } else {
+        "- The context lists the whole document. Do not claim the paper is verified because you handled the listed differences.\n"
+    };
     let repair = input
         .get("repairNote")
         .and_then(Value::as_str)
@@ -1789,6 +1828,7 @@ This request carries ONE REPAIR PACKET, not the whole paper. A packet is a self-
 - `scope.pages` / `scope.answerPages` are 1-based. `sourceEvidence.pages[].lines[].id` looks like `p4:l12` (page 4, line 12).\n\
 - `sourceEvidence.regions[]` carry `imageAttached`; when it is true the region picture is attached to this request as an image.\n\
 - `draftSlice` / `candidateSlice` are only this packet's targets. `paperMap` is a one-screen index of the whole paper.\n\
+- If you call `read_draft`, include `taskGroupIds` and/or `questionNumbers` copied from this packet; the backend rejects empty or out-of-packet selectors.\n\
 If the packet does not contain what you need to judge a listed difference, do NOT guess and do NOT conclude from an impression:\n\
 - call `report_insufficient_context` with the exact pages / quotes / paragraphs you need, or\n\
 - fetch it yourself with `read_source` (a page range or a quote is REQUIRED; at most 3 pages per call), `search_source`, `read_page_region`, `read_passage`, `read_candidate` or `read_draft`.\n\
@@ -1799,18 +1839,18 @@ Call `finish_packet` when this packet is done.\n"
     };
     format!(
         "You are repairing an {paper} authoring draft so it matches the ORIGINAL FILE.\n\
-Return JSON only: exactly one object {{\"callId\":\"call-1\",\"tool\":\"read_draft\",\"arguments\":{{}}}} (tool is one of the allowed tools; arguments follow the tools table in the input).\n\
+Return JSON only: exactly one object shaped like {draft_example} (replace sample values with values from this request; arguments must follow the selected tool entry in the tools table).\n\
 Do not return Markdown, prose, or several objects.\n\
 Allowed tools (and nothing else): {tools}.\n\
 {packet}\n\
 {repair}\n\
 Work like an editor: read what you need, then submit ONE batch of domain commands per turn, then read the result.\n\
-- apply_edits requires baseVersion: pass the editVersion you actually saw from read_draft.\n\
+{base_version_rule}\
 - Use only the stable ids you were given. Never invent ids.\n\
 - Attach evidence copied from the original file to content changes (sourceFileId, 1-based pageIndex, exact quote). A malformed evidence entry rejects the whole batch.\n\
 - Never invent an answer the file does not give.\n\
 - If a batch is rejected because a target is protected by a human edit, narrow the batch — do not retry the same commands.\n\
-- The context lists the whole document. Do not claim the paper is verified because you handled the listed differences.\n\
+{document_scope_rule}\
 \n\
 DIFFERENCES ARE NOT AUTOMATICALLY THE USER'S PROBLEM.\n\
 The first-pass cloud candidate is only an input and it can be wrong. For every difference listed in the context, the user should NOT have to decide it unless you genuinely cannot:\n\
@@ -2105,6 +2145,22 @@ fn validate_repair_tool_arguments(tool: &str, arguments: &Value) -> CommandResul
             }
         }
         "report_insufficient_context" => {
+            let packet_id = arguments
+                .get("packetId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|packet_id| !packet_id.is_empty());
+            if packet_id.is_none() {
+                return missing("needs a non-empty \"packetId\" matching the active packet");
+            }
+            let reason = arguments
+                .get("reason")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|reason| !reason.is_empty());
+            if reason.is_none() {
+                return missing("needs a non-empty \"reason\"");
+            }
             let Some(needs) = arguments.get("needs").and_then(Value::as_array) else {
                 return missing("needs a \"needs\" array saying exactly what you are missing");
             };
@@ -3481,6 +3537,65 @@ mod tests {
         assert!(
             repair.contains("\"callId\"") && repair.contains("\"tool\""),
             "repair prompt 丢了信封声明"
+        );
+    }
+
+    #[test]
+    fn packet_repair_prompt_does_not_show_an_unscoped_read_draft_call() {
+        let prompt = repair_step_prompt(&json!({
+            "context": {
+                "contextMode": "packets",
+                "packetId": "packet-1",
+                "taskIds": ["task-group-1"],
+                "questionNumbers": [14]
+            }
+        }));
+        assert!(
+            !prompt.contains("\"tool\":\"read_draft\",\"arguments\":{}"),
+            "包模式的 read_draft 空参数示例会被执行器拒绝：{prompt}"
+        );
+        assert!(
+            prompt.contains("taskGroupIds") && prompt.contains("questionNumbers"),
+            "包模式必须指导 read_draft 使用本包范围选择器：{prompt}"
+        );
+        assert!(
+            prompt.contains("draftSlice.editVersion")
+                && prompt.contains("read_draft")
+                && !prompt.contains("pass the editVersion you actually saw from read_draft"),
+            "包模式的 baseVersion 来源应覆盖包内 draftSlice.editVersion：{prompt}"
+        );
+        assert!(
+            !prompt.contains("The context lists the whole document"),
+            "包模式 prompt 不得同时宣称上下文包含整份文档：{prompt}"
+        );
+    }
+
+    #[test]
+    fn insufficient_context_validator_requires_the_declared_packet_and_reason_fields() {
+        let mut missing_packet_id = json!({
+            "callId": "call-1",
+            "tool": "report_insufficient_context",
+            "arguments": {
+                "reason": "the answer page is missing",
+                "needs": [{"kind": "pages", "from": 3, "to": 3}]
+            }
+        });
+        assert!(
+            validate_repair_step_output(&mut missing_packet_id).is_err(),
+            "prompt/tools table declare packetId, so validator must require it"
+        );
+
+        let mut missing_reason = json!({
+            "callId": "call-2",
+            "tool": "report_insufficient_context",
+            "arguments": {
+                "packetId": "packet-1",
+                "needs": [{"kind": "pages", "from": 3, "to": 3}]
+            }
+        });
+        assert!(
+            validate_repair_step_output(&mut missing_reason).is_err(),
+            "prompt/tools table declare reason, so validator must require it"
         );
     }
 

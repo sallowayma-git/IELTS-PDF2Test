@@ -584,7 +584,7 @@ pub(crate) fn make_repair_authoring_step_input(
     // 而最近的观察（上一批被拒的具体原因、刚写入的新版本）才是模型下一步需要的。
     let omitted = observations.len().saturating_sub(MAX_REPAIR_OBSERVATIONS);
     let recent = &observations[omitted..];
-    json!({
+    let mut input = json!({
         "mode": "repair_authoring_step",
         "modality": candidate_modality(modality),
         "job": {"jobId": job.job_id, "title": job.title},
@@ -595,7 +595,6 @@ pub(crate) fn make_repair_authoring_step_input(
             "fileType": source.file_type,
             "sha256": source.sha256
         },
-        "pdfPath": pdf_path.to_string_lossy(),
         "context": context,
         "observations": recent,
         "omittedObservationCount": omitted,
@@ -603,7 +602,18 @@ pub(crate) fn make_repair_authoring_step_input(
         // 唯一真源：分发器真正放行的 op 清单。手抄一份迟早漂移。
         "allowedOps": crate::cloud_repair::tools::MODEL_ALLOWED_OPS,
         "rules": repair_tool_rules(context)
-    })
+    });
+    let packet_mode = context.get("contextMode").and_then(Value::as_str) == Some("packets");
+    let attach_full_source = context
+        .get("attachFullSource")
+        .and_then(Value::as_bool)
+        == Some(true);
+    // L0-L2 只传包证据，连本机 PDF 路径也不进入 repair input；只有 L3 后端确实要附整份
+    // PDF 时才把路径交给网关。legacy 则保留原有路径，作为 L3 与回归对照。
+    if !packet_mode || attach_full_source {
+        input["pdfPath"] = json!(pdf_path.to_string_lossy().to_string());
+    }
+    input
 }
 
 /// 修复工具表（**给模型看的信封形状**，唯一真源）。
@@ -618,8 +628,8 @@ pub(crate) fn make_repair_authoring_step_input(
 pub(crate) fn repair_tools_table() -> Value {
     json!({
         "read_draft": {
-            "purpose": "Read the CURRENT draft (authoritative canonical) for specific task groups.",
-            "arguments": {"taskGroupIds": ["optional task id list"], "questionNumbers": [1, 2]}
+            "purpose": "Read the CURRENT draft (authoritative canonical) for specific task groups. In packet mode, taskGroupIds or questionNumbers from this packet are REQUIRED; an empty or out-of-packet selector is rejected.",
+            "arguments": {"taskGroupIds": ["task id from this packet"], "questionNumbers": [1, 2]}
         },
         "read_source": {
             "purpose": "Read the ORIGINAL FILE evidence. You cannot choose a path. \
@@ -645,7 +655,7 @@ In packet mode a page range or a quote is REQUIRED and one call returns at most 
         "apply_edits": {
             "purpose": "Submit a batch of domain commands. This really writes to the authoritative draft.",
             "arguments": {
-                "baseVersion": "the editVersion you based this batch on (REQUIRED)",
+                "baseVersion": 7,
                 "commands": [{"op": "setAnswer", "slotId": "slot-27", "value": {"kind": "text", "values": ["example"]}}],
                 "evidence": [{"sourceFileId": "answer-source", "pageIndex": 1, "quote": "27 example"}]
             }
@@ -666,7 +676,7 @@ Use it when you have checked the original file and the difference does not need 
         },
         "report_insufficient_context": {
             "purpose": "Say that the evidence you were given is NOT enough to judge, and ask for exactly what you need. \
-Use this instead of guessing: a guess that cannot be checked against the file is worse than saying you do not know.",
+Use this instead of guessing: a guess that cannot be checked against the file is worse than saying you do not know. packetId and a non-empty reason are required.",
             "arguments": {
                 "packetId": "the packetId you were given",
                 "reason": "why the current evidence is not enough, in one sentence",
@@ -714,20 +724,27 @@ pub(crate) fn repair_tool_rules(context: &Value) -> Value {
     let packet_mode = context.get("contextMode").and_then(Value::as_str) == Some("packets");
     let tools = crate::schema::cloud_repair_v1::CLOUD_REPAIR_TOOLS.join(", ");
     let mut rules: Vec<String> = vec![
-        "Return JSON only: exactly one object {\"callId\":\"call-1\",\"tool\":\"read_draft\",\"arguments\":{}} (arguments per the tools table).".to_string(),
+        "Return JSON only: exactly one object with top-level keys callId (non-empty string), tool (one allowed name), and arguments (an object matching that tool's entry in the tools table).".to_string(),
         format!("tool MUST be one of {tools}. There is no other tool."),
         "You may only use the ops listed in allowedOps. resolveIssue and any quality/audit/provenance flag are NOT available.".to_string(),
-        "apply_edits REQUIRES baseVersion. Call read_draft first and pass back the editVersion you actually saw.".to_string(),
         "Target ids MUST be the stable ids you got from read_draft or the context. Never invent an id.".to_string(),
         "Attach evidence from the original file to content changes: evidence entries are {sourceFileId, 1-based pageIndex, exact non-empty quote}. A malformed entry rejects the whole batch. An empty evidence list is accepted, but the change then carries no source support for the reviewer.".to_string(),
         "Never invent an answer the original file does not provide. Leave it unresolved instead.".to_string(),
         "Some targets are protected because a human edited them. If a batch is rejected for that reason, narrow the batch instead of retrying the same commands.".to_string(),
     ];
     rules.push(if packet_mode {
+        "apply_edits REQUIRES numeric baseVersion. Use draftSlice.editVersion from this packet or editVersion from a scoped read_draft result; never invent a version.".to_string()
+    } else {
+        "apply_edits REQUIRES numeric baseVersion. Call read_draft first and pass back the editVersion you actually saw.".to_string()
+    });
+    rules.push(if packet_mode {
         "The context is ONE repair packet, not the whole paper. It lists what was included, what was omitted and which tool fetches it. Do not claim anything outside the packet is verified.".to_string()
     } else {
         "The context lists the WHOLE document. Do not claim the paper is verified just because you handled the listed differences.".to_string()
     });
+    if packet_mode {
+        rules.push("In packet mode, if you call read_draft, include taskGroupIds and/or questionNumbers copied from this packet; an empty or out-of-packet selector is rejected.".to_string());
+    }
     rules.extend([
         "When a batch is rejected you get the specific error in the next observation. Fix exactly that and try again.".to_string(),
         "A difference is NOT automatically the user's problem. The first-pass candidate can be wrong. If the file shows the current draft is right, record_ruling \"current_is_correct\" instead of leaving the difference for the user.".to_string(),
@@ -1303,5 +1320,115 @@ mod tests {
         );
         assert_eq!(candidate["modality"], json!("listening"));
         assert!(candidate["outputContract"]["shape"].get("listeningParts").is_some());
+    }
+
+    #[test]
+    fn packet_repair_rules_explain_the_read_draft_scope_selector() {
+        let rules = repair_tool_rules(&json!({"contextMode": "packets"}));
+        let rules = rules.as_array().expect("rules array");
+        assert!(
+            rules.iter().filter_map(Value::as_str).any(|rule| {
+                rule.contains("read_draft")
+                    && rule.contains("taskGroupIds")
+                    && rule.contains("questionNumbers")
+                    && rule.contains("packet")
+            }),
+            "包模式必须说明 read_draft 需要本包内的 taskGroupIds 或 questionNumbers：{rules:#?}"
+        );
+        assert!(
+            rules.iter().filter_map(Value::as_str).any(|rule| {
+                rule.contains("apply_edits")
+                    && rule.contains("draftSlice")
+                    && rule.contains("editVersion")
+                    && rule.contains("read_draft")
+            }),
+            "包模式应指导使用 draftSlice.editVersion 或 read_draft 返回的版本：{rules:#?}"
+        );
+        assert!(
+            !rules.iter().filter_map(Value::as_str).any(|rule| {
+                rule.contains("apply_edits") && rule.contains("Call read_draft first")
+            }),
+            "包模式已有 draftSlice.editVersion，不应强制多打一轮 read_draft：{rules:#?}"
+        );
+    }
+
+    #[test]
+    fn packet_repair_input_carries_pdf_path_only_for_the_l3_fallback() {
+        let profile = json!({"model": "m"});
+        let job = fixture_job();
+        let source = fixture_source();
+        let path = Path::new("C:/tmp/paper.pdf");
+        let build = |context: &Value| {
+            make_repair_authoring_step_input(
+                &profile,
+                &job,
+                "profile-1",
+                &source,
+                path,
+                context,
+                &[],
+                "reading",
+            )
+        };
+
+        let packet = build(&json!({"contextMode": "packets"}));
+        assert!(
+            packet.get("pdfPath").is_none(),
+            "L0-L2 packet input must not carry the full-source path: {packet:#?}"
+        );
+
+        let l3 = build(&json!({"contextMode": "packets", "attachFullSource": true}));
+        assert_eq!(
+            l3["pdfPath"],
+            json!(path.to_string_lossy().to_string()),
+            "L3 still needs the backend-only path to attach the full source"
+        );
+
+        assert!(
+            build(&json!({"contextMode": "legacy"})).get("pdfPath").is_some(),
+            "legacy regression path must keep the PDF source"
+        );
+    }
+
+    #[test]
+    fn repair_tools_table_names_and_argument_keys_match_the_dispatch_contract() {
+        let table = repair_tools_table();
+        let mut table_names: Vec<&str> = table
+            .as_object()
+            .expect("tools table object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let mut allowed_names = crate::schema::cloud_repair_v1::CLOUD_REPAIR_TOOLS.to_vec();
+        table_names.sort_unstable();
+        allowed_names.sort_unstable();
+        assert_eq!(table_names, allowed_names, "tool table and parser allow-list must match");
+
+        for (tool, expected) in [
+            ("read_draft", vec!["questionNumbers", "taskGroupIds"]),
+            ("read_source", vec!["pageIndex", "pageTo", "quote"]),
+            ("search_source", vec!["query"]),
+            ("read_page_region", vec!["bbox", "pageIndex"]),
+            ("read_passage", vec!["paragraphLabels", "questionNumbers"]),
+            ("read_candidate", vec!["questionNumbers", "taskIds"]),
+            ("apply_edits", vec!["baseVersion", "commands", "evidence"]),
+            ("record_ruling", vec!["rulings"]),
+            ("report_insufficient_context", vec!["needs", "packetId", "reason"]),
+            ("finish_packet", vec!["note", "unresolved"]),
+            ("finish", vec!["note", "unresolved"]),
+        ] {
+            let mut actual: Vec<&str> = table[tool]["arguments"]
+                .as_object()
+                .unwrap_or_else(|| panic!("{tool} arguments must be an object"))
+                .keys()
+                .map(String::as_str)
+                .collect();
+            actual.sort_unstable();
+            assert_eq!(actual, expected, "{tool} tool-table keys drifted");
+        }
+        assert!(
+            table["apply_edits"]["arguments"]["baseVersion"].is_number(),
+            "baseVersion must be shown with its numeric type"
+        );
     }
 }
