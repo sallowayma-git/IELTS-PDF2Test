@@ -11,7 +11,7 @@
 | P1 | `packets.rs` 切分 + 范围 + 包内容（TASK §4.1，测试 1-4） | done | `fe15917`（`85f5064` 修升级阶梯）。命令处理器层，`cargo test --lib cloud_repair::` 89 passed |
 | P2 | `grab.rs` 抓取工具 + `report_insufficient_context` + 升级阶梯（§4.2，测试 6-7） | done | `fe15917`。同上 |
 | P3 | 编排改造 + prompt + 请求体去整份 PDF（§4.3/4.4，测试 5、8、9） | done | `fe15917`、`85f5064`。含真实 HTTP 集成用例 `packets_mode_requests_carry_no_whole_pdf_...` |
-| P4 | 可观测性 + 受控模型剧本 + 真实 HTTP 集成测试 + 两模式对比（§4.5/§6/§7） | doing | `ee524f2`（§4.5 可观测性 + 文案）；`1e5c8bf`（§6 受控剧本 + §6 两模式对比）。**未完成**：§7 CDP 步骤（见「审计发现」A-12 / C-1） |
+| P4 | 可观测性 + 受控模型剧本 + 真实 HTTP 集成测试 + 两模式对比（§4.5/§6/§7） | doing | `ee524f2`（§4.5 可观测性 + 文案）；`38ec89b`（§6 受控剧本 + §6 两模式对比）。**未完成**：§7 CDP 步骤（见「审计发现」A-4 / A-5） |
 | P5 | 独立审计 #1（子代理，只读，对抗式） | doing | 见「审计发现」；3 个只读子代理 + 3 处突变检查 + 逐条源码复核 |
 | P6 | 修复审计 #1 发现 | todo | |
 | P7 | 最终验收 + 独立审计 #2 + 修复 | todo | |
@@ -51,14 +51,13 @@
 
 **A-2｜证据引文从不与原文比对，§2「校验仍对照完整原文」这句话没有实现。**
 - 位置：`src-tauri/src/cloud_repair/tools.rs:271-303`（`validate_evidence`）。函数自己的注释也写明「只校验**结构**……不校验内容正确性」。
-- 事实：`apply_cloud_edits`（`tools.rs:309-314`）只拿 `validate_evidence` 的结构问题决定是否拒批。因此 `apply_edits` 带一条**凭空编造**的 `quote`（只要 `sourceFileId` 非空、`pageIndex >= 1`、`quote` 非空）也会被判 `Applied`。
-- 复现：`tests.rs` 的 `cloud_edit_success_path_applies_and_records_journal` 把 evidence 的 `quote` 改成任意字符串，测试仍绿（本分支未改 `tools.rs`，行为与基线一致）。
+- 事实：`apply_cloud_edits`（`tools.rs:309-403`）在写库前只做四件事 —— `sanitize_commands`、`validate_evidence`（结构）、人工保护目标预检、事务内质量重算 + `validate_authoring`（schema / ID / 引用闭合）。**全流程没有任何一处把 `quote` 与原文文本层比对**。仓库里唯一做这件事的函数是 `llm_suggestions.rs:887 llm_suggestion_quote_mismatches`，它服务的是 outline 建议链，**不在云端修复的写入路径上**。因此 `apply_edits` 带一条凭空编造的 `quote`（只要 `sourceFileId` 非空、`pageIndex >= 1`、`quote` 非空）也会被判 `Applied`。
 - 归属：`tools.rs` 在 §8 **不允许**改（§2 也明写「不改 tools.rs 的校验与写入逻辑」）→ 见「越界需求」。**不是本分支引入的回归**，但任务书 §2 的描述与实现不符，报告里必须如实说明。
 
 **A-3｜L2 刚补的整页图可能被紧随其后的预算裁剪清掉，而 `escalationNote` 仍声称「已附」。**
 - 位置：`src-tauri/src/cloud_repair/mod.rs:3462-3472`（L2 分支写入 `regions` 并写 `scopeManifest.escalationNote = "L2: the backend attached whole-page images for every page in scope."`）→ `:3486` 立刻 `enforce_packet_budget(packet)` → `:3303-3327` 超预算时 `regions.clear()`。
 - 事实：L2 附整页图后包体几乎必然超过 24k（`PACKET_IMAGE_TOKENS = 1200` / 张，`packets.rs:39`），`enforce_packet_budget` 会把**包括刚补的**整页图全部清掉，同时留下 `budgetNote`。于是包里同时存在「L2 已附整页图」和「N 张区域图被丢」两句互相矛盾的话，而模型看到的是一张图都没有。
-- 复现：构造一个 scope 有 ≥ 6 页的包（或把 `PACKET_IMAGE_TOKENS` 临时调大），断言 `packet["sourceEvidence"]["regions"]` 非空 → 红。
+- 复现：**未实测**（源码级判定）。需要构造 scope ≥ 6 页的包（6 张整页图 = 7200 token，加正文易过 24000），断言 `packet["sourceEvidence"]["regions"]` 非空即红。本机没有现成的 ≥ 6 页 packet fixture，P6 补用例时一并确认。
 - 归属：`mod.rs` 在 §8 允许清单内 → P6 修（L2 之后不要立刻按同一预算裁剪，或裁剪时改写成诚实的 `escalationNote`）。
 
 **A-4｜受控服务的「包模式」剧本只覆盖答案类修复，CDP 剧本是题面类修复 → 一旦跑 Windows CDP 很可能直接失败。**
@@ -156,5 +155,5 @@
 
 - 2026-09-24 P0：`34dfadd` 在 macOS 上编译不过（`parser.rs:2184` E0425），基线改在 `f13c75a` 取。worktree `/tmp/pdf2test-baseline-34dfadd`（`CARGO_TARGET_DIR` 指向主 target 复用依赖；`lib/` 软链到主工作区）。数字：cargo 1046/0/11、vitest 391、tsc 0。下一步：P1。
 - 2026-09-24 P1-P3：`fe15917`（packets.rs + grab.rs + 编排 + prompt + 去整份 PDF）、`85f5064`（修「无进展指纹不含升级级别」导致阶梯卡在 L1；修「收尾包被误报 budget_exhausted」）。`cargo test --lib` 1085/0/11。
-- 2026-09-24 P4：`ee524f2`（§4.5 逐包 `packetId`/`escalationLevel`/`pagesIncluded`/`estimatedInputTokens`/`imageCount`/`requestBytes` 落 `llm-calls.jsonl`；`userTasks.ts` 把「材料没到手」与「查过但定不了」拆成两句）。`1e5c8bf`（§6 受控服务包模式剧本 + §6 两模式对比用例：legacy 917173 B → packets 83531 B）。**受控服务剧本已用真实 HTTP 逐分支验证**：缺答案页 → `report_insufficient_context{needs:[pages 3..3]}`；页到手 → `apply_edits{baseVersion:7, quote:"14 A"}`；差异清空 → `finish_packet`；**反自证**：页在包里但答案行不在 → 只 `finish_packet`，不编答案。
+- 2026-09-24 P4：`ee524f2`（§4.5 逐包 `packetId`/`escalationLevel`/`pagesIncluded`/`estimatedInputTokens`/`imageCount`/`requestBytes` 落 `llm-calls.jsonl`；`userTasks.ts` 把「材料没到手」与「查过但定不了」拆成两句）。`38ec89b`（§6 受控服务包模式剧本 + §6 两模式对比用例：legacy 917173 B → packets 83531 B）。**受控服务剧本已用真实 HTTP 逐分支验证**：缺答案页 → `report_insufficient_context{needs:[pages 3..3]}`；页到手 → `apply_edits{baseVersion:7, quote:"14 A"}`；差异清空 → `finish_packet`；**反自证**：页在包里但答案行不在 → 只 `finish_packet`，不编答案。
 - 2026-09-24 P5：3 个只读子代理并行审计（边界与正确性 / 上下文质量 / 测试可信度）+ 3 处突变检查（M1-M3 均确认变红后还原）+ 逐条源码复核 + A-1 实测复现（临时断言变红 `left: 1 / right: 0`，已删除）。结果见「审计发现」：P0 ×1、P1 ×4、P2 ×11、未证实 ×3。下一步：P6 先修 A-1 / A-3 / A-4（A-4 是 CDP 验收的前置阻断），再补 A-5 的 CDP 步骤。
