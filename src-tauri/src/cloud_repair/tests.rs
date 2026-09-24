@@ -4255,3 +4255,131 @@ fn packets_mode_sends_much_less_input_than_legacy_for_the_same_paper() {
         "legacy 不产生逐包估算：这个字段的有无本身就是两种模式的分界"
     );
 }
+
+/// 包超预算时：按 §4.3 的「整页图 → 区域图」丢**最少够用**的图，并且**不许**在
+/// `escalationNote` 里继续声称「整页图已附」——那句 note 是 L2 写的，而预算可能
+/// 紧接着就把图清掉了（审计发现 A-3：包里会同时躺着两句互相矛盾的话，模型看到的
+/// 却是一张图都没有）。
+#[test]
+fn an_over_budget_packet_drops_the_fewest_images_and_corrects_the_escalation_note() {
+    // 每张图按 1200 token 计费、字符按 4 折算：8.2 万字符 ≈ 20500 token，加 3 张图
+    // 3600 ⇒ 约 24100，只超一点点 ⇒ 丢 1 张就够。
+    let mut packet = json!({
+        "contextMode": "packets",
+        "packetId": "pkt-budget",
+        "filler": "x".repeat(82_000),
+        "scopeManifest": {
+            "escalationNote": "L2: the backend attached whole-page images for every page in scope."
+        },
+        "sourceEvidence": {
+            "regions": [
+                {"pageIndex": 1, "bbox": Value::Null, "image": "whole-1.png"},
+                {"pageIndex": 2, "bbox": {"x": 1.0}, "image": "crop-2.png"},
+                {"pageIndex": 3, "bbox": {"x": 2.0}, "image": "crop-3.png"},
+            ]
+        }
+    });
+    let estimate = packet_token_estimate(&packet);
+    assert!(
+        estimate > super::packets::PACKET_TOKEN_BUDGET,
+        "夹具必须先真的超预算，否则这条用例什么都没测：{estimate}"
+    );
+
+    apply_budget_after_escalation(&mut packet);
+
+    let regions = packet["sourceEvidence"]["regions"]
+        .as_array()
+        .expect("regions 必须还在")
+        .clone();
+    assert_eq!(
+        regions.len(),
+        2,
+        "只该丢最少够用的那几张，不该一超预算就全清：{regions:#?}"
+    );
+    assert!(
+        regions.iter().all(|region| !region["bbox"].is_null()),
+        "退让顺序是「整页图 → 区域图」，整页图必须先丢：{regions:#?}"
+    );
+    assert!(
+        packet["budgetNote"].as_str().is_some_and(|note| note.contains("dropped")),
+        "丢了什么必须写下来：{:#?}",
+        packet["budgetNote"]
+    );
+    let note = packet["scopeManifest"]["escalationNote"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        note.contains("dropped"),
+        "预算把图清掉之后，L2 的 note 必须改口，不能继续说「已附整页图」：{note}"
+    );
+}
+
+/// 升级阶梯只许写**实际发生过**的事（审计发现 A-3 / A-12）。
+///
+/// 两处「假陈述」都在这里：
+/// ① L2 拿不到任何页图（例如这一卷没有渲染产物）时，note 仍照抄「已附整页图」；
+/// ② 第二个包要 L3 时整份原文的额度已用完，代码静默跳过却把级别抬成 3，
+///    读者只看到一个 `escalationLevel: 3`，以为附过了。
+#[test]
+fn the_escalation_ladder_only_claims_what_it_actually_attached() {
+    let root = temp_root();
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    // 没有任何页图的来源索引：`materialize_regions` 一张也裁不出来。
+    let source = super::packets::SourcePageIndex {
+        source_file_id: "early-approaches-pdf".to_string(),
+        kind: "pdf".to_string(),
+        lines: std::collections::BTreeMap::new(),
+        page_images: std::collections::BTreeMap::new(),
+        answer_pages: Vec::new(),
+        answer_pages_known: false,
+        paragraphs: Vec::new(),
+    };
+    let mut packet = json!({
+        "packetId": "pkt-ladder",
+        "scope": {"pages": [1, 2]},
+        "sourceEvidence": {"regions": []},
+        "scopeManifest": {}
+    });
+    let mut used_full_source = false;
+
+    // L1 → L2：一张图都没附上，note 就必须说「没附上」。
+    let level = escalate_packet(&request, &source, &mut packet, 1, &mut used_full_source);
+    assert_eq!(level, 2);
+    assert_eq!(packet["escalationLevel"], json!(2));
+    let note = packet["scopeManifest"]["escalationNote"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        note.contains("no page image was available"),
+        "L2 一张图都没附上，却仍声称「已附整页图」：{note}"
+    );
+
+    // L2 → L3：整份原文这一次用掉。
+    let level = escalate_packet(&request, &source, &mut packet, 2, &mut used_full_source);
+    assert_eq!(level, 3);
+    assert_eq!(packet["attachFullSource"], json!(true));
+    assert!(used_full_source);
+
+    // 第二个包再要 L3：拿不到（每次运行只允许一次），但必须留下说明。
+    let mut second = json!({
+        "packetId": "pkt-ladder-2",
+        "scope": {"pages": [3]},
+        "sourceEvidence": {"regions": []},
+        "scopeManifest": {}
+    });
+    let level = escalate_packet(&request, &source, &mut second, 2, &mut used_full_source);
+    assert_eq!(level, 3, "级别仍要抬，否则阶梯不前进、到不了 L4");
+    assert!(
+        second.get("attachFullSource").is_none(),
+        "第二个包不该拿到整份原文：{second:#?}"
+    );
+    let note = second["scopeManifest"]["escalationNote"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        note.contains("already attached"),
+        "L3 被额度挡下时必须说清楚，不能只留一个「级别 3」让读者以为附过了：{note}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

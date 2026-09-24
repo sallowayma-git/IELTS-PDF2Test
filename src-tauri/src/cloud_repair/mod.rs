@@ -3307,34 +3307,108 @@ fn packet_token_estimate(packet: &Value) -> usize {
     chars / packets::PACKET_CHARS_PER_TOKEN + images * packets::PACKET_IMAGE_TOKENS
 }
 
-/// 超预算时按「整页图 → 区域图」退让，并**如实写明**少了什么。
+/// 超预算时按 §4.3 的退让顺序「整页图 → 区域图」丢**最少够用**的图，并**如实写明**少了什么。
 ///
 /// 静默丢图比丢文字更危险：文字还在包里，模型至少知道自己读到了什么；而一张「本该
 /// 附上但没附」的图会让模型以为自己看过那一块。
+///
+/// 为什么不是「一超预算就把图全清掉」：那样最坏情况下会把 L2 刚补的整页图连同区域图
+/// 一起丢掉，而任务书 §4.3 的退让阶梯是逐级的（整页图 → 区域图 → 缩小裁剪 → 拆包）。
+/// 每张图按固定值计费，所以「至少得丢几张」可以直接算出来，多丢一张都是白丢。
 fn enforce_packet_budget(packet: &mut Value) {
-    if packet_token_estimate(packet) <= packets::PACKET_TOKEN_BUDGET {
+    let estimate = packet_token_estimate(packet);
+    if estimate <= packets::PACKET_TOKEN_BUDGET {
         return;
     }
-    if let Some(regions) = packet
+    let Some(regions) = packet
+        .pointer("/sourceEvidence/regions")
+        .and_then(Value::as_array)
+    else {
+        return;
+    };
+    if regions.is_empty() {
+        return;
+    }
+    // 只有真的带了图的条目才占 token（`packet_token_estimate` 同一判据）。
+    let costly: Vec<usize> = (0..regions.len())
+        .filter(|index| !regions[*index]["image"].is_null())
+        .collect();
+    if costly.is_empty() {
+        return;
+    }
+    let excess = estimate - packets::PACKET_TOKEN_BUDGET;
+    let per_image = packets::PACKET_IMAGE_TOKENS.max(1);
+    let must_drop = ((excess + per_image - 1) / per_image).min(costly.len());
+    // 退让顺序：整页图信息量最小（只是「这一页长这样」），先丢；仍不够才动区域图。
+    let mut ordered = costly;
+    ordered.sort_by_key(|index| {
+        let whole_page = regions[*index].get("bbox").map_or(true, Value::is_null);
+        (if whole_page { 0u8 } else { 1u8 }, *index)
+    });
+    let drop_set: BTreeSet<usize> = ordered.into_iter().take(must_drop).collect();
+    let kept: Vec<Value> = regions
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !drop_set.contains(index))
+        .map(|(_, region)| region.clone())
+        .collect();
+    if let Some(list) = packet
         .pointer_mut("/sourceEvidence/regions")
         .and_then(Value::as_array_mut)
     {
-        if regions.is_empty() {
-            return;
-        }
-        let dropped = regions.len();
-        regions.clear();
-        if let Some(object) = packet.as_object_mut() {
-            object.insert(
-                "budgetNote".to_string(),
-                json!(format!(
-                    "{dropped} region image(s) were dropped: the packet exceeded the {}-token \
-                     budget. The text layer for the pages in scope is still below.",
-                    packets::PACKET_TOKEN_BUDGET
-                )),
-            );
-        }
+        *list = kept;
     }
+    if let Some(object) = packet.as_object_mut() {
+        object.insert(
+            "budgetNote".to_string(),
+            json!(format!(
+                "{must_drop} image(s) were dropped: the packet exceeded the {}-token \
+                 budget. Whole-page images go first, then region crops. The text layer for \
+                 the pages in scope is still below.",
+                packets::PACKET_TOKEN_BUDGET
+            )),
+        );
+    }
+}
+
+/// 升级之后按预算退让，并把**实际结果**写进 `escalationNote`。
+///
+/// 为什么不能只调 [`enforce_packet_budget`]：L2 写下的 note 是「已附整页图」，而预算可能
+/// 紧接着就把那些图清掉。那样包里会同时躺着「L2 已附整页图」和「N 张图被丢」两句互相
+/// 矛盾的话——模型看到的是一张图都没有，而诊断说它看过。这里让 note 跟着**实际留下的
+/// 图**走：没发生的事不许写成发生了。
+fn apply_budget_after_escalation(packet: &mut Value) {
+    let image_count = |packet: &Value| -> usize {
+        packet
+            .pointer("/sourceEvidence/regions")
+            .and_then(Value::as_array)
+            .map(|regions| {
+                regions
+                    .iter()
+                    .filter(|region| !region["image"].is_null())
+                    .count()
+            })
+            .unwrap_or(0)
+    };
+    let before = image_count(packet);
+    enforce_packet_budget(packet);
+    let after = image_count(packet);
+    if before <= after {
+        return;
+    }
+    let Some(note) = packet
+        .pointer("/scopeManifest/escalationNote")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    else {
+        return;
+    };
+    packet["scopeManifest"]["escalationNote"] = json!(format!(
+        "{note} Correction: {} of those image(s) were then dropped because the packet exceeds \
+         the {}-token budget; the text layer for the pages in scope is still below.",
+        before - after,
+        packets::PACKET_TOKEN_BUDGET
+    ));
 }
 
 /// 把一次 `report_insufficient_context` 取到的证据并入本包。
@@ -3478,9 +3552,27 @@ fn escalate_packet(
                 &requests,
             ));
             packet["sourceEvidence"]["regions"] = json!(regions);
-            packet["scopeManifest"]["escalationNote"] = json!(
-                "L2: the backend attached whole-page images for every page in scope."
-            );
+            // note 必须写**实际附上了几张**。拿不到页图（例如这一卷没有渲染产物）时
+            // 照抄「已附整页图」，就是让模型以为自己看过那一块——静默丢图最危险的那一种。
+            let attached = packet
+                .pointer("/sourceEvidence/regions")
+                .and_then(Value::as_array)
+                .map(|regions| {
+                    regions
+                        .iter()
+                        .filter(|region| !region["image"].is_null())
+                        .count()
+                })
+                .unwrap_or(0);
+            if attached > 0 {
+                packet["scopeManifest"]["escalationNote"] = json!(format!(
+                    "L2: the backend attached whole-page images for {attached} page(s) in scope."
+                ));
+            } else {
+                packet["scopeManifest"]["escalationNote"] = json!(
+                    "L2: no page image was available for this source, so no whole-page image could be attached."
+                );
+            }
         }
         3 => {
             if !*used_full_source {
@@ -3489,12 +3581,16 @@ fn escalate_packet(
                 packet["scopeManifest"]["escalationNote"] = json!(
                     "L3: the whole original file is attached to this packet (last resort, once per run)."
                 );
+            } else {
+                packet["scopeManifest"]["escalationNote"] = json!(
+                    "L3 is exhausted for this run: the whole original file was already attached to another packet, so this packet keeps its text scope only."
+                );
             }
         }
         _ => {}
     }
     packet["escalationLevel"] = json!(next);
-    enforce_packet_budget(packet);
+    apply_budget_after_escalation(packet);
     next
 }
 
