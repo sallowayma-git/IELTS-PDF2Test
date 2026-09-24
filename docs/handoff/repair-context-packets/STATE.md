@@ -7,7 +7,7 @@
 
 | 阶段 | 内容 | 状态 | 提交 / 证据 |
 |---|---|---|---|
-| P0 | 基线：环境探测、全量测试数字、核对 TASK.md §3 行号 | done | worktree `/tmp/pdf2test-baseline-34dfadd` @ `f13c75a`；数字见「基线数字」 |
+| P0 | 基线：环境探测、全量测试数字、核对 TASK.md §3 行号 | done | worktree `/tmp/pdf2test-baseline-34dfadd` @ `f13c75a`（已清理，重建方法见下）；数字见「基线数字」 |
 | P1 | `packets.rs` 切分 + 范围 + 包内容（TASK §4.1，测试 1-4） | done | `fe15917`（`85f5064` 修升级阶梯）。命令处理器层，`cargo test --lib cloud_repair::` 89 passed |
 | P2 | `grab.rs` 抓取工具 + `report_insufficient_context` + 升级阶梯（§4.2，测试 6-7） | done | `fe15917`。同上 |
 | P3 | 编排改造 + prompt + 请求体去整份 PDF（§4.3/4.4，测试 5、8、9） | done | `fe15917`、`85f5064`。含真实 HTTP 集成用例 `packets_mode_requests_carry_no_whole_pdf_...` |
@@ -21,6 +21,7 @@
 
 - **平台**：macOS（darwin，aarch64-apple-darwin）。Rust 工具链在 `~/.cargo/bin`（需显式 export PATH）；node 22.22.2；前端依赖已在 `node_modules/.bin`。
 - **基线提交不是 `34dfadd`**：`34dfadd` 在 macOS 上**根本无法编译** —— `src-tauri/src/parser.rs:2184` `E0425: cannot find value '_asset_dir'`，只出现在 macOS 的 sips 渲染分支，仓库此前只在 Windows 构建过。本分支第一个提交 `f13c75a`（一行改动，把 `_asset_dir` 改回真实存在的 `asset_dir`）修掉了它，**无任何行为变更**。因此基线数字取 `f13c75a`。
+  - 复现方式（worktree 已用完清理，需要时重建）：`git worktree add /tmp/base f13c75a`，把主工作区的 `src-tauri/lib`（pdfium，gitignore 里，worktree 拿不到）和 `node_modules` 软链进去，再 `cd /tmp/base/src-tauri && CARGO_TARGET_DIR=<主 target> cargo test --lib`（共享 target 可复用依赖产物，整轮约 1 分钟）。
 - Rust `cargo test --lib`：基线（`f13c75a`）**1046 passed / 0 failed / 11 ignored** → 本分支 **1086 passed / 0 failed / 11 ignored**（净 +40）
 - Vitest：基线 **391 passed**（28 个测试文件里 1 个加载失败）→ 本分支 **392 passed**（同样 1 个文件加载失败；净 +1）
 - tsc：基线 `exit 0` → 本分支 `exit 0`
