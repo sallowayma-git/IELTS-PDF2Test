@@ -4145,6 +4145,189 @@ fn packets_mode_requests_carry_no_whole_pdf_and_the_fetched_page_reaches_the_mod
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// PATH 里找一个 `node` 可执行文件；找不到返回 `None`。
+///
+/// 找不到就**如实跳过**（与仓库里 pdfium 用例同一处理），不静默当成通过：
+/// 这个用例证明的是「仓库里那个受控服务在包模式下能自己把缺的页要回来」，
+/// 没跑成 node 就等于没证。
+fn node_binary() -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    for directory in std::env::split_paths(&path) {
+        for name in ["node", "node.exe"] {
+            let candidate = directory.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+/// 一个当前空闲的本地端口。
+///
+/// 先绑 0 让内核挑，再立刻放开给受控服务去绑。中间有一个很短的窗口；单机测试里
+/// 可以接受，因为失败的表现是「服务起不来 → 健康检查超时 → 用例报错」，不会静默。
+fn free_local_port() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind 临时端口");
+    let port = listener.local_addr().expect("local addr").port();
+    drop(listener);
+    port
+}
+
+/// 受控服务子进程的看门狗：无论用例怎么退出（包括断言失败 panic）都要收掉它，
+/// 否则一个还占着端口的 node 进程会留在机器上。
+struct ChildGuard(std::process::Child);
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// §7.2：**真实网关代码 + 真实 HTTP + 仓库里那个受控服务**，驱动包模式循环走完
+/// L0 → L1 → 编辑 → 收工。
+///
+/// 与 [`packets_mode_requests_carry_no_whole_pdf_and_the_fetched_page_reaches_the_model`]
+/// 的区别只在 HTTP 对端：那一条是测试内的 TCP stub（够用来量输入量与断言请求体形状），
+/// 这一条起的是仓库里真正交付、CDP 链在 Windows 上用的
+/// `scripts/controlled-llm-service.mjs`。任务书 §7 点名的就是后者 —— 因为「受控服务在
+/// 包模式下能自己把缺的页要回来」这件事，只有让**它**真的跑一遍才算证过：A-4 补的
+/// 题面类 / 答案类分支此前只有一份未提交的临时脚本验证过，CDP 链又只跑在 Windows。
+///
+/// 剧本里**不给正确答案**，只给「改哪个槽、答案在哪一页」：答案与引文都只能由受控
+/// 服务从包里真实出现的行读出来。
+#[test]
+fn the_real_controlled_service_drives_the_packet_loop_through_l0_l1_and_finish() {
+    let Some(node) = node_binary() else {
+        eprintln!("[skip] 本机 PATH 里没有 node，跳过 §7.2 的真实受控服务用例");
+        return;
+    };
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("src-tauri 必须有父目录")
+        .join("scripts/controlled-llm-service.mjs");
+    assert!(script.is_file(), "受控服务脚本必须在仓库里：{script:?}");
+
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+    seed_packet_job(&root);
+
+    let plan_path = root.join("repair-plan.json");
+    crate::util::write_json(
+        &plan_path,
+        &json!({
+            "fixSlotIds": ["q14"],
+            "questionNumber": 14,
+            "sourcePageOneBased": 3,
+            "rulings": [],
+            "unresolved": [],
+            "finishNote": "受控服务：q14 已按原文件改为 A"
+        }),
+    )
+    .expect("写剧本");
+
+    let port = free_local_port();
+    let child = std::process::Command::new(&node)
+        .arg(&script)
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--plan")
+        .arg(&plan_path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap_or_else(|error| panic!("起受控服务失败 node={node:?}: {error}"));
+    let _guard = ChildGuard(child);
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let mut ready = false;
+    while std::time::Instant::now() < deadline {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            ready = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(ready, "受控服务 15 秒内没有起来（端口 {port}）");
+
+    crate::llm_profiles::save_profiles(
+        &root,
+        &[json!({
+            "profileId": "controlled-repair",
+            "name": "Controlled Repair Service",
+            "provider": "OpenAiCompatible",
+            "baseUrl": format!("http://127.0.0.1:{port}/v1"),
+            "model": "controlled-repair-v1",
+            "temperature": 0,
+            "timeoutMs": 60000,
+            "forceJson": true,
+            "enabled": true
+        })],
+    )
+    .expect("profile 必须能落盘");
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let report = run_packets(&request, |context: &Value, observations: &[Value]| {
+        repair_authoring_step_through_gateway(
+            &root,
+            ITEM_ID,
+            Some("controlled-repair"),
+            context,
+            observations,
+        )
+    })
+    .expect("包模式循环必须跑完（受控服务真的被驱动过）");
+
+    // ① 编辑真的落库，且值是**从包里那一行**读出来的（剧本里没有 "A"）。
+    assert_eq!(
+        read_answer(&root, "q14")["labels"],
+        json!(["A"]),
+        "编辑必须真的落库"
+    );
+    assert_eq!(report.applied_count, 1);
+    // ② 「不够就说」这条出口真的被走过：L1 在逐包诊断里看得见。
+    assert_eq!(
+        report.packets[0]["insufficientContext"],
+        json!(1),
+        "受控服务必须真的报过一次「不够」：{:#?}",
+        report.packets
+    );
+    assert!(
+        report.packets[0]["escalationLevel"].as_u64().unwrap_or(0) >= 1,
+        "走过 report_insufficient_context 之后级别必须抬到 L1：{:#?}",
+        report.packets[0]
+    );
+
+    // ③ 逐包记录对账：第一轮 L0 且没有答案页；第二轮 L1 且带着取回的答案页。
+    let records: Vec<Value> = std::fs::read_to_string(
+        crate::util::job_dir(&root, ITEM_ID).join("llm-calls.jsonl"),
+    )
+    .expect("网关必须留下 llm-calls.jsonl")
+    .lines()
+    .filter_map(|line| serde_json::from_str(line).ok())
+    .filter(|record: &Value| record["commandName"] == json!("repair_authoring_step"))
+    .collect();
+    assert!(records.len() >= 2, "至少两轮修复调用要落记录：{records:#?}");
+    assert_eq!(records[0]["escalationLevel"], json!(0), "{:#?}", records[0]);
+    assert_eq!(records[1]["escalationLevel"], json!(1), "{:#?}", records[1]);
+    let first_pages = records[0]["pagesIncluded"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let second_pages = records[1]["pagesIncluded"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(!first_pages.contains(&json!(3)), "第一轮不该包含答案页：{first_pages:?}");
+    assert!(second_pages.contains(&json!(3)), "第二轮必须包含取回的答案页：{second_pages:?}");
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// 给 `seed_packet_job` 的作业补一份**视觉缓存**（页图 + `pdf-images.json`）。
 ///
 /// `grab::load_source_index` 只认这一个产物；没有它 `source.page_images` 是空的，
