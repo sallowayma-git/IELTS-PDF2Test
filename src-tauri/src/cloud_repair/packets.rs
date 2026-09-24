@@ -499,9 +499,24 @@ fn anchor_pages_of(document: &Value, task_ids: &BTreeSet<String>) -> Vec<AnchorP
     out
 }
 
+/// 已知的最大页号（文本层与页图取并集）。两者都空时返回 `None`。
+fn max_known_page(source: &SourcePageIndex) -> Option<u32> {
+    let from_lines = source.lines.keys().next_back().copied();
+    let from_images = source.page_images.keys().next_back().copied();
+    match (from_lines, from_images) {
+        (Some(left), Some(right)) => Some(left.max(right)),
+        (Some(only), None) | (None, Some(only)) => Some(only),
+        (None, None) => None,
+    }
+}
+
 /// 锚点贴页边 ⇒ 题目跨页 ⇒ 左右各扩一页。
+///
+/// 两侧都要夹住已知页范围：往回扩要 `page > 1`，往外扩要 `page < 最后一页`。
+/// 少了外侧上界就会把不存在的页写进 `scope.pages`，模型照它去取只会拿到「不存在」。
 fn expand_edge_pages(pages: &[u32], anchors: &[AnchorPage], source: &SourcePageIndex) -> Vec<u32> {
     let mut out: BTreeSet<u32> = pages.iter().copied().collect();
+    let last_page = max_known_page(source);
     for anchor in anchors {
         let Some((top, bottom)) = anchor.edges else {
             continue;
@@ -520,7 +535,9 @@ fn expand_edge_pages(pages: &[u32], anchors: &[AnchorPage], source: &SourcePageI
         if anchor.page > 1 {
             out.insert(anchor.page - 1);
         }
-        out.insert(anchor.page + 1);
+        if last_page.is_some_and(|last| anchor.page < last) {
+            out.insert(anchor.page + 1);
+        }
     }
     out.into_iter().collect()
 }
@@ -1205,6 +1222,10 @@ fn build_packet(
 }
 
 /// 题组锚点 → 裁剪请求（pageIndex + bbox）。同一页多个锚点只留一个区域请求。
+///
+/// 缺 bbox 的**那一页**退整页图，判据是「这一页有没有 bbox」，不是「整组有没有」：
+/// 按整组判时，「同组里 2 页有 bbox、1 页没有」的那一页会既没有区域图也没有整页图，
+/// 而 `scope.pages` 里明明写着它。
 fn region_requests(
     draft: &PacketDraft,
     input: &PacketPlanInput<'_>,
@@ -1212,6 +1233,7 @@ fn region_requests(
 ) -> Vec<Value> {
     let mut out: Vec<Value> = Vec::new();
     let mut seen: BTreeSet<(u32, String)> = BTreeSet::new();
+    let mut pages_requested: BTreeSet<u32> = BTreeSet::new();
     for task_id in &draft.task_ids {
         let Some(group) = canonical_index.groups.get(task_id) else {
             continue;
@@ -1221,6 +1243,7 @@ fn region_requests(
         let mut bboxes = Vec::new();
         collect_bboxes(group, &mut bboxes);
         for (page, bbox) in bboxes.iter() {
+            pages_requested.insert(*page);
             let key = (*page, serde_json::to_string(bbox).unwrap_or_default());
             if !seen.insert(key) {
                 continue;
@@ -1232,20 +1255,16 @@ fn region_requests(
                 "image": Value::Null,
             }));
         }
-        if bboxes.is_empty() {
-            // 锚点缺失：改用整页图（任务书 4.1）。
-            for anchor in anchors {
-                let key = (anchor.page, String::new());
-                if !seen.insert(key) {
-                    continue;
-                }
-                out.push(json!({
-                    "pageIndex": anchor.page,
-                    "bbox": Value::Null,
-                    "taskId": task_id,
-                    "image": Value::Null,
-                }));
+        for anchor in anchors {
+            if !pages_requested.insert(anchor.page) {
+                continue;
             }
+            out.push(json!({
+                "pageIndex": anchor.page,
+                "bbox": Value::Null,
+                "taskId": task_id,
+                "image": Value::Null,
+            }));
         }
     }
     let _ = input;
@@ -1481,6 +1500,27 @@ mod tests {
             }],
             "children": [{"type": "text", "id": format!("{id}-t"), "text": text, "sourceAnchors": []}],
         })
+    }
+
+    /// 带可选 bbox 的锚点节点（`bbox` 是 PDF 点坐标，`origin: top-left`）。
+    fn anchored_node(id: &str, page_zero_based: i64, bbox: Option<(f64, f64)>) -> Value {
+        let mut anchor = json!({
+            "sourceFileId": "src-1",
+            "pageIndex": page_zero_based,
+            "nodeIds": [id],
+            "extractionMode": "pdf_native",
+            "sourceHash": "a".repeat(64),
+        });
+        if let Some((y, height)) = bbox {
+            anchor["bbox"] = json!({
+                "x": 0.0,
+                "y": y,
+                "width": 100.0,
+                "height": height,
+                "origin": "top-left",
+            });
+        }
+        json!({"type": "paragraph", "id": id, "sourceAnchors": [anchor], "children": []})
     }
 
     /// 一个三题组的本地稿：1-5（true/false）、6-7（completion）、8-10（matching）。
@@ -1723,6 +1763,95 @@ mod tests {
             let id = line["id"].as_str().unwrap();
             assert!(id.starts_with("p2:"), "行 id 必须带正确的页号，实际 {id}");
         }
+    }
+
+    /// 锚点贴**最后一页**的页边时，不能扩出不存在的页（审计发现 A-6）。
+    ///
+    /// 往回扩那一侧有 `page > 1` 保护，往外扩那一侧原来没有上界：锚点压到最后一页的
+    /// 页底，`scope.pages` 就会多出一个「最后一页 + 1」。那一页在文本层和页图里都不存在，
+    /// 模型照 `scopeManifest` 去要只会拿到「不存在」，白白耗掉一轮。
+    #[test]
+    fn an_edge_anchor_on_the_last_page_does_not_invent_a_page() {
+        let source = index_with_pages(&[(1, &["one"]), (2, &["two"]), (3, &["three"])]);
+        let last_page_edge = vec![AnchorPage {
+            page: 3,
+            edges: Some((800.0, 842.0)),
+        }];
+        let pages = expand_edge_pages(&[3], &last_page_edge, &source);
+        assert_eq!(
+            pages,
+            vec![2, 3],
+            "最后一页贴边只该往回扩，不该扩出第 4 页：{pages:?}"
+        );
+
+        // 中间页贴边仍要左右各扩一页：上界不能把正常行为也一起掐掉。
+        let middle_page_edge = vec![AnchorPage {
+            page: 2,
+            edges: Some((0.0, 20.0)),
+        }];
+        let pages = expand_edge_pages(&[2], &middle_page_edge, &source);
+        assert_eq!(pages, vec![1, 2, 3], "中间页贴边必须左右都扩：{pages:?}");
+    }
+
+    /// 一个题组里「有的页有 bbox、有的页没有」时，缺 bbox 的**那一页**必须退成整页图
+    /// （审计发现 A-7）。
+    ///
+    /// 判据原来是整组级的（`bboxes.is_empty()`）：组里只要有一页有 bbox，另一页缺 bbox
+    /// 就既拿不到区域图、也拿不到整页图 —— 而 `scope.pages` 里明明写着这一页。
+    #[test]
+    fn a_page_without_a_bbox_falls_back_to_a_whole_page_inside_a_group_that_has_bboxes() {
+        let canonical = json!({
+            "taskGroups": [{
+                "taskId": "tg-mixed",
+                "displayRange": {"kind": "range", "start": 1, "end": 3},
+                "taskType": "matching_information",
+                "instructions": [
+                    anchored_node("tg-mixed-1", 0, Some((10.0, 20.0))),
+                    anchored_node("tg-mixed-2", 1, None),
+                    anchored_node("tg-mixed-3", 2, Some((10.0, 20.0))),
+                ],
+                "stimulus": [],
+                "optionBank": Value::Null,
+                "responseGroups": [],
+                "sourceAnchors": [],
+            }],
+            "answerSlots": {},
+            "answerKey": {},
+        });
+        let source = index_with_pages(&[(1, &["one"]), (2, &["two"]), (3, &["three"])]);
+        let index = GroupIndex::build(&canonical);
+        let draft = PacketDraft {
+            task_ids: BTreeSet::from(["tg-mixed".to_string()]),
+            part_id: None,
+            differences: Vec::new(),
+            blocking_issues: Vec::new(),
+            document_only: false,
+        };
+        let input = PacketPlanInput {
+            canonical: &canonical,
+            candidate: &Value::Null,
+            differences: &[],
+            blocking_issues: &[],
+            protected: &BTreeSet::new(),
+            source: &source,
+            edit_version: 1,
+        };
+        let requests = region_requests(&draft, &input, &index);
+        let mut pages: Vec<(u64, bool)> = requests
+            .iter()
+            .map(|request| {
+                (
+                    request["pageIndex"].as_u64().unwrap(),
+                    !request["bbox"].is_null(),
+                )
+            })
+            .collect();
+        pages.sort();
+        assert_eq!(
+            pages,
+            vec![(1, true), (2, false), (3, true)],
+            "缺 bbox 的那一页必须退成整页图，不能整组一起漏掉：{requests:#?}"
+        );
     }
 
     /// 阻断问题排在答案差异之前，答案差异排在文本差异之前。

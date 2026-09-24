@@ -561,7 +561,7 @@ fn crop_page_image(
     }
     // 锚点 bbox 的原点可能是左下；裁剪要的是从上往下。
     let bottom_left = bbox.get("origin").and_then(Value::as_str) == Some("bottom-left");
-    let top = if bottom_left { y + height } else { y };
+    let anchor_top = if bottom_left { y + height } else { y };
     let margin_x = width * 0.05;
     let margin_y = height * 0.10;
 
@@ -585,8 +585,12 @@ fn crop_page_image(
     let right = ((x + width + margin_x) * scale_x)
         .max(left + 1.0)
         .min(pixel_width as f64);
-    let top = ((top - height - margin_y) * scale_y).max(0.0).min(pixel_height as f64 - 1.0);
-    let bottom = ((top + height * 3.0 + margin_y) * scale_y)
+    // 上下边界全部在**页单位**里算完，最后一次性乘 `scale_y`。
+    // 混着算（像素 `top` + 页单位 `height`）会让裁剪高度多出近一倍。
+    let top = ((anchor_top - height - margin_y) * scale_y)
+        .max(0.0)
+        .min(pixel_height as f64 - 1.0);
+    let bottom = ((anchor_top + height + margin_y) * scale_y)
         .max(top + 1.0)
         .min(pixel_height as f64);
     let left = left as u32;
@@ -854,6 +858,78 @@ mod tests {
             );
         }
         source
+    }
+
+    /// 写一张纯色 PNG 当页图，返回可直接喂给 `crop_page_image` 的引用。
+    fn write_page_image(
+        root: &Path,
+        page: u32,
+        pixel_width: u32,
+        pixel_height: u32,
+        page_width: f64,
+        page_height: f64,
+    ) -> PageImageRef {
+        let directory = crate::util::job_dir(root, "job-crop")
+            .join("cache")
+            .join("vision");
+        std::fs::create_dir_all(&directory).expect("建页图目录");
+        let path = directory.join(format!("page-{page}.png"));
+        let file = std::fs::File::create(&path).expect("建页图文件");
+        let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), pixel_width, pixel_height);
+        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().expect("写 PNG 头");
+        writer
+            .write_image_data(&vec![255u8; (pixel_width * pixel_height * 3) as usize])
+            .expect("写 PNG 数据");
+        writer.finish().expect("收尾 PNG");
+        PageImageRef {
+            path: path.to_string_lossy().to_string(),
+            mime_type: "image/png".to_string(),
+            width: page_width,
+            height: page_height,
+        }
+    }
+
+    /// 区域裁剪的上下边界要在**页单位**里算完再一次性换算成像素
+    /// （审计发现 A-13）。
+    ///
+    /// 旧代码把已经是像素的 `top` 又加了一遍页单位的 `height * 3.0`，
+    /// 裁出来的高度比 bbox 承诺的多出近一倍：模型拿到一张「比它要的区域大得多」的图，
+    /// 却以为那就是证据区域。
+    #[test]
+    fn a_region_crop_keeps_the_bbox_height_it_promised() {
+        let root =
+            std::env::temp_dir().join(format!("grab-crop-{}", uuid::Uuid::new_v4().simple()));
+        // 页 100×400 点 → 200×800 像素，scale_x = scale_y = 2。
+        let image = write_page_image(&root, 1, 200, 800, 100.0, 400.0);
+        let bbox = json!({
+            "x": 10.0,
+            "y": 50.0,
+            "width": 40.0,
+            "height": 20.0,
+            "origin": "top-left",
+        });
+        let path = crop_page_image(&root, "job-crop", "pkt-crop", 1, &image, Some(&bbox))
+            .expect("裁剪应成功")
+            .expect("top-left 的 bbox 应能裁出区域");
+        let bytes = std::fs::read(&path).expect("读裁剪结果");
+        let info = png::Decoder::new(std::io::Cursor::new(&bytes))
+            .read_info()
+            .expect("裁剪结果必须是合法 PNG")
+            .info()
+            .clone();
+        // x 边距 2 点、y 边距 2 点：
+        //   左右 (10-2)~(10+40+2) = 8~52 点 → 16~104 像素，宽 88；
+        //   上下 (50-20-2)~(50+20+2) = 28~72 点 → 56~144 像素，高 88。
+        assert_eq!(
+            (info.width, info.height),
+            (88, 88),
+            "裁剪尺寸必须与 bbox 承诺的一致，实际 {}x{}",
+            info.width,
+            info.height
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// 不带页范围也不带引文的 `read_source` 必须被拒，且原因要具体。
