@@ -393,13 +393,29 @@ pub(crate) fn build_authoring_v2_shadow_for_modality(
             )
         });
         rehost_structured_slots(&task_id, &task_type, &mut slots);
+        // Recognition warnings are the draft's non-blocking record of how the
+        // group was read.  A completion group whose blanks the paper never
+        // numbered gets one here, so the slot's origin is part of the draft
+        // instead of being silently indistinguishable from extraction.
+        let mut recognition_warnings = zone
+            .warnings
+            .iter()
+            .chain(signature_result.warnings.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        if let Some(warning) = completion_structure
+            .as_ref()
+            .and_then(CompletionStructureCandidate::slot_order_inferred_warning)
+        {
+            recognition_warnings.push(warning);
+        }
         let mut group = json!({
             "taskId": task_id,
             "displayRange": expression,
             "taskType": task_type_name,
             "instructions": instructions,
             "instructionSignature": serde_json::to_value(&signature_result.signature).map_err(|error| error.to_string())?,
-            "recognitionWarnings": zone.warnings.iter().chain(signature_result.warnings.iter()).cloned().collect::<Vec<_>>(),
+            "recognitionWarnings": recognition_warnings,
             "responseGroups": responses,
             "sourceAnchors": task_source_anchors,
             "quality": {"score": 0.0, "sourceCoverage": 0.0, "hardFailures": []},

@@ -36,7 +36,14 @@ export type UserTaskKind =
   /** 当前稿与云端读到的不一样（云端没能定论，交给用户看一眼）。 */
   | "cloud-difference"
   /** 云端留下的疑问 / 原文件有云端没读全的部分。 */
-  | "cloud-note";
+  | "cloud-note"
+  /**
+   * 空位是按阅读顺序**推断**出来的（原卷没在这几行印题号）。
+   *
+   * 这是识别自己记录的推断来源（草稿的 `recognitionWarnings`），不是缺内容：
+   * 位置可能对，也可能错，所以只提示、不阻断发布。
+   */
+  | "inferred-slot";
 
 export type UserTaskActionId =
   /** 定位到答案控件（题面上的输入框）。 */
@@ -83,6 +90,15 @@ export interface UserTaskSummaryV1 {
   /** 被合并掉的原始问题行数（验收报告用，普通界面不显示）。 */
   mergedRowCount: number;
 }
+
+/**
+ * 草稿里记录「空位按阅读顺序推断」的 `recognitionWarnings` 前缀。
+ *
+ * 后端在 `completion.rs::assign_drawn_blank_slots` 里，把原卷**没有印题号**的
+ * 空位按阅读顺序派给剩余题号时会写下 `slot_order_inferred:<题号…>`。
+ * 前缀必须与后端常量 `SLOT_ORDER_INFERRED_WARNING` 逐字一致。
+ */
+const SLOT_ORDER_INFERRED_WARNING = "slot_order_inferred:";
 
 // ── 质量码分类 ────────────────────────────────────────────────────────
 //
@@ -487,7 +503,10 @@ export function buildUserTasks(
     "missing-asset": 4,
     "processing-failed": 5,
     "cloud-difference": 6,
-    "cloud-note": 7
+    "cloud-note": 7,
+    // 这里排不出 `inferred-slot`：它在 `buildEditingAids` 末尾追加，不经过本函数排序。
+    // 类型上仍要给一个位置，取一个不影响任何已排序任务的号。
+    "inferred-slot": 8
   };
   tasks.sort((a, b) => {
     if (a.severity !== b.severity) return a.severity === "blocker" ? -1 : 1;
@@ -738,6 +757,34 @@ export function buildEditingAids(
       detail: "请对照原文件核对这一部分。",
       actions: [{ id: "view-source", label: "查看原文", targetId: "document" }],
       covers: [id]
+    });
+  }
+
+  // 识别自己记下的「空位是推断出来的」：草稿的 `taskGroups[].recognitionWarnings`
+  // 里带一条 `slot_order_inferred:<题号…>`（由 `completion.rs` 在按阅读顺序把
+  // 未印题号的空位派给剩余题号时写入）。这是**推断来源**，不是缺内容，所以只给
+  // 一条 warning，不参与 `blockerCount`，发布判据完全不动。
+  const inferredNumbers: number[] = [];
+  for (const task of ds.taskGroups) {
+    for (const warning of task.recognitionWarnings ?? []) {
+      if (!warning.startsWith(SLOT_ORDER_INFERRED_WARNING)) continue;
+      const rest = warning.slice(SLOT_ORDER_INFERRED_WARNING.length);
+      for (const part of rest.split(",")) {
+        const number = Number(part.trim());
+        if (Number.isInteger(number) && number > 0) inferredNumbers.push(number);
+      }
+    }
+  }
+  if (inferredNumbers.length) {
+    const range = questionRangeLabel(inferredNumbers);
+    tasks.push({
+      taskId: "inferred-slot",
+      kind: "inferred-slot",
+      severity: "warning",
+      title: `${range}的空位位置是按阅读顺序推断的`,
+      detail: "原卷这几行没有印题号，识别按顺序把它们对到了剩余题号上；请对照原文件确认位置对不对。",
+      actions: [{ id: "view-source", label: "查看原文", targetId: "document" }],
+      covers: []
     });
   }
   return { ...summary, tasks, headline: headlineFor(tasks.length) };
