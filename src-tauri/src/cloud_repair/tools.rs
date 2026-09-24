@@ -15,6 +15,7 @@
 //! 模型能做的只有"提交一批领域命令 + 说明依据"。它不能执行代码、不能改源码、
 //! 不能直接写导出 JS、不能碰质量/审计/来源路径字段、不能标记问题已解决。
 
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -101,7 +102,7 @@ pub(crate) struct CloudEditRequest {
     pub round: i64,
     pub tool_call_id: String,
     pub commands: Vec<Value>,
-    /// 证据（原文页索引与引文）：只做留痕与后端核对，不参与内容正确性判断。
+    /// 证据（原文页索引与引文）：留痕与后端核对；引文必须能在完整原文文本层里找到。
     pub evidence: Vec<Value>,
 }
 
@@ -125,10 +126,13 @@ pub(crate) struct CloudEditOutcome {
     /// code 去重后的列表（`push_issue` 只在 `severity == "blocking"` 时压入 code），它把
     /// 「问题落在哪个目标上」丢掉了。于是「q15 缺答案」与「q16 缺答案」在 code 集合里是
     /// 同一个 `ANSWER_KEY_MISSING_SLOT`：云端若把 q16 的答案也删掉，code 集合前后不变、差集
-    /// 为空，会被判成「没引入新问题」而放行，用户的内容就此静默丢失。反向同理：code 集合少
-    /// 一个元素，并不等于那个问题真的被修好。所以这里比较的是 `/quality/issues[]` 里的
+    /// 为空，会被判成「没引入新问题」而放行，用户的内容就此静默丢失。反向同理：code 集合
+    /// 少一个元素，并不等于那个问题真的被修好。所以这里比较的是 `/quality/issues[]` 里的
     /// **具体诊断指纹**——模型也能从指纹里直接读出「哪道题」出了问题。
     pub introduced_hard_failures: Vec<String>,
+    /// 无法核验引文的 evidence 下标（原文没有文本层时）。**不**算已核验，
+    /// 必须原样进入工具结果与运行摘要，不能被「编辑已应用」盖成「证据已核实」。
+    pub evidence_unverifiable: Vec<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -262,13 +266,13 @@ fn blocking_diagnostic_fingerprints(ds: &Value) -> BTreeSet<String> {
 
 /// 证据条目的结构校验。
 ///
-/// 只校验**结构**（来源归属字段、页范围、引文非空），不校验内容正确性——后者是模型
-/// 结合原文的语义判断，程序无法替代。但"结构有效"不等于"内容正确"，所以这里通过
-/// 也不代表后端认可了模型的主张。
+/// 只校验**结构**（来源归属字段、页范围、引文非空），内容正确性由
+/// [`verify_evidence_quotes`] 对照**完整原文**文本层核验——两件事分开做：
+/// 结构错误是「这条证据根本不成立」，引文核验是「这条证据声称的原文不存在」。
 ///
 /// `pageIndex >= 1`：页索引 0 在本产品里被判为无效来源定位（见
 /// `cloud_outline_group_quote_invalid`），早在这里拦下比事后返工便宜。
-fn validate_evidence(evidence: &[Value]) -> Vec<String> {
+pub(crate) fn validate_evidence(evidence: &[Value]) -> Vec<String> {
     let mut problems = Vec::new();
     for (index, entry) in evidence.iter().enumerate() {
         let Some(object) = entry.as_object() else {
@@ -302,16 +306,167 @@ fn validate_evidence(evidence: &[Value]) -> Vec<String> {
     problems
 }
 
+/// 证据引文核验用的**完整原文**文本层。
+///
+/// 为什么不是包内切片：给模型看的范围缩小了，但「引文必须真实存在」的判据**不能**
+/// 跟着缩小——拿包内切片对照等于让提交证据的一方自己出题自己判。抓取工具与包证据
+/// 用的是同一份全量索引（`grab::load_source_index` 读整个 `document-ir.json`），
+/// 因此模型看到的行与这里核验用的行同源。
+pub(crate) enum EvidenceSourceText {
+    /// PDF：逐页文本。键是 **1-based** 页号；值是该页各行按原顺序以换行连接。
+    Paged(BTreeMap<u32, String>),
+    /// DOCX / TXT / MD：从原始文件独立抽取的全文。没有页的概念，页一致性不适用。
+    Whole(String),
+    /// 没有文本层（扫描件、原文件解析产物缺失）：引文**无法核验**。不据此拒绝，
+    /// 但必须如实标记为 unverifiable——不能算作已核验，也不能假装通过。
+    Unavailable,
+}
+
+/// 引文比对前的规范化。**白名单**，不做模糊匹配：连续空白合并为一个空格、
+/// 弯引号/撇号统一成直引号、各种连字符/破折号统一成 `-`、忽略大小写。
+///
+/// 刻意**不做**的：忽略标点、去掉连字符断行残留、音似/形似容错——那会把
+/// 「引文确实在原文里」滑成「引文跟原文差不多」，编造就又有了生存空间。
+fn normalize_quote_text(value: &str) -> String {
+    let unified: String = value
+        .chars()
+        .map(|ch| match ch {
+            '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' | '\u{2032}' => '\'',
+            '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{201F}' | '\u{2033}' => '"',
+            '\u{2010}' | '\u{2011}' | '\u{2012}' | '\u{2013}' | '\u{2014}' | '\u{2015}'
+            | '\u{2212}' => '-',
+            other => other,
+        })
+        .collect();
+    unified
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// 结构完整的条目才值得核验：缺字段/越页的由 [`validate_evidence`] 报具体的结构错误，
+/// 这里跳过它们，不重复计数、不把结构错误混进引文错误。
+fn verifiable_quote(entry: &Value) -> Option<String> {
+    let object = entry.as_object()?;
+    let quote = object
+        .get("quote")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|quote| !quote.is_empty())?;
+    let page = object.get("pageIndex").and_then(Value::as_i64)?;
+    if page < 1 {
+        return None;
+    }
+    Some(normalize_quote_text(quote))
+}
+
+/// 在逐页文本里找引文，返回「出现该引文的页」（1-based）。
+///
+/// 先逐页找；整页都找不到时再找**相邻两页拼接**（跨页引文）——拼接命中时两页都算
+/// 「找到的页」，声明页落在其中任一页的 ±1 内都算一致。行内换行不另做处理：
+/// 页文本按行拼接后空白已合并，跨**行**引文天然可查。
+fn quote_pages(pages: &BTreeMap<u32, String>, needle: &str) -> Vec<u32> {
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let found: Vec<u32> = pages
+        .iter()
+        .filter(|(_, text)| normalize_quote_text(text).contains(needle))
+        .map(|(page, _)| *page)
+        .collect();
+    if !found.is_empty() {
+        return found;
+    }
+    let mut spans: Vec<u32> = Vec::new();
+    let mut previous: Option<(&u32, &String)> = None;
+    for (page, text) in pages {
+        if let Some((previous_page, previous_text)) = previous {
+            let joined = normalize_quote_text(&format!("{previous_text}\n{text}"));
+            if joined.contains(needle) {
+                spans.push(*previous_page);
+                spans.push(*page);
+            }
+        }
+        previous = Some((page, text));
+    }
+    spans
+}
+
+/// 逐条核验 `evidence[].quote` 是否真的出现在**完整原文**文本层里。
+///
+/// 返回 `(整批拒绝的错误码列表, 无法核验的条目下标列表)`：
+/// - 引文（规范化后）在原文里找不到，或实际所在页与声明页相差超过 1 页 ⇒ 整批拒绝，
+///   错误码 `CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:<index>`（`<index>` 是 evidence
+///   数组下标，模型能直接定位是哪一条编的）；
+/// - 原文没有文本层 ⇒ 该条标为 unverifiable：**不**拒绝，也**不**算已核验；
+/// - 结构不完整的条目跳过（结构错误由 [`validate_evidence`] 负责）。
+pub(crate) fn verify_evidence_quotes(
+    evidence: &[Value],
+    source: &EvidenceSourceText,
+) -> (Vec<String>, Vec<usize>) {
+    let mut problems = Vec::new();
+    let mut unverifiable = Vec::new();
+    match source {
+        EvidenceSourceText::Unavailable => {
+            for (index, entry) in evidence.iter().enumerate() {
+                if verifiable_quote(entry).is_some() {
+                    unverifiable.push(index);
+                }
+            }
+        }
+        EvidenceSourceText::Whole(text) => {
+            let haystack = normalize_quote_text(text);
+            for (index, entry) in evidence.iter().enumerate() {
+                let Some(needle) = verifiable_quote(entry) else {
+                    continue;
+                };
+                if !haystack.contains(&needle) {
+                    problems.push(format!("CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:{index}"));
+                }
+            }
+        }
+        EvidenceSourceText::Paged(pages) => {
+            for (index, entry) in evidence.iter().enumerate() {
+                let Some(needle) = verifiable_quote(entry) else {
+                    continue;
+                };
+                let found = quote_pages(pages, &needle);
+                let declared = entry
+                    .get("pageIndex")
+                    .and_then(Value::as_i64)
+                    .unwrap_or_default();
+                // 页一致性允许 ±1：引文可能横跨页边界，声明页与实际页差一页是正常的。
+                let page_agrees = found
+                    .iter()
+                    .any(|page| ((*page as i64) - declared).abs() <= 1);
+                if !page_agrees {
+                    problems.push(format!("CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:{index}"));
+                }
+            }
+        }
+    }
+    (problems, unverifiable)
+}
+
 /// 云端修复的写入入口。
 ///
 /// 全流程落在**一个**事务里：版本 CAS、授权检查、试算校验、写入、journal、保护目标
 /// 更新彼此同生共死。任何一步失败整批回滚，权威稿一字不改。
+///
+/// `source_text` 是**完整原文**的文本层（不是包内切片）：每条 `evidence.quote` 都要能
+/// 在它里面逐字找到（规范化空白/引号/连字符、忽略大小写；声明页允许 ±1）。找不到就
+/// 整批拒绝；原文没有文本层时标 unverifiable，不拒绝也不算已核验。
 pub(crate) fn apply_cloud_edits(
     root: &Path,
     request: &CloudEditRequest,
+    source_text: &EvidenceSourceText,
 ) -> CommandResult<CloudEditOutcome> {
     let (commands, stripped_keys) = sanitize_commands(&request.commands)?;
-    let evidence_problems = validate_evidence(&request.evidence);
+    let mut evidence_problems = validate_evidence(&request.evidence);
+    let (quote_problems, evidence_unverifiable) =
+        verify_evidence_quotes(&request.evidence, source_text);
+    evidence_problems.extend(quote_problems);
 
     let mut conn = open_library_connection(root)?;
     // 读一次当前稿：既用于**预检**（给模型更快的具体反馈），也用于"本次引入了哪些
@@ -342,6 +497,7 @@ pub(crate) fn apply_cloud_edits(
             errors: evidence_problems,
             stripped_keys,
             introduced_hard_failures: Vec::new(),
+            evidence_unverifiable,
         });
     }
 
@@ -358,6 +514,7 @@ pub(crate) fn apply_cloud_edits(
             errors: vec![format!("EDIT_PROTECTED_TARGET:{conflict}")],
             stripped_keys,
             introduced_hard_failures: Vec::new(),
+            evidence_unverifiable,
         });
     }
 
@@ -411,6 +568,7 @@ pub(crate) fn apply_cloud_edits(
             errors: Vec::new(),
             stripped_keys,
             introduced_hard_failures: Vec::new(),
+            evidence_unverifiable,
         }),
         Err(error) => {
             // 失败也要如实给出**当前**版本：模型据此重新 read_draft 再修，而不是
@@ -426,6 +584,7 @@ pub(crate) fn apply_cloud_edits(
                 errors: vec![error],
                 stripped_keys,
                 introduced_hard_failures: introduced.into_inner(),
+                evidence_unverifiable,
             })
         }
     }
@@ -743,6 +902,13 @@ mod cloud_repair_write_entry_tests {
         }
     }
 
+    /// 既有用例都在「没有原文文本层」的库根上跑：传 `Unavailable` 与真实路径下
+    /// 「读不到原文索引」的语义一致（引文标 unverifiable，不据此拒绝）。
+    /// 引文核验本身的行为由下面 P9 的专项用例对着真实文本层验证。
+    fn apply(root: &Path, request: &CloudEditRequest) -> CommandResult<CloudEditOutcome> {
+        apply_cloud_edits(root, request, &EvidenceSourceText::Unavailable)
+    }
+
     /// 生成一个 `insertAnswerSlot` 命令：在 golden fixture 的共享题组里插入一个**答案未解**
     /// （`unresolved`）的新槽。这会令质量管线在**新目标**上产生一条 `ANSWER_KEY_MISSING_SLOT`
     /// 阻断诊断——用于验证「同 code、不同目标」必须被识别为新引入的硬失败。
@@ -795,7 +961,7 @@ mod cloud_repair_write_entry_tests {
         let item_id = seed_item(&root, &load_fixture());
 
         let request = base_request(&item_id, "run-success", 1, set_answer_command("q14", &["A"]));
-        let outcome = apply_cloud_edits(&root, &request).expect("apply_cloud_edits");
+        let outcome = apply(&root, &request).expect("apply_cloud_edits");
 
         assert_eq!(outcome.status, CloudEditStatus::Applied, "errors={:?}", outcome.errors);
         assert_eq!(outcome.edit_version, 2, "版本应推进到 base + 1");
@@ -831,7 +997,7 @@ mod cloud_repair_write_entry_tests {
             "pageIndex": 0,
             "quote": "some quoted span"
         })];
-        let outcome = apply_cloud_edits(&root, &request).expect("apply_cloud_edits");
+        let outcome = apply(&root, &request).expect("apply_cloud_edits");
 
         assert_eq!(outcome.status, CloudEditStatus::Rejected);
         assert!(
@@ -861,7 +1027,7 @@ mod cloud_repair_write_entry_tests {
         }
 
         let request = base_request(&item_id, "run-protected", 1, set_answer_command("q14", &["A"]));
-        let outcome = apply_cloud_edits(&root, &request).expect("apply_cloud_edits");
+        let outcome = apply(&root, &request).expect("apply_cloud_edits");
 
         assert_eq!(outcome.status, CloudEditStatus::Rejected);
         assert!(
@@ -882,7 +1048,7 @@ mod cloud_repair_write_entry_tests {
         let item_id = seed_item(&root, &load_fixture());
         let run = "run-undo";
 
-        let outcome = apply_cloud_edits(&root, &base_request(&item_id, run, 1, set_answer_command("q14", &["A"])))
+        let outcome = apply(&root, &base_request(&item_id, run, 1, set_answer_command("q14", &["A"])))
             .expect("apply_cloud_edits");
         assert_eq!(outcome.status, CloudEditStatus::Applied);
         assert_eq!(outcome.edit_version, 2, "修复后版本应推进到 2");
@@ -919,7 +1085,7 @@ mod cloud_repair_write_entry_tests {
         let item_id = seed_item(&root, &ds);
 
         let request = base_request(&item_id, "run-stale", 1, set_answer_command("q14", &["A"]));
-        let outcome = apply_cloud_edits(&root, &request).expect("apply_cloud_edits");
+        let outcome = apply(&root, &request).expect("apply_cloud_edits");
 
         assert_eq!(
             outcome.status,
@@ -957,7 +1123,7 @@ mod cloud_repair_write_entry_tests {
         // ANSWER_KEY_MISSING_SLOT，而 q15 的老问题依旧存在。两者 code 相同、目标不同。
         let command = insert_unresolved_slot_command("q16", 16, 1);
         let request = base_request(&item_id, "run-same-code-diff-target", 1, command);
-        let outcome = apply_cloud_edits(&root, &request).expect("apply_cloud_edits");
+        let outcome = apply(&root, &request).expect("apply_cloud_edits");
 
         assert_eq!(
             outcome.status,
@@ -1020,7 +1186,7 @@ mod cloud_repair_write_entry_tests {
         // 在 q14 上引入一条**同 code** 的新阻断诊断（q15 的老问题依旧）。
         let command = json!({"op": "setAnswer", "slotId": "q14", "value": {"kind": "unresolved"}});
         let request = base_request(&item_id, "run-silent-loss", 1, command.clone());
-        let outcome = apply_cloud_edits(&root, &request).expect("apply_cloud_edits");
+        let outcome = apply(&root, &request).expect("apply_cloud_edits");
 
         assert_eq!(
             outcome.status,
@@ -1094,7 +1260,7 @@ mod cloud_repair_write_entry_tests {
 
         // 实际当前版本是 1，但传 99。
         let request = base_request(&item_id, "run-conflict", 99, set_answer_command("q14", &["A"]));
-        let outcome = apply_cloud_edits(&root, &request).expect("apply_cloud_edits");
+        let outcome = apply(&root, &request).expect("apply_cloud_edits");
 
         assert_eq!(outcome.status, CloudEditStatus::Rejected);
         assert!(
@@ -1137,7 +1303,7 @@ mod cloud_repair_write_entry_tests {
 
         // 本次只改 q14：合法修复，不该被 q15 的老问题挡住。
         let request = base_request(&item_id, "run-quality-parity", 1, set_answer_command("q14", &["A"]));
-        let outcome = apply_cloud_edits(&root, &request).expect("apply_cloud_edits");
+        let outcome = apply(&root, &request).expect("apply_cloud_edits");
         assert_eq!(
             outcome.status,
             CloudEditStatus::Applied,
@@ -1169,6 +1335,205 @@ mod cloud_repair_write_entry_tests {
             "两种口径必须给出同一组阻断指纹；不同就说明基线比对的前提不成立"
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── P9：evidence.quote 必须能在**完整原文**文本层里找到 ────────────────────
+    //
+    // A-2 的落地：以前 validate_evidence 只查结构，编一句 quote 也能被判 Applied。
+    // 现在引文对照完整原文核验：编造的整批拒绝；真实存在的引文允许空白/弯引号/
+    // 连字符/大小写差异；页号允许 ±1（跨页），差 2 页以上拒绝；没有文本层时标
+    // unverifiable——不拒绝，但也绝不冒充「已核验」。
+
+    /// 一份两页的原文文本层（页号 1-based）。页 2 故意带「脏」文本：多余空白、
+    /// 弯引号、U+2010 连字符、混合大小写——核验必须吃下这些差异才算对。
+    fn paged_source() -> EvidenceSourceText {
+        EvidenceSourceText::Paged(BTreeMap::from([
+            (1u32, "Early approaches to organisational design.".to_string()),
+            (
+                2,
+                "The  preferred  answer   is \u{2018}14  A\u{2019} on the co\u{2010}operation page.".to_string(),
+            ),
+        ]))
+    }
+
+    fn apply_with_source(
+        root: &Path,
+        request: &CloudEditRequest,
+        source: &EvidenceSourceText,
+    ) -> CommandResult<CloudEditOutcome> {
+        apply_cloud_edits(root, request, source)
+    }
+
+    #[test]
+    fn a_fabricated_quote_rejects_the_whole_batch_and_names_the_entry() {
+        let root = temp_root();
+        let item_id = seed_item(&root, &load_fixture());
+        let mut request =
+            base_request(&item_id, "run-quote-fabricated", 1, set_answer_command("q14", &["A"]));
+        // 原文文本层里没有任何一行长这样：这是编造的引文。
+        request.evidence = vec![json!({
+            "sourceFileId": "early-approaches-pdf",
+            "pageIndex": 2,
+            "quote": "Totally invented sentence that appears nowhere"
+        })];
+        let outcome = apply_with_source(&root, &request, &paged_source()).expect("apply_cloud_edits");
+
+        assert_eq!(outcome.status, CloudEditStatus::Rejected, "errors={:?}", outcome.errors);
+        assert!(
+            outcome
+                .errors
+                .iter()
+                .any(|error| error == "CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:0"),
+            "错误码必须点名是哪一条（下标 0）：{:?}",
+            outcome.errors
+        );
+        // 整批拒绝：canonical 的版本与内容都没变。
+        assert_eq!(outcome.edit_version, 1);
+        assert_eq!(
+            read_answer(&root, &item_id, "q14").pointer("/labels"),
+            Some(&json!(["B"])),
+            "编造引文的编辑不得落库"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_real_quote_survives_whitespace_quote_hyphen_and_case_differences() {
+        let root = temp_root();
+        let item_id = seed_item(&root, &load_fixture());
+        let mut request = base_request(&item_id, "run-quote-normalized", 1, set_answer_command("q14", &["A"]));
+        // 模型抄回来的引文与原文的差异只在白名单内：空白数量、弯引号 vs 直引号、
+        // U+2010 连字符 vs ASCII 连字符、大小写。规范化后必须判为同一段原文。
+        request.evidence = vec![json!({
+            "sourceFileId": "early-approaches-pdf",
+            "pageIndex": 2,
+            "quote": "the preferred answer is '14 a' on the co-operation page"
+        })];
+        let outcome = apply_with_source(&root, &request, &paged_source()).expect("apply_cloud_edits");
+        assert_eq!(
+            outcome.status,
+            CloudEditStatus::Applied,
+            "真实引文（仅白名单差异）必须通过，errors={:?}",
+            outcome.errors
+        );
+        assert!(outcome.evidence_unverifiable.is_empty(), "有文本层时不得标 unverifiable");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_quote_two_pages_away_from_the_declared_page_is_rejected() {
+        let root = temp_root();
+        let item_id = seed_item(&root, &load_fixture());
+        let mut request =
+            base_request(&item_id, "run-quote-page-off", 1, set_answer_command("q14", &["A"]));
+        // 引文真实存在于第 1 页，却声明在第 3 页：差 2 页，超出跨页容差。
+        request.evidence = vec![json!({
+            "sourceFileId": "early-approaches-pdf",
+            "pageIndex": 3,
+            "quote": "Early approaches to organisational design."
+        })];
+        let outcome = apply_with_source(&root, &request, &paged_source()).expect("apply_cloud_edits");
+        assert_eq!(outcome.status, CloudEditStatus::Rejected, "errors={:?}", outcome.errors);
+        assert!(
+            outcome
+                .errors
+                .iter()
+                .any(|error| error == "CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:0"),
+            "页号差 2 页必须按「引文不在原文」拒绝：{:?}",
+            outcome.errors
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_quote_one_page_off_is_accepted_as_a_cross_page_citation() {
+        let root = temp_root();
+        let item_id = seed_item(&root, &load_fixture());
+        let mut request =
+            base_request(&item_id, "run-quote-cross-page", 1, set_answer_command("q14", &["A"]));
+        // 引文在第 1 页，声明第 2 页：±1 的跨页容差之内，放行。
+        request.evidence = vec![json!({
+            "sourceFileId": "early-approaches-pdf",
+            "pageIndex": 2,
+            "quote": "Early approaches to organisational design."
+        })];
+        let outcome = apply_with_source(&root, &request, &paged_source()).expect("apply_cloud_edits");
+        assert_eq!(
+            outcome.status,
+            CloudEditStatus::Applied,
+            "跨页引用（差 1 页）必须放行，errors={:?}",
+            outcome.errors
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_quote_spanning_a_page_break_is_found_by_joining_adjacent_pages() {
+        let pages = EvidenceSourceText::Paged(BTreeMap::from([
+            (1u32, "The preferred answer is".to_string()),
+            (2, "'14 A' for the first slot.".to_string()),
+        ]));
+        let evidence = vec![json!({
+            "sourceFileId": "early-approaches-pdf",
+            "pageIndex": 2,
+            "quote": "The preferred answer is '14 A' for the first slot"
+        })];
+        let (problems, unverifiable) = verify_evidence_quotes(&evidence, &pages);
+        assert!(
+            problems.is_empty(),
+            "跨页引文必须靠相邻页拼接找到：{problems:?}"
+        );
+        assert!(unverifiable.is_empty());
+    }
+
+    #[test]
+    fn evidence_without_a_text_layer_is_marked_unverifiable_not_rejected_or_verified() {
+        let root = temp_root();
+        let item_id = seed_item(&root, &load_fixture());
+        let mut request =
+            base_request(&item_id, "run-quote-unverifiable", 1, set_answer_command("q14", &["A"]));
+        request.evidence = vec![json!({
+            "sourceFileId": "early-approaches-pdf",
+            "pageIndex": 1,
+            "quote": "14 A"
+        })];
+        let outcome = apply(&root, &request).expect("apply_cloud_edits");
+        assert_eq!(
+            outcome.status,
+            CloudEditStatus::Applied,
+            "扫描件没有文本层：不得据此拒绝，errors={:?}",
+            outcome.errors
+        );
+        // 关键：不能假装「已核验」。unverifiable 必须原样上报，摘要与工具结果据此呈现。
+        assert_eq!(outcome.evidence_unverifiable, vec![0], "证据必须标为 unverifiable");
+        assert_eq!(
+            read_answer(&root, &item_id, "q14").pointer("/labels"),
+            Some(&json!(["A"])),
+            "没有文本层时编辑仍然落库"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_unverifiable_mark_survives_in_the_tool_result_shape() {
+        // 这是「摘要里如实呈现」的钉子：工具结果里必须能看到 unverifiable 的条目下标，
+        // 而不是只剩一个「applied」。execute_tool 把 outcome.evidence_unverifiable 原样
+        // 放进结果的 `evidenceUnverifiable`。
+        let outcome = CloudEditOutcome {
+            status: CloudEditStatus::Applied,
+            edit_version: 2,
+            applied_count: 1,
+            applied_targets: vec!["q14".to_string()],
+            errors: Vec::new(),
+            stripped_keys: Vec::new(),
+            introduced_hard_failures: Vec::new(),
+            evidence_unverifiable: vec![1, 3],
+        };
+        assert_eq!(
+            serde_json::to_value(&outcome).unwrap()["evidenceUnverifiable"],
+            json!([1, 3]),
+            "序列化后的字段名必须是 evidenceUnverifiable（camelCase，与结果 JSON 其余字段一致）"
+        );
     }
 
 }

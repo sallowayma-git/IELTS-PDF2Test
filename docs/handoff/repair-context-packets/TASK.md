@@ -17,7 +17,7 @@
 ## 2. 不可动摇的边界（不得放宽）
 
 - 权威稿只经 `cloud_repair/tools.rs::apply_cloud_edits` 事务写入（`baseVersion` CAS、`human_protected_targets`、证据校验）。`cloud_edit_rejects_protected_human_target` 必须保持绿。
-- 证据引文校验**不缩小**：给模型看的范围缩小，但校验仍对照**完整原文**文本层。
+- 证据引文校验**不缩小**：给模型看的范围缩小，但每条 `evidence.quote` 必须能在**完整原文**文本层里逐字找到（规范化空白/弯引号/连字符、忽略大小写；声明页与实际页允许 ±1 的跨页差；编造引文整批拒绝 `CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:<index>`；原文没有文本层时标 `unverifiable`，不算已核验）。**注**：本句最初写于实现之前，实现（P9-Q 之前）只校验结构，与本句不符；引文对照完整原文的校验已在收尾轮（P9-Q）落地，这里保留修订后的准确描述。
 - 原文没有的答案绝不编造；「上下文不足」绝不变成「猜一个」。
 - 三态不坍缩：`not_executed` / `insufficient_context` / `passed` 分开。上下文不足不得算作已核对。
 - **不改**：云端候选生成（`generate_authoring_candidate`）、云端优先级、调度器阶段顺序、`quality.rs`、`tools.rs` 的校验与写入逻辑。

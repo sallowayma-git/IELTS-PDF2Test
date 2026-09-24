@@ -1833,6 +1833,7 @@ If the packet does not contain what you need to judge a listed difference, do NO
 - call `report_insufficient_context` with the exact pages / quotes / paragraphs you need, or\n\
 - fetch it yourself with `read_source` (a page range or a quote is REQUIRED; at most 3 pages per call), `search_source`, `read_page_region`, `read_passage`, `read_candidate` or `read_draft`.\n\
 Every quote you cite must be copied VERBATIM from a line you were actually returned, and you must give its line id and page. A quote you did not receive is not evidence.\n\
+The backend verifies every quote you cite (in apply_edits and record_ruling) against the FULL source text layer — a quote that is not in the source rejects the whole batch with CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:<index>.\n\
 Call `finish_packet` when this packet is done.\n"
     } else {
         ""
@@ -1848,6 +1849,7 @@ Work like an editor: read what you need, then submit ONE batch of domain command
 {base_version_rule}\
 - Use only the stable ids you were given. Never invent ids.\n\
 - Attach evidence copied from the original file to content changes (sourceFileId, 1-based pageIndex, exact quote). A malformed evidence entry rejects the whole batch.\n\
+- EVERY evidence.quote is checked against the FULL source text layer before anything is applied (whitespace, quote marks, hyphens and letter case are normalized; the declared page may differ from the page where the quote is found by at most 1). A quote that does not appear in the source rejects the whole batch with CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:<index>. record_ruling evidence goes through the same check — a fabricated quote keeps the ruling from being recorded. If the file has no text layer the backend marks your evidence unverifiable; it is recorded, but never treated as verified.\n\
 - Never invent an answer the file does not give.\n\
 - If a batch is rejected because a target is protected by a human edit, narrow the batch — do not retry the same commands.\n\
 {document_scope_rule}\
@@ -3568,6 +3570,31 @@ mod tests {
             !prompt.contains("The context lists the whole document"),
             "包模式 prompt 不得同时宣称上下文包含整份文档：{prompt}"
         );
+    }
+
+    /// P9 的 prompt 契约：两种模式都必须告诉模型「引文会对照完整原文核验」、
+    /// 拒绝码是什么、没有文本层时会被标 unverifiable（而不是被当成已核验）。
+    /// 只对照校验器与错误码逐字核对——prompt 漏写信封/拒绝码是这个分支吃过的亏。
+    #[test]
+    fn repair_prompt_says_quotes_are_verified_against_the_full_source_in_both_modes() {
+        let packet_prompt = repair_step_prompt(&json!({
+            "context": {"contextMode": "packets", "packetId": "packet-1"}
+        }));
+        let legacy_prompt = repair_step_prompt(&json!({"context": {}}));
+        for (mode, prompt) in [("packets", packet_prompt), ("legacy", legacy_prompt)] {
+            assert!(
+                prompt.contains("CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE"),
+                "{mode} 模式的 prompt 必须写明编造引文的拒绝码：{prompt}"
+            );
+            assert!(
+                prompt.contains("FULL source text layer"),
+                "{mode} 模式的 prompt 必须写明对照的是完整原文（不是包内切片）：{prompt}"
+            );
+            assert!(
+                prompt.contains("unverifiable"),
+                "{mode} 模式的 prompt 必须写明没有文本层时如实标 unverifiable：{prompt}"
+            );
+        }
     }
 
     #[test]

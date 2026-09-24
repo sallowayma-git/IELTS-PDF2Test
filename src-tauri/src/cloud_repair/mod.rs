@@ -182,6 +182,11 @@ pub(crate) struct RepairRunReport {
     /// 只进 `repair_json` 的诊断区，前端展示不变。它存在的理由：包模式最怕的就是
     /// 「输入量下来了、但模型其实什么都没核」——那只能靠逐包记录才看得出来。
     pub packets: Vec<Value>,
+    /// 整次运行里「证据无法核验」的条数（原文没有文本层）。
+    ///
+    /// 摘要如实带出：这些证据**没有**对照原文核验过，不能被「已应用 / 已了结」的
+    /// 数字盖成「已核验」。前端暂不展示，但审计与对账都读它。
+    pub unverified_evidence: usize,
 }
 
 impl RepairRunReport {
@@ -199,6 +204,7 @@ impl RepairRunReport {
             "undoAvailable": undo_available,
             "repairRunId": self.repair_run_id,
             "packets": self.packets,
+            "unverifiedEvidence": self.unverified_evidence,
         })
     }
 }
@@ -714,6 +720,7 @@ fn failure_report(request: &RepairRunRequest<'_>, error: String) -> RepairRunRep
         last_error: Some(error),
         repair_run_id: request.repair_run_id.to_string(),
         packets: Vec::new(),
+        unverified_evidence: 0,
     }
 }
 
@@ -1352,6 +1359,97 @@ impl PacketTools<'_> {
 }
 
 /// 执行一次允许的工具调用，返回**真实**结果。
+/// 引文核验用的**完整原文**文本层（P9）。
+///
+/// - PDF：`document-ir` 的逐页行文本。包模式直接复用抓取工具手里的那份全量索引——
+///   模型看到的行与核验用的行**同源**，不存在「核验用另一套文本」的缝；
+/// - DOCX / TXT / MD：从原始文件独立抽取的全文（没有页的概念）；
+/// - 什么都读不到（扫描件 / 解析产物缺失）⇒ `Unavailable`：不拒绝，标 unverifiable。
+fn evidence_source_text(
+    request: &RepairRunRequest<'_>,
+    context: &Value,
+    packet_tools: Option<&PacketTools<'_>>,
+) -> tools::EvidenceSourceText {
+    // 包模式的 PDF：抓取工具的 `source` 就是整份原文索引（不是包切片），零额外 I/O。
+    if let Some(tools) = packet_tools {
+        if tools.source.kind == "pdf" {
+            return paged_source_text(&tools.source.lines);
+        }
+    }
+    let source_meta = crate::auto_pipeline::cloud_source_evidence(request.root, request.job_id)
+        .unwrap_or(Value::Null);
+    match source_meta.get("kind").and_then(Value::as_str) {
+        Some("text") => {
+            let text = source_meta
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if text.trim().is_empty() {
+                tools::EvidenceSourceText::Unavailable
+            } else {
+                tools::EvidenceSourceText::Whole(text.to_string())
+            }
+        }
+        Some("pdf") => {
+            let index = load_packet_source_index(request, context);
+            paged_source_text(&index.lines)
+        }
+        _ => tools::EvidenceSourceText::Unavailable,
+    }
+}
+
+fn paged_source_text(
+    lines: &BTreeMap<u32, Vec<packets::SourceLine>>,
+) -> tools::EvidenceSourceText {
+    if lines.is_empty() {
+        return tools::EvidenceSourceText::Unavailable;
+    }
+    tools::EvidenceSourceText::Paged(
+        lines
+            .iter()
+            .map(|(page, page_lines)| {
+                (
+                    *page,
+                    page_lines
+                        .iter()
+                        .map(|line| line.text.clone())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// 给裁定证据逐条盖上核验结果（`verified` / `unverifiable`）。
+///
+/// 标记跟着裁定记录一起落进 `repair-rulings` artifact——那是裁定的 journal：
+/// 「原文没有文本层」的裁定必须能被事后看出**没有核验过**，而不是只留下一个
+/// 看不出出处的结论。
+fn annotate_evidence_verification(mut evidence: Vec<Value>, unverifiable: &[usize]) -> Vec<Value> {
+    for (index, entry) in evidence.iter_mut().enumerate() {
+        if let Some(object) = entry.as_object_mut() {
+            let verification = if unverifiable.contains(&index) {
+                "unverifiable"
+            } else {
+                "verified"
+            };
+            object.insert("verification".to_string(), json!(verification));
+        }
+    }
+    evidence
+}
+
+/// 从工具结果里读「多少条证据没有核验」。apply_edits 回数组（条目下标），
+/// record_ruling 回数字（条数），两种形状都收。
+fn evidence_unverifiable_count(result: &Value) -> usize {
+    match result.get("evidenceUnverifiable") {
+        Some(Value::Array(items)) => items.len(),
+        Some(Value::Number(number)) => number.as_u64().unwrap_or(0) as usize,
+        _ => 0,
+    }
+}
+
 fn execute_tool(
     request: &RepairRunRequest<'_>,
     call: &CloudRepairToolCallV1,
@@ -1729,10 +1827,14 @@ fn execute_tool(
                 commands: commands.clone(),
                 evidence,
             };
-            match tools::apply_cloud_edits(request.root, &edit_request) {
+            // 引文对照**完整原文**文本层（P9）：编造的引文整批拒绝；没有文本层时
+            // 标 unverifiable，不拒绝也不算已核验。
+            let source_text = evidence_source_text(request, context, packet.as_deref());
+            match tools::apply_cloud_edits(request.root, &edit_request, &source_text) {
                 Ok(outcome) => {
                     let applied = matches!(outcome.status, tools::CloudEditStatus::Applied);
                     let applied_count = outcome.applied_count;
+                    let evidence_unverifiable = outcome.evidence_unverifiable.clone();
                     let result = json!({
                         "status": match outcome.status {
                             tools::CloudEditStatus::Applied => "applied",
@@ -1743,6 +1845,9 @@ fn execute_tool(
                         "appliedTargets": outcome.applied_targets,
                         "strippedKeys": outcome.stripped_keys,
                         "introducedHardFailures": outcome.introduced_hard_failures,
+                        // 原文没有文本层时这里非空：这些证据**没有**被核验过，
+                        // 摘要据此如实呈现，不能被「已应用」盖成「已核实」。
+                        "evidenceUnverifiable": evidence_unverifiable,
                         "errors": outcome.errors,
                     });
                     let tool_result = if applied {
@@ -1789,7 +1894,10 @@ fn execute_tool(
             };
             let mut recorded = Vec::new();
             let mut errors = Vec::new();
-            for entry in entries {
+            let mut evidence_unverifiable_total = 0usize;
+            // P9：裁定证据与 apply_edits 走**同一套**引文核验，对照同一份完整原文。
+            let source_text = evidence_source_text(request, context, packet.as_deref());
+            for (entry_index, entry) in entries.iter().enumerate() {
                 let target_type = entry
                     .get("targetType")
                     .and_then(Value::as_str)
@@ -1836,13 +1944,45 @@ fn execute_tool(
                     continue;
                 };
                 let (canonical_digest, candidate_digest, context_digest) = difference_digests(difference);
+                // P9：裁定证据与 apply_edits 走**同一套**校验——先结构，再引文对照完整原文。
+                // 编造引文的裁定不得记录：那等于允许模型给它没看过的结论盖章。
+                // 原文没有文本层时照常记录，但每条证据标 unverifiable，不算已核验。
+                let evidence_entries = entry
+                    .get("evidence")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                let structural: Vec<String> = tools::validate_evidence(&evidence_entries)
+                    .into_iter()
+                    .map(|problem| format!("CLOUD_RULING_EVIDENCE_INVALID:{entry_index}:{problem}"))
+                    .collect();
+                if !structural.is_empty() {
+                    errors.extend(structural);
+                    continue;
+                }
+                let (quote_problems, unverifiable) =
+                    tools::verify_evidence_quotes(&evidence_entries, &source_text);
+                if !quote_problems.is_empty() {
+                    // quote_problems 的下标是**本条裁定证据数组内**的下标；
+                    // 前面拼上裁定下标，模型才能定位是第几条裁定的第几条证据。
+                    errors.extend(quote_problems.into_iter().map(|problem| {
+                        match problem.rsplit_once(':') {
+                            Some((code, index)) => format!("{code}:{entry_index}:{index}"),
+                            None => format!("{problem}:{entry_index}"),
+                        }
+                    }));
+                    continue;
+                }
+                evidence_unverifiable_total += unverifiable.len();
+                let annotated_evidence =
+                    annotate_evidence_verification(evidence_entries, &unverifiable);
                 recorded.push(json!({
                     "targetType": target_type,
                     "targetId": target_id,
                     "field": field.clone(),
                     "ruling": ruling,
                     "reason": entry.get("reason").cloned().unwrap_or(Value::Null),
-                    "evidence": entry.get("evidence").cloned().unwrap_or_else(|| json!([])),
+                    "evidence": annotated_evidence,
                     // 绑定裁定当时看到的这一对内容；任一侧后来变了，这条裁定作废重评。
                     "canonicalDigest": canonical_digest,
                     "candidateDigest": candidate_digest,
@@ -1862,6 +2002,8 @@ fn execute_tool(
                         "status": "recorded",
                         "recorded": recorded,
                         "errors": errors,
+                        // 没有文本层时非 0：这些裁定**记了**，但它们的证据没有被核验过。
+                        "evidenceUnverifiable": evidence_unverifiable_total,
                         "noteForModel": "Recorded rulings remove adjudicated differences from the user's list. \
                                          They cannot remove structural problems found by the backend validator.",
                     }),
@@ -2425,6 +2567,7 @@ fn finish_repair_run(
         model_questions,
         finish_note,
         packets,
+        unverified_evidence,
         mut status,
         mut last_error,
     } = outcome;
@@ -2503,6 +2646,7 @@ fn finish_repair_run(
         },
         repair_run_id: request.repair_run_id.to_string(),
         packets,
+        unverified_evidence,
     })
 }
 
@@ -2517,6 +2661,9 @@ struct RepairRunOutcome {
     finish_note: Option<String>,
     last_error: Option<String>,
     packets: Vec<Value>,
+    /// 整次运行里「证据没有核验」的条数（原文没有文本层）。摘要必须如实带出，
+    /// 不能被「已应用 / 已了结」的数字盖成「已核验」。
+    unverified_evidence: usize,
 }
 
 /// 改造前的修复循环（legacy）：每轮附整份原文件 + 整卷上下文。
@@ -2543,6 +2690,7 @@ where
     };
     let mut observations: Vec<Value> = Vec::new();
     let mut applied_count = 0usize;
+    let mut unverified_evidence = 0usize;
     let mut rounds = 0u32;
     let mut finish_note: Option<String> = None;
     let mut last_error: Option<String> = None;
@@ -2682,6 +2830,7 @@ where
 
         let is_finish = call.tool == "finish";
         let (result, applied) = execute_tool(request, &call, rounds, &context, None);
+        unverified_evidence += evidence_unverifiable_count(&result.result);
         // 裁定：从**工具真实返回**里取，不重新解释一遍模型输入——否则「记录了什么」
         // 与「回给模型什么」可能不一致，而落盘的必须是后者（模型据此继续推理）。
         if call.tool == "record_ruling" {
@@ -2776,6 +2925,7 @@ where
             finish_note,
             last_error,
             packets: Vec::new(),
+            unverified_evidence,
         },
     )
 }
@@ -2832,6 +2982,7 @@ where
     let mut model_questions: Vec<Value> = Vec::new();
     let mut observations: Vec<Value> = Vec::new();
     let mut applied_count = 0usize;
+    let mut unverified_evidence = 0usize;
     let mut rounds = 0u32;
     let mut status = REPAIR_STATUS_COMPLETED;
     let mut last_error: Option<String> = None;
@@ -2912,6 +3063,7 @@ where
         let mut packet_rulings = 0usize;
         let mut packet_edits = 0usize;
         let mut packet_insufficient = 0usize;
+        let mut packet_unverified = 0usize;
         let mut packet_status = "rounds_exhausted";
         let mut repeats: BTreeMap<String, u32> = BTreeMap::new();
         let mut escalated = false;
@@ -3029,6 +3181,9 @@ where
                 };
                 execute_tool(request, &call, rounds, &packet, Some(&mut tools))
             };
+            // P9：没有文本层时的「证据未核验」如实累计——进逐包诊断与整次摘要。
+            packet_unverified += evidence_unverifiable_count(&result.result);
+            unverified_evidence += evidence_unverifiable_count(&result.result);
             // 抓取工具的调用本身是 L1 尝试，即使来源不可用；上下文不足则只在调用真的
             // 被接受时计入 L1。被拒的旧 packetId / malformed need 不是一次有效报告。
             let valid_insufficient = is_insufficient
@@ -3196,6 +3351,7 @@ where
             "rulings": packet_rulings,
             "edits": packet_edits,
             "insufficientContext": packet_insufficient,
+            "evidenceUnverifiable": packet_unverified,
             "questionNumbers": question_numbers,
             "scopePages": packet.pointer("/scope/pages").cloned().unwrap_or_else(|| json!([])),
             "estimatedInputTokens": packet_token_estimate(&packet),
@@ -3241,6 +3397,7 @@ where
             finish_note,
             last_error,
             packets: packet_reports,
+            unverified_evidence,
         },
     )
 }

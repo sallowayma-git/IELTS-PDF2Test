@@ -866,6 +866,174 @@ fn a_ruling_is_re_evaluated_once_the_content_changes_again() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+// ── P9：evidence.quote 必须能在完整原文文本层里找到（A-2 的落地） ────────────────
+
+/// 编造引文的编辑整批拒绝（错误码点名是哪一条）；换成原文里真实存在的引文后落库。
+///
+/// 这是 A-2 在**链路层**的可执行版本：以前 `apply_edits` 只查证据结构，一句凭空编造的
+/// `quote` 也会被判 `Applied`。剧本第二轮故意编一句文本层里没有的话，第三轮才引用
+/// `seed_job_with_source` 文本层里真实存在的那一行。
+#[test]
+fn an_edit_with_a_fabricated_quote_is_rejected_and_a_real_quote_lands() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+    seed_job_with_source(&root);
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let mut calls = 0u32;
+    let report = run_legacy(&request, |context: &Value, _observations: &[Value]| {
+        calls += 1;
+        let version = context.get("editVersion").and_then(Value::as_i64).unwrap_or(0);
+        Ok(match calls {
+            1 => json!({"callId": "c1", "tool": "read_draft",
+                        "arguments": {"taskGroupIds": ["early-approaches-q14-15"]}}),
+            2 => json!({"callId": "c2", "tool": "apply_edits",
+                        "arguments": {"baseVersion": version, "commands": [set_answer("q14", "C")],
+                                      "evidence": [{"sourceFileId": "early-approaches-pdf",
+                                                    "pageIndex": 1,
+                                                    "quote": "A sentence that appears nowhere in the file"}]}}),
+            3 => json!({"callId": "c3", "tool": "apply_edits",
+                        "arguments": {"baseVersion": version, "commands": [set_answer("q14", "C")],
+                                      "evidence": [{"sourceFileId": "early-approaches-pdf",
+                                                    "pageIndex": 1,
+                                                    "quote": "Early approaches to organisational design."}]}}),
+            _ => json!({"callId": "c4", "tool": "finish",
+                        "arguments": {"note": "编造的引文被拒后，改用真实原文行"}}),
+        })
+    })
+    .expect("修复循环必须返回结果");
+
+    // 第一次提交被拒：错误码点名是 evidence 数组的第 0 条。
+    let first_apply = report
+        .observations
+        .iter()
+        .find(|observation| observation["callId"] == json!("c2"))
+        .expect("第一次 apply_edits 的观察必须在报告里");
+    assert_eq!(first_apply["status"], json!("rejected"), "{first_apply:#?}");
+    assert!(
+        first_apply["errors"]
+            .as_array()
+            .is_some_and(|errors| errors.iter().any(|error| error
+                == "CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:0")),
+        "编造引文必须以 CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:<index> 拒绝：{first_apply:#?}"
+    );
+    // 第二次提交（真实引文）落地；最终答案真的是 C。
+    assert_eq!(report.applied_count, 1, "只有真实引文的那一批落地");
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["C"]));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 裁定证据走同一套引文核验：编造引文的裁定**不得记录**；真实引文的裁定照常记录。
+#[test]
+fn a_ruling_with_a_fabricated_quote_is_rejected_and_a_grounded_one_is_recorded() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+    // seed_packet_job：文本层第 3 页有一行真实的「14 A」。
+    seed_packet_job(&root);
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let mut calls = 0u32;
+    let report = run_packets(&request, |_context: &Value, _observations: &[Value]| {
+        calls += 1;
+        Ok(match calls {
+            1 => ruling_call(
+                "r1",
+                "slot",
+                "q14",
+                "answer",
+                crate::schema::cloud_repair_v1::CLOUD_RULING_CURRENT_IS_CORRECT,
+                "编造引文的一轮：这句原文不存在",
+            ),
+            2 => json!({
+                "callId": "r2",
+                "tool": "record_ruling",
+                "arguments": {"rulings": [{
+                    "targetType": "slot",
+                    "targetId": "q14",
+                    "field": "answer",
+                    "ruling": crate::schema::cloud_repair_v1::CLOUD_RULING_CURRENT_IS_CORRECT,
+                    "reason": "真实引文的一轮：引第 3 页文本层里的那一行",
+                    "evidence": [{"sourceFileId": "early-approaches-pdf",
+                                  "pageIndex": 3,
+                                  "quote": "14 A"}]
+                }]}
+            }),
+            _ => json!({"callId": "r3", "tool": "finish_packet", "arguments": {}}),
+        })
+    })
+    .expect("包模式循环必须返回结果");
+
+    let first_ruling = report
+        .observations
+        .iter()
+        .find(|observation| observation["callId"] == json!("r1"))
+        .expect("第一次 record_ruling 的观察必须在报告里");
+    assert_eq!(first_ruling["status"], json!("rejected"), "{first_ruling:#?}");
+    assert!(
+        first_ruling["errors"].as_array().is_some_and(|errors| errors.iter().any(|error| error
+            == "CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:0:0")),
+        "编造引文的裁定必须被拒（<裁定下标>:<证据下标> 都要点名）：{first_ruling:#?}"
+    );
+
+    // 第二次（真实引文）记录成功，且只有那一条进了裁定。
+    assert_eq!(report.adjudicated_count, 1, "只记录了真实引文的那条裁定");
+    // 落盘的裁定（rulings journal）里，证据必须带着核验标记：这里文本层存在 → verified。
+    let stored = crate::reconcile::store::read_repair_rulings(&root, ITEM_ID, BATCH_ID)
+        .expect("读裁定记录")
+        .expect("裁定必须落盘");
+    let evidence = &stored["rulings"][0]["evidence"][0];
+    assert_eq!(evidence["quote"], json!("14 A"), "落盘的是剧本给出的真实引文");
+    assert_eq!(
+        evidence["verification"],
+        json!("verified"),
+        "有文本层且引文核对成功：标记必须是 verified：{stored:#?}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 原文没有文本层（本用例不给 `document-ir.json`）时，裁定**照常记录**，但证据标
+/// `unverifiable`——不拒绝、也不冒充「已核验」。这是扫描件的路径。
+#[test]
+fn rulings_recorded_without_a_text_layer_carry_the_unverifiable_mark() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+    // 注意：不 seed 任何 job / document-ir —— 原文索引读不到，等价于扫描件没有文本层。
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 4);
+    let report = run_legacy(&request, |_context: &Value, _observations: &[Value]| {
+        Ok(ruling_call(
+            "r1",
+            "slot",
+            "q14",
+            "answer",
+            crate::schema::cloud_repair_v1::CLOUD_RULING_CURRENT_IS_CORRECT,
+            "原文是 B",
+        ))
+    })
+    .expect("循环必须返回结果");
+
+    assert_eq!(report.adjudicated_count, 1, "没有文本层不构成拒绝的理由");
+    let stored = crate::reconcile::store::read_repair_rulings(&root, ITEM_ID, BATCH_ID)
+        .expect("读裁定记录")
+        .expect("裁定必须落盘");
+    let evidence = &stored["rulings"][0]["evidence"][0];
+    assert_eq!(
+        evidence["verification"],
+        json!("unverifiable"),
+        "没有文本层：证据必须标 unverifiable，不能算已核验：{stored:#?}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// 进度上报：开工一次 `running`，**每批有效写入之后立刻再来一次**。
 ///
 /// 这条锁的是「不要等十分钟循环结束」。修复循环的真实预算十分钟，只在结尾上报一次
@@ -1069,9 +1237,11 @@ fn scripted_repair_reply(body: &str, round: usize) -> String {
             "arguments": {
                 "baseVersion": version,
                 "commands": [set_answer("q14", "A")],
+                // P9 起引文要对照完整原文核验：`14 A` 只在答案页（第 3 页）的文本层里，
+                // 页号必须如实声明（旧值 1 会因「找到的页与声明页差 2」被拒）。
                 "evidence": [{
                     "sourceFileId": "early-approaches-pdf",
-                    "pageIndex": 1,
+                    "pageIndex": 3,
                     "quote": "14 A"
                 }]
             }
@@ -1132,9 +1302,16 @@ fn seed_job_with_source(root: &Path) {
     std::fs::create_dir_all(dir.join("uploads")).expect("uploads dir");
     std::fs::write(dir.join("uploads").join("early-approaches.pdf"), b"%PDF-1.4\n")
         .expect("write source");
+    // 文本层带一个真实的答案页（第 3 页有一行 `14 A`）：修复剧本提交的证据引文必须
+    // 能在**完整原文**文本层里核验（P9）。注意答案页里没有 `14 C` —— 「云端推翻本地、
+    // 写入第三种内容 C」的那条用例靠这一点证明答案值来自模型的判断，不是文本抽取。
     write_json(
         &dir.join("document-ir.json"),
-        &json!({"pages":[{"pageIndex":0,"lines":[{"text":"Early approaches to organisational design."}]}]}),
+        &json!({"pages":[
+            {"pageIndex":0,"lines":[{"text":"Early approaches to organisational design."}]},
+            {"pageIndex":1,"lines":[{"text":"Section 2"}]},
+            {"pageIndex":2,"lines":[{"text":"Answer key"},{"text":"14 A"}]}
+        ]}),
     )
     .expect("document-ir");
 }
@@ -1407,6 +1584,8 @@ fn controlled_model_service_drives_a_real_repair_round_through_the_real_gateway(
 ///
 /// C 是**本地与候选之外的第三种内容**也无所谓，这里的关键是「本地是 B、原文件是 C」：
 /// 模型必须能推翻本地结论，而不是只能在候选与当前稿之间二选一。
+/// 证据引文取自夹具文本层里**真实存在**的那一行（P9 起引文要对照原文核验；
+/// 编造的引文整批拒绝），而答案值 C 只能来自模型的判断——文本层里没有答案行。
 fn scripted_third_answer_reply(body: &str, round: usize) -> String {
     let input = repair_request_input(body);
     let version = input
@@ -1429,7 +1608,7 @@ fn scripted_third_answer_reply(body: &str, round: usize) -> String {
                 "evidence": [{
                     "sourceFileId": "early-approaches-pdf",
                     "pageIndex": 1,
-                    "quote": "14 C"
+                    "quote": "Early approaches to organisational design."
                 }]
             }
         }),
@@ -1496,7 +1675,7 @@ fn scripted_retry_edit_reply(body: &str, round: usize) -> String {
                 "evidence": [{
                     "sourceFileId": "early-approaches-pdf",
                     "pageIndex": 1,
-                    "quote": "15 E"
+                    "quote": "Early approaches to organisational design."
                 }]
             }
         }),
@@ -1629,7 +1808,7 @@ fn scripted_structure_fix_reply(body: &str, round: usize) -> String {
                 "evidence": [{
                     "sourceFileId": "early-approaches-pdf",
                     "pageIndex": 1,
-                    "quote": "factor B (revised)"
+                    "quote": "Early approaches to organisational design."
                 }]
             }
         }),
@@ -1671,7 +1850,7 @@ fn scripted_new_task_group_reply(body: &str, round: usize) -> String {
                 "evidence": [{
                     "sourceFileId": "early-approaches-pdf",
                     "pageIndex": 1,
-                    "quote": "16-17 new factors"
+                    "quote": "Early approaches to organisational design."
                 }]
             }
         }),
