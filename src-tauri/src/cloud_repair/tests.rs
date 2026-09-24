@@ -4147,9 +4147,14 @@ fn packets_mode_requests_carry_no_whole_pdf_and_the_fetched_page_reaches_the_mod
 
 /// PATH 里找一个 `node` 可执行文件；找不到返回 `None`。
 ///
-/// 找不到就**如实跳过**（与仓库里 pdfium 用例同一处理），不静默当成通过：
-/// 这个用例证明的是「仓库里那个受控服务在包模式下能自己把缺的页要回来」，
-/// 没跑成 node 就等于没证。
+/// **调用方必须把 `None` 当成失败，不能当成跳过。** 这些用例证明的是「仓库里那个受控
+/// 服务在包模式下能自己把缺的页要回来 / 能裁定」——没跑成 node 就等于没证。以前这里
+/// `eprintln!` 一句就 `return`，而 `cargo test` 默认捕获通过用例的 stderr，于是在没有
+/// node 的机器上这是一条**恒绿但什么都没证**的用例（P7 审计 #2 的 P2）。
+///
+/// 与仓库里 pdfium 用例的差别是有意的：pdfium 是**可选**渲染器，node 是这个仓库的
+/// **必需**工具链（vitest、全部 `scripts/e2e/*.mjs`、`npm run check` 都靠它）。
+/// 缺 node 意味着工具链坏了，静默跳过会把这件事藏起来。
 fn node_binary() -> Option<std::path::PathBuf> {
     let path = std::env::var_os("PATH")?;
     for directory in std::env::split_paths(&path) {
@@ -4200,8 +4205,8 @@ impl Drop for ChildGuard {
 #[test]
 fn the_real_controlled_service_drives_the_packet_loop_through_l0_l1_and_finish() {
     let Some(node) = node_binary() else {
-        eprintln!("[skip] 本机 PATH 里没有 node，跳过 §7.2 的真实受控服务用例");
-        return;
+        // 不许静默跳过：这条用例是 §7.2 的验收证据，跳过却报绿等于假绿。
+        panic!("本机 PATH 里没有 node：§7.2 的真实受控服务用例无法执行——这不是通过（见 node_binary 的说明）");
     };
     let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
