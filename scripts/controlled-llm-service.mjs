@@ -528,7 +528,14 @@ function repairStepReply(text) {
  *   · 引文与答案值 → `context.sourceEvidence.pages[].lines[].text`
  */
 function repairPacketStepReply(context, plan, round) {
-  const giveUp = (note) => ({ callId: `p${round}`, tool: 'finish_packet', arguments: { note } });
+  const packetId = context?.packetId ?? null;
+  // `finish_packet` 也能带 `unresolved`：无法定论的疑问必须变成用户可见的剩余任务，
+  // 否则「把不确定性交出去」这条规则在包模式下就没有出口。
+  const giveUp = (note) => ({
+    callId: `p${round}`,
+    tool: 'finish_packet',
+    arguments: { packetId, note, unresolved: unresolvedFromPacket(plan, context) },
+  });
   const differences = Array.isArray(context?.differences) ? context.differences : [];
   // 本包没有待核对的差异（例如差异都修完之后的收尾包）⇒ 直接收工。
   if (differences.length === 0) {
@@ -541,52 +548,136 @@ function repairPacketStepReply(context, plan, round) {
     return giveUp('剧本没有指定答案页，受控服务不知道要去要哪一页');
   }
 
-  // ① 答案页还不在包里 ⇒ 只能说「不够」，并点名要哪一页。**不猜答案**。
+  // ① 目标页还不在包里 ⇒ 只能说「不够」，并点名要哪一页。**不猜**。
   if (!inScope.includes(answerPage)) {
     return {
       callId: `p${round}`,
       tool: 'report_insufficient_context',
       arguments: {
-        packetId: context?.packetId ?? null,
+        packetId,
         reason: 'the page that carries the answer is not in this packet',
         needs: [{ kind: 'pages', from: answerPage, to: answerPage }],
       },
     };
   }
 
-  // ② 页在包里：答案与引文都从**包里真实出现的行**里取。
-  const found = answerLineFromPacket(context, plan.questionNumber);
-  if (!found) {
-    return giveUp('受控服务在包内原文里找不到剧本指定的答案行，本轮不做任何修改');
-  }
   const version = context?.draftSlice?.editVersion;
   if (typeof version !== 'number') {
     return giveUp('受控服务没有从包里读到真实 editVersion，不能提交编辑');
   }
-  const slotIds = Array.isArray(plan.fixSlotIds) ? plan.fixSlotIds : [];
-  if (slotIds.length === 0) {
-    return giveUp('剧本没有指定要改的答案槽，本轮不做任何修改');
+
+  // ② 页在包里。修复形态由**包内差异本身**区分，不由剧本常量决定：
+  //    · `targetType === 'slot' && field === 'answer'` ⇒ 答案类（`setAnswer`）；
+  //    · 其余 ⇒ 题面 / 说明的文本差异 ⇒ 题面类（`setResponseGroup`）。
+  //    CDP 场景是后者：`scripts/e2e/lib/cloud-repair-scenario.mjs` 的差异是 prompt
+  //    被写错（`setResponseGroup` 改写），剧本里**没有**答案行。以前这里只认答案行，
+  //    于是包模式下 CDP 场景必然退化成「不够 → L4 → 题面根本没改」（审计发现 A-4）。
+  const wantsAnswer = differences.some(
+    (difference) => difference?.targetType === 'slot' && difference?.field === 'answer',
+  );
+  if (wantsAnswer) {
+    // 答案与引文都从**包里真实出现的行**里取。
+    const found = answerLineFromPacket(context, plan.questionNumber);
+    if (!found) {
+      return giveUp('受控服务在包内原文里找不到剧本指定的答案行，本轮不做任何修改');
+    }
+    const slotIds = Array.isArray(plan.fixSlotIds) ? plan.fixSlotIds : [];
+    if (slotIds.length === 0) {
+      return giveUp('剧本没有指定要改的答案槽，本轮不做任何修改');
+    }
+    return {
+      callId: `p${round}`,
+      tool: 'apply_edits',
+      arguments: {
+        baseVersion: version,
+        commands: slotIds.map((slotId) => ({
+          op: 'setAnswer',
+          slotId,
+          value: { kind: 'option', labels: [found.label], assignment: 'unordered_set' },
+        })),
+        evidence: [
+          {
+            sourceFileId: context?.sourceEvidence?.sourceFileId ?? null,
+            pageIndex: answerPage,
+            // 引文就是包里那一行本身 —— 逐字取自请求，不是常量。
+            quote: found.line,
+          },
+        ],
+      },
+    };
   }
+  return (
+    packetPromptRewrite(context, plan, round, version)
+    ?? giveUp('受控服务在包内原文里找不到剧本指定的题面行，本轮不做任何修改')
+  );
+}
+
+/**
+ * 题面类修复：把作答组的 prompt 改回原文件里的真值。
+ *
+ * 与 legacy 剧本**同源**：正确题面只能从原文里读出来（`<题号> <题面>` 那一行），
+ * 剧本里没有它。包模式下「原文」就是包自己的 `sourceEvidence.pages[].lines[]` ——
+ * 引文也因此必然逐字来自这一轮请求，而不是脚本里的常量。
+ *
+ * 读不到题面行、或定位不到承载它的作答组时返回 `null`，调用方如实收工（**不编**）。
+ */
+function packetPromptRewrite(context, plan, round, version) {
+  const number = Number(plan.questionNumber);
+  if (!Number.isInteger(number) || number <= 0) return null;
+  const prefix = new RegExp(`^${number}\\s+(.+)$`);
+  let derived = null;
+  for (const entry of packetLines(context)) {
+    const matched = prefix.exec(entry.text);
+    const stem = matched?.[1]?.trim();
+    if (stem) {
+      derived = { stem, quote: entry.text, pageIndex: entry.pageIndex };
+      break;
+    }
+  }
+  if (!derived) return null;
+  const target = locateFixTarget(context?.draftSlice, plan.fixSlotIds);
+  if (!target) return null;
+  const rewritten = replaceFirstText(target.response.prompt, derived.stem);
+  if (!rewritten.done) return null;
   return {
     callId: `p${round}`,
     tool: 'apply_edits',
     arguments: {
       baseVersion: version,
-      commands: slotIds.map((slotId) => ({
-        op: 'setAnswer',
-        slotId,
-        value: { kind: 'option', labels: [found.label], assignment: 'unordered_set' },
-      })),
+      // 结构改写是**整块替换**：来源依据必须原样带回，否则质量门禁会逐个点名拒绝
+      // （`PROVENANCE_MISSING`）。证据页码用包里那一行真实所在的页。
+      commands: [
+        {
+          op: 'setResponseGroup',
+          taskId: target.group.taskId,
+          responseGroup: { ...target.response, prompt: rewritten.nodes },
+        },
+      ],
       evidence: [
         {
           sourceFileId: context?.sourceEvidence?.sourceFileId ?? null,
-          pageIndex: answerPage,
-          // 引文就是包里那一行本身 —— 逐字取自请求，不是常量。
-          quote: found.line,
+          pageIndex: derived.pageIndex,
+          quote: derived.quote,
         },
       ],
     },
   };
+}
+
+/** `finish_packet.unresolved`：包模式下 `sourceFileId` 在 `context.sourceEvidence` 里。 */
+function unresolvedFromPacket(plan, context) {
+  const sourceFileId = context?.sourceEvidence?.sourceFileId;
+  return (Array.isArray(plan?.unresolved) ? plan.unresolved : []).map((entry) => ({
+    ...(entry.targetId ? { targetId: entry.targetId } : {}),
+    message: entry.message,
+    evidence: [
+      {
+        sourceFileId,
+        pageIndex: Number(entry.pageIndex ?? 1),
+        quote: entry.quote ?? entry.message,
+      },
+    ],
+  }));
 }
 
 /** 包里真实出现的行文本（`sourceEvidence.pages[].lines[].text`）。 */

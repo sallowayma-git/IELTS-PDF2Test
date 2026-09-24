@@ -417,7 +417,21 @@ function llmTraces(jobId) {
       .map((line) => {
         try {
           const parsed = JSON.parse(line);
-          return { commandName: parsed.commandName, ok: parsed.ok, errorClass: parsed.errorClass ?? null, latencyMs: parsed.latencyMs ?? null };
+          return {
+            commandName: parsed.commandName,
+            ok: parsed.ok,
+            errorClass: parsed.errorClass ?? null,
+            latencyMs: parsed.latencyMs ?? null,
+            // 包模式的可观测性字段（`llm_gateway.rs` 逐包记录）。新增步骤 11b 要用它们
+            // 证明「至少一个包走了 L1」，否则「输入量下降是不是靠模型自己补的」无从对账。
+            // 非包模式的调用这些字段是 null（`packetId` 为 null 即「这一轮不是包」）。
+            packetId: parsed.packetId ?? null,
+            escalationLevel: parsed.escalationLevel ?? null,
+            pagesIncluded: parsed.pagesIncluded ?? null,
+            imageCount: parsed.imageCount ?? null,
+            estimatedInputTokens: parsed.estimatedInputTokens ?? null,
+            requestBytes: parsed.requestBytes ?? null,
+          };
         } catch {
           return { raw: line.slice(0, 200) };
         }
@@ -1173,6 +1187,49 @@ async function main() {
     });
   } else {
     record("model-corrected-itself-from-real-feedback", SCENARIO_STATUS.FAILED, { problems: feedbackProblems });
+  }
+
+  // ---- 11b. 断言：包模式下至少一个包走了 L1，且最终稿正确 ----
+  //
+  // 任务书 §7 要求「新增一步断言至少一个包走了 L1 且最终稿正确」。两件事必须**一起**
+  // 断言：「包更小了」本身不是成绩——如果代价是模型拿不到该看的页，那只是把问题藏起来。
+  // L1 的判据取自 `llm-calls.jsonl` 的逐包记录（`packetId` + `escalationLevel`），
+  // 不是脚本自己的推断。
+  const callRecords = report.modelTraces.llm?.callRecords ?? [];
+  const packetCalls = callRecords.filter(
+    (entry) => typeof entry.packetId === "string" && entry.packetId.startsWith("pkt-"),
+  );
+  const l1Calls = packetCalls.filter((entry) => Number(entry.escalationLevel ?? 0) >= 1);
+  const packetProblems = [];
+  if (packetCalls.length === 0) {
+    packetProblems.push("没有任何修复调用带上包 id：包模式没有真的生效（或可观测性字段没落盘）");
+  }
+  if (l1Calls.length === 0) {
+    packetProblems.push(
+      `${packetCalls.length} 次修复调用的升级级别全是 0，没有任何包走到 L1。`
+        + "包模式的上下文是本地预切的一块，模型本该把缺的页自己要回来；"
+        + "全是 0 意味着要么这一卷的包恰好自足，要么它没敢要——两种情况都必须写清楚",
+    );
+  }
+  // 「最终稿正确」与步骤 10 同一判据，且用的是**落库后的权威稿**，不是脚本的期望值。
+  if (promptAfter !== derived.fix.after) {
+    packetProblems.push(
+      `最终稿的题面不是原文件里的真值：期望 ${JSON.stringify(derived.fix.after)}，`
+        + `实际 ${JSON.stringify(promptAfter)}`,
+    );
+  }
+  if (packetProblems.length === 0) {
+    record("packet-mode-asked-for-the-missing-page", SCENARIO_STATUS.PASSED, {
+      packetCalls: packetCalls.length,
+      l1Calls: l1Calls.length,
+      escalationLevels: packetCalls.map((entry) => entry.escalationLevel),
+      packetIds: [...new Set(packetCalls.map((entry) => entry.packetId))],
+      estimatedInputTokens: packetCalls.reduce((sum, entry) => sum + Number(entry.estimatedInputTokens ?? 0), 0),
+      requestBytes: packetCalls.reduce((sum, entry) => sum + Number(entry.requestBytes ?? 0), 0),
+      finalPrompt: promptAfter,
+    });
+  } else {
+    record("packet-mode-asked-for-the-missing-page", SCENARIO_STATUS.FAILED, { problems: packetProblems });
   }
 
   // ---- 12. 断言：进度在循环结束前就可读（不是十分钟后才出现）----
