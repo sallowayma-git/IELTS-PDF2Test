@@ -3352,12 +3352,82 @@ fn is_dynamic_late_passage_tail_start(blocks: &[Value], index: usize) -> bool {
 }
 
 fn dynamic_late_passage_question_block_count(blocks: &[Value]) -> usize {
+    // `Choose FOUR correct answers, A-F, next to questions 17-20` declares the
+    // group's **own** option bank.  Its lettered run (`A ... B ... C ...`) is
+    // textually identical to the start of a lettered reading passage, so the
+    // tail heuristic below cuts the group right before the bank and pushes the
+    // remaining item rows out of it.  Those rows then leave the group
+    // (`SIGNIFICANT_REGION_UNASSIGNED`) and their prompts go empty
+    // (`PROMPT_BOUNDARY_AMBIGUOUS`) — the private listening paper's group-5.
+    let declared_bank = declared_dynamic_option_bank_range(blocks);
     for index in 1..blocks.len() {
         if is_dynamic_late_passage_tail_start(blocks, index) {
+            if !declared_bank.is_empty()
+                && lettered_run_matches_declared_bank(blocks, index, &declared_bank)
+            {
+                continue;
+            }
             return index.max(1);
         }
     }
     blocks.len()
+}
+
+/// The option-bank labels the group's instruction declares as a **contiguous
+/// range** (`A-F`, `A-G`), or empty when it declares none.  Deliberately does
+/// not fall back to an explicit letter list (`A, B, C or D`): that shape is far
+/// more common in reading instructions, and widening the guard there would let
+/// a genuine lettered passage be re-read as an option bank.
+fn declared_dynamic_option_bank_range(blocks: &[Value]) -> Vec<String> {
+    let text = blocks
+        .iter()
+        .map(dynamic_block_text)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let normalized = normalized_dynamic_instruction_text(&text);
+    for end in ['N', 'M', 'L', 'K', 'J', 'I', 'H', 'G', 'F', 'E', 'D', 'C'] {
+        if normalized.contains(&format!("a-{}", end.to_ascii_lowercase())) {
+            return ('A'..=end).map(|label| label.to_string()).collect();
+        }
+    }
+    Vec::new()
+}
+
+/// True when the lettered run that `is_dynamic_late_passage_tail_start` keys on
+/// carries exactly the labels the instruction declares as its option bank.
+fn lettered_run_matches_declared_bank(
+    blocks: &[Value],
+    index: usize,
+    declared: &[String],
+) -> bool {
+    let opens_the_run = blocks.get(index).is_some_and(|block| {
+        let label = dynamic_lettered_paragraph_label(&dynamic_block_text(block));
+        label == Some('A') && is_substantive_dynamic_lettered_article_block(block, 'A')
+    });
+    let run_start = if opens_the_run {
+        Some(index)
+    } else {
+        find_dynamic_lettered_article_block(blocks, index + 1, 'A', 3)
+    };
+    let Some(run_start) = run_start else {
+        return false;
+    };
+    let mut observed = Vec::new();
+    for position in run_start..blocks.len() {
+        let block = &blocks[position];
+        let Some(label) = dynamic_lettered_paragraph_label(&dynamic_block_text(block)) else {
+            break;
+        };
+        if !is_substantive_dynamic_lettered_article_block(block, label) {
+            break;
+        }
+        observed.push(label.to_string());
+    }
+    observed.len() == declared.len()
+        && observed
+            .iter()
+            .zip(declared.iter())
+            .all(|(observed, declared)| observed == declared)
 }
 
 fn dynamic_leading_question_marker(text: &str) -> Option<(u32, usize)> {
@@ -3579,7 +3649,38 @@ fn collect_dynamic_completion_interleaved_passage_runs(blocks: &[Value]) -> Vec<
         .collect()
 }
 
+/// The `[start, end)` block span where the group's declared option bank (`A-F`)
+/// is printed, or `None` when the group declares no bank or the lettered run
+/// does not carry exactly the declared labels.
+///
+/// Same idea as the guard in `dynamic_late_passage_question_block_count`, but
+/// this one hands back the *span* of the bank instead of a yes/no answer,
+/// because the caller has to decide whether a candidate prose run overlaps it.
+fn declared_option_bank_run(blocks: &[Value]) -> Option<(usize, usize)> {
+    let declared = declared_dynamic_option_bank_range(blocks);
+    if declared.is_empty() {
+        return None;
+    }
+    let start = (1..blocks.len()).find(|index| {
+        dynamic_lettered_paragraph_label(&dynamic_block_text(&blocks[*index])) == Some('A')
+            && is_substantive_dynamic_lettered_article_block(&blocks[*index], 'A')
+            && lettered_run_matches_declared_bank(blocks, *index, &declared)
+    })?;
+    // `lettered_run_matches_declared_bank` only matched when the run carries
+    // exactly the declared labels in order, so its length is the declared one.
+    Some((start, start + declared.len()))
+}
+
 fn find_dynamic_prose_passage_tail_start(blocks: &[Value]) -> Option<usize> {
+    // A group's own declared option bank (`Choose FOUR correct answers, A-F`) is
+    // printed as a lettered run, so it is indistinguishable from the start of a
+    // lettered reading passage by shape alone.  It is never a passage tail:
+    // cutting the group there pushes the group's last item rows out of it, and
+    // the final row then has no prompt at all.  The private listening paper's
+    // group-5 hit exactly this — the A-F bank made the run look like a passage,
+    // so `Fashion gallery 20` was dropped and q20 fell back to the instruction
+    // anchor (`PROMPT_BOUNDARY_AMBIGUOUS` + `SIGNIFICANT_REGION_UNASSIGNED`).
+    let declared_bank = declared_option_bank_run(blocks);
     for index in 1..blocks.len() {
         if !has_prior_dynamic_question_content(blocks, index) {
             continue;
@@ -3587,9 +3688,18 @@ fn find_dynamic_prose_passage_tail_start(blocks: &[Value]) -> Option<usize> {
         let Some(run_end) = dynamic_prose_passage_run_end(blocks, index) else {
             continue;
         };
-        if !has_later_dynamic_question_content(blocks, run_end) {
-            return Some(index);
+        if has_later_dynamic_question_content(blocks, run_end) {
+            continue;
         }
+        // Any overlap with the declared bank means the prose the heuristic is
+        // seeing is (part of) the group's option bank, not a passage that
+        // happens to sit inside the group.
+        if declared_bank.is_some_and(|(bank_start, bank_end)| {
+            index < bank_end && bank_start < run_end
+        }) {
+            continue;
+        }
+        return Some(index);
     }
     None
 }
@@ -10393,6 +10503,87 @@ mod tests {
         assert!(
             !prompt.contains("Questions 36"),
             "q40 must not take the range heading as its prompt, got {prompt:?}"
+        );
+    }
+
+    /// The private listening paper's group-5 declares `Choose FOUR correct
+    /// answers, A-F` and then prints its four item rows followed by the A-F
+    /// bank.  The lettered run must not be read as a lettered reading passage:
+    /// cutting there drops rows 18/19/20 out of the group, which surfaces as
+    /// `SIGNIFICANT_REGION_UNASSIGNED` plus `PROMPT_BOUNDARY_AMBIGUOUS`.
+    #[test]
+    fn a_declared_option_bank_is_not_a_lettered_passage_tail() {
+        let blocks = [
+            json!({"blockId":"b102","text":"Questions 17-20"}),
+            json!({"blockId":"b103","text":"What information does the guide give about each of the following collections?"}),
+            json!({"blockId":"b104","text":"Choose FOUR correct answers, A-F, next to questions 17-20."}),
+            json!({"blockId":"b105","text":"Information"}),
+            json!({"blockId":"b106","text":"Collections"}),
+            json!({"blockId":"b107","text":"18th-century paintings17"}),
+            json!({"blockId":"b108","text":"Farnley collection 18"}),
+            json!({"blockId":"b109","text":"Kitchen appliances 19"}),
+            json!({"blockId":"b110","text":"Fashion gallery 20"}),
+            json!({"blockId":"b111","text":"A has been shown in different museums"}),
+            json!({"blockId":"b112","text":"B consist of work by a local resident"}),
+            json!({"blockId":"b113","text":"C has exhibits from various countries"}),
+            json!({"blockId":"b114","text":"D is only on temporary display"}),
+            json!({"blockId":"b115","text":"E shows things that are no longer common"}),
+            json!({"blockId":"b116","text":"F is on loan from foreign museums"}),
+        ];
+        assert_eq!(
+            declared_dynamic_option_bank_range(&blocks),
+            ["A", "B", "C", "D", "E", "F"]
+                .map(str::to_string)
+                .to_vec()
+        );
+        assert_eq!(
+            dynamic_late_passage_question_block_count(&blocks),
+            blocks.len(),
+            "the A-F bank is the group's own option bank, so nothing after it may be cut"
+        );
+        // The specific heuristic is not the only one in play: when it keeps the
+        // whole group, `dynamic_question_block_count_for_group` falls through to
+        // the *generic* prose-tail heuristic, which keys on the same lettered
+        // run. That fallback is what actually cut this group (at `Fashion
+        // gallery 20`), so assert on the value the caller really consumes.
+        assert_eq!(
+            find_dynamic_prose_passage_tail_start(&blocks),
+            None,
+            "the A-F bank must not be read as a prose passage tail"
+        );
+        assert_eq!(
+            declared_option_bank_run(&blocks),
+            Some((9, 15)),
+            "the bank span is the six lettered lines at the end of the group"
+        );
+        assert_eq!(
+            dynamic_question_block_count_for_group("matching_features", &blocks),
+            blocks.len(),
+            "the whole group, including the final row and its option bank, belongs to the group"
+        );
+    }
+
+    /// A genuine lettered reading passage has no `A-F` range in its
+    /// instruction, so the guard must stay out of the way.
+    #[test]
+    fn a_lettered_passage_without_a_declared_bank_is_still_a_tail() {
+        let blocks = [
+            json!({"blockId":"h","text":"Questions 1-4"}),
+            json!({"blockId":"t","text":"You should spend about 20 minutes on this passage"}),
+            json!({"blockId":"a","text":"A The museum opened in 1892 and has since grown into one of the largest collections of decorative art in the region, drawing visitors from many countries."}),
+            json!({"blockId":"b","text":"B Its founders believed that ordinary household objects deserved the same care as fine paintings, a view that shaped the whole collection."}),
+        ];
+        assert!(declared_dynamic_option_bank_range(&blocks).is_empty());
+        assert_eq!(declared_option_bank_run(&blocks), None);
+        // Without a declared bank the guard must stay out of the way, so the
+        // existing tail heuristics still fire and cut the group short.
+        assert!(
+            dynamic_late_passage_question_block_count(&blocks) < blocks.len(),
+            "no bank is declared, so the lettered-passage tail heuristic must still apply"
+        );
+        assert!(
+            dynamic_question_block_count_for_group("matching_features", &blocks) < blocks.len(),
+            "no bank is declared, so the generic prose-tail fallback must still apply"
         );
     }
 
