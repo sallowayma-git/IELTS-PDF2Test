@@ -4300,6 +4300,184 @@ fn packets_mode_attaches_the_region_image_and_keeps_local_paths_out_of_the_promp
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// 一个题组在权威稿里覆盖的页（`sourceAnchors[].pageIndex` 是 0-based，转成 1-based）。
+fn anchor_pages_of_group(canonical: &Value, task_id: &str) -> Vec<u64> {
+    fn walk(value: &Value, out: &mut Vec<u64>) {
+        match value {
+            Value::Array(items) => items.iter().for_each(|item| walk(item, out)),
+            Value::Object(map) => {
+                if let Some(anchors) = map.get("sourceAnchors").and_then(Value::as_array) {
+                    for anchor in anchors {
+                        if let Some(page) = anchor.get("pageIndex").and_then(Value::as_i64) {
+                            if page >= 0 {
+                                out.push(page as u64 + 1);
+                            }
+                        }
+                    }
+                }
+                map.values().for_each(|child| walk(child, out));
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for group in canonical["taskGroups"].as_array().into_iter().flatten() {
+        if group["taskId"].as_str() != Some(task_id) {
+            continue;
+        }
+        walk(group, &mut out);
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+/// §5 第 1 条：**包模式**下用真实 `complex-reading` 的 canonical + 构造候选切包 ——
+/// 包数与每包题组符合规则 2，`scope.pages` 与锚点一致，包内没有范围外的页。
+///
+/// 为什么必须补这一条：本分支原有的包模式用例全部走 `seed_packet_job` 手写的 3 页
+/// `document-ir.json`，而唯一用 `complex-reading` 的用例是 **legacy** 用例。
+/// 「真实多题组长文下的切分规则」在包模式里一次都没被验过。
+#[test]
+fn complex_reading_splits_into_packets_that_obey_the_grouping_rules() {
+    use crate::library::migration::ensure_initial_canonical;
+
+    let root = temp_root();
+    crate::util::ensure_app_dirs(&root).expect("app dirs");
+    seed_docx_job_with_source(&root);
+    crate::auto_pipeline::run_auto_pipeline_core(
+        &root,
+        ITEM_ID,
+        Some(crate::AutoPipelineInput {
+            execution_mode: Some("localOnly".to_string()),
+            target: Some("editableDraft".to_string()),
+            allow_overwrite: Some(true),
+            ..Default::default()
+        }),
+    )
+    .expect("真实 DOCX 导入必须完成");
+    ensure_initial_canonical(&root, ITEM_ID).expect("seed canonical");
+    let conn = open_library_connection(&root).expect("库连接");
+    let (canonical, version) = get_canonical_ds(&conn, ITEM_ID)
+        .expect("读 canonical")
+        .expect("已播");
+    drop(conn);
+
+    let group_ids: Vec<String> = canonical["taskGroups"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|group| group["taskId"].as_str().map(str::to_string))
+        .collect();
+    assert!(
+        group_ids.len() >= 2,
+        "complex-reading 必须有多题组，否则这条用例测不到切分：{group_ids:?}"
+    );
+
+    // 构造候选：每个题组的**第一条答案**改一个值 ⇒ 每个题组各一条答案差异。
+    // 刻意改答案而不是改正文：slot → 题组的归属是切分规则 1 的正路，也让规则 2 的
+    // 「不共享选项库/刺激 ⇒ 各自成包」可判定。
+    let mut candidate = canonical.clone();
+    let mut expected: Vec<String> = Vec::new();
+    for group in canonical["taskGroups"].as_array().into_iter().flatten() {
+        let Some(slot) = group["responseGroups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|response| response["slotIds"].as_array().into_iter().flatten())
+            .filter_map(Value::as_str)
+            .next()
+        else {
+            continue;
+        };
+        let Some(values) = candidate["answerKey"][slot]["values"].as_array_mut() else {
+            continue;
+        };
+        let first = values.first_mut().expect("答案必须有值");
+        let text = first.as_str().unwrap_or_default().to_string();
+        *first = json!(format!("{text} CHANGED"));
+        expected.push(slot.to_string());
+    }
+    assert_eq!(
+        expected.len(),
+        group_ids.len(),
+        "每个题组都应被构造出一条差异：{expected:?}"
+    );
+
+    let differences = super::candidate_differences(&canonical, &candidate);
+    assert_eq!(
+        differences.len(),
+        group_ids.len(),
+        "每个题组各应产出一条差异：{differences:#?}"
+    );
+
+    let source = super::grab::load_source_index(&root, ITEM_ID, "complex-reading-docx", "docx");
+    let planned = super::packets::plan_packets(&super::packets::PacketPlanInput {
+        canonical: &canonical,
+        candidate: &candidate,
+        differences: &differences,
+        blocking_issues: &[],
+        protected: &BTreeSet::new(),
+        source: &source,
+        edit_version: version,
+    });
+
+    // 规则 2（负向）：两个题组既不共享选项库也不共享 stimulus ⇒ 各自成包，不许并。
+    assert_eq!(
+        planned.len(),
+        group_ids.len(),
+        "不共享选项库/刺激的题组必须各自成包：{planned:#?}"
+    );
+    let mut seen_groups: Vec<String> = Vec::new();
+    for packet in &planned {
+        let task_ids: Vec<String> = packet["taskIds"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect();
+        assert_eq!(task_ids.len(), 1, "每包只该带一个题组：{packet:#?}");
+        seen_groups.extend(task_ids.iter().cloned());
+
+        // `scope.pages` 与锚点一致：题组的每一个锚点页都必须在范围内。
+        let anchors = anchor_pages_of_group(&canonical, &task_ids[0]);
+        let scope: Vec<u64> = packet["scope"]["pages"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_u64)
+            .collect();
+        assert!(!scope.is_empty(), "scope.pages 不能为空：{packet:#?}");
+        for page in &anchors {
+            assert!(
+                scope.contains(page),
+                "题组 {task_ids:?} 的锚点页 {page} 不在 scope.pages({scope:?}) 里：{packet:#?}"
+            );
+        }
+        // 包内没有范围外的页。
+        let included: Vec<u64> = packet["sourceEvidence"]["pages"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|page| page["pageIndex"].as_u64())
+            .collect();
+        assert!(!included.is_empty(), "包里必须有范围内页文本：{packet:#?}");
+        for page in &included {
+            assert!(
+                scope.contains(page),
+                "包里有范围外的页 {page}：scope={scope:?} included={included:?}"
+            );
+        }
+    }
+    seen_groups.sort();
+    let mut wanted = group_ids.clone();
+    wanted.sort();
+    assert_eq!(seen_groups, wanted, "所有题组都必须被切进某个包");
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// 与 [`seed_packet_job`] 同一份作业，但 `uploads/` 里放的是**真实多页 PDF**。
 ///
 /// 两模式对比必须有真实附件才成立：`seed_packet_job` 写的是 8 字节的 `%PDF-1.4\n`，

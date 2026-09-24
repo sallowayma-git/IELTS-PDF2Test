@@ -1262,9 +1262,16 @@ fn build_packet(
 
 /// 题组锚点 → 裁剪请求（pageIndex + bbox）。同一页多个锚点只留一个区域请求。
 ///
-/// 缺 bbox 的**那一页**退整页图，判据是「这一页有没有 bbox」，不是「整组有没有」：
-/// 按整组判时，「同组里 2 页有 bbox、1 页没有」的那一页会既没有区域图也没有整页图，
-/// 而 `scope.pages` 里明明写着它。
+/// 缺 bbox 的**那一页**退整页图，判据是「**这一组**在这一页有没有 bbox」，不是
+/// 「这一页在整个包里有没有 bbox」：
+/// - 按整组判时（A-7 之前的写法），「同组里 2 页有 bbox、1 页没有」的那一页会既没有
+///   区域图也没有整页图，而 `scope.pages` 里明明写着它；
+/// - 按草稿判时（A-7 之后、本条修正之前的写法），同一个包里**另一个**题组在这一页裁了
+///   区域图，就把本组这一页的整页图退路一起吞掉 —— 而那两条 bbox 覆盖的版面未必重叠，
+///   本组要核的内容可能整块落在对方的裁剪范围之外。判据下沉到组内后结果也不再随
+///   `draft.task_ids` 的字典序遍历顺序摇摆。
+///
+/// 去重（`seen`）仍然是跨组的：同一页的整页图只需要一张。
 fn region_requests(
     draft: &PacketDraft,
     input: &PacketPlanInput<'_>,
@@ -1272,7 +1279,6 @@ fn region_requests(
 ) -> Vec<Value> {
     let mut out: Vec<Value> = Vec::new();
     let mut seen: BTreeSet<(u32, String)> = BTreeSet::new();
-    let mut pages_requested: BTreeSet<u32> = BTreeSet::new();
     for task_id in &draft.task_ids {
         let Some(group) = canonical_index.groups.get(task_id) else {
             continue;
@@ -1281,8 +1287,10 @@ fn region_requests(
         anchor_pages(group, &mut anchors);
         let mut bboxes = Vec::new();
         collect_bboxes(group, &mut bboxes);
+        // 本组已经有区域图的页：本组自己的锚点页不再退整页图。
+        let mut covered: BTreeSet<u32> = BTreeSet::new();
         for (page, bbox) in bboxes.iter() {
-            pages_requested.insert(*page);
+            covered.insert(*page);
             let key = (*page, serde_json::to_string(bbox).unwrap_or_default());
             if !seen.insert(key) {
                 continue;
@@ -1295,7 +1303,10 @@ fn region_requests(
             }));
         }
         for anchor in anchors {
-            if !pages_requested.insert(anchor.page) {
+            if covered.contains(&anchor.page) {
+                continue;
+            }
+            if !seen.insert((anchor.page, String::new())) {
                 continue;
             }
             out.push(json!({
@@ -1890,6 +1901,125 @@ mod tests {
             pages,
             vec![(1, true), (2, false), (3, true)],
             "缺 bbox 的那一页必须退成整页图，不能整组一起漏掉：{requests:#?}"
+        );
+    }
+
+    /// 同一个包里的两个题组：一个有 bbox、一个没有 ⇒ 缺 bbox 的那一组**仍要**退整页图。
+    ///
+    /// A-7 的修法引入了 `pages_requested`，但把它声明在 `for task_id` **外面**，判据于是
+    /// 变成**草稿级**的：包内任一题组在某一页有 bbox，其他题组在这一页的「缺 bbox 退整页图」
+    /// 就被吞掉。而这一页恰恰是后一组要核的内容 —— 前一组裁出来的那条区域未必覆盖它。
+    /// 判据必须是**组内**的（`covered`），只有去重（`seen`）才跨组。
+    ///
+    /// 题组顺序还会让结果摇摆：`draft.task_ids` 是 `BTreeSet`，谁先被遍历取决于 id 字典序，
+    /// 于是同一个包可能给 1 张图、也可能给 2 张。这条用例把两种顺序都固定成 2 张。
+    #[test]
+    fn a_group_without_a_bbox_still_gets_a_whole_page_when_another_group_has_one() {
+        let shared_bank = json!({"optionBankId": "bank-shared", "options": []});
+        let group = |task_id: &str, range: (u64, u64), node: Value, slot: &str| {
+            json!({
+                "taskId": task_id,
+                "displayRange": {"kind": "range", "start": range.0, "end": range.1},
+                "taskType": "matching_information",
+                "instructions": [node],
+                "stimulus": [],
+                "optionBank": shared_bank.clone(),
+                "responseGroups": [{
+                    "responseGroupId": format!("{task_id}-rg"),
+                    "kind": "text_entry",
+                    "prompt": [],
+                    "slotIds": [slot],
+                }],
+                "sourceAnchors": [],
+            })
+        };
+        let canonical = json!({
+            "taskGroups": [
+                group("tg-a", (1, 2), anchored_node("tg-a-1", 0, Some((10.0, 20.0))), "q1"),
+                group("tg-b", (3, 4), anchored_node("tg-b-1", 0, None), "q3"),
+            ],
+            "answerSlots": {
+                "q1": {"slotId": "q1", "questionNumber": 1, "displayLabel": "1", "hostType": "prompt", "interaction": "text", "participation": "scoring", "confidence": 0.9},
+                "q3": {"slotId": "q3", "questionNumber": 3, "displayLabel": "3", "hostType": "prompt", "interaction": "text", "participation": "scoring", "confidence": 0.9},
+            },
+            "answerKey": {
+                "q1": {"kind": "text", "values": ["TRUE"]},
+                "q3": {"kind": "text", "values": ["TRUE"]},
+            },
+        });
+        let source = index_with_pages(&[(1, &["one"]), (2, &["two"])]);
+        let index = GroupIndex::build(&canonical);
+
+        // 直测 `region_requests`：两种题组顺序都必须给出「区域图 + 整页图」两张。
+        for order in [
+            ["tg-a", "tg-b"],
+            ["tg-b", "tg-a"],
+        ] {
+            let draft = PacketDraft {
+                task_ids: order.iter().map(|id| id.to_string()).collect(),
+                part_id: None,
+                differences: Vec::new(),
+                blocking_issues: Vec::new(),
+                document_only: false,
+            };
+            let input = PacketPlanInput {
+                canonical: &canonical,
+                candidate: &Value::Null,
+                differences: &[],
+                blocking_issues: &[],
+                protected: &BTreeSet::new(),
+                source: &source,
+                edit_version: 1,
+            };
+            let requests = region_requests(&draft, &input, &index);
+            let mut pages: Vec<(u64, bool)> = requests
+                .iter()
+                .map(|request| {
+                    (
+                        request["pageIndex"].as_u64().unwrap(),
+                        !request["bbox"].is_null(),
+                    )
+                })
+                .collect();
+            // 同页先排「有 bbox」再排「整页」，免得元组序把 `false` 排到前面。
+            pages.sort_by(|left, right| left.0.cmp(&right.0).then(right.1.cmp(&left.1)));
+            assert_eq!(
+                pages,
+                vec![(1, true), (1, false)],
+                "顺序 {order:?}：有 bbox 的题组给区域图，没有的必须退整页图：{requests:#?}"
+            );
+        }
+
+        // 走真实切包路径，确认这两个题组确实会被并进**同一个**包（共用选项库 ⇒ 规则 2），
+        // 否则上面那条对草稿的手工构造就站不住。
+        let differences = vec![
+            difference("slot", "q1", "answer", json!("TRUE"), json!("FALSE")),
+            difference("slot", "q3", "answer", json!("TRUE"), json!("FALSE")),
+        ];
+        let packets = plan(&canonical, &Value::Null, &differences, &source);
+        assert_eq!(packets.len(), 1, "共用选项库的题组必须并成一个包：{packets:#?}");
+        let task_ids: Vec<&str> = packets[0]["taskIds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert_eq!(task_ids, vec!["tg-a", "tg-b"], "并包结果：{packets:#?}");
+        let regions = packets[0]["sourceEvidence"]["regions"].as_array().unwrap();
+        let mut planned: Vec<(u64, bool)> = regions
+            .iter()
+            .map(|region| {
+                (
+                    region["pageIndex"].as_u64().unwrap(),
+                    !region["bbox"].is_null(),
+                )
+            })
+            .collect();
+        planned.sort_by(|left, right| left.0.cmp(&right.0).then(right.1.cmp(&left.1)));
+        assert_eq!(
+            planned,
+            vec![(1, true), (1, false)],
+            "并包后仍要给缺 bbox 的题组一张整页图：{regions:#?}"
         );
     }
 
