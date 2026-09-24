@@ -4168,6 +4168,29 @@ fn node_binary() -> Option<std::path::PathBuf> {
     None
 }
 
+/// 往受控服务发一个 JSON POST 并读回响应体（只够这条用例用，不引入额外依赖）。
+///
+/// 走 `Connection: close`：服务端自己带 `content-length`，读到 EOF 即完整响应体。
+fn post_json(port: u16, path: &str, body: &Value) -> Value {
+    use std::io::{Read, Write};
+    let payload = serde_json::to_string(body).expect("请求体必须可序列化");
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("连接受控服务");
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(20)))
+        .expect("设置读超时");
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+        payload.len()
+    );
+    stream.write_all(request.as_bytes()).expect("写请求");
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).expect("读响应");
+    let text = String::from_utf8_lossy(&raw);
+    let at = text.find("\r\n\r\n").expect("HTTP 响应必须有头体分隔");
+    serde_json::from_str(text[at + 4..].trim()).expect("响应体必须是 JSON")
+}
+
 /// 一个当前空闲的本地端口。
 ///
 /// 先绑 0 让内核挑，再立刻放开给受控服务去绑。中间有一个很短的窗口；单机测试里
@@ -4329,6 +4352,250 @@ fn the_real_controlled_service_drives_the_packet_loop_through_l0_l1_and_finish()
         .unwrap_or_default();
     assert!(!first_pages.contains(&json!(3)), "第一轮不该包含答案页：{first_pages:?}");
     assert!(second_pages.contains(&json!(3)), "第二轮必须包含取回的答案页：{second_pages:?}");
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 包模式裁定用例共用的原文定义句：`evidenceKeyword`（`NOT GIVEN`）落在这一行里。
+const RULING_DEFINITION: &str = "Do the following statements agree with the claims of the writer? \
+     Write YES if the statement agrees with the claims of the writer, \
+     NO if the statement contradicts the claims of the writer, \
+     NOT GIVEN if it is impossible to say what the writer thinks about this.";
+
+/// 造一个「承载裁定型差异的包」的输入信封（`context.contextMode == "packets"`）。
+///
+/// 包里只有一条差异，类型是 `task_group` + `instructions`：这正是
+/// `cloud-repair-scenario.mjs` 里那条「当前稿对、候选错」的差异形状——**不能**靠
+/// `apply_edits` 消掉，只能靠 `record_ruling` 了结。
+fn ruling_packet_input(observations: Value) -> Value {
+    json!({
+        "mode": "repair_authoring_step",
+        "context": {
+            "contextMode": "packets",
+            "packetId": "pkt-rule-1",
+            "scope": {"pages": [4]},
+            "differences": [{
+                "targetType": "task_group",
+                "targetId": "demanding-q27-40",
+                "field": "instructions",
+                "canonical": RULING_DEFINITION,
+                "candidate": "Do the following statements agree with the claims of the writer?"
+            }],
+            "draftSlice": {"editVersion": 7, "taskGroups": []},
+            "sourceEvidence": {
+                "sourceFileId": "demanding-reading-pdf",
+                "pages": [{
+                    "pageIndex": 4,
+                    "lines": [
+                        {"id": "p4:l1", "text": "Questions 27-40"},
+                        {"id": "p4:l2", "text": RULING_DEFINITION}
+                    ]
+                }]
+            }
+        },
+        "observations": observations
+    })
+}
+
+/// 一条真实的 `record_ruling` observation（形状与 `CloudRepairToolResultV1::ok` 一致）。
+fn recorded_ruling_observation(target_type: &str, target_id: &str, field: &str) -> Value {
+    json!({
+        "schemaVersion": "CloudRepairToolResultV1",
+        "callId": "p1",
+        "status": "ok",
+        "result": {
+            "status": "recorded",
+            "recorded": [{
+                "targetType": target_type,
+                "targetId": target_id,
+                "field": field,
+                "ruling": "current_is_correct",
+                "reason": "原文件里这段说明包含完整的 YES / NO / NOT GIVEN 定义。",
+                "evidence": [{"sourceFileId": "demanding-reading-pdf", "pageIndex": 4, "quote": "NOT GIVEN"}]
+            }],
+            "errors": []
+        },
+        "errors": []
+    })
+}
+
+/// 把输入信封发成受控服务认得的请求体，并取回它给的**工具调用**。
+///
+/// 请求体形状与网关一致：`repair_step_prompt` 的首句用于 `detectTask` 分流，
+/// `Input JSON: ` 之后是整份输入信封（`repairInput` 按最后一个标记切）。
+fn ask_controlled_service(port: u16, input: &Value) -> Value {
+    let body = json!({
+        "model": "controlled-repair-v1",
+        "messages": [{
+            "role": "user",
+            "content": [{
+                "type": "text",
+                "text": format!(
+                    "You are repairing an IELTS Reading authoring draft so it matches the ORIGINAL FILE.\n\
+                     Input JSON: {input}"
+                )
+            }]
+        }]
+    });
+    let reply = post_json(port, "/v1/chat/completions", &body);
+    let content = reply["choices"][0]["message"]["content"]
+        .as_str()
+        .expect("受控服务必须回 content 字符串");
+    serde_json::from_str(content).expect("content 必须是一段工具调用 JSON")
+}
+
+/// 起一个受控服务子进程并等它就绪（返回看门狗，用例结束自动收掉）。
+fn start_controlled_service(node: &std::path::Path, plan_path: &std::path::Path) -> (u16, ChildGuard) {
+    let port = free_local_port();
+    let child = std::process::Command::new(node)
+        .arg(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("src-tauri 必须有父目录")
+                .join("scripts/controlled-llm-service.mjs"),
+        )
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--plan")
+        .arg(plan_path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap_or_else(|error| panic!("起受控服务失败 node={node:?}: {error}"));
+    let guard = ChildGuard(child);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while std::time::Instant::now() < deadline {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            return (port, guard);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    panic!("受控服务 15 秒内没有起来（端口 {port}）");
+}
+
+/// 包模式剧本必须能裁定「当前稿对、候选错」的差异（P7 审计 #2 的 P1）。
+///
+/// CDP 链默认就跑在包模式下（`REPAIR_CONTEXT_MODE` 默认 `Packets`，而全仓库没有一处设
+/// `IELTS_REPAIR_CONTEXT_MODE`），它的 `cloud-fixed-content-on-its-own` 要求
+/// `adjudicatedCount >= 1`。这个数字只数**裁定**（`effective_adjudicated_count`）——
+/// 被编辑改掉的差异进的是 `appliedCount`，两者刻意不重叠。包模式剧本此前只会
+/// `report_insufficient_context` / `apply_edits` / `finish_packet`，**从不**
+/// `record_ruling`，于是那条断言在包模式下恒红。
+///
+/// 这里把一个「承载裁定型差异的包」直接喂给仓库里那个真实脚本（真 HTTP），断言：
+///   ① 它回的是 `record_ruling`，不是直接 `finish_packet` 收工；
+///   ② 裁定指向的正是包里列出的那条差异；
+///   ③ 引文逐字来自**包内原文行**，不是脚本里的常量。
+///
+/// 注意裁定**不会**让差异从 `context.differences` 里消失（`build_repair_context` 给的是
+/// 原始 `candidate_differences`），所以剧本必须靠 `observations` 里的 `record_ruling`
+/// 结果去重，否则会原地打转到轮数用尽。这条用例只覆盖「第一次该裁定」这一半；
+/// 去重那一半由 [`the_controlled_service_stops_ruling_once_it_already_has`] 覆盖。
+#[test]
+fn the_real_controlled_service_rules_on_a_ruling_type_difference_in_packet_mode() {
+    let Some(node) = node_binary() else {
+        panic!("本机 PATH 里没有 node：包模式裁定用例无法执行——这不是通过（见 node_binary 的说明）");
+    };
+    let root = temp_root();
+    std::fs::create_dir_all(&root).expect("临时目录");
+    let plan_path = root.join("repair-plan.json");
+    crate::util::write_json(
+        &plan_path,
+        &json!({
+            "fixSlotIds": [],
+            "questionNumber": 40,
+            "sourcePageOneBased": 4,
+            "rulings": [{
+                "targetType": "task_group",
+                "targetId": "demanding-q27-40",
+                "field": "instructions",
+                "ruling": "current_is_correct",
+                "reason": "原文件里这段说明包含完整的 YES / NO / NOT GIVEN 定义，当前稿与之一致。",
+                "evidenceKeyword": "NOT GIVEN"
+            }],
+            "unresolved": [],
+            "finishNote": "受控服务：裁定完成"
+        }),
+    )
+    .expect("写剧本");
+
+    let (port, _guard) = start_controlled_service(&node, &plan_path);
+    let call = ask_controlled_service(port, &ruling_packet_input(json!([])));
+
+    assert_eq!(
+        call["tool"], json!("record_ruling"),
+        "包模式剧本必须能裁定「当前稿对、候选错」的差异，否则 CDP 链的 adjudicatedCount 恒为 0：{call:#?}"
+    );
+    let ruling = &call["arguments"]["rulings"][0];
+    assert_eq!(ruling["targetType"], json!("task_group"));
+    assert_eq!(ruling["targetId"], json!("demanding-q27-40"));
+    assert_eq!(ruling["field"], json!("instructions"));
+    assert_eq!(ruling["ruling"], json!("current_is_correct"));
+    let quote = ruling["evidence"][0]["quote"].as_str().unwrap_or_default();
+    assert!(
+        RULING_DEFINITION.contains(quote) && quote.contains("NOT GIVEN"),
+        "引文必须逐字取自包内原文行（不是脚本里的常量）：{quote:?}"
+    );
+    assert_eq!(
+        ruling["evidence"][0]["pageIndex"],
+        json!(4),
+        "引文要落在它真实所在的那一页：{ruling:#?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 已经裁定过之后，剧本必须收工——否则每个包会一直裁到轮数用尽。
+///
+/// 裁定**不会**把差异从 `context.differences` 里拿掉：`build_repair_context` 给的是原始
+/// `candidate_differences`，而 `effective_adjudicated_count` 的设计恰恰依赖「差异还在、
+/// 裁定也还在」才算数。所以剧本只能靠 `observations` 里 `record_ruling` 的真实返回去重。
+/// 少了这一步，一个只承载裁定型差异的包会每轮重复同一次调用，被 `REPEAT_LIMIT` 判成
+/// `no_progress`，整个 run 报成 `budget_exhausted`。
+#[test]
+fn the_controlled_service_stops_ruling_once_it_already_has() {
+    let Some(node) = node_binary() else {
+        panic!("本机 PATH 里没有 node：包模式裁定用例无法执行——这不是通过（见 node_binary 的说明）");
+    };
+    let root = temp_root();
+    std::fs::create_dir_all(&root).expect("临时目录");
+    let plan_path = root.join("repair-plan.json");
+    crate::util::write_json(
+        &plan_path,
+        &json!({
+            "fixSlotIds": [],
+            "questionNumber": 40,
+            "sourcePageOneBased": 4,
+            "rulings": [{
+                "targetType": "task_group",
+                "targetId": "demanding-q27-40",
+                "field": "instructions",
+                "ruling": "current_is_correct",
+                "reason": "原文件里这段说明包含完整的 YES / NO / NOT GIVEN 定义，当前稿与之一致。",
+                "evidenceKeyword": "NOT GIVEN"
+            }],
+            "unresolved": [],
+            "finishNote": "受控服务：裁定完成"
+        }),
+    )
+    .expect("写剧本");
+
+    let (port, _guard) = start_controlled_service(&node, &plan_path);
+    let observations = json!([recorded_ruling_observation(
+        "task_group",
+        "demanding-q27-40",
+        "instructions"
+    )]);
+    let call = ask_controlled_service(port, &ruling_packet_input(observations));
+
+    assert_ne!(
+        call["tool"], json!("record_ruling"),
+        "这条差异已经裁定过了，不许再裁一次（会原地打转到轮数用尽）：{call:#?}"
+    );
+    assert_eq!(
+        call["tool"], json!("finish_packet"),
+        "裁定过的包应当收工：{call:#?}"
+    );
 
     let _ = std::fs::remove_dir_all(&root);
 }

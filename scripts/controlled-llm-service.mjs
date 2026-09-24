@@ -21,7 +21,9 @@
 //      apply_edits / record_ruling / finish，由 `--plan` 指定的剧本驱动。
 //      请求里 `context.contextMode === 'packets'` 时走**包模式**剧本：首包故意不含
 //      答案页 → `report_insufficient_context` → 拿到那一页后 `apply_edits` →
-//      `finish_packet`（见 `repairPacketStepReply`）。
+//      `finish_packet`；若本包承载的是「当前稿对、候选错」的差异，则先
+//      `record_ruling`（见 `repairPacketStepReply` / `packetRulingCall`）。少了裁定这一路，
+//      CDP 链的 `adjudicatedCount` 在包模式下恒为 0。
 //
 // 上一版**只**会返回第 1 种。于是 A3/A4 请求拿到的是一份 outline，被网关校验器
 // 整份拒绝（`MODEL_INVALID_OUTPUT`），链状态退化成 `partial`/`unusable`——
@@ -380,7 +382,7 @@ function repairStepReply(text) {
   // `read_draft` 不给选择器会被拒、`read_source` 不给页范围也会被拒，
   // 收尾工具是 `finish_packet` 而不是 `finish`。
   if (context.contextMode === 'packets') {
-    return repairPacketStepReply(context, plan, round);
+    return repairPacketStepReply(context, plan, round, observations);
   }
   const giveUp = (note) => ({ callId: `c${round}`, tool: 'finish', arguments: { note } });
 
@@ -515,19 +517,21 @@ function repairStepReply(text) {
 
 /**
  * 包模式剧本（任务书 §6）：首包**故意**不含答案页 → `report_insufficient_context` →
- * 拿到那一页后 `apply_edits` → `finish_packet`。
+ * 拿到那一页后 `apply_edits` → `finish_packet`；承载「当前稿对、候选错」差异的包先
+ * `record_ruling` 再收工。
  *
- * 与 legacy 剧本同一条纪律：**答案与引文只能从请求里真实出现的行里读出来**。
+ * 与 legacy 剧本同一条纪律：**答案、题面与引文只能从请求里真实出现的行里读出来**。
  * 答案页不在包里时，这个剧本连答案是什么都不知道——它只能报「不够」，交不出那一行。
  * 这正是「回退真的在传内容」的证明：第一轮请求里没有那一行。
  *
- * 每一步的判据都取自**请求**（`context`），不取自脚本里的常量：
+ * 每一步的判据都取自**请求**（`context` / `observations`），不取自脚本里的常量：
  *   · 本包还有没有待核对的差异 → `context.differences`
  *   · 答案页在不在本包 → `context.scope.pages`（1-based）
  *   · 编辑用哪个版本 → `context.draftSlice.editVersion`
  *   · 引文与答案值 → `context.sourceEvidence.pages[].lines[].text`
+ *   · 这条差异裁定过没有 → `observations[].result.recorded[]`
  */
-function repairPacketStepReply(context, plan, round) {
+function repairPacketStepReply(context, plan, round, observations) {
   const packetId = context?.packetId ?? null;
   // `finish_packet` 也能带 `unresolved`：无法定论的疑问必须变成用户可见的剩余任务，
   // 否则「把不确定性交出去」这条规则在包模式下就没有出口。
@@ -608,8 +612,86 @@ function repairPacketStepReply(context, plan, round) {
   }
   return (
     packetPromptRewrite(context, plan, round, version)
+    ?? packetRulingCall(context, plan, round, observations)
     ?? giveUp('受控服务在包内原文里找不到剧本指定的题面行，本轮不做任何修改')
   );
+}
+
+/**
+ * 本包承载的、**尚未裁定**的「当前稿对、候选错」差异 ⇒ 一条 `record_ruling` 调用。
+ *
+ * 判据全部取自**请求**，与 legacy 剧本同一条纪律：
+ *   · 这条差异在不在本包 → `context.differences`；
+ *   · 裁定目标与检索键 → 剧本（`plan.rulings`），但**引文只能从包内原文行里取**。
+ *   · 是否已经裁定过 → `observations` 里 `record_ruling` 的真实返回。
+ *
+ * 最后一条不可省：裁定**不会**让差异从 `context.differences` 里消失
+ * （`build_repair_context` 给的是原始 `candidate_differences`，`effective_adjudicated_count`
+ * 的设计恰恰依赖「差异还在、裁定也还在」）。少了它，只承载裁定型差异的包会每轮重复
+ * 同一次调用，被 `REPEAT_LIMIT` 判成 `no_progress`，整个 run 报成 `budget_exhausted`。
+ *
+ * 找不到原文依据就**不裁定**——裁定没有出处等于编造。
+ */
+function packetRulingCall(context, plan, round, observations) {
+  const entries = Array.isArray(plan?.rulings) ? plan.rulings : [];
+  if (entries.length === 0) return null;
+  const differences = Array.isArray(context?.differences) ? context.differences : [];
+  for (const entry of entries) {
+    const listed = differences.find(
+      (difference) =>
+        difference?.targetType === entry.targetType
+        && difference?.targetId === entry.targetId
+        && difference?.field === entry.field,
+    );
+    if (!listed) continue;
+    if (rulingAlreadyRecorded(observations, entry)) continue;
+    const grounded = packetLineContaining(context, entry.evidenceKeyword);
+    if (!grounded) continue;
+    return {
+      callId: `p${round}`,
+      tool: 'record_ruling',
+      arguments: {
+        rulings: [
+          {
+            targetType: entry.targetType,
+            targetId: entry.targetId,
+            field: entry.field,
+            ruling: entry.ruling ?? 'current_is_correct',
+            reason: entry.reason ?? '原文件与当前稿一致，候选读错了。',
+            evidence: [
+              {
+                sourceFileId: context?.sourceEvidence?.sourceFileId ?? null,
+                pageIndex: grounded.pageIndex,
+                // 引文就是包里那一行本身 —— 逐字取自请求，不是常量。
+                quote: grounded.text,
+              },
+            ],
+          },
+        ],
+      },
+    };
+  }
+  return null;
+}
+
+/** 这一次裁定是否已经落在 `observations` 里（按身份判，不看轮数）。 */
+function rulingAlreadyRecorded(observations, entry) {
+  return (Array.isArray(observations) ? observations : []).some((observation) => {
+    const recorded = observation?.result?.recorded;
+    if (!Array.isArray(recorded)) return false;
+    return recorded.some(
+      (item) =>
+        item?.targetType === entry.targetType
+        && item?.targetId === entry.targetId
+        && item?.field === entry.field,
+    );
+  });
+}
+
+/** 包内原文行里第一行含 `keyword` 的（返回 `{pageIndex, lineId, text}`）。 */
+function packetLineContaining(context, keyword) {
+  if (typeof keyword !== 'string' || keyword.length === 0) return null;
+  return packetLines(context).find((entry) => entry.text.includes(keyword)) ?? null;
 }
 
 /**
