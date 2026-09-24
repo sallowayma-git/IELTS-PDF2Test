@@ -396,12 +396,28 @@ function llmTraces(jobId) {
     for (const entry of inputs) {
       try {
         const input = JSON.parse(fs.readFileSync(path.join(dir, entry.file), "utf8"));
+        const packetPages = Array.isArray(input.context?.sourceEvidence?.pages)
+          ? input.context.sourceEvidence.pages
+              .map((page) => Number(page?.pageIndex))
+              .filter((page) => Number.isInteger(page))
+          : [];
         traces.repairRounds.push({
           stamp: entry.stamp,
           observations: Array.isArray(input.observations) ? input.observations.length : 0,
           differences: (input.context?.differences ?? []).length,
           editVersion: input.context?.editVersion ?? null,
           protectedTargets: input.context?.protectedTargets ?? [],
+          // 包模式的字段（`cloud_repair/packets.rs::build_packet`）。legacy 下 `packetId`
+          // 是 null、`packetPages` 是空数组 —— 「这一轮是不是一个包」本身就是要断言的事实，
+          // 所以两种模式都要如实记下来，不能只在包模式下补字段。
+          //
+          // `editVersion` 只在 legacy 的顶层；包模式在 `draftSlice.editVersion`。
+          // 不把后者也记下来，步骤 11 就没有东西可以拿来比「模型是不是照真实版本改的」。
+          draftEditVersion: input.context?.draftSlice?.editVersion ?? null,
+          packetId: input.context?.packetId ?? null,
+          escalationLevel: input.context?.escalationLevel ?? null,
+          packetMode: input.context?.contextMode === "packets",
+          packetPages,
         });
       } catch {
         traces.repairRounds.push({ stamp: entry.stamp, error: "unparsable" });
@@ -483,6 +499,41 @@ function repairToolCalls(jobId) {
       }
     });
 }
+
+/**
+ * 本次修复实际用的是哪种上下文模式（`packets` / `legacy`）。
+ *
+ * 判据取自**落盘记录**，不是脚本的期望值：`REPAIR_CONTEXT_MODE` 的默认值是 `Packets`
+ * （`cloud_repair/mod.rs`），而脚本里没有任何地方设 `IELTS_REPAIR_CONTEXT_MODE`。
+ * 也就是说这条链默认跑在包模式下。步骤 10b / 11 原先写死了 legacy 的回合形状，
+ * 一旦默认切到包模式就会红 —— 那不是「云端改坏了」，是断言在问一个包模式下不存在的问题。
+ * 所以两条步骤都要按这个函数分流。
+ */
+function repairContextMode() {
+  const records = report.modelTraces?.llm?.callRecords ?? [];
+  const packetCalls = records.filter(
+    (entry) => typeof entry.packetId === "string" && entry.packetId.startsWith("pkt-"),
+  );
+  if (packetCalls.length > 0) return "packets";
+  const rounds = report.modelTraces?.llm?.repairRounds ?? [];
+  if (rounds.some((round) => round.packetMode === true)) return "packets";
+  return "legacy";
+}
+
+/** 包模式允许出现的工具（与 `schema/cloud_repair_v1.rs::CLOUD_REPAIR_TOOLS` 同一份清单）。 */
+const PACKET_TOOLS = new Set([
+  "read_draft",
+  "read_source",
+  "search_source",
+  "read_page_region",
+  "read_passage",
+  "read_candidate",
+  "apply_edits",
+  "record_ruling",
+  "report_insufficient_context",
+  "finish_packet",
+  "finish",
+]);
 
 /**
  * 取一份权威稿快照。
@@ -1078,10 +1129,28 @@ async function main() {
     const quotes = toolCalls.flatMap((call) => call.evidence ?? []);
     const pageTexts = sourcePageTextsFromJob(itemId);
     const expectedPageText = pageTexts.get(Number(annotated.sourcePage.oneBased)) ?? null;
+    const mode = repairContextMode();
     const problems = [];
 
-    // (0) 回合本身必须存在：没有 read_source，后面两条都无从谈起。
-    if (sourceRounds.length === 0) {
+    // (0) 回合本身必须存在：原文没有真的到过模型手里，后面两条都无从谈起。
+    //
+    // 两种模式的「到手」方式不同，前提也必须不同：
+    //   · legacy：原文靠模型自己 `read_source` 取回来 ⇒ 必须有 read_source 回合；
+    //   · packets：原文**随包**发过来（`sourceEvidence.pages[].lines[]`）⇒ 要断言的是
+    //     「至少有一轮请求真的带着承载那一页的原文文本」。写死 read_source 会冤枉
+    //     包模式：它的整条设计就是不靠模型反复取页，而是本地预切。
+    // 两边都不是「脚本说它拿到了」——判据来自请求体落盘文件。
+    if (mode === "packets") {
+      const roundsWithPage = (report.modelTraces.llm.repairRounds ?? []).filter((round) =>
+        (round.packetPages ?? []).includes(Number(annotated.sourcePage.oneBased)),
+      );
+      if (roundsWithPage.length === 0) {
+        problems.push(
+          `包模式下没有任何一轮请求带着第 ${annotated.sourcePage.oneBased} 页的原文文本：`
+            + "改对了也只能是从剧本抄的，证明不了「依据原文件」",
+        );
+      }
+    } else if (sourceRounds.length === 0) {
       problems.push("整条修复回合里没有一次 read_source：改对了也只是照剧本抄的，证明不了「依据原文件」");
     }
     if (!expectedPageText) {
@@ -1136,7 +1205,13 @@ async function main() {
     }
 
     report.observed.sourceGroundedCorrection = {
+      contextMode: mode,
       readSourceRounds: sourceRounds.length,
+      // 包模式下 legacy 的 read_source 计数天然是 0：原文是随包来的。补一个**包模式口径**
+      // 的计数，免得报告里那个 0 被读成「原文一次都没到过模型手里」。
+      roundsCarryingSourcePage: (report.modelTraces.llm.repairRounds ?? []).filter((round) =>
+        (round.packetPages ?? []).includes(Number(annotated.sourcePage.oneBased)),
+      ).length,
       quotes: quotes.map((quote) => ({ pageIndex: quote?.pageIndex ?? null, quote: quote.quote })),
       sourcePageOneBased: annotated.sourcePage.oneBased,
       sourcePageTextLength: expectedPageText?.length ?? 0,
@@ -1159,34 +1234,79 @@ async function main() {
   }
 
   // ---- 11. 断言：模型是**照着真实反馈**改的 ----
+  //
+  // 这条步骤必须**按模式分流**。原先它把 legacy 的回合形状（read_draft → read_source →
+  // 被拒的 apply_edits → 带 baseVersion 重交 → record_ruling → finish）写成了硬断言，
+  // 而 `REPAIR_CONTEXT_MODE` 的默认值已经是 `Packets`、脚本里又没有一处设
+  // `IELTS_REPAIR_CONTEXT_MODE` —— 也就是说这条链默认就跑在包模式下，而包模式的回合
+  // 形状完全不同（没有 read_draft，收工是 `finish_packet`，一个包一轮循环）。硬断言
+  // 必然红，而且红得没有信息量：那不是「模型没照反馈改」，是断言在问一个包模式下不存在的问题。
+  //
+  // 两种模式要证明的是**同一件事**：写进稿子的 `baseVersion` 是模型从**真实请求**里读到的，
+  // 不是剧本里的常量。legacy 读顶层 `editVersion`，包模式读 `draftSlice.editVersion`；
+  // 两个值都从请求体落盘文件里取，所以这条断言两边都可证伪。
   const rounds = report.modelTraces.toolCalls;
+  const roundInputs = report.modelTraces.llm.repairRounds ?? [];
+  const contextMode = repairContextMode();
   const feedbackProblems = [];
-  if (rounds.length < 5) feedbackProblems.push(`至少应有 5 轮工具调用，实际 ${rounds.length}`);
-  if (rounds[0]?.tool !== "read_draft") feedbackProblems.push(`第 1 轮应为 read_draft，实际 ${rounds[0]?.tool}`);
-  // 第 2 轮必须是 read_source：少了它，「照真实反馈改」就退化成照剧本改。
-  // （read_source 是后加的，下面所有轮次序号都跟着后移一位。）
-  if (rounds[1]?.tool !== "read_source") feedbackProblems.push(`第 2 轮应为 read_source，实际 ${rounds[1]?.tool}`);
-  if (rounds[2]?.tool !== "apply_edits" || rounds[2]?.baseVersion != null) {
-    feedbackProblems.push(`第 3 轮应为不带 baseVersion 的 apply_edits，实际 ${rounds[2]?.tool}/${rounds[2]?.baseVersion}`);
+  const readDraftRound = roundInputs[0];
+  if (contextMode === "packets") {
+    const unknown = rounds
+      .map((round) => round.tool)
+      .filter((tool) => !PACKET_TOOLS.has(tool));
+    if (unknown.length > 0) {
+      feedbackProblems.push(`出现了包模式清单外的工具：${[...new Set(unknown)].join("、")}`);
+    }
+    if (rounds.length < 2) {
+      feedbackProblems.push(`至少应有 2 轮工具调用（一轮构不成「照反馈修正」），实际 ${rounds.length}`);
+    }
+    const inputsByStamp = new Map(roundInputs.map((round) => [round.stamp, round]));
+    const edits = rounds.filter((round) => round.tool === "apply_edits");
+    if (edits.length === 0) {
+      feedbackProblems.push("整条修复回合里没有一次 apply_edits：题面根本没被改过");
+    }
+    for (const edit of edits) {
+      const fromRequest = inputsByStamp.get(edit.stamp)?.draftEditVersion ?? null;
+      if (edit.baseVersion == null) {
+        feedbackProblems.push(`第 ${edit.stamp} 轮的 apply_edits 没有带 baseVersion`);
+      } else if (fromRequest == null) {
+        feedbackProblems.push(`第 ${edit.stamp} 轮：请求体里读不到 draftSlice.editVersion，无法核对 baseVersion`);
+      } else if (Number(edit.baseVersion) !== Number(fromRequest)) {
+        feedbackProblems.push(
+          `第 ${edit.stamp} 轮的 baseVersion(${edit.baseVersion}) 不等于同一轮请求里真实的 `
+            + `draftSlice.editVersion(${fromRequest})：说明它不是照真实反馈改的`,
+        );
+      }
+    }
+  } else {
+    if (rounds.length < 5) feedbackProblems.push(`至少应有 5 轮工具调用，实际 ${rounds.length}`);
+    if (rounds[0]?.tool !== "read_draft") feedbackProblems.push(`第 1 轮应为 read_draft，实际 ${rounds[0]?.tool}`);
+    // 第 2 轮必须是 read_source：少了它，「照真实反馈改」就退化成照剧本改。
+    // （read_source 是后加的，下面所有轮次序号都跟着后移一位。）
+    if (rounds[1]?.tool !== "read_source") feedbackProblems.push(`第 2 轮应为 read_source，实际 ${rounds[1]?.tool}`);
+    if (rounds[2]?.tool !== "apply_edits" || rounds[2]?.baseVersion != null) {
+      feedbackProblems.push(`第 3 轮应为不带 baseVersion 的 apply_edits，实际 ${rounds[2]?.tool}/${rounds[2]?.baseVersion}`);
+    }
+    if (rounds[3]?.tool !== "apply_edits" || rounds[3]?.baseVersion == null) {
+      feedbackProblems.push(`第 4 轮应带 baseVersion 重交，实际 ${rounds[3]?.tool}/${rounds[3]?.baseVersion}`);
+    }
+    if (readDraftRound && rounds[3]?.baseVersion !== readDraftRound.editVersion) {
+      feedbackProblems.push(`第 4 轮的 baseVersion(${rounds[3]?.baseVersion}) 必须等于第 1 轮真实读到的 editVersion(${readDraftRound.editVersion})`);
+    }
+    if (rounds[4]?.tool !== "record_ruling") feedbackProblems.push(`第 5 轮应为 record_ruling，实际 ${rounds[4]?.tool}`);
+    if ((rounds.at(-1)?.tool ?? null) !== "finish") feedbackProblems.push(`最后一轮应为 finish，实际 ${rounds.at(-1)?.tool}`);
+    if ((rounds.at(-1)?.unresolved ?? 0) < 1) feedbackProblems.push("finish 必须留下至少一条未解疑问");
   }
-  if (rounds[3]?.tool !== "apply_edits" || rounds[3]?.baseVersion == null) {
-    feedbackProblems.push(`第 4 轮应带 baseVersion 重交，实际 ${rounds[3]?.tool}/${rounds[3]?.baseVersion}`);
-  }
-  const readDraftRound = report.modelTraces.llm.repairRounds[0];
-  if (readDraftRound && rounds[3]?.baseVersion !== readDraftRound.editVersion) {
-    feedbackProblems.push(`第 4 轮的 baseVersion(${rounds[3]?.baseVersion}) 必须等于第 1 轮真实读到的 editVersion(${readDraftRound.editVersion})`);
-  }
-  if (rounds[4]?.tool !== "record_ruling") feedbackProblems.push(`第 5 轮应为 record_ruling，实际 ${rounds[4]?.tool}`);
-  if ((rounds.at(-1)?.tool ?? null) !== "finish") feedbackProblems.push(`最后一轮应为 finish，实际 ${rounds.at(-1)?.tool}`);
-  if ((rounds.at(-1)?.unresolved ?? 0) < 1) feedbackProblems.push("finish 必须留下至少一条未解疑问");
   if (feedbackProblems.length === 0) {
     record("model-corrected-itself-from-real-feedback", SCENARIO_STATUS.PASSED, {
+      contextMode,
       rounds: rounds.map((round) => round.tool),
-      baseVersion: rounds[3]?.baseVersion,
+      baseVersions: rounds.filter((round) => round.tool === "apply_edits").map((round) => round.baseVersion ?? null),
       readDraftEditVersion: readDraftRound?.editVersion ?? null,
+      draftEditVersions: roundInputs.map((round) => round.draftEditVersion ?? null),
     });
   } else {
-    record("model-corrected-itself-from-real-feedback", SCENARIO_STATUS.FAILED, { problems: feedbackProblems });
+    record("model-corrected-itself-from-real-feedback", SCENARIO_STATUS.FAILED, { contextMode, problems: feedbackProblems });
   }
 
   // ---- 11b. 断言：包模式下至少一个包走了 L1，且最终稿正确 ----
@@ -1195,11 +1315,33 @@ async function main() {
   // 断言：「包更小了」本身不是成绩——如果代价是模型拿不到该看的页，那只是把问题藏起来。
   // L1 的判据取自 `llm-calls.jsonl` 的逐包记录（`packetId` + `escalationLevel`），
   // 不是脚本自己的推断。
+  //
+  // L1 有两条腿（`mod.rs`：`report_insufficient_context` 与任何一个抓取工具都会把级别抬到 1），
+  // 所以「一个包走了 L1」既可以是「它明说不够、要来了那一页」，也可以是「它自己伸手去取」。
+  //
+  // 失败时的载荷必须能直接回答「为什么没走到 L1」：逐包的 `pagesIncluded` 与「承载正确答案的
+  // 那一页在不在这个包里」都要写出来。少了这两项，红了的报告只会说「全是 0」，
+  // 而看不出是「这一卷的包恰好自足」还是「模型没敢要」——两者的处置完全不同。
   const callRecords = report.modelTraces.llm?.callRecords ?? [];
   const packetCalls = callRecords.filter(
     (entry) => typeof entry.packetId === "string" && entry.packetId.startsWith("pkt-"),
   );
   const l1Calls = packetCalls.filter((entry) => Number(entry.escalationLevel ?? 0) >= 1);
+  const fixPageOneBased = Number(derived.fix.sourcePageOneBased);
+  const packetDiagnostics = [...new Set(packetCalls.map((entry) => entry.packetId))].map((packetId) => {
+    const calls = packetCalls.filter((entry) => entry.packetId === packetId);
+    const first = calls[0] ?? {};
+    const pages = Array.isArray(first.pagesIncluded) ? first.pagesIncluded.map(Number) : [];
+    return {
+      packetId,
+      calls: calls.length,
+      escalationLevels: calls.map((entry) => entry.escalationLevel ?? null),
+      firstCallPages: pages,
+      // 这一包第一次请求里有没有承载正确答案的那一页。
+      firstCallHadFixPage: Number.isInteger(fixPageOneBased) ? pages.includes(fixPageOneBased) : null,
+    };
+  });
+  const selfSufficient = packetDiagnostics.filter((entry) => entry.firstCallHadFixPage === true);
   const packetProblems = [];
   if (packetCalls.length === 0) {
     packetProblems.push("没有任何修复调用带上包 id：包模式没有真的生效（或可观测性字段没落盘）");
@@ -1207,8 +1349,10 @@ async function main() {
   if (l1Calls.length === 0) {
     packetProblems.push(
       `${packetCalls.length} 次修复调用的升级级别全是 0，没有任何包走到 L1。`
-        + "包模式的上下文是本地预切的一块，模型本该把缺的页自己要回来；"
-        + "全是 0 意味着要么这一卷的包恰好自足，要么它没敢要——两种情况都必须写清楚",
+        + `本次共 ${packetDiagnostics.length} 个包，其中 ${selfSufficient.length} 个在第一次请求里就已经带着承载正确答案的第 ${fixPageOneBased} 页`
+        + `（逐包明细见 packets）：若全部自足，说明这一卷的包没有「要不到材料」的机会，`
+        + "那么「至少一个包走 L1」这件事只能由另一份卷子或另一条差异来证明，不能靠这一条硬撑；"
+        + "若并不自足，那就是模型没敢要——这是缺陷。",
     );
   }
   // 「最终稿正确」与步骤 10 同一判据，且用的是**落库后的权威稿**，不是脚本的期望值。
@@ -1224,12 +1368,18 @@ async function main() {
       l1Calls: l1Calls.length,
       escalationLevels: packetCalls.map((entry) => entry.escalationLevel),
       packetIds: [...new Set(packetCalls.map((entry) => entry.packetId))],
+      packets: packetDiagnostics,
       estimatedInputTokens: packetCalls.reduce((sum, entry) => sum + Number(entry.estimatedInputTokens ?? 0), 0),
       requestBytes: packetCalls.reduce((sum, entry) => sum + Number(entry.requestBytes ?? 0), 0),
       finalPrompt: promptAfter,
     });
   } else {
-    record("packet-mode-asked-for-the-missing-page", SCENARIO_STATUS.FAILED, { problems: packetProblems });
+    record("packet-mode-asked-for-the-missing-page", SCENARIO_STATUS.FAILED, {
+      problems: packetProblems,
+      packets: packetDiagnostics,
+      fixPageOneBased,
+      finalPrompt: promptAfter,
+    });
   }
 
   // ---- 12. 断言：进度在循环结束前就可读（不是十分钟后才出现）----
