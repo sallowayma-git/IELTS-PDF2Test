@@ -4103,3 +4103,125 @@ fn packets_mode_requests_carry_no_whole_pdf_and_the_fetched_page_reaches_the_mod
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// 与 [`seed_packet_job`] 同一份作业，但 `uploads/` 里放的是**真实多页 PDF**。
+///
+/// 两模式对比必须有真实附件才成立：`seed_packet_job` 写的是 8 字节的 `%PDF-1.4\n`，
+/// 拿它比「附整份 PDF 贵多少」等于什么都没比。这里换用仓库里真实存在的 212 KB 样本。
+fn seed_packet_job_with_real_pdf(root: &Path) {
+    seed_packet_job(root);
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../fixtures/parser/demanding-reading-passage-3.pdf");
+    let bytes = std::fs::read(&source).expect("真实 PDF 样本必须在仓库里");
+    std::fs::write(
+        crate::util::job_dir(root, ITEM_ID)
+            .join("uploads")
+            .join("early-approaches.pdf"),
+        bytes,
+    )
+    .expect("把真实 PDF 放进 uploads");
+}
+
+/// 同一份 fixture、同一条**真实 HTTP 网关**，分别跑 legacy 与 packets，把每一次修复
+/// 请求的 `requestBytes` 与包自己估的 `estimatedInputTokens` 加起来。
+///
+/// 这是任务书 §6 要求的「两模式对比」，也是「单次校核总输入量显著下降」这句话唯一
+/// 可对账的版本：两个数字都取自 `llm-calls.jsonl` 的真实记录，不是脚本自己算的。
+fn repair_input_totals(mode: RepairContextMode, script: fn(&str, usize) -> String) -> (u64, u64) {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+    seed_packet_job_with_real_pdf(&root);
+
+    let (base_url, _requests) = spawn_scripted_repair_service_with(script);
+    crate::llm_profiles::save_profiles(
+        &root,
+        &[json!({
+            "profileId": "controlled-repair",
+            "name": "Controlled Repair Service",
+            "provider": "OpenAiCompatible",
+            "baseUrl": base_url,
+            "model": "controlled-repair-v1",
+            "temperature": 0,
+            "timeoutMs": 60000,
+            "forceJson": true,
+            "enabled": true
+        })],
+    )
+    .expect("profile 必须能落盘");
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let step = |context: &Value, observations: &[Value]| {
+        repair_authoring_step_through_gateway(
+            &root,
+            ITEM_ID,
+            Some("controlled-repair"),
+            context,
+            observations,
+        )
+    };
+    match mode {
+        RepairContextMode::Legacy => {
+            run_legacy(&request, step).expect("legacy 循环必须跑完");
+        }
+        RepairContextMode::Packets => {
+            run_packets(&request, step).expect("包模式循环必须跑完");
+        }
+    }
+
+    let records: Vec<Value> = std::fs::read_to_string(
+        crate::util::job_dir(&root, ITEM_ID).join("llm-calls.jsonl"),
+    )
+    .expect("网关必须留下 llm-calls.jsonl")
+    .lines()
+    .filter_map(|line| serde_json::from_str(line).ok())
+    .filter(|record: &Value| record["commandName"] == json!("repair_authoring_step"))
+    .collect();
+    assert!(!records.is_empty(), "两种模式都必须真的发出修复请求");
+    let bytes: u64 = records
+        .iter()
+        .filter_map(|record| record["requestBytes"].as_u64())
+        .sum();
+    let tokens: u64 = records
+        .iter()
+        .filter_map(|record| record["estimatedInputTokens"].as_u64())
+        .sum();
+    let _ = std::fs::remove_dir_all(&root);
+    (bytes, tokens)
+}
+
+/// §6 两模式对比：**同一份卷子**，包模式的请求体总量必须显著小于 legacy。
+///
+/// 判据刻意取「不到一半」而不是「小一点点」：如果只是小一点点，那说明真正的大头
+/// （整份 PDF 附件）还在路上，改造就没落地。
+#[test]
+fn packets_mode_sends_much_less_input_than_legacy_for_the_same_paper() {
+    let (legacy_bytes, legacy_tokens) =
+        repair_input_totals(RepairContextMode::Legacy, scripted_repair_reply);
+    let (packet_bytes, packet_tokens) =
+        repair_input_totals(RepairContextMode::Packets, scripted_packet_reply);
+
+    assert!(legacy_bytes > 0, "legacy 侧的请求体字节数必须真实记录");
+    assert!(packet_bytes > 0, "包模式侧的请求体字节数必须真实记录");
+    // 数字打进测试输出（默认被捕获，`--nocapture` 可见）：报告里的对比值必须是**量出来的**。
+    eprintln!(
+        "[repair-input] legacy requestBytes={legacy_bytes} packets requestBytes={packet_bytes} \
+         packets estimatedInputTokens={packet_tokens}"
+    );
+    assert!(
+        packet_bytes * 2 < legacy_bytes,
+        "同一份卷子，包模式的总请求体必须不到 legacy 的一半：\
+         legacy={legacy_bytes} packets={packet_bytes}"
+    );
+    // 逐包估算 token 是包模式才有的对账口径（legacy 每轮附整份 PDF，没有「包」这个概念）。
+    assert!(
+        packet_tokens > 0,
+        "包模式必须记下每包的估算 token，否则「输入量下降」无从对账"
+    );
+    assert_eq!(
+        legacy_tokens, 0,
+        "legacy 不产生逐包估算：这个字段的有无本身就是两种模式的分界"
+    );
+}

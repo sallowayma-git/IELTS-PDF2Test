@@ -19,6 +19,9 @@
 //   5. `repair_authoring_step`（**修复回合**，新主链的第二步）→ 必须回
 //      `{callId,tool,arguments}`，tool 只能是 read_draft / read_source /
 //      apply_edits / record_ruling / finish，由 `--plan` 指定的剧本驱动。
+//      请求里 `context.contextMode === 'packets'` 时走**包模式**剧本：首包故意不含
+//      答案页 → `report_insufficient_context` → 拿到那一页后 `apply_edits` →
+//      `finish_packet`（见 `repairPacketStepReply`）。
 //
 // 上一版**只**会返回第 1 种。于是 A3/A4 请求拿到的是一份 outline，被网关校验器
 // 整份拒绝（`MODEL_INVALID_OUTPUT`），链状态退化成 `partial`/`unusable`——
@@ -373,6 +376,12 @@ function repairStepReply(text) {
   const draft = lastDraftObservation(observations);
 
   const plan = repairPlan ?? {};
+  // 包模式（`contextMode === 'packets'`）走另一套剧本：上下文是一个**校核包**，
+  // `read_draft` 不给选择器会被拒、`read_source` 不给页范围也会被拒，
+  // 收尾工具是 `finish_packet` 而不是 `finish`。
+  if (context.contextMode === 'packets') {
+    return repairPacketStepReply(context, plan, round);
+  }
   const giveUp = (note) => ({ callId: `c${round}`, tool: 'finish', arguments: { note } });
 
   if (round === 1) {
@@ -502,6 +511,115 @@ function repairStepReply(text) {
       unresolved: unresolvedFrom(plan, context),
     },
   };
+}
+
+/**
+ * 包模式剧本（任务书 §6）：首包**故意**不含答案页 → `report_insufficient_context` →
+ * 拿到那一页后 `apply_edits` → `finish_packet`。
+ *
+ * 与 legacy 剧本同一条纪律：**答案与引文只能从请求里真实出现的行里读出来**。
+ * 答案页不在包里时，这个剧本连答案是什么都不知道——它只能报「不够」，交不出那一行。
+ * 这正是「回退真的在传内容」的证明：第一轮请求里没有那一行。
+ *
+ * 每一步的判据都取自**请求**（`context`），不取自脚本里的常量：
+ *   · 本包还有没有待核对的差异 → `context.differences`
+ *   · 答案页在不在本包 → `context.scope.pages`（1-based）
+ *   · 编辑用哪个版本 → `context.draftSlice.editVersion`
+ *   · 引文与答案值 → `context.sourceEvidence.pages[].lines[].text`
+ */
+function repairPacketStepReply(context, plan, round) {
+  const giveUp = (note) => ({ callId: `p${round}`, tool: 'finish_packet', arguments: { note } });
+  const differences = Array.isArray(context?.differences) ? context.differences : [];
+  // 本包没有待核对的差异（例如差异都修完之后的收尾包）⇒ 直接收工。
+  if (differences.length === 0) {
+    return giveUp(plan.finishNote ?? '受控服务：本包没有待核对的差异');
+  }
+
+  const inScope = (Array.isArray(context?.scope?.pages) ? context.scope.pages : []).map(Number);
+  const answerPage = Number(plan.sourcePageOneBased);
+  if (!Number.isInteger(answerPage) || answerPage <= 0) {
+    return giveUp('剧本没有指定答案页，受控服务不知道要去要哪一页');
+  }
+
+  // ① 答案页还不在包里 ⇒ 只能说「不够」，并点名要哪一页。**不猜答案**。
+  if (!inScope.includes(answerPage)) {
+    return {
+      callId: `p${round}`,
+      tool: 'report_insufficient_context',
+      arguments: {
+        packetId: context?.packetId ?? null,
+        reason: 'the page that carries the answer is not in this packet',
+        needs: [{ kind: 'pages', from: answerPage, to: answerPage }],
+      },
+    };
+  }
+
+  // ② 页在包里：答案与引文都从**包里真实出现的行**里取。
+  const found = answerLineFromPacket(context, plan.questionNumber);
+  if (!found) {
+    return giveUp('受控服务在包内原文里找不到剧本指定的答案行，本轮不做任何修改');
+  }
+  const version = context?.draftSlice?.editVersion;
+  if (typeof version !== 'number') {
+    return giveUp('受控服务没有从包里读到真实 editVersion，不能提交编辑');
+  }
+  const slotIds = Array.isArray(plan.fixSlotIds) ? plan.fixSlotIds : [];
+  if (slotIds.length === 0) {
+    return giveUp('剧本没有指定要改的答案槽，本轮不做任何修改');
+  }
+  return {
+    callId: `p${round}`,
+    tool: 'apply_edits',
+    arguments: {
+      baseVersion: version,
+      commands: slotIds.map((slotId) => ({
+        op: 'setAnswer',
+        slotId,
+        value: { kind: 'option', labels: [found.label], assignment: 'unordered_set' },
+      })),
+      evidence: [
+        {
+          sourceFileId: context?.sourceEvidence?.sourceFileId ?? null,
+          pageIndex: answerPage,
+          // 引文就是包里那一行本身 —— 逐字取自请求，不是常量。
+          quote: found.line,
+        },
+      ],
+    },
+  };
+}
+
+/** 包里真实出现的行文本（`sourceEvidence.pages[].lines[].text`）。 */
+function packetLines(context) {
+  const pages = Array.isArray(context?.sourceEvidence?.pages) ? context.sourceEvidence.pages : [];
+  const out = [];
+  for (const page of pages) {
+    const pageIndex = Number(page?.pageIndex ?? 0);
+    for (const line of Array.isArray(page?.lines) ? page.lines : []) {
+      const text = typeof line?.text === 'string' ? line.text.trim() : '';
+      if (text) out.push({ pageIndex, lineId: line?.id ?? null, text });
+    }
+  }
+  return out;
+}
+
+/**
+ * 从包里的行文本里读「题号 + 答案值」那一行。
+ *
+ * 取不到就返回 null（调用方据此如实收工）——**不编**。
+ * `1 A` → `{label:'A', line:'1 A'}`；`7  TRUE` → `{label:'TRUE', line:'7  TRUE'}`。
+ */
+function answerLineFromPacket(context, questionNumber) {
+  const number = Number(questionNumber);
+  if (!Number.isInteger(number) || number <= 0) return null;
+  const prefix = new RegExp(`^${number}\\s+(.+)$`);
+  for (const entry of packetLines(context)) {
+    const matched = prefix.exec(entry.text);
+    if (!matched) continue;
+    const label = matched[1].trim();
+    if (label) return { label, line: entry.text, lineId: entry.lineId, pageIndex: entry.pageIndex };
+  }
+  return null;
 }
 
 /** 观察结果里最后一次 `read_source` 的真实返回（含逐页原文文本）。 */
