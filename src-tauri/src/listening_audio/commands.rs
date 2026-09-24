@@ -59,6 +59,10 @@ pub(crate) async fn bind_listening_audio(input: BindListeningAudioInput, app: Ap
         // Mirror onto the canonical draft's part `media` through a real edit
         // transaction, so preview/export/student runtime read one document.
         let sync = super::canonical_media::sync_item_audio_media(&root, &item_id)?;
+        // 台账写成功 ≠ 绑定成功：预览/导出/学生端只读权威稿里的 part media。
+        // 稿已存在而这一 part 的 media 没跟上（镜像被人工保护挡住、或写入没落盘）时
+        // 必须如实报错——返回 Ok 会让界面说「已添加」，而音频根本读不到。
+        super::canonical_media::ensure_part_media_matches(&root, &item_id, part_ordinal, &bound)?;
         Ok((bound, sync))
     })
     .await?;

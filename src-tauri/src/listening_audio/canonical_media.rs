@@ -31,6 +31,10 @@ use super::store::{list_bindings, ListeningAudioAssetV1};
 /// (and the matching `assets` entry).
 pub(crate) const SET_LISTENING_PART_MEDIA_OP: &str = "setListeningPartMedia";
 
+/// 镜像遇版本冲突时的重试次数。导入期的镜像与播种后的对账会并行提交，必然有输家；
+/// 每次尝试都从当前稿重算，因此重试是有界且收敛的（不需要无限重试）。
+const AUDIO_MEDIA_SYNC_ATTEMPTS: usize = 5;
+
 /// Stable asset id for a managed audio file.
 ///
 /// Derived from the content hash, so identical bytes always resolve to the same
@@ -272,8 +276,30 @@ pub(crate) struct AudioMediaSyncV1 {
 /// No-op (and no version bump) when the draft already matches. Otherwise one
 /// machine-origin edit transaction, so a concurrent human save wins the CAS
 /// instead of being overwritten.
+///
+/// **版本冲突要重试，不能当成失败**：镜像不是「把旧值写回去」，而是「让稿收敛到台账」——
+/// 它每次都从**当前**稿重算该改哪几个 part，所以重试是安全且必然收敛的。而它天然会撞版本：
+/// 导入期「绑一段就镜像一次」与「播种后的对账」并行，两条链各自读一个 base_version，
+/// 提交时必有一条输掉 CAS。此前输了就返回 Err——调用方（命令）把它整个丢掉，于是那一段的
+/// media 永久缺失：台账有行、稿里没有。实测在并发扫掠里稳定复现为「丢后缀」
+/// （只镜像上 part-1/part-2，台账却是 4 行）。
+///
+/// 人工保护不受影响：每次尝试都在事务内重新计算 `protected_edits_json`，被人手工改过的
+/// part 永远走 `protected_parts` 分支，不会被重试绕过。
 pub(crate) fn sync_item_audio_media(root: &Path, item_id: &str) -> CommandResult<AudioMediaSyncV1> {
-    let bindings = list_bindings(root, item_id)?;
+    let mut last_conflict = None;
+    for _ in 0..AUDIO_MEDIA_SYNC_ATTEMPTS {
+        match sync_item_audio_media_once(root, item_id) {
+            Err(error) if error.starts_with("EDIT_VERSION_CONFLICT:") => last_conflict = Some(error),
+            other => return other,
+        }
+    }
+    // 重试到上限仍冲突：如实上抛最后一次的具体版本号，不悄悄当成功。
+    Err(last_conflict.expect("循环内至少发生过一次版本冲突"))
+}
+
+/// 单次镜像尝试（见 [`sync_item_audio_media`]：冲突由调用方重试）。
+fn sync_item_audio_media_once(root: &Path, item_id: &str) -> CommandResult<AudioMediaSyncV1> {
     let mut conn = open_library_connection(root)?;
     let Some((canonical, base_version)) = get_canonical_ds(&conn, item_id)? else {
         // No draft yet (import still running). The seed path applies bindings once
@@ -284,6 +310,21 @@ pub(crate) fn sync_item_audio_media(root: &Path, item_id: &str) -> CommandResult
             protected_parts: Vec::new(),
         });
     };
+    // **顺序不能反：先读稿、后读台账。**
+    //
+    // `changed_parts` 把「台账里没有这个 part」解读成「稿里也不该有 media」，于是补丁会带
+    // `media: null` 去**删除**它。这把「台账快照」当成了「权威的全集」，而快照是会过期的：
+    // 台账行由 `bind_audio` 先落、镜像后跑，两条链并发时，镜像完全可能读到一个**早于当前稿**
+    // 的台账快照，于是它看到「part-3/part-4 还没绑」，转手就把**另一个绑定刚镜像进去的
+    // media 删掉**。实测（30 次并发扫掠）：播种读到 1 行、写好 v1（只有 part-1），随后绑定链
+    // 依次把 part-2/3/4 镜像到 v4，最后对账用一份**只有 1 行**的台账快照提交 v5——
+    // 读回是 `["part-1"]`，part-2/3/4 的 media 被那次写入抹掉；台账 4 行、稿里 1 个。
+    //
+    // 为什么反过来就安全：稿里的 media **只可能由镜像写入**，而镜像必须先有台账行，
+    // 因此「稿的 media 集合 ⊆ 台账行集合」始终成立（台账行只增不减，显式解绑才会删行）。
+    // 于是「先读稿、再读台账」保证后读到的台账至少覆盖前一刻稿的 media 集合，
+    // 不会再出现「因为快照旧了而误删」。真正被解绑的 part（台账行确实没了）仍然会被清掉。
+    let bindings = list_bindings(root, item_id)?;
     let changed = changed_parts(&canonical, &bindings);
     // A part whose media a human edited is dropped from the batch *before* it is
     // built. Leaving it in would make the all-or-nothing transaction reject the
@@ -361,6 +402,50 @@ pub(crate) fn sync_item_audio_media(root: &Path, item_id: &str) -> CommandResult
         edit_version: Some(result.edit_version),
         protected_parts: protected_parts_for_result,
     })
+}
+
+/// 读回确认：权威稿**已经存在**时，这一 part 的 media 必须是刚刚绑定的那一段。
+///
+/// 台账（`listening_audio_assets_v1`）是绑定的权威，但预览 / 导出 / 学生端读的是权威稿里的
+/// `listening.parts[].media`。两者可以不一致，而且不一致时**没有任何界面会说话**：
+/// - 镜像被人工保护挡住（`protected_parts`）——这是刻意拒绝，但调用方此前把结果整个丢掉；
+/// - 镜像因为版本冲突/校验失败没能落盘。
+///
+/// 所以绑定命令必须自己读回确认，而不是把「台账写成功」当成「绑定成功」。
+///
+/// 稿**还不存在**是合法的：导入期的识别可能还没产出首稿，此时镜像是**故意**空转的
+/// （`sync_item_audio_media` 的 no-draft 分支），播种路径会补齐——所以这里返回 `Ok`。
+pub(crate) fn ensure_part_media_matches(
+    root: &Path,
+    item_id: &str,
+    part_ordinal: i64,
+    bound: &ListeningAudioAssetV1,
+) -> CommandResult<()> {
+    let conn = open_library_connection(root)?;
+    let Some((canonical, _)) = get_canonical_ds(&conn, item_id)? else {
+        return Ok(());
+    };
+    let part_id = format!("part-{part_ordinal}");
+    let media = canonical
+        .pointer("/listening/parts")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|part| part.get("partId").and_then(Value::as_str) == Some(part_id.as_str()))
+        .and_then(|part| part.get("media"))
+        .filter(|media| !media.is_null())
+        .cloned();
+    let Some(media) = media else {
+        return Err(format!("LISTENING_AUDIO_MEDIA_NOT_MIRRORED:{part_id}"));
+    };
+    if !media
+        .get("sha256")
+        .and_then(Value::as_str)
+        .is_some_and(|mirrored| mirrored.eq_ignore_ascii_case(&bound.sha256))
+    {
+        return Err(format!("LISTENING_AUDIO_MEDIA_NOT_MIRRORED:{part_id}"));
+    }
+    Ok(())
 }
 
 /// Pure mirror used by the seed path, where the draft is not in SQLite yet.
@@ -913,5 +998,232 @@ mod media_sync_tests {
         let ds = canonical(&root, "item-protected");
         assert!(ds["listening"]["parts"][1]["media"]["assetId"].is_string());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── 导入期并发：边导边绑 vs 识别播种 ────────────────────────────────────
+
+    /// 只建壳 + 写 job 目录里的 shadow 候选稿，**不**播种权威稿。
+    ///
+    /// 这正是「识别还在跑、用户已经在校验音频」那一刻的库状态：条目在、稿还没落。
+    fn seed_item_awaiting_seed(root: &Path, item_id: &str) {
+        let conn = open_library_connection(root).unwrap();
+        upsert_item_shell(
+            &conn,
+            &UpsertItemInput {
+                id: item_id,
+                modality: "listening",
+                title: "Listening",
+                status: "processing",
+                source_asset_id: None,
+            },
+        )
+        .unwrap();
+        let dir = crate::util::job_dir(root, item_id);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut ds: Value = serde_json::from_str(include_str!(
+            "../../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
+        ))
+        .unwrap();
+        ds["modality"] = json!("listening");
+        ds.as_object_mut().unwrap().remove("passage");
+        ds["assets"] = json!([]);
+        ds["listening"] = listening_draft();
+        std::fs::write(
+            dir.join(crate::authoring_v2_commands::AUTHORING_V2_SHADOW_FILE),
+            ds.to_string(),
+        )
+        .unwrap();
+    }
+
+    /// 稿里**已经镜像上 media** 的 part id。
+    fn mirrored_part_ids(ds: &Value) -> Vec<String> {
+        ds.pointer("/listening/parts")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|part| {
+                part.get("media")
+                    .map(|media| !media.is_null())
+                    .unwrap_or(false)
+            })
+            .filter_map(|part| part.get("partId").and_then(Value::as_str).map(str::to_string))
+            .collect()
+    }
+
+    /// 导入期的真实并发：用户边导边绑 4 段音频，识别完成的**播种**同时写入。
+    ///
+    /// 这条盯的是一个真实发生过的缺陷：`ensure_initial_canonical`（播种路径）**只读一次**
+    /// 音频台账，然后整体写稿；而 `sync_item_audio_media` 在「稿还不存在」时会**静默 no-op**
+    /// （它假定「种子路径会补上」）。于是任何一段的 `bind`+镜像若恰好落在
+    /// 「播种读台账 → 播种提交」这个窗口里，它的镜像就没做、之后也无人补做——台账里那一行
+    /// 在（`listening_audio_assets_v1` 有 4 行），但**权威稿里那个 part 没有 media**，
+    /// 预览 / 导出 / 学生端都读不到它的音频。
+    ///
+    /// 窗口很窄 ⇒ 每次只丢一个 part；窗口落点随机 ⇒ 丢的 part 会变（真实链路实测：
+    /// 一次 part-4、一次 part-2）。所以这里按评审要求重复 30 次，并把播种时机的**偏移逐次
+    /// 扫掠**过绑定序列，让窗口有机会落在某一次绑定行提交的前一刻；同时统计两件事：
+    /// 台账行数 与 稿里镜像上的 part 数。
+    #[test]
+    fn binding_audio_while_the_seed_runs_never_loses_a_parts_media() {
+        let mut ledger_losses: Vec<String> = Vec::new();
+        let mut mirror_losses: Vec<String> = Vec::new();
+        // 反空转：这条用例的价值全在「绑定链真的与播种交错了」上。若哪天改动让播种
+        // 总是最后一个跑（或绑定总是先跑完），扫掠就会退化成一条什么都不测的绿用例——
+        // 所以这里显式要求「至少有若干次，绑定线程的镜像真的往稿里写过东西」。
+        let mut iterations_where_a_mirror_wrote = 0usize;
+
+        for iteration in 0..30usize {
+            let root = temp_root();
+            let item_id = "item-race";
+            seed_item_awaiting_seed(&root, item_id);
+
+            // 绑定线程：严格照命令的次序——先落台账行，再把 media 镜像进稿。
+            let binder_root = root.clone();
+            let binder = std::thread::spawn(move || {
+                let mut log: Vec<String> = Vec::new();
+                for ordinal in 1..=4 {
+                    let source = binder_root.join(format!("section-{ordinal}.wav"));
+                    tone(&source, 300.0 + ordinal as f64 * 60.0);
+                    let bound =
+                        crate::listening_audio::store::bind_audio(&binder_root, item_id, ordinal, &source)
+                            .unwrap();
+                    assert!(bound.playable, "part {ordinal}: {:?}", bound.issue_codes);
+                    // 命令里紧接着就是这次镜像；它可能在「稿还不存在」时静默 no-op。
+                    // 这里**不吞掉**结果：丢行时要能从失败信息里看出是哪一次、哪种结局。
+                    match sync_item_audio_media(&binder_root, item_id) {
+                        Ok(sync) => log.push(format!(
+                            "part-{ordinal}:ok updated={:?} protected={:?}",
+                            sync.updated_parts, sync.protected_parts
+                        )),
+                        Err(error) => log.push(format!("part-{ordinal}:ERR {error}")),
+                    }
+                }
+                log
+            });
+
+            // 播种线程（主线程）：把启动时机逐次后移，扫掠过整个绑定序列。
+            std::thread::sleep(std::time::Duration::from_micros(iteration as u64 * 1_200));
+            let seeded = crate::library::migration::ensure_initial_canonical(&root, item_id)
+                .unwrap_or_else(|error| panic!("迭代 {iteration}：播种不得失败：{error}"));
+            let binder_log = binder.join().unwrap();
+            if binder_log.iter().any(|entry| !entry.contains("updated=[]")) {
+                iterations_where_a_mirror_wrote += 1;
+            }
+
+            let rows = crate::listening_audio::store::list_bindings(&root, item_id)
+                .unwrap()
+                .len();
+            if rows != 4 {
+                ledger_losses.push(format!("#{iteration} 台账只有 {rows} 行"));
+            }
+            if !seeded {
+                ledger_losses.push(format!("#{iteration} 播种没有产生权威稿"));
+                continue;
+            }
+            let ds = canonical(&root, item_id);
+            let mirrored = mirrored_part_ids(&ds);
+            if mirrored.len() != 4 {
+                mirror_losses.push(format!(
+                    "#{iteration} 稿里只镜像了 {mirrored:?}（台账 {rows} 行）绑定线程镜像日志 {binder_log:?}"
+                ));
+            }
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        assert!(
+            ledger_losses.is_empty(),
+            "台账（listening_audio_assets_v1）丢行：{ledger_losses:#?}"
+        );
+        assert!(
+            mirror_losses.is_empty(),
+            "台账有行、权威稿却少了 media 的 part：{mirror_losses:#?}"
+        );
+        assert!(
+            iterations_where_a_mirror_wrote > 0,
+            "扫掠空转：30 次里没有任何一次「绑定线程的镜像真的写了稿」，说明播种与绑定的交错已经不存在，这条用例失效了"
+        );
+    }
+
+    /// 播种之后必须**对账**：台账里已绑的 part，稿里就得有 media。
+    ///
+    /// 上面那条是并发扫掠（概率命中）；这条是把同一个契约**确定性地**钉死：
+    /// 只要稿是「播种时才出现」的，播种这一步就必须自己把此前落地的绑定补齐——
+    /// 那些绑定的镜像当时看到「稿不存在」而 no-op，之后不会有人再替它们跑一次。
+    #[test]
+    fn seeding_after_the_bindings_mirrors_every_bound_part() {
+        let root = temp_root();
+        let item_id = "item-seed-after";
+        seed_item_awaiting_seed(&root, item_id);
+
+        // 稿还不存在：这四次镜像全都只能 no-op——播种必须替它们收尾。
+        for ordinal in 1..=4 {
+            let source = root.join(format!("section-{ordinal}.wav"));
+            tone(&source, 300.0 + ordinal as f64 * 60.0);
+            crate::listening_audio::store::bind_audio(&root, item_id, ordinal, &source).unwrap();
+            let sync = sync_item_audio_media(&root, item_id).unwrap();
+            assert!(
+                sync.updated_parts.is_empty(),
+                "稿还不存在时镜像无处可写，只能空转：{sync:?}"
+            );
+        }
+
+        assert!(
+            crate::library::migration::ensure_initial_canonical(&root, item_id).unwrap(),
+            "播种必须产出权威稿"
+        );
+
+        let ds = canonical(&root, item_id);
+        assert_eq!(
+            mirrored_part_ids(&ds),
+            vec!["part-1", "part-2", "part-3", "part-4"],
+            "播种之后，台账里已绑的 4 个 part 在稿里都必须有 media：{ds}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 台账写成功 ≠ 绑定成功：镜像没落盘时，绑定命令必须**读回发现**，而不是返回 Ok。
+    ///
+    /// 这里用**人工保护**制造「镜像被刻意拒绝」这一真实分支（用户在编辑器里手工改过这个
+    /// part 的 media）。此前 `bind_listening_audio` 把 `AudioMediaSyncV1` 整个丢掉，
+    /// 于是界面只会说「已添加」，而稿里那一段音频根本读不到。
+    #[test]
+    fn a_refused_mirror_is_reported_instead_of_looking_like_a_successful_bind() {
+        let root = temp_root();
+        seed_listening_item(&root, "item-refused");
+        {
+            let conn = open_library_connection(&root).unwrap();
+            conn.execute(
+                "UPDATE library_items_v2 SET protected_edits_json = ?2 WHERE id = ?1",
+                rusqlite::params!["item-refused", r#"{"targets":["part-1"]}"#],
+            )
+            .unwrap();
+        }
+        let source = root.join("section-1.wav");
+        tone(&source, 440.0);
+        let refused = bind_audio(&root, "item-refused", 1, &source).unwrap();
+        let sync = sync_item_audio_media(&root, "item-refused").unwrap();
+        assert_eq!(sync.protected_parts, vec!["part-1".to_string()]);
+        let error = ensure_part_media_matches(&root, "item-refused", 1, &refused).unwrap_err();
+        assert!(
+            error.starts_with("LISTENING_AUDIO_MEDIA_NOT_MIRRORED:part-1"),
+            "{error}"
+        );
+
+        // 反向：没人保护的那个 part 镜像得上，读回必须是 Ok——否则这条判据会把正常绑定也判红。
+        let other = root.join("section-2.wav");
+        tone(&other, 660.0);
+        let mirrored = bind_audio(&root, "item-refused", 2, &other).unwrap();
+        sync_item_audio_media(&root, "item-refused").unwrap();
+        ensure_part_media_matches(&root, "item-refused", 2, &mirrored).unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+
+        // 稿还不存在时**不能**报错：识别还没产出首稿，播种（含播种后的对账）负责补镜像。
+        let no_draft = temp_root();
+        seed_item_awaiting_seed(&no_draft, "item-nodraft");
+        let source = no_draft.join("section-1.wav");
+        tone(&source, 440.0);
+        let bound = crate::listening_audio::store::bind_audio(&no_draft, "item-nodraft", 1, &source).unwrap();
+        ensure_part_media_matches(&no_draft, "item-nodraft", 1, &bound).unwrap();
+        let _ = std::fs::remove_dir_all(&no_draft);
     }
 }
