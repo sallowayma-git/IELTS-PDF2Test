@@ -4707,7 +4707,42 @@ fn a_packet_that_is_still_over_budget_says_it_cannot_concede_any_further() {
 /// 测试，是为了让「文档包读不到稿」是一个决定，而不是一个没人注意的副作用。
 #[test]
 fn a_document_packet_never_hands_out_a_draft_slice() {
+    // 走**真实切包路径**拿到文档包，而不是手工拼一个空 `taskIds` 的 `PacketTools`：
+    // 手工拼的那一版只证明了「`scope_error` 在空集合上会拒绝」，而那条分支这条改动
+    // 根本没碰过 —— 等于没测到新东西（P7 审计 #2）。真正要固定的是两件事**连在一起**
+    // 成立：① 文档包的 `taskIds` 是空的、`draftSlice` 里没有题组；② 因此 `read_draft`
+    // 在文档包里必被拒。①和②分别由不同的函数负责，只有一起断言才能防住「切包那边
+    // 开始给文档包塞题组，而拒绝逻辑没跟着变」。
+    let canonical = golden_authoring();
     let source = super::packets::SourcePageIndex::default();
+    // `passage` 不是任何题组能认领的 target ⇒ 归到文档级差异。
+    let differences = vec![json!({
+        "targetType": "passage",
+        "targetId": "passage-1",
+        "field": "text",
+        "canonical": "本地稿里的文章正文",
+        "candidate": "候选里的文章正文",
+        "contextDigest": "digest",
+    })];
+    let planned = super::packets::plan_packets(&super::packets::PacketPlanInput {
+        canonical: &canonical,
+        candidate: &Value::Null,
+        differences: &differences,
+        blocking_issues: &[],
+        protected: &std::collections::BTreeSet::new(),
+        source: &source,
+        edit_version: 7,
+    });
+    assert_eq!(planned.len(), 1, "只有文档级差异时只该有一个包：{planned:#?}");
+    let packet = &planned[0];
+    assert_eq!(packet["documentOnly"], json!(true), "这条差异归文档级：{packet:#?}");
+    assert_eq!(packet["taskIds"], json!([]), "文档包不带题组：{packet:#?}");
+    assert_eq!(
+        packet["draftSlice"]["taskGroups"],
+        json!([]),
+        "文档包没有可读的稿件切片：{packet:#?}"
+    );
+
     let mut budget = super::grab::GrabBudget::new();
     let tools = super::PacketTools {
         source: &source,
@@ -4795,6 +4830,54 @@ fn the_escalation_ladder_only_claims_what_it_actually_attached() {
     assert!(
         note.contains("already attached"),
         "L3 被额度挡下时必须说清楚，不能只留一个「级别 3」让读者以为附过了：{note}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// L2 的 note 只许数**它这一次**附上的整页图（P7 审计 #2 的残留项）。
+///
+/// `attached` 原来是「包内所有带图的 region」——把**计划期就裁好的区域图**、以及模型
+/// 自己取回的页图一并数了进去。于是当包里已经有一条带图的区域图、而 L2 一张整页图都
+/// 附不上时（这一卷没有渲染产物），note 会写「已附 1 张整页图」：那张图既不是整页图，
+/// 也不是 L2 附的。这正是 A-12 修掉的那类「把没发生的事记成发生了」，只是换了条路径
+/// ——A-12 的用例只覆盖 `regions` 本来就空的那一种。
+#[test]
+fn the_l2_note_counts_only_the_images_it_actually_attached() {
+    let root = temp_root();
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    // 这一卷**没有**页图产物：`materialize_regions` 一张也裁不出来。
+    let source = super::packets::SourcePageIndex {
+        source_file_id: "early-approaches-pdf".to_string(),
+        kind: "pdf".to_string(),
+        lines: std::collections::BTreeMap::new(),
+        page_images: std::collections::BTreeMap::new(),
+        answer_pages: Vec::new(),
+        answer_pages_known: false,
+        paragraphs: Vec::new(),
+    };
+    // 计划期已经裁好的一张区域图（带图）在第 1 页；第 2 页什么都没有。
+    // L2 只需要补第 2 页，而它补不上。
+    let mut packet = json!({
+        "packetId": "pkt-l2-count",
+        "scope": {"pages": [1, 2]},
+        "sourceEvidence": {"regions": [{
+            "pageIndex": 1,
+            "bbox": {"x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0, "origin": "top-left"},
+            "taskId": "tg",
+            "image": {"path": "/tmp/crop-1.png", "mimeType": "image/png"}
+        }]},
+        "scopeManifest": {}
+    });
+    let mut used_full_source = false;
+    let level = escalate_packet(&request, &source, &mut packet, 1, &mut used_full_source);
+    assert_eq!(level, 2);
+    let note = packet["scopeManifest"]["escalationNote"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        note.contains("no page image was available"),
+        "L2 一张整页图都没附上，note 不许把计划期那张区域图算成「已附整页图」：{note}"
     );
     let _ = std::fs::remove_dir_all(&root);
 }

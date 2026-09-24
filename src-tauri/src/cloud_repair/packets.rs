@@ -2063,19 +2063,31 @@ mod tests {
         );
         assert_eq!(labels_of(2), vec!["C".to_string()], "第 2 页只有 C 段：{map:#?}");
 
-        // 与工具判据一致：`paperMap` 报出来的标号必须真的能被 `read_passage` 取到。
-        let mut budget = crate::cloud_repair::grab::GrabBudget::new();
-        let found = crate::cloud_repair::grab::read_passage(
-            &source,
-            &json!({"paragraphLabels": ["C"]}),
-            &mut budget,
-        )
-        .expect("read_passage 必须能用标号定位");
-        assert_eq!(
-            found["paragraphs"][0]["lineId"],
-            json!("p2:l2"),
-            "`paperMap` 报了 C 段，工具就必须取得到：{found:#?}"
-        );
+        // 与工具判据一致：`paperMap` **报出来的每一个标号**都必须真的能被 `read_passage`
+        // 取到。刻意写成「遍历报出来的全部标号」而不是写死一个 "C"：写死就只能证明
+        // 「C 这一条对」，而契约是「报出来的都对」——`paperMap` 说有、工具说没有，
+        // 模型只会乱猜，那正是这条判据要挡的事。
+        let mut checked = 0usize;
+        for page in [1u64, 2] {
+            for label in labels_of(page) {
+                let mut budget = crate::cloud_repair::grab::GrabBudget::new();
+                let found = crate::cloud_repair::grab::read_passage(
+                    &source,
+                    &json!({"paragraphLabels": [label]}),
+                    &mut budget,
+                )
+                .unwrap_or_else(|error| {
+                    panic!("paperMap 报了第 {page} 页的 {label}，工具却拒绝：{error}")
+                });
+                let paragraphs = found["paragraphs"].as_array().cloned().unwrap_or_default();
+                assert!(
+                    !paragraphs.is_empty(),
+                    "paperMap 报了第 {page} 页的 {label}，工具却取不到任何段落：{found:#?}"
+                );
+                checked += 1;
+            }
+        }
+        assert_eq!(checked, 3, "第 1 页 A/B、第 2 页 C，共 3 个标号都要被核对过");
     }
 
     /// 阻断问题排在答案差异之前，答案差异排在文本差异之前。

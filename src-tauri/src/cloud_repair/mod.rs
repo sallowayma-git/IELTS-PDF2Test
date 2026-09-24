@@ -3557,35 +3557,40 @@ fn escalate_packet(
                 .filter(|page| !existing.contains(page))
                 .map(|page| json!({"pageIndex": page, "bbox": Value::Null, "taskIds": [], "image": Value::Null}))
                 .collect();
-            regions.extend(grab::materialize_regions(
+            let wanted = requests.len();
+            let added = grab::materialize_regions(
                 request.root,
                 request.job_id,
                 &packet_id,
                 source_index,
                 &requests,
-            ));
+            );
+            // note 必须写**这一次实际附上了几张**。两个坑都要避开：
+            // ① 拿不到页图（例如这一卷没有渲染产物）时照抄「已附整页图」，就是让模型
+            //    以为自己看过那一块——静默丢图最危险的那一种；
+            // ② 数**整包**带图的 region 会把计划期就裁好的区域图、以及模型自己取回的
+            //    页图一并算进去，于是 L2 一张都没附也会报「已附 N 张」。
+            // 所以只数 `added`（这一档新加的）里真的带上图的那些。
+            let attached = added
+                .iter()
+                .filter(|region| !region["image"].is_null())
+                .count();
+            regions.extend(added);
             packet["sourceEvidence"]["regions"] = json!(regions);
-            // note 必须写**实际附上了几张**。拿不到页图（例如这一卷没有渲染产物）时
-            // 照抄「已附整页图」，就是让模型以为自己看过那一块——静默丢图最危险的那一种。
-            let attached = packet
-                .pointer("/sourceEvidence/regions")
-                .and_then(Value::as_array)
-                .map(|regions| {
-                    regions
-                        .iter()
-                        .filter(|region| !region["image"].is_null())
-                        .count()
-                })
-                .unwrap_or(0);
-            if attached > 0 {
-                packet["scopeManifest"]["escalationNote"] = json!(format!(
+            packet["scopeManifest"]["escalationNote"] = if wanted == 0 {
+                json!(
+                    "L2: every page in scope already had an image in this packet, so there was \
+                     nothing more to attach."
+                )
+            } else if attached > 0 {
+                json!(format!(
                     "L2: the backend attached whole-page images for {attached} page(s) in scope."
-                ));
+                ))
             } else {
-                packet["scopeManifest"]["escalationNote"] = json!(
+                json!(
                     "L2: no page image was available for this source, so no whole-page image could be attached."
-                );
-            }
+                )
+            };
         }
         3 => {
             if !*used_full_source {
