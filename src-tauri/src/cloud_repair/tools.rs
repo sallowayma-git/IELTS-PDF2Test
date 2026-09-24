@@ -313,10 +313,22 @@ pub(crate) fn validate_evidence(evidence: &[Value]) -> Vec<String> {
 /// 用的是同一份全量索引（`grab::load_source_index` 读整个 `document-ir.json`），
 /// 因此模型看到的行与这里核验用的行同源。
 pub(crate) enum EvidenceSourceText {
-    /// PDF：逐页文本。键是 **1-based** 页号；值是该页各行按原顺序以换行连接。
-    Paged(BTreeMap<u32, String>),
+    /// PDF：逐页文本。
+    Paged {
+        /// 这份文本层归属的**主试卷** sourceFileId。修复链的证据面（随包原文、
+        /// read_source、legacy 整份附件）只来自它；引用其它 sourceFileId 的证据
+        /// 核验不了，也不该拒绝。
+        source_file_id: String,
+        /// 键是 **1-based** 页号；值是该页各行按原顺序以换行连接。只有**有文本层**
+        /// 的页才有条目——扫描页 / 图片答案页在这里缺席。
+        pages: BTreeMap<u32, String>,
+        /// 文档里**真实存在**的页（有文本或有页图）。用来区分「存在但没有文本层的
+        /// 扫描页」与「超出文档末尾的页号」——前者让引文核验退让成 unverifiable，
+        /// 后者是编造页号，照拒。
+        existing_pages: BTreeSet<u32>,
+    },
     /// DOCX / TXT / MD：从原始文件独立抽取的全文。没有页的概念，页一致性不适用。
-    Whole(String),
+    Whole { source_file_id: String, text: String },
     /// 没有文本层（扫描件、原文件解析产物缺失）：引文**无法核验**。不据此拒绝，
     /// 但必须如实标记为 unverifiable——不能算作已核验，也不能假装通过。
     Unavailable,
@@ -344,6 +356,16 @@ fn normalize_quote_text(value: &str) -> String {
         .join(" ")
         .to_lowercase()
 }
+
+/// 一页文本层「薄到等于没有」的阈值（规范化后的字符数）。
+///
+/// 理由：扫描页 / 图片答案页的文本层常常只剩页码、边框或个别 OCR 噪声字符
+/// （1–4 个），而任何**真实可引用**的原文——哪怕最短的一行答案加上页面上其它
+/// 印刷内容——都会明显超过它。低于阈值的页不能拿来证明「引文是编造的」：
+/// 模型引用的可能是页图里的内容（L2 整页图 / `read_page_region` 交给模型的正是
+/// 这些页）。这不是模糊匹配——阈值只决定「这一页能不能当反证」，引文本身的
+/// 匹配仍然是逐字的。
+const MIN_TEXT_LAYER_CHARS: usize = 8;
 
 /// 结构完整的条目才值得核验：缺字段/越页的由 [`validate_evidence`] 报具体的结构错误，
 /// 这里跳过它们，不重复计数、不把结构错误混进引文错误。
@@ -407,30 +429,30 @@ pub(crate) fn verify_evidence_quotes(
 ) -> (Vec<String>, Vec<usize>) {
     let mut problems = Vec::new();
     let mut unverifiable = Vec::new();
-    match source {
-        EvidenceSourceText::Unavailable => {
-            for (index, entry) in evidence.iter().enumerate() {
-                if verifiable_quote(entry).is_some() {
+    for (index, entry) in evidence.iter().enumerate() {
+        let Some(needle) = verifiable_quote(entry) else {
+            continue;
+        };
+        match source {
+            EvidenceSourceText::Unavailable => unverifiable.push(index),
+            EvidenceSourceText::Whole { source_file_id, text } => {
+                // 非主试卷的 sourceFileId（如单独上传的答案文件）：修复链的证据面从不
+                // 包含它，后端没有它的文本层可比。既不能拿主试卷的文本硬核（会误拒
+                // 真实存在的引文），也不能当编造拒——如实标 unverifiable。
+                if !same_source_file_id(entry, source_file_id) {
                     unverifiable.push(index);
-                }
-            }
-        }
-        EvidenceSourceText::Whole(text) => {
-            let haystack = normalize_quote_text(text);
-            for (index, entry) in evidence.iter().enumerate() {
-                let Some(needle) = verifiable_quote(entry) else {
                     continue;
-                };
+                }
+                let haystack = normalize_quote_text(text);
                 if !haystack.contains(&needle) {
                     problems.push(format!("CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:{index}"));
                 }
             }
-        }
-        EvidenceSourceText::Paged(pages) => {
-            for (index, entry) in evidence.iter().enumerate() {
-                let Some(needle) = verifiable_quote(entry) else {
+            EvidenceSourceText::Paged { source_file_id, pages, existing_pages } => {
+                if !same_source_file_id(entry, source_file_id) {
+                    unverifiable.push(index);
                     continue;
-                };
+                }
                 let found = quote_pages(pages, &needle);
                 let declared = entry
                     .get("pageIndex")
@@ -440,13 +462,62 @@ pub(crate) fn verify_evidence_quotes(
                 let page_agrees = found
                     .iter()
                     .any(|page| ((*page as i64) - declared).abs() <= 1);
-                if !page_agrees {
+                if page_agrees {
+                    continue;
+                }
+                if quote_is_verifiable_on_textless_page(declared, pages, existing_pages) {
+                    // 声明页（或相邻页）存在但没有有效文本层：模型引用的很可能是页图
+                    // 里的内容——文本层无从核验，标 unverifiable，不算编造。
+                    unverifiable.push(index);
+                } else {
                     problems.push(format!("CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:{index}"));
                 }
             }
         }
     }
     (problems, unverifiable)
+}
+
+/// 条目声明的 sourceFileId 是否就是这份文本层归属的主试卷。
+fn same_source_file_id(entry: &Value, main_source_file_id: &str) -> bool {
+    let declared = entry
+        .get("sourceFileId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    declared == main_source_file_id
+}
+
+/// 引文在全文里都找不到时，判断它是否**无法核验**（而不是编造）：
+/// 声明页（或 ±1 相邻页）真实存在、但没有有效文本层（缺席或薄于
+/// [`MIN_TEXT_LAYER_CHARS`]）。这些页正是 L2 整页图 / `read_page_region`
+/// 交给模型的页——模型引用的是图里的内容，文本层没有反证能力。
+///
+/// 声明页本身必须**存在**：超出文档末尾的页号是编造位置，照拒（页号不许编造
+/// 是既有纪律，不能借「没有文本层」逃成 unverifiable）。
+fn quote_is_verifiable_on_textless_page(
+    declared: i64,
+    pages: &BTreeMap<u32, String>,
+    existing_pages: &BTreeSet<u32>,
+) -> bool {
+
+    if declared < 1 || !existing_pages.contains(&(declared as u32)) {
+        return false;
+    }
+    for offset in [-1i64, 0, 1] {
+        let page = declared + offset;
+        if page < 1 || !existing_pages.contains(&(page as u32)) {
+            continue;
+        }
+        let thin = pages
+            .get(&(page as u32))
+            .map(|text| normalize_quote_text(text).chars().count() < MIN_TEXT_LAYER_CHARS)
+            .unwrap_or(true);
+        if thin {
+            return true;
+        }
+    }
+    false
 }
 
 /// 云端修复的写入入口。
@@ -1347,13 +1418,17 @@ mod cloud_repair_write_entry_tests {
     /// 一份两页的原文文本层（页号 1-based）。页 2 故意带「脏」文本：多余空白、
     /// 弯引号、U+2010 连字符、混合大小写——核验必须吃下这些差异才算对。
     fn paged_source() -> EvidenceSourceText {
-        EvidenceSourceText::Paged(BTreeMap::from([
-            (1u32, "Early approaches to organisational design.".to_string()),
-            (
-                2,
-                "The  preferred  answer   is \u{2018}14  A\u{2019} on the co\u{2010}operation page.".to_string(),
-            ),
-        ]))
+        EvidenceSourceText::Paged {
+            source_file_id: "early-approaches-pdf".to_string(),
+            pages: BTreeMap::from([
+                (1u32, "Early approaches to organisational design.".to_string()),
+                (
+                    2,
+                    "The  preferred  answer   is \u{2018}14  A\u{2019} on the co\u{2010}operation page.".to_string(),
+                ),
+            ]),
+            existing_pages: BTreeSet::from([1, 2]),
+        }
     }
 
     fn apply_with_source(
@@ -1469,10 +1544,14 @@ mod cloud_repair_write_entry_tests {
 
     #[test]
     fn a_quote_spanning_a_page_break_is_found_by_joining_adjacent_pages() {
-        let pages = EvidenceSourceText::Paged(BTreeMap::from([
-            (1u32, "The preferred answer is".to_string()),
-            (2, "'14 A' for the first slot.".to_string()),
-        ]));
+        let pages = EvidenceSourceText::Paged {
+            source_file_id: "early-approaches-pdf".to_string(),
+            pages: BTreeMap::from([
+                (1u32, "The preferred answer is".to_string()),
+                (2, "'14 A' for the first slot.".to_string()),
+            ]),
+            existing_pages: BTreeSet::from([1, 2]),
+        };
         let evidence = vec![json!({
             "sourceFileId": "early-approaches-pdf",
             "pageIndex": 2,
@@ -1536,4 +1615,157 @@ mod cloud_repair_write_entry_tests {
         );
     }
 
+    // ── P12-Q：声明页没有文本层时，真实引文必须标 unverifiable 而不是被拒 ────────
+    //
+    // 缺陷：核验只要整份文档有任何一页有文本，就要求引文必须找得到。但扫描的答案页、
+    // 以图片形式嵌入的答案表（正是 L2 整页图与 read_page_region 会交给模型的那些页）
+    // 在文本层里**缺席**——模型从页图里读到的真实引文会被当成编造拒掉。
+
+    /// 两页有文本、第 3 页存在但无文本层的原文。
+    fn paged_source_with_textless_answer_page(thin: bool) -> EvidenceSourceText {
+        EvidenceSourceText::Paged {
+            source_file_id: "early-approaches-pdf".to_string(),
+            pages: BTreeMap::from([
+                (1u32, "Early approaches to organisational design.".to_string()),
+                (2, "Notes on the reading passage".to_string()),
+                // thin=true：文本层只剩页码噪声；thin=false：整页缺席（纯扫描页）。
+                (
+                    3,
+                    if thin { "3".to_string() } else { String::new() },
+                ),
+            ]),
+            existing_pages: BTreeSet::from([1, 2, 3]),
+        }
+    }
+
+    #[test]
+    fn a_quote_read_from_a_textless_page_is_marked_unverifiable_not_rejected() {
+        // 两个变体：第 3 页完全没有文本层；第 3 页文本层只剩页码噪声（1 字符 < 阈值）。
+        // 每个变体独立建库：第一个变体落库会推进版本，别让第二个撞上 CAS。
+        for thin in [false, true] {
+            let root = temp_root();
+            let item_id = seed_item(&root, &load_fixture());
+            let mut request = base_request(
+                &item_id,
+                if thin { "run-thin-text" } else { "run-no-text" },
+                1,
+                set_answer_command("q14", &["A"]),
+            );
+            // 引文真实存在——印在第 3 页的**图**里（L2 / read_page_region 给模型的那种页）。
+            request.evidence = vec![json!({
+                "sourceFileId": "early-approaches-pdf",
+                "pageIndex": 3,
+                "quote": "14 A"
+            })];
+            let outcome =
+                apply_with_source(&root, &request, &paged_source_with_textless_answer_page(thin))
+                    .expect("apply_cloud_edits");
+            assert_eq!(
+                outcome.status,
+                CloudEditStatus::Applied,
+                "thin={thin}：声明页没有（有效）文本层时不得拒绝，errors={:?}",
+                outcome.errors
+            );
+            assert_eq!(
+                outcome.evidence_unverifiable,
+                vec![0],
+                "thin={thin}：这条证据必须标 unverifiable（不算已核验，也不算编造）"
+            );
+            assert_eq!(
+                read_answer(&root, &item_id, "q14").pointer("/labels"),
+                Some(&json!(["A"])),
+                "thin={thin}：修改必须落库"
+            );
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+
+    #[test]
+    fn a_missing_quote_on_a_page_with_a_real_text_layer_is_still_rejected() {
+        let root = temp_root();
+        let item_id = seed_item(&root, &load_fixture());
+        let mut request =
+            base_request(&item_id, "run-text-layer-rejects", 1, set_answer_command("q14", &["A"]));
+        request.evidence = vec![json!({
+            "sourceFileId": "early-approaches-pdf",
+            "pageIndex": 3,
+            "quote": "14 A"
+        })];
+        // 第 3 页有**真实**文本层（超过阈值、不含这条引文），相邻页也都有文本：
+        // 引文不在 ⇒ 编造，照拒。这一点不变。
+        let source = EvidenceSourceText::Paged {
+            source_file_id: "early-approaches-pdf".to_string(),
+            pages: BTreeMap::from([
+                (1u32, "Early approaches to organisational design.".to_string()),
+                (2, "Notes on the reading passage".to_string()),
+                (3, "Answer key with the printed answers for every question in this section".to_string()),
+            ]),
+            existing_pages: BTreeSet::from([1, 2, 3]),
+        };
+        let outcome = apply_with_source(&root, &request, &source).expect("apply_cloud_edits");
+        assert_eq!(outcome.status, CloudEditStatus::Rejected, "errors={:?}", outcome.errors);
+        assert!(
+            outcome
+                .errors
+                .iter()
+                .any(|error| error == "CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:0"),
+            "errors={:?}",
+            outcome.errors
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_declared_page_beyond_the_document_is_rejected_even_without_text_layers() {
+        // 编造页号的旧纪律保持：声明页根本不存在（不在 existing_pages 里）时，
+        // 不能借「没有文本层」逃成 unverifiable。
+        let root = temp_root();
+        let item_id = seed_item(&root, &load_fixture());
+        let mut request =
+            base_request(&item_id, "run-phantom-page", 1, set_answer_command("q14", &["A"]));
+        request.evidence = vec![json!({
+            "sourceFileId": "early-approaches-pdf",
+            "pageIndex": 9,
+            "quote": "14 A"
+        })];
+        let outcome =
+            apply_with_source(&root, &request, &paged_source_with_textless_answer_page(false))
+                .expect("apply_cloud_edits");
+        assert_eq!(outcome.status, CloudEditStatus::Rejected, "errors={:?}", outcome.errors);
+        assert!(
+            outcome
+                .errors
+                .iter()
+                .any(|error| error == "CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:0"),
+            "errors={:?}",
+            outcome.errors
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── P12-Q：非主试卷的 sourceFileId —— 核验不了，标 unverifiable 而不是误拒 ────
+
+    #[test]
+    fn evidence_from_a_non_main_source_file_is_marked_unverifiable_not_rejected() {
+        let root = temp_root();
+        let item_id = seed_item(&root, &load_fixture());
+        let mut request =
+            base_request(&item_id, "run-other-source", 1, set_answer_command("q14", &["A"]));
+        // 单独上传的答案文件的 sourceFileId：修复链的证据面从不包含它，后端拿它
+        // 没有文本层可比。真实存在于答案文件里的引文不得被误拒——标 unverifiable。
+        request.evidence = vec![json!({
+            "sourceFileId": "answer-sheet-pdf",
+            "pageIndex": 1,
+            "quote": "14 A"
+        })];
+        let outcome = apply_with_source(&root, &request, &paged_source()).expect("apply_cloud_edits");
+        assert_eq!(
+            outcome.status,
+            CloudEditStatus::Applied,
+            "非主试卷的证据不得按「编造」拒绝，errors={:?}",
+            outcome.errors
+        );
+        assert_eq!(outcome.evidence_unverifiable, vec![0]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

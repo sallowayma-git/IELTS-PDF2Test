@@ -6371,3 +6371,195 @@ fn a_conflicting_edit_from_a_later_packet_is_rejected_and_recovers_without_overw
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ── P12-Q：答案页只有页图、没有文本层 —— 从页图读来的引文标 unverifiable，不拒绝 ──
+//
+// 端到端（真实受控服务 + 真实 HTTP）版本：扫描的答案页 / 图片答案表正是 L2 整页图与
+// `read_page_region` 交给模型的页。模型从页图里读到答案与引文并提交编辑——引文在
+// 文本层里**不存在**是预期，后端必须标 unverifiable 并放行，而不是当成编造拒掉。
+#[test]
+fn an_edit_quoting_an_image_only_answer_page_lands_and_is_marked_unverifiable() {
+    let Some(node) = node_binary() else {
+        panic!("本机 PATH 里没有 node：这条真实受控服务用例无法执行——这不是通过（见 node_binary 的说明）");
+    };
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("src-tauri 必须有父目录")
+        .join("scripts/controlled-llm-service.mjs");
+    assert!(script.is_file(), "受控服务脚本必须在仓库里：{script:?}");
+
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+    seed_packet_job(&root);
+    // 答案页（第 3 页）在文本层里**缺席**：document-ir 的第 3 页零文本行
+    // （模拟纯扫描答案页 / 以图片嵌入的答案表）。
+    crate::util::write_json(
+        &crate::util::job_dir(&root, ITEM_ID).join("document-ir.json"),
+        &json!({"pages": [
+            {"pageIndex": 0, "lines": [
+                {"text": "Questions 14-15"},
+                {"text": "Which TWO factors influenced early organisational design?"}
+            ]},
+            {"pageIndex": 1, "lines": [{"text": "Section 2"}]},
+            {"pageIndex": 2, "lines": []}
+        ]}),
+    )
+    .expect("重写 document-ir");
+    // 第 3 页**存在**且有页图（read_page_region 的入口；前提自检：它的文本层缺席）。
+    seed_page_images(&root, &[3]);
+    let text_layer = crate::util::read_json_opt(
+        &crate::util::job_dir(&root, ITEM_ID).join("document-ir.json"),
+    )
+    .expect("读 document-ir")
+    .expect("document-ir 必须存在");
+    let answer_page_lines: Vec<&Value> = text_layer["pages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|page| page["pageIndex"] == json!(2))
+        .flat_map(|page| page["lines"].as_array().unwrap().iter())
+        .collect();
+    assert!(
+        answer_page_lines.is_empty(),
+        "前提：答案页的文本层必须缺席：{answer_page_lines:?}"
+    );
+
+    let plan_path = root.join("repair-plan-region.json");
+    let request_log_path = root.join("controlled-llm-requests.jsonl");
+    crate::util::write_json(
+        &plan_path,
+        &json!({
+            // 剧本里没有答案值；答案页只有页图 ⇒ 走 read_page_region。
+            "fixSlotIds": ["q14"],
+            "questionNumber": 14,
+            "sourcePageOneBased": 3,
+            "answerFetch": "read_page_region",
+            "rulings": [],
+            "unresolved": [],
+            "finishNote": "受控服务：q14 已按页图里的答案改正"
+        }),
+    )
+    .expect("写剧本");
+
+    let port = free_local_port();
+    let child = std::process::Command::new(&node)
+        .arg(&script)
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--plan")
+        .arg(&plan_path)
+        .arg("--request-log")
+        .arg(&request_log_path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap_or_else(|error| panic!("起受控服务失败 node={node:?}: {error}"));
+    let _guard = ChildGuard(child);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let mut ready = false;
+    while std::time::Instant::now() < deadline {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            ready = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(ready, "受控服务 15 秒内没有起来（端口 {port}）");
+
+    crate::llm_profiles::save_profiles(
+        &root,
+        &[json!({
+            "profileId": "controlled-repair",
+            "name": "Controlled Repair Service",
+            "provider": "OpenAiCompatible",
+            "baseUrl": format!("http://127.0.0.1:{port}/v1"),
+            "model": "controlled-repair-v1",
+            "temperature": 0,
+            "timeoutMs": 60000,
+            "forceJson": true,
+            "enabled": true
+        })],
+    )
+    .expect("profile 必须能落盘");
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let report = run_packets(&request, |context: &Value, observations: &[Value]| {
+        repair_authoring_step_through_gateway(
+            &root,
+            ITEM_ID,
+            Some("controlled-repair"),
+            context,
+            observations,
+        )
+    })
+    .expect("包模式循环必须跑完（受控服务真的被驱动过）");
+
+    // ① 修改落库：从页图读来的答案值写进了权威稿。
+    assert_eq!(
+        read_answer(&root, "q14")["labels"],
+        json!(["A"]),
+        "页图里的真实引文不得被拒，编辑必须落库"
+    );
+
+    // ② 抓取动作真的发生了：观察里有 read_page_region 的 ok 结果，带着第 3 页的图。
+    assert!(
+        report.observations.iter().any(|observation| {
+            observation["status"] == json!("ok")
+                && observation["result"]["pageIndex"] == json!(3)
+                && observation["result"]["image"].is_object()
+        }),
+        "必须真的有一轮 read_page_region 把答案页的页图带了回来：{:#?}",
+        report.observations
+    );
+
+    // ③ 应用的编辑带着 unverifiable 标记：工具结果、逐包诊断、运行摘要三处都能看到。
+    assert!(
+        report.observations.iter().any(|observation| observation["result"]["evidenceUnverifiable"]
+            == json!([0])),
+        "应用的编辑结果必须如实标出 unverifiable 的证据：{:#?}",
+        report.observations
+    );
+    assert_eq!(
+        report.packets[0]["evidenceUnverifiable"],
+        json!(1),
+        "逐包诊断必须如实累计：{:#?}",
+        report.packets[0]
+    );
+    assert_eq!(
+        report.unverified_evidence, 1,
+        "运行摘要必须如实呈现「证据没有核验」的条数"
+    );
+
+    // ④ L1 走的是页图抓取路径：级别抬到 L1 且没有调用 report_insufficient_context。
+    assert_eq!(
+        report.packets[0]["escalationLevel"].as_u64().unwrap_or(0),
+        1,
+        "read_page_region 也是 L1：{:#?}",
+        report.packets[0]
+    );
+    assert_eq!(
+        report.packets[0]["insufficientContext"],
+        json!(0),
+        "这条路径没有调用 report_insufficient_context：{:#?}",
+        report.packets[0]
+    );
+
+    // ⑤ 全程没有附整份 PDF；第一轮请求里没有答案行（它只存在于页图里，文本层缺席）。
+    let captured = std::fs::read_to_string(&request_log_path)
+        .expect("真实受控服务必须记录它实际收到的 HTTP 请求体");
+    assert!(
+        captured.lines().all(|body| !body.contains("data:application/pdf;base64,")),
+        "整个过程不得附整份 PDF"
+    );
+    let first_request = captured.lines().next().expect("至少一轮请求");
+    assert!(
+        !first_request.contains("14 A"),
+        "第一轮请求的文本里没有答案行（它只在页图里）：{}",
+        &first_request[..first_request.len().min(600)]
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}

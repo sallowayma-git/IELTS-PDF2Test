@@ -1400,7 +1400,7 @@ fn evidence_source_text(
     // 包模式的 PDF：抓取工具的 `source` 就是整份原文索引（不是包切片），零额外 I/O。
     if let Some(tools) = packet_tools {
         if tools.source.kind == "pdf" {
-            return paged_source_text(&tools.source.lines);
+            return paged_source_text(tools.source);
         }
     }
     let source_meta = crate::auto_pipeline::cloud_source_evidence(request.root, request.job_id)
@@ -1411,28 +1411,37 @@ fn evidence_source_text(
                 .get("text")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
+            let source_file_id = source_meta
+                .get("sourceFileId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
             if text.trim().is_empty() {
                 tools::EvidenceSourceText::Unavailable
             } else {
-                tools::EvidenceSourceText::Whole(text.to_string())
+                tools::EvidenceSourceText::Whole { source_file_id, text: text.to_string() }
             }
         }
         Some("pdf") => {
             let index = load_packet_source_index(request, context);
-            paged_source_text(&index.lines)
+            paged_source_text(&index)
         }
         _ => tools::EvidenceSourceText::Unavailable,
     }
 }
 
-fn paged_source_text(
-    lines: &BTreeMap<u32, Vec<packets::SourceLine>>,
-) -> tools::EvidenceSourceText {
-    if lines.is_empty() {
+fn paged_source_text(source: &packets::SourcePageIndex) -> tools::EvidenceSourceText {
+    if source.lines.is_empty() {
         return tools::EvidenceSourceText::Unavailable;
     }
-    tools::EvidenceSourceText::Paged(
-        lines
+    // 「真实存在的页」= 有文本的页 ∪ 有页图的页。扫描页有图无文本，正是要在
+    // 引文核验里区别对待的那种页。
+    let mut existing_pages: BTreeSet<u32> = source.lines.keys().copied().collect();
+    existing_pages.extend(source.page_images.keys().copied());
+    tools::EvidenceSourceText::Paged {
+        source_file_id: source.source_file_id.clone(),
+        pages: source
+            .lines
             .iter()
             .map(|(page, page_lines)| {
                 (
@@ -1445,7 +1454,8 @@ fn paged_source_text(
                 )
             })
             .collect(),
-    )
+        existing_pages,
+    }
 }
 
 /// 给裁定证据逐条盖上核验结果（`verified` / `unverifiable`）。

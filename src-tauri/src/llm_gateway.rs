@@ -1849,7 +1849,7 @@ Work like an editor: read what you need, then submit ONE batch of domain command
 {base_version_rule}\
 - Use only the stable ids you were given. Never invent ids.\n\
 - Attach evidence copied from the original file to content changes (sourceFileId, 1-based pageIndex, exact quote). A malformed evidence entry rejects the whole batch.\n\
-- EVERY evidence.quote is checked against the FULL source text layer before anything is applied (whitespace, quote marks, hyphens and letter case are normalized; the declared page may differ from the page where the quote is found by at most 1). A quote that does not appear in the source rejects the whole batch with CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:<index>. record_ruling evidence goes through the same check — a fabricated quote keeps the ruling from being recorded. If the file has no text layer the backend marks your evidence unverifiable; it is recorded, but never treated as verified.\n\
+- EVERY evidence.quote is checked against the FULL source text layer before anything is applied (whitespace, quote marks, hyphens and letter case are normalized; the declared page may differ from the page where the quote is found by at most 1). A quote that does not appear in the source rejects the whole batch with CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:<index>. record_ruling evidence goes through the same check — a fabricated quote keeps the ruling from being recorded. two cases are recorded as unverifiable instead of rejected, and are never treated as verified: (a) evidence citing a sourceFileId other than the main paper on this request (the backend has no text layer for other files, for example a separately uploaded answer sheet); (b) a quote that appears nowhere in the text layer while its declared page (or a neighbor) has no usable text layer — that is a scanned or image-embedded page, which you may have read via its picture.\n\
 - Never invent an answer the file does not give.\n\
 - If a batch is rejected because a target is protected by a human edit, narrow the batch — do not retry the same commands.\n\
 {document_scope_rule}\
@@ -3593,6 +3593,16 @@ mod tests {
             assert!(
                 prompt.contains("unverifiable"),
                 "{mode} 模式的 prompt 必须写明没有文本层时如实标 unverifiable：{prompt}"
+            );
+            // P12-Q：prompt 必须说明两类「不拒绝、标 unverifiable」的情形——
+            // 非主试卷的 sourceFileId，以及无文本层（扫描/图片）页上的引文。
+            assert!(
+                prompt.contains("sourceFileId other than the main paper"),
+                "{mode} 模式的 prompt 必须写明非主试卷的 sourceFileId 标 unverifiable：{prompt}"
+            );
+            assert!(
+                prompt.contains("scanned or image-embedded page"),
+                "{mode} 模式的 prompt 必须写明扫描/图片页上的引文标 unverifiable：{prompt}"
             );
         }
     }

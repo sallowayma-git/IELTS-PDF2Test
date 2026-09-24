@@ -595,6 +595,52 @@ function repairPacketStepReply(context, plan, round, observations) {
     };
   }
 
+  // ⓪′ 页图路径（`plan.answerFetch === 'read_page_region'`）：答案页只有**页图**没有
+  //    文本行（扫描的答案页 / 图片答案表——L2 与 `read_page_region` 交给模型的正是
+  //    这种页）。模型用 `read_page_region` 把页图取回来「看」；真实多模态模型从图里
+  //    读出答案与引文。受控服务读不了像素，答案值取自请求文本里唯一可用的来源——
+  //    候选切片（`candidateSlice.answerKey`，云端自己的主张）；它引用的引文（题号+值）
+  //    在文本层里**不存在**，后端必须如实标 unverifiable——这正是本场景要证明的。
+  if (plan.answerFetch === 'read_page_region' && !inScope.includes(answerPage)) {
+    const version = context?.draftSlice?.editVersion;
+    const fetchedRegion = lastPageRegionObservation(observations, answerPage);
+    if (fetchedRegion) {
+      const slotId = (Array.isArray(plan.fixSlotIds) ? plan.fixSlotIds : [])[0] ?? null;
+      const label = slotId ? candidateAnswerLabel(context, slotId) : null;
+      if (!slotId || !label || typeof version !== 'number') {
+        return giveUp('受控服务没有读到答案值 / 要改的答案槽 / editVersion，不能提交编辑');
+      }
+      return {
+        callId: `p${round}`,
+        tool: 'apply_edits',
+        arguments: {
+          baseVersion: version,
+          commands: [
+            {
+              op: 'setAnswer',
+              slotId,
+              value: { kind: 'option', labels: [label], assignment: 'unordered_set' },
+            },
+          ],
+          evidence: [
+            {
+              sourceFileId: context?.sourceEvidence?.sourceFileId ?? null,
+              pageIndex: answerPage,
+              // 模型「从页图里读到」的那一行。这份页没有文本层——引文在文本层里
+              // 找不到是**预期**，后端据此标 unverifiable，而不是拒绝。
+              quote: `${Number(plan.questionNumber)} ${label}`,
+            },
+          ],
+        },
+      };
+    }
+    return {
+      callId: `p${round}`,
+      tool: 'read_page_region',
+      arguments: { pageIndex: answerPage },
+    };
+  }
+
   // ① 目标页还不在包里 ⇒ 只能说「不够」，并点名要哪一页。**不猜**。
   if (!inScope.includes(answerPage)) {
     return {
@@ -836,6 +882,37 @@ function answerLineFromPacket(context, questionNumber) {
     if (label) return { label, line: entry.text, lineId: entry.lineId, pageIndex: entry.pageIndex };
   }
   return null;
+}
+
+/**
+ * 观察里最近一次 `read_page_region` 对某一页的真实返回（含附加的页图信息）。
+ */
+function lastPageRegionObservation(observations, pageOneBased) {
+  for (let index = (observations ?? []).length - 1; index >= 0; index -= 1) {
+    const result = observations[index]?.result;
+    if (
+      result
+      && typeof result === 'object'
+      && Number(result.pageIndex) === Number(pageOneBased)
+      && result.image
+      && typeof result.image === 'object'
+    ) {
+      return result;
+    }
+  }
+  return null;
+}
+
+/**
+ * 候选切片里某个槽位的答案值（`candidateSlice.answerKey[slotId].labels` 里的
+ * 第一个非空字符串）。页图路径里请求文本中唯一的答案来源。
+ */
+function candidateAnswerLabel(context, slotId) {
+  const labels = context?.candidateSlice?.answerKey?.[slotId]?.labels;
+  const label = Array.isArray(labels)
+    ? labels.find((entry) => typeof entry === 'string' && entry.length > 0)
+    : null;
+  return label ?? null;
 }
 
 /**
