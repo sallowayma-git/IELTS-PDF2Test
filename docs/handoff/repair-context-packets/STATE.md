@@ -7,7 +7,7 @@
 
 | 阶段 | 内容 | 状态 | 提交 / 证据 |
 |---|---|---|---|
-| P0 | 基线：环境探测、全量测试数字、核对 TASK.md §3 行号 | done | worktree `/tmp/pdf2test-baseline-34dfadd` @ `f13c75a`（已清理，重建方法见下）；数字见「基线数字」 |
+| P0 | 基线：环境探测、全量测试数字、核对 TASK.md §3 行号 | done | 原始基线 worktree `/tmp/pdf2test-baseline-34dfadd` @ `f13c75a`；本轮已在 HEAD `24eaa98` 复核平台、三项门禁、§3 行号、受控服务和 CDP 可用性，详见本日志；数字见「基线数字」 |
 | P1 | `packets.rs` 切分 + 范围 + 包内容（TASK §4.1，测试 1-4） | done | `fe15917`（`85f5064` 修升级阶梯）。命令处理器层，`cargo test --lib cloud_repair::` 89 passed |
 | P2 | `grab.rs` 抓取工具 + `report_insufficient_context` + 升级阶梯（§4.2，测试 6-7） | done | `fe15917`。同上 |
 | P3 | 编排改造 + prompt + 请求体去整份 PDF（§4.3/4.4，测试 5、8、9） | done | `fe15917`、`85f5064`。含真实 HTTP 集成用例 `packets_mode_requests_carry_no_whole_pdf_...` |
@@ -20,11 +20,11 @@
 
 ## 基线数字（P0 填）
 
-- **平台**：macOS（darwin，aarch64-apple-darwin）。Rust 工具链在 `~/.cargo/bin`（需显式 export PATH）；node 22.22.2；前端依赖已在 `node_modules/.bin`。
+- **平台**：原始 P0 记录为 macOS（darwin，aarch64-apple-darwin）、Node 22.22.2；本轮复核仍是 macOS（Darwin 22.6.0 arm64），当前 Node **v24.21.0**。Rust 工具链在 `~/.cargo/bin`；前端命令由仓库依赖运行。
 - **基线提交不是 `34dfadd`**：`34dfadd` 在 macOS 上**根本无法编译** —— `src-tauri/src/parser.rs:2184` `E0425: cannot find value '_asset_dir'`，只出现在 macOS 的 sips 渲染分支，仓库此前只在 Windows 构建过。本分支第一个提交 `f13c75a`（一行改动，把 `_asset_dir` 改回真实存在的 `asset_dir`）修掉了它，**无任何行为变更**。因此基线数字取 `f13c75a`。
   - 复现方式（worktree 已用完清理，需要时重建）：`git worktree add /tmp/base f13c75a`，把主工作区的 `src-tauri/lib`（pdfium，gitignore 里，worktree 拿不到）和 `node_modules` 软链进去，再 `cd /tmp/base/src-tauri && CARGO_TARGET_DIR=<主 target> cargo test --lib`（共享 target 可复用依赖产物，整轮约 1 分钟）。
 - Rust `cargo test --lib`：基线（`f13c75a`）**1046 passed / 0 failed / 11 ignored** → P7 时 **1102 passed / 0 failed / 11 ignored**（净 +56）；P9 最新复测见下文
-- Vitest：基线 **391 passed**（28 个测试文件里 1 个加载失败）→ 本分支 **392 passed**（同样 1 个文件加载失败；净 +1）
+- Vitest：基线 **391 passed / 0 failed tests**（28 个测试文件里 1 个 suite 加载失败）→ P9 **392 passed / 0 failed tests**（27 suites passed，1 个 suite 因缺 `selenium-webdriver` 加载失败；净 +1 passed）
 - tsc：基线 `exit 0` → 本分支 `exit 0`
 - 已知基线失败（**非本任务引入，两提交一致**）：
   1. `scripts/e2e/lib/tauri-harness.mjs` 加载失败：`Failed to load url selenium-webdriver` —— 本机 `node_modules` 里没有 `selenium-webdriver`。属于环境缺依赖。
@@ -309,3 +309,6 @@ P6 另有两处「对着旧行为跑红」的验证（不是独立突变，而�
 - 2026-09-24 P7（审计 #2 复核轮）：第 2 个只读子代理的回归复核回来了，产出 **A-22（P1）/ A-23（P2）/ A-24（P2）**，并逐条复核了 A-17/A-18/A-19/A-20/A-21 四个提交：**P0 无、这四个提交本身没引入 P1**，三处被加固的用例各自临时突变全部变红（**不是只改绿**）。逐条按 P6 的方式修：A-23 先写失败用例看到红（note 真的是「every page in scope already had an image…」，而包里一张图都没有）→ `4a578c5`；A-24 把「缺 node 静默报绿」改成硬失败 → `c264ada`；A-22 先写失败用例看到红（包模式剧本回的是 `finish_packet` + 「找不到剧本指定的题面行」）→ 给 `repairPacketStepReply` 加 `packetRulingCall`（含 `observations` 去重，突变 M10 确认有效）→ `84325a1`。**重跑**：`cargo test --lib` **1102/0/11**、`vitest` 392、`tsc exit 0`、§6 对比未变。**仍未标 done**：① A-2（越界 P1）；② **A-22 只修掉了一半**——步骤 11b 的 L1 断言在这份 CDP 场景下结构性不可满足（题面类修复所需的原文行就在包内），要让 §7.3 在包模式下可满足必须改场景，属越界 + 设计决策，已写进「越界需求」6 等指示；③ CDP 链本机跑不了。下一步：P8 收口报告；等指示后再动场景。
 - 2026-09-24 P8：写本目录 `REPORT.md`（八节：用户可感知变化 / 22 个提交列表 / 逐项证据等级 / 先红后绿与 M1-M10 突变 / 全量数字与基线对比 / 审计 24 条最终状态 / 未执行项 + 偏离 + 越界需求 / 下一轮建议：真实模型验收怎么跑、云端优先级与原生 tool call 与 prompt cache 各从哪个接口入手）。写报告时**没有重跑门禁**（上一轮 `a6c75a0` 的全量数字就是当前 HEAD 的数字，报告里如实注明取自该轮）。**整条链未收口**：P7 仍 `blocked`，三条原因（A-2 越界 P1 / §7.3 步骤 11b 结构性未达成 / CDP 本机不可跑 / §7.4 无额度）全部需要外部输入才能推进，因此**不输出 `ALL_DONE`**。下一步：等指示——要么授权越界需求 1（`tools.rs` 引文校验）与 6（场景换靶子），要么提供 Windows 环境 / 真实模型额度。
 - 2026-09-24 P9：继续修复分支问题并提交 `1df51b7`（packet ID 纳入完整差异与阻断问题内容，避免差异值变化后重切包被 `done_packets` 跳过；包模式近灰度整页 PNG 转灰度并缩至最长边 600 px，彩色图保持原字节）。A-25/A-26 都先看到旧行为变红，再修复：重切集成用例从旧行为 3 包/预期 4 包变绿；两模式请求体从 packets 1191137 B > legacy 917173 B，压缩后 226697 B。最新门禁：`cargo test --lib` 1104/0/11；Vitest 392 tests passed、27 suites passed，1 suite 因缺 `selenium-webdriver` 加载失败；`npx tsc --noEmit` exit 0。`cargo fmt --check` 全仓仍受既有格式漂移影响，不通过；没有运行全仓格式化。证据为命令处理器/真实 HTTP 与单测，**不是产品端到端**；CDP 仍因本机 macOS 缺 WebView2/`ielts-author-studio.exe` 未执行，真实模型仍无额度。报告已更新 A-25/A-26 与本机最新输入量；P7 的原有阻塞未解除。
+- 2026-09-24 P0 复核（HEAD `24eaa98`）：无未提交改动。平台为 Darwin 22.6.0 arm64 / Node v24.21.0。重跑 `cd src-tauri && cargo test --lib`：**1104 passed / 0 failed / 11 ignored**；`npx vitest run`：**392 passed / 0 failed tests**，27 suites passed，1 suite 加载失败（缺 `selenium-webdriver`，属环境问题）；`npx tsc --noEmit`：exit 0。对照 `34dfadd` 核验 TASK §3：`repair_authoring_step_through_gateway` 2866、`make_repair_authoring_step_input` 573、`run_openai_compatible_repair_step_llm` 1651、`build_repair_context` 843；12 条 observation / 6 轮、锚点结构、页号口径均符合快照。基线 `read_source` 无 `pageIndex` 会返回 PDF 全部页；当前包模式改为强制页范围或引文，legacy 保留旧行为。TASK §3 行号与描述在基线均无事实偏差，**未加 P0 更正**；实现后的行号变化（网关 1856、上下文 912）是新增代码造成的漂移。
+- 2026-09-24 P0 复核：group-6 缺少选项 E-G（以及 group-5 少六行）是 `7b644b2` 在基线 `34dfadd` 之前已修复的历史问题（该提交是基线祖先），故不记作当前测试失败或本任务引入。当前真实听力探针 `real_listening_split_evidence_covers_every_claimed_block` 依赖私有 fixture `fixtures/golden/private-real/listening-vol7-t9.pdf`；本机 fixture 不存在，用例提前返回，因此本轮**未复核真实卷**，不能把它的绿灯当成该问题的当前端到端证据。
+- 2026-09-24 P0 复核：已实际运行 `node scripts/controlled-llm-service.mjs`，默认监听 `127.0.0.1:11435`，base URL 为 `http://127.0.0.1:11435/v1`；`GET /health` 返回 `ok: true`，结束后确认服务已停止。P4 修复剧本使用 `--candidate <file> --plan <file>`。本机不是 Windows 且没有 `src-tauri/target/debug/ielts-author-studio.exe`，所以 WebView2 CDP 产品链**不能执行**；不报通过。下一未完成阶段 P7 仍受既有阻塞：A-2 要改 `tools.rs`，场景要改 TASK §8 未列出的 `scripts/e2e/lib/cloud-repair-scenario.mjs`，且本机无 Windows/WebView2 与真实模型额度；本轮未越界改动。
