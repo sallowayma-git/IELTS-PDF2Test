@@ -5786,6 +5786,67 @@ fn is_dynamic_choice_control_signal(text: &str) -> bool {
         || lower.contains("in boxes")
 }
 
+/// Words that end a *banner* rather than a numbered row.  `Questions 21-25`,
+/// `SECTION 2` and `Part 3` all end with digits, so a bare trailing-number test
+/// would read them as item text.
+const DYNAMIC_TRAILING_ROW_STOP_WORDS: &[&str] = &[
+    "section",
+    "part",
+    "unit",
+    "module",
+    "passage",
+    "test",
+    "page",
+    "question",
+    "questions",
+    "time",
+    "minutes",
+    "minute",
+    "marks",
+    "mark",
+];
+
+/// A table row may print its question number **after** the item text
+/// (`PEST 21`, `Drill Down 22`, `Farnley collection 18`).  The generic window in
+/// `dynamic_question_prompt_and_options` assumes the number leads, so for those
+/// rows it takes the prompt from the *next* row and the final question swallows
+/// the option bank.  When a block ends with the question number and a real row
+/// prefix precedes it, that prefix is the whole prompt.
+fn dynamic_trailing_row_prompt(group_blocks: &[Value], number: u32) -> Option<String> {
+    let needle = number.to_string();
+    for block in group_blocks {
+        let text = collapse_whitespace(&dynamic_block_text(block));
+        let Some(prefix) = text.strip_suffix(needle.as_str()) else {
+            continue;
+        };
+        // A glued number (`18th-century paintings17`) is not this layout, and a
+        // block that already parses as a leading-number line keeps the generic
+        // path so nothing regresses for the ordinary `N text` form.
+        if dynamic_leading_question_number(&text) == Some(number) {
+            return None;
+        }
+        // The number must be its own whitespace-separated token.  `Questions
+        // 21-25` ends in `-25`, which is a range tail, not a row number.
+        if !prefix.ends_with(char::is_whitespace) {
+            continue;
+        }
+        let prefix = prefix.trim_end();
+        if prefix.is_empty() {
+            continue;
+        }
+        let last_word = prefix
+            .rsplit(|ch: char| !ch.is_alphanumeric())
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if DYNAMIC_TRAILING_ROW_STOP_WORDS.contains(&last_word.as_str()) {
+            continue;
+        }
+        return Some(prefix.to_string());
+    }
+    None
+}
+
 fn dynamic_question_prompt_and_options(
     group_blocks: &[Value],
     group_text: &str,
@@ -5820,6 +5881,13 @@ fn dynamic_question_prompt_and_options(
         if let Some(shared) = dynamic_shared_choice_prompt_and_options(group_blocks) {
             return shared;
         }
+    }
+    // A row that prints its number after the item text carries its own prompt
+    // and nothing else.  Handling it before the generic window is what keeps the
+    // window from drifting one row down and letting the last question absorb the
+    // option bank.
+    if let Some(row_prompt) = dynamic_trailing_row_prompt(group_blocks, number) {
+        return (row_prompt, Vec::new());
     }
     let Some((start_index, marker_start)) = group_blocks
         .iter()
@@ -10209,6 +10277,71 @@ mod tests {
         );
         assert!(!prompt_12.contains("13 ______"));
         assert_eq!(source_ids, vec!["q12".to_string(), "tail".to_string()]);
+    }
+
+    /// The private listening paper prints its choose-N rows as `<item> <number>`
+    /// (`PEST 21`, `Drill Down 22`).  The window must read the row prefix, not
+    /// the next row — and the last row must not absorb the shared option bank.
+    #[test]
+    fn a_row_that_prints_its_number_last_keeps_its_own_prompt() {
+        let group_blocks = [
+            json!({"blockId":"b119","text":"Questions 21-25"}),
+            json!({"blockId":"b120","text":"What are the characteristics of the following analysis methods?"}),
+            json!({"blockId":"b121","text":"Choose FIVE correct letters, A-G, next to questions 21-25."}),
+            json!({"blockId":"b122","text":"Analysis methods"}),
+            json!({"blockId":"b123","text":"PEST 21"}),
+            json!({"blockId":"b124","text":"Drill Down 22"}),
+            json!({"blockId":"b125","text":"PMI 23"}),
+            json!({"blockId":"b126","text":"Pareto 24"}),
+            json!({"blockId":"b127","text":"SWOT 25"}),
+            json!({"blockId":"b128","text":"A. it will save a lot of business time and effort"}),
+            json!({"blockId":"b129","text":"B. it is visualized"}),
+        ];
+        let group_text = group_blocks
+            .iter()
+            .map(dynamic_block_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let expected = [
+            (21, "PEST"),
+            (22, "Drill Down"),
+            (23, "PMI"),
+            (24, "Pareto"),
+            (25, "SWOT"),
+        ];
+        for (number, want) in expected {
+            let (prompt, options) = dynamic_question_prompt_and_options(
+                &group_blocks,
+                &group_text,
+                number,
+                "Questions 21-25",
+                25,
+                "short_answer",
+            );
+            assert_eq!(prompt, want, "q{number} prompt");
+            assert!(
+                options.is_empty(),
+                "q{number} must not lift the option bank into its prompt"
+            );
+        }
+    }
+
+    /// A range banner also ends in digits, so it must never be read as a row.
+    #[test]
+    fn range_banners_and_headings_are_not_rows_with_a_trailing_number() {
+        let group_blocks = [
+            json!({"blockId":"h","text":"Questions 21-25"}),
+            json!({"blockId":"s","text":"SECTION 2"}),
+            json!({"blockId":"b","text":"Part 3"}),
+            json!({"blockId":"row","text":"PEST 21"}),
+        ];
+        assert_eq!(dynamic_trailing_row_prompt(&group_blocks, 25), None);
+        assert_eq!(dynamic_trailing_row_prompt(&group_blocks, 2), None);
+        assert_eq!(dynamic_trailing_row_prompt(&group_blocks, 3), None);
+        assert_eq!(
+            dynamic_trailing_row_prompt(&group_blocks, 21),
+            Some("PEST".to_string())
+        );
     }
 
     #[test]
