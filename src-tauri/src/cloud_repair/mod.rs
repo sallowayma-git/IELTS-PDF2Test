@@ -3544,8 +3544,15 @@ fn escalate_packet(
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default();
+            // 「这一页已经有图了」必须按**真的带了图**算，不能只看有没有 region 条目：
+            // `grab::materialize_regions` 在这一卷没有页图产物时会给每条 region 写
+            // `"image": null`，而 `enforce_packet_budget` 只删**带图**的条目 —— null
+            // 条目会原样留下。按 `pageIndex` 收集的话，`scope.pages ⊆ region 页` 时
+            // `wanted` 会变成 0，note 就会写出「every page in scope already had an image
+            // in this packet」——一张图都没有（P7 审计 #2 找到的 A-19 残留）。
             let existing: BTreeSet<u64> = regions
                 .iter()
+                .filter(|region| !region["image"].is_null())
                 .filter_map(|region| region.get("pageIndex").and_then(Value::as_u64))
                 .collect();
             let requests: Vec<Value> = packet

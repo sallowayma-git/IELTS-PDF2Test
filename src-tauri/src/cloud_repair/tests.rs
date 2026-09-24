@@ -5064,3 +5064,61 @@ fn the_l2_note_counts_only_the_images_it_actually_attached() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// L2 的 note 也不许把「有 region 条目、但那条目没有图」的页说成「已经有过图」。
+///
+/// 这是 P7 审计 #2 找到的 A-19 残留（也是 A-19 修复自己引入的一处**倒退**）：
+/// `existing` 只按 `pageIndex` 收集，不看 `image` 是不是 `null`；而
+/// `grab::materialize_regions` 在这一卷没有页图产物时会给每条 region 写
+/// `"image": null`（`(None, None) => Value::Null`），`enforce_packet_budget` 又只删
+/// **带图**的条目 —— null 条目原样留着。于是 `scope.pages ⊆ region 页` 时
+/// `wanted == 0`，note 写的是「every page in scope already had an image in this packet」，
+/// 而实际上**一张图都没有**。A-19 之前走的是诚实的「no page image was available」。
+///
+/// 这条路径在整个仓库里原本零用例覆盖：`grep "every page in scope already had an image"`
+/// 只命中生产代码。
+#[test]
+fn the_l2_note_does_not_call_a_page_without_an_image_covered() {
+    let root = temp_root();
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    // 同样：这一卷没有页图产物，`materialize_regions` 补不出任何图。
+    let source = super::packets::SourcePageIndex {
+        source_file_id: "early-approaches-pdf".to_string(),
+        kind: "pdf".to_string(),
+        lines: std::collections::BTreeMap::new(),
+        page_images: std::collections::BTreeMap::new(),
+        answer_pages: Vec::new(),
+        answer_pages_known: false,
+        paragraphs: Vec::new(),
+    };
+    // 第 1 页**已经有一条 region 条目**（计划期生成的），但它没有图。
+    // scope 只有这一页 ⇒ 旧实现的 `wanted` 会是 0。
+    let mut packet = json!({
+        "packetId": "pkt-l2-null-image",
+        "scope": {"pages": [1]},
+        "sourceEvidence": {"regions": [{
+            "pageIndex": 1,
+            "bbox": {"x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0, "origin": "top-left"},
+            "taskId": "tg",
+            "image": Value::Null,
+            "note": "no page image available for this page"
+        }]},
+        "scopeManifest": {}
+    });
+    let mut used_full_source = false;
+    let level = escalate_packet(&request, &source, &mut packet, 1, &mut used_full_source);
+    assert_eq!(level, 2);
+    let note = packet["scopeManifest"]["escalationNote"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        !note.contains("every page in scope already had an image"),
+        "第 1 页的 region 条目没有图，就不算「已经有过图」：{note}"
+    );
+    assert!(
+        note.contains("no page image was available"),
+        "补不上图时必须如实说补不上：{note}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
