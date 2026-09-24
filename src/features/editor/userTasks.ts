@@ -584,6 +584,13 @@ export interface RepairAidInputV1 {
   field?: string;
   currentValue?: unknown;
   cloudValue?: unknown;
+  /**
+   * 云端**没能拿到足够的原文**来判断这一处（后端理由码 `CONTEXT_INSUFFICIENT`）。
+   *
+   * 它与「云端查过原文件但定不了论」是两件事：前者材料根本没到手，后者是看过之后仍
+   * 无定论。两者在界面上必须说成不同的话——否则用户会以为云端看过原文。
+   */
+  contextInsufficient?: boolean;
 }
 
 const FIELD_LABEL: Record<string, string> = {
@@ -703,7 +710,10 @@ export function buildEditingAids(
           : isAnswer
             ? `${where}的答案：现在是「${formatDecisionValue(task.currentValue)}」，云端读到的是「${formatDecisionValue(task.cloudValue)}」`
             : `${where}的${label}和云端读到的不一样`,
-        detail: "云端对照原文件后没能定论，看一眼原文再决定保留哪个。",
+        // 「材料没到手」不能说成「看过了但定不了」：后者会让人以为云端已经对照过原文。
+        detail: task.contextInsufficient
+          ? "云端没能拿到足够的原文来判断这一处，请对照原文确认。"
+          : "云端对照原文件后没能定论，看一眼原文再决定保留哪个。",
         actions: isAnswer && target
           ? [{ id: "fill-answer", label: "去看看", targetId: target }, { id: "view-source", label: "查看原文", targetId: target }]
           : [{ id: "view-source", label: "查看原文", targetId: target || "document" }],

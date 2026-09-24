@@ -2983,6 +2983,10 @@ where
             {
                 level = level.max(1);
             }
+            // 包自身的级别必须与这里推进的 `level` 同步。请求体（以及 `llm-calls.jsonl`）
+            // 读的就是 `context.escalationLevel` 这个字段：不同步的话，「这一轮到底在 L 几」
+            // 会有两个答案——诊断说 L1，模型看到的却是 L0。
+            packet["escalationLevel"] = json!(level);
             let (result, applied) = {
                 let mut tools = PacketTools {
                     source: &source_index,

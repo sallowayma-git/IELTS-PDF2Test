@@ -50,6 +50,13 @@ struct LlmCallTrace {
     usage: Option<Value>,
     finish_reason: Option<String>,
     raw_content: Option<String>,
+    /// 校核包（`repair_authoring_step`）专属：这一轮问的是**哪个包**、升到了哪一级、
+    /// 包里带了哪些页、包自己估了多少 token。没有这四个字段，「输入量下降」就只是一句
+    /// 感觉——有了它们，逐包逐轮都能对账（见任务书 §4.5）。
+    packet_id: Option<String>,
+    escalation_level: Option<u32>,
+    pages_included: Option<Vec<u64>>,
+    estimated_input_tokens: Option<usize>,
 }
 
 thread_local! {
@@ -172,6 +179,11 @@ pub(crate) fn run_llm_gateway(
         "httpStatus": trace.http_status,
         "usage": trace.usage.unwrap_or(Value::Null),
         "finishReason": trace.finish_reason,
+        // 非包模式的调用留 null：这些字段只在「这一轮问的是一个包」时才有意义。
+        "packetId": trace.packet_id,
+        "escalationLevel": trace.escalation_level,
+        "pagesIncluded": trace.pages_included,
+        "estimatedInputTokens": trace.estimated_input_tokens,
         "rejectedPath": rejected_path,
         "recordedAt": Utc::now().to_rfc3339()
     });
@@ -1721,6 +1733,9 @@ fn run_openai_compatible_repair_step_llm(
             .pointer("/context/attachFullSource")
             .and_then(Value::as_bool)
             == Some(true);
+    if packet_mode {
+        trace_packet_metrics(input);
+    }
     let mut had_pdf = false;
     if attach_full_source {
         let pdf_part = data_url_for_pdf(root, job_id, input)?;
@@ -1780,6 +1795,44 @@ The extracted source text below is the ONLY evidence you may use; do not invent 
         }
     }
     Ok(parsed)
+}
+
+/// 把「这一轮问的是哪个包」记进调用记录。
+///
+/// 读的是**请求里真实出现的那一份**包（`input.context`），不是后端内存里的副本：记录
+/// 要能回答「模型看到的到底是什么」，而不是「我们以为它看到了什么」。
+fn trace_packet_metrics(input: &Value) {
+    let Some(context) = input.get("context") else {
+        return;
+    };
+    let packet_id = context
+        .get("packetId")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let escalation_level = context
+        .get("escalationLevel")
+        .and_then(Value::as_u64)
+        .map(|level| level as u32);
+    let pages_included: Vec<u64> = context
+        .pointer("/sourceEvidence/pages")
+        .and_then(Value::as_array)
+        .map(|pages| {
+            pages
+                .iter()
+                .filter_map(|page| page.get("pageIndex").and_then(Value::as_u64))
+                .collect()
+        })
+        .unwrap_or_default();
+    let estimated_input_tokens = context
+        .get("estimatedInputTokens")
+        .and_then(Value::as_u64)
+        .map(|tokens| tokens as usize);
+    with_trace(|trace| {
+        trace.packet_id = packet_id;
+        trace.escalation_level = escalation_level;
+        trace.pages_included = Some(pages_included);
+        trace.estimated_input_tokens = estimated_input_tokens;
+    });
 }
 
 /// 把校核包里的区域页图附到请求上（`image_url` 部分）。

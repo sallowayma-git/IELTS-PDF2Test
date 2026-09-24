@@ -4057,5 +4057,49 @@ fn packets_mode_requests_carry_no_whole_pdf_and_the_fetched_page_reaches_the_mod
     assert_eq!(report.applied_count, 1);
     assert_eq!(report.packets[0]["insufficientContext"], json!(1));
 
+    // ④ 调用记录必须能**对账**：逐包记下包 id、升级级别、带了哪些页、估了多少 token、
+    //    请求体多少字节。没有这几个字段，「输入量下降」就只是一句感觉。
+    let records: Vec<Value> = std::fs::read_to_string(
+        crate::util::job_dir(&root, ITEM_ID).join("llm-calls.jsonl"),
+    )
+    .expect("网关必须留下 llm-calls.jsonl")
+    .lines()
+    .filter_map(|line| serde_json::from_str(line).ok())
+    .collect();
+    let packet_records: Vec<&Value> = records
+        .iter()
+        .filter(|record| record["commandName"] == json!("repair_authoring_step"))
+        .collect();
+    assert!(
+        packet_records.len() >= 2,
+        "至少两轮修复调用要落记录：{records:#?}"
+    );
+    for record in &packet_records {
+        assert!(
+            record["packetId"].as_str().is_some_and(|id| id.starts_with("pkt-")),
+            "每条修复记录都要写明是哪个包：{record:#?}"
+        );
+        assert!(record["escalationLevel"].as_u64().is_some(), "{record:#?}");
+        assert!(
+            record["estimatedInputTokens"].as_u64().unwrap_or(0) > 0,
+            "包自己估的 token 必须记下来：{record:#?}"
+        );
+        assert!(
+            record["requestBytes"].as_u64().unwrap_or(0) > 0,
+            "请求体字节数必须记下来：{record:#?}"
+        );
+        assert!(record["imageCount"].as_u64().is_some(), "{record:#?}");
+    }
+    // 第一轮里没有答案页，第二轮里有——这正是「回退真的在传内容」的可对账版本。
+    let first_pages = packet_records[0]["pagesIncluded"].as_array().cloned().unwrap_or_default();
+    let second_pages = packet_records[1]["pagesIncluded"].as_array().cloned().unwrap_or_default();
+    assert!(!first_pages.contains(&json!(3)), "第一轮不该包含答案页：{first_pages:?}");
+    assert!(second_pages.contains(&json!(3)), "第二轮必须包含取回的答案页：{second_pages:?}");
+    // 记录的是**那一轮请求**的级别：第一轮模型还没报「不够」，所以是 L0；报过之后
+    // 第二轮就是 L1。升级在记录里看得见，正是「这一次输入量下降是不是靠模型自己补的」
+    // 这个问题的答案。
+    assert_eq!(packet_records[0]["escalationLevel"], json!(0), "{:#?}", packet_records[0]);
+    assert_eq!(packet_records[1]["escalationLevel"], json!(1), "{:#?}", packet_records[1]);
+
     let _ = std::fs::remove_dir_all(&root);
 }

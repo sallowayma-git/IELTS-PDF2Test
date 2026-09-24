@@ -370,6 +370,38 @@ describe("唯一一份编辑辅助清单：本地 + 发布前检查 + 云端剩�
     expect(text).toContain("原文件第 3 页");
   });
 
+  it("「云端没能拿到足够的原文」与「查过但定不了论」在界面上是两句不同的话", () => {
+    const [insufficient, undecided] = buildEditingAids(DS, [], [
+      {
+        userTaskId: "cloud-diff:slot:q13:answer",
+        targetIds: ["q13"],
+        message: "云端没能拿到足够的原文来判断第 13 题，请对照原文确认",
+        field: "answer",
+        currentValue: { kind: "text", values: ["river"] },
+        cloudValue: { kind: "text", values: ["rivers"] },
+        contextInsufficient: true
+      },
+      {
+        userTaskId: "cloud-diff:slot:q12:answer",
+        targetIds: ["q12"],
+        message: "第 12 题的答案与云端识别结果不一致；云端已查过原文件但无法定论：答案区被裁掉",
+        field: "answer",
+        currentValue: { kind: "text", values: ["B"] },
+        cloudValue: { kind: "text", values: ["A"] }
+      }
+    ]).tasks;
+
+    // 材料没到手：说「没能拿到足够的原文」，且**不**说成「对照过原文件」。
+    expect(insufficient.detail).toContain("没能拿到足够的原文");
+    expect(insufficient.detail).not.toContain("对照原文件后没能定论");
+    // 看过了但定不了：反过来。
+    expect(undecided.detail).toContain("对照原文件后没能定论");
+    expect(undecided.detail).not.toContain("没能拿到足够的原文");
+    // 两者的标题仍然如实说「现在是什么、云端读到的是什么」。
+    expect(insufficient.title).toBe("第 13 题的答案：现在是「river」，云端读到的是「rivers」");
+    expect(undecided.title).toBe("第 12 题的答案：现在是「B」，云端读到的是「A」");
+  });
+
   it("没有门槛话术：不出现「不能导出」「阻断」「可以导出」", () => {
     const summary = buildEditingAids(DS, [
       issue("i1", "ANSWER_MISSING", "q11"),
