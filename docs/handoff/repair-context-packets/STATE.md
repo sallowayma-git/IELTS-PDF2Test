@@ -16,19 +16,20 @@
 | P6 | 修复审计 #1 发现 | done | A-1 `b821ae2`；A-3/A-12 `71814c2`；A-6/A-7/A-13 `3e4a5dd`；A-8/A-9/A-10/A-11/A-14/A-15/A-16 `c617f7a`；A-4/A-5 见本条日志。**A-2 未修**（越界，见「越界需求」1） |
 | P7 | 最终验收 + 独立审计 #2 + 修复 | **blocked（原因见下）** | 干净状态重跑数字见「基线数字」；审计 #2 的发现见「P7 处置」；修复提交 `391294f` / `2a5dc64` / `208afd9` / `7430a71` / `4a578c5` / `c264ada` / `84325a1`。**未标 done**：① A-2 仍是未修的 P1（越界，见「越界需求」1）；② **§7.3 在包模式下仍差一步**：A-22 修掉了「包模式剧本从不裁定」这一半，但步骤 11b 要求的「至少一个包走了 L1」在这份 CDP 场景下**结构性不可满足**——题面类修复所需的原文行就在包内（`sourceEvidence.pages[]` 来自题组锚点页），模型没有升级的理由；要让它可满足必须改场景（把修复靶子换成答案类差异，答案页不在题组锚点页里），属**设计决策**，且本机无 CDP 通道无法验证；③ CDP 链在本机跑不了（macOS 无 WebView2 CDP 通道），§7.3 与 A-5 / A-18 / A-22 的实机验证全部缺失 |
 | P8 | 收口报告 `REPORT.md` | done | 本目录 `REPORT.md`（证据等级逐项标注、审计 24 条最终状态表、未执行项与越界需求、下一轮建议）。**注意**：P8 完成**不代表整条链收口**——P7 仍 `blocked`（A-2 越界 P1、§7.3 步骤 11b 结构性未达成、CDP 本机不可跑、§7.4 无额度） |
+| P9 | 修复重切漏核风险、恢复包模式输入量优势并复核 | done | `1df51b7`。A-25/A-26 先红后绿；`cargo test --lib` 1104/0/11；真实 HTTP 两模式对比 226697 B vs 917173 B。命令处理器层；产品 UI / CDP / 真实模型仍未验收 |
 
 ## 基线数字（P0 填）
 
 - **平台**：macOS（darwin，aarch64-apple-darwin）。Rust 工具链在 `~/.cargo/bin`（需显式 export PATH）；node 22.22.2；前端依赖已在 `node_modules/.bin`。
 - **基线提交不是 `34dfadd`**：`34dfadd` 在 macOS 上**根本无法编译** —— `src-tauri/src/parser.rs:2184` `E0425: cannot find value '_asset_dir'`，只出现在 macOS 的 sips 渲染分支，仓库此前只在 Windows 构建过。本分支第一个提交 `f13c75a`（一行改动，把 `_asset_dir` 改回真实存在的 `asset_dir`）修掉了它，**无任何行为变更**。因此基线数字取 `f13c75a`。
   - 复现方式（worktree 已用完清理，需要时重建）：`git worktree add /tmp/base f13c75a`，把主工作区的 `src-tauri/lib`（pdfium，gitignore 里，worktree 拿不到）和 `node_modules` 软链进去，再 `cd /tmp/base/src-tauri && CARGO_TARGET_DIR=<主 target> cargo test --lib`（共享 target 可复用依赖产物，整轮约 1 分钟）。
-- Rust `cargo test --lib`：基线（`f13c75a`）**1046 passed / 0 failed / 11 ignored** → 本分支 **1102 passed / 0 failed / 11 ignored**（净 +56）
+- Rust `cargo test --lib`：基线（`f13c75a`）**1046 passed / 0 failed / 11 ignored** → P7 时 **1102 passed / 0 failed / 11 ignored**（净 +56）；P9 最新复测见下文
 - Vitest：基线 **391 passed**（28 个测试文件里 1 个加载失败）→ 本分支 **392 passed**（同样 1 个文件加载失败；净 +1）
 - tsc：基线 `exit 0` → 本分支 `exit 0`
 - 已知基线失败（**非本任务引入，两提交一致**）：
   1. `scripts/e2e/lib/tauri-harness.mjs` 加载失败：`Failed to load url selenium-webdriver` —— 本机 `node_modules` 里没有 `selenium-webdriver`。属于环境缺依赖。
   2. CDP 通道只在 Windows（WebView2）可用，本机 macOS 跑不了 `scripts/e2e/tauri-cdp-*.mjs`。
-- **§6 两模式输入量对比（本机实测，`--nocapture`）**：同一份作业、同一条真实 HTTP 网关、同一份 212 KB 真实 PDF 样本 ——
+- **§6 P7 历史两模式输入量对比（本机实测，`--nocapture`）**：同一份作业、同一条真实 HTTP 网关、同一份 212 KB 真实 PDF 样本 ——
   - legacy 总 `requestBytes` = **917173**（每轮附整份 PDF base64）
   - packets 总 `requestBytes` = **83738**（≈ 9.1%，**缩小 10.95 倍**）
   - packets 逐包 `estimatedInputTokens` 合计 = **12956**；legacy 侧该字段为 0（没有「包」这个概念）
@@ -49,11 +50,31 @@
   - §6 两模式对比：**917173 / 83738 / 12956，一字未变**（A-23 只影响「有 region 条目但无图」这条升级路径，本样本走不到）
   - A-22 的两条用例真的起 node 跑 `scripts/controlled-llm-service.mjs`（真 HTTP）：`the_real_controlled_service_rules_on_a_ruling_type_difference_in_packet_mode`、`the_controlled_service_stops_ruling_once_it_already_has`，均 passed
   - A-24 验证方式：把 PATH 换成 `$HOME/.cargo/bin:/usr/bin:/bin`（`which node` = not found）后跑 §7.2 用例 → **失败**（`本机 PATH 里没有 node…`），修复前同样条件下报的是 `1 passed`
+- **P9 最新复测（代码提交 `1df51b7`）**：
+  - Rust `cargo test --lib`：**1104 passed / 0 failed / 11 ignored**；A-25 / A-26 共新增 2 个用例。
+  - Vitest：**392 tests passed**，27 suites passed；1 suite 加载失败，因为本机缺 `selenium-webdriver`（`scripts/e2e/lib/tauri-harness.mjs`）。
+  - `npx tsc --noEmit`：`exit 0`。
+  - §6 同卷真实 HTTP 对比：legacy **917173 B**，packets **226697 B**（约 **4.05×** 缩小）；packets `estimatedInputTokens` 合计 **12480**。当前 PDF 路径附带 **420174 B** 整页 PNG；未压缩包模式曾量到 **1191137 B**，故新增近灰度图压缩。
+  - A-25 旧实现先红：第二个包编辑 q14 后，重切出来的新值仍命中旧 packet ID，实际只处理 3 包而用例要求 4 包；修复后新内容包重排，未完成的 q14 留在 `remaining_tasks`，整次状态也没有误报 `completed`。
+  - A-26 旧图像路径先红：packet 总请求 **1191137 B > 917173 B**；灰度 PNG 压缩后两模式对比通过。图像单测确认长边不超过 600 px、彩色页图保持原样。
+  - `cargo fmt --check` 全仓不通过，原因是仓库既有格式漂移；没有运行全仓格式化以免引入无关改动。
+  - 产品端到端未执行：macOS 无 WebView2，CDP 脚本依旧因缺 `ielts-author-studio.exe` 无法启动；真实模型验收仍无额度。
 
-## 审计发现（P5/P7 填，逐条带状态）
+## 审计发现（P5/P7/P9 填，逐条带状态）
 
 > P5 方法：3 个只读子代理分别查「边界与正确性」「上下文质量」「测试可信度」，每条发现都要求 `file:line` + 可复现失败场景。汇总时**逐条回源码复核**，能复现的才写下来；不能复现的标「未证实」并写明原因。另做 3 处临时突变检查（见 M1-M3）。
 > 严重级别口径：**P0** = 触碰 §2 不可动摇边界，或产生「假完成 / 假核对」的对外结论；**P1** = 产品行为可观测地错误或退化，或阻断验收；**P2** = 质量 / 覆盖 / 可维护性。
+
+### P9 追加发现与处置
+
+| # | 级别 | 状态 | 提交 / 证据 |
+|---|---|---|---|
+| A-25 | P1 | **fixed** | `1df51b7`。packet ID 纳入每条差异完整 JSON 与阻断问题内容，再用 SHA-256 生成稳定 ID。`a_replanned_packet_with_changed_difference_values_is_not_skipped_as_done` 旧行为红（3 包 vs 预期 4 包），修复后绿。 |
+| A-26 | P1 | **fixed** | `1df51b7`。当前 PDF 的无 bbox 整页 PNG 让 packets 请求体达到 1191137 B，高于 legacy 917173 B；包模式近灰度图转灰度并缩到最长边 600 px 后为 226697 B。彩色图保持原字节；真实 HTTP 对比及 PNG 单测通过。 |
+
+**A-25 复现细节**：已完成的 q14 包之后，另一个文档包把 q14 canonical 值从 A 改为 E。旧 ID 只含差异键，重切会把新值仍在的 q14 差异误认为已完成并跳过。修复后 ID 由题组、完整差异内容、阻断问题完整内容和文档包标记共同派生；内容未变的包保持稳定，内容变化时会重新排队。回归用例还断言 run 状态不是 `completed` 且 q14 出现在 `remaining_tasks`。
+
+**A-26 复现细节**：输入量两模式用例先因 packets **1191137 B** 大于 legacy **917173 B** 变红。根因是当前环境生成的 **420174 B** 无 bbox 整页 PNG 抵消了文本上下文节省。修复只作用于包模式近灰度 PNG；彩色页图原样发送，细节不足可通过 `read_page_region` 请求原尺寸区域图。压缩后的真实 HTTP 请求体为 **226697 B**，比 legacy 小约 **4.05×**。
 
 ### P6 处置（每条发现的状态）
 
@@ -130,7 +151,7 @@
 | §5.6 上下文不足 → 用户任务 | 通过 | `a_packet_that_never_gets_enough_context_hands_the_difference_to_the_user_honestly`（突变 M2） |
 | §5.7 抓取边界 | 通过 | `grab::tests::*`（突变 M3） |
 | §5.8 编辑后重切 | 通过 | `packets.rs::tests::packet_ids_are_derived_from_identity_and_stay_stable_across_replanning` |
-| §5.9 既有测试全绿 | 通过 | `cargo test --lib` 1102/0/11 |
+| §5.9 既有测试全绿 | 通过 | P9 最新 `cargo test --lib` 1104/0/11 |
 | §7.1 命令处理器层三项 | 通过 | 见「基线数字」 |
 | §7.2 真实 HTTP + 受控服务 | **通过（P7 补齐）** | `the_real_controlled_service_drives_the_packet_loop_through_l0_l1_and_finish`；A-22 又补两条裁定用例 |
 | §7.3 CDP 13/13 + 新增一步 | **未执行（且包模式下仍差一步，见 A-22 的「未达成的那一半」）** | macOS 无 WebView2 CDP 通道；脚本报 `ENOENT ... ielts-author-studio.exe`。步骤已按模式分流（A-18）、包模式剧本已能裁定（A-22），但步骤 11b 的 L1 断言在这份场景下结构性不可满足，实机判定与场景调整留待 Windows |
@@ -257,15 +278,13 @@ P7 追加（同样：临时改坏 → 确认变红 → 还原，`grep -c "TEMP-M
 
 P6 另有两处「对着旧行为跑红」的验证（不是独立突变，而是修 A-3 / A-12 时临时还原旧实现）：A-3 探针 `left: 0 / right: 2`、A-12 探针打印出 `TEMP-A12-PROBE-L2` 并变红，两处均已还原、**未提交**。
 
-**未证实（写了原因，不算发现）**：
+**历史审计中的未证实项（写了原因，不算发现）**：
 
-- **`packetId` 不含内容指纹，重切后可能命中 `done_packets` 而被跳过**。`packets.rs:852-894` 的 id 只由「本地题组 + 差异键 + 阻断问题 id + 是否文档包」派生，注释也明说「内容变了才换 id」，但差异键 `(targetType, targetId, field)` 在值变化时**不变**。构造「键不变而值变、且该包已在 `done_packets` 里」的场景需要一次真实 `apply_edits` 造成候选侧值变化 —— 试过一轮没能稳定复现，**未证实**。
+- **A-25：`packetId` 不含内容指纹的风险，P5/P7 时未证实，P9 已证实并修复**。详见上方「P9 追加发现与处置」；集成用例构造「已完成的 q14 包、其他包改写 q14 值、重切后 q14 仍有差异」并先红后绿。此项不再是当前未证实问题。
 - **`anchor_pages_of(input.candidate, &draft.task_ids)` 按本地 taskId 匹配候选锚点会漏**（`packets.rs:1028`）。反证：`reconcile/candidate.rs:4815` 的断言「14-15 必须接到权威稿题组」说明归一化后的候选题组 `task_id` **就是**本地 id；临时探针也打印出 `candidateSlice.taskGroups[].taskId = Some("early-approaches-q15-15"→本地 id)`。**未证实**（在本仓库的归一化下不成立）。
 - **`crop_page_image` 的 `bottom-left` 分支可达**（见 A-13 的「未证实部分」）。
 
-**P6 对以上三条的复核结论（都不是发现）**：
-- 第 1 条（`packetId` 不含内容指纹）**仍为未证实**：差异键 `(targetType, targetId, field)` 在值变化时不变是**读源码就能确认**的事实，但「因此会被 `done_packets` 跳过」需要一次真实 `apply_edits` 造成候选侧值变化并命中 `done_packets`——P5 试过一轮没稳定复现，P6 也未复现，因此不写成发现。**注意**：这条如果成立，后果是「重切后漏核」，属于 P0 级；它没有被证伪，只是没有被证实。留待 P7 用真实模型跑一轮时重点观察。
-  - **P7 结论：仍然未证实**。P7 没有跑真实模型（§7.4 无额度，如实记「未执行」），所以这条依旧既没被证实也没被证伪。**这是 P7 留白的第二项**，见阶段表。P7 能做的是把它写清楚：它需要「一次真实 `apply_edits` 让候选侧值变化，且重切后的包 id 已在 `done_packets` 里」这个组合，用假模型很难稳定造出来。
+**P6/P7 对其余两条的复核结论**：
 - 第 2 条（候选锚点按本地 taskId 匹配会漏）**已证伪**：`reconcile/candidate.rs:4815` 的断言与临时探针都表明归一化后的候选题组 `task_id` 就是本地 id。不成立，不修。
 - 第 3 条（`bottom-left` 分支可达）**仍为未证实**：`bbox` 由 `pdf_ingest/coordinates.rs:137-155 display_rect` 产出、`origin` 恒为 `"top-left"`，`bottom-left` 只出现在 `nativeBBox`，而 `collect_bboxes` / `crop_page_image` 只读 `bbox`。P6 没找到能走到该分支的输入，因此按 A-13 只修了**确定可达**的算式错误。
 
@@ -289,3 +308,4 @@ P6 另有两处「对着旧行为跑红」的验证（不是独立突变，而�
 - 2026-09-24 P7：**干净状态重跑**（`cargo test --lib` 1099/0/11、`vitest` 392、`tsc exit 0`、§6 对比 917173→83738 未变、CDP 未执行）+ **2 个全新只读子代理**（A 按 §5/§7 逐条验收；B 专查「P6 的修复有没有引入回归 / 是不是只把测试改绿了」，只给范围不给结论）。发现 **P1 ×2**（A-17 `region_requests` 的判据被 A-7 的修法从「整组」滑到「整包」；A-18 CDP 步骤 10b/11 写死 legacy 形状而默认模式已是 `packets`）、**P2 ×3**（A-19 L2 note 的 `attached` 数了整包带图的 region；A-20 三条弱证据用例；A-21 §7.2 打的是测试内 stub 而不是任务书点名的受控服务）。逐条按 P6 的方式修：先写失败断言**看到红**（A-17 `left: [(1, true)] / right: [(1, true), (1, false)]`；A-19 note 真的是「attached whole-page images for 1 page(s)」），再修，然后重跑受影响的测试。提交 `391294f`（A-17 + §5.1 用例）、`2a5dc64`（A-18）、`208afd9`（A-19/A-20）、`7430a71`（A-21）。**5 处突变检查 M5-M9 全部确认变红后还原**（`grep -c "TEMP-M"` 在四个文件上均为 0）。**P7 不标 done**：A-2 仍是未修的 P1（越界，见「越界需求」1），且 CDP 链在本机跑不了（§7.3 未执行）。另有一条 P0 级的**未证实**项仍未证实（`packetId` 不含内容指纹 → 重切后可能漏核），P7 没有真实模型额度，无法推进，见「未证实」。下一步：P8 收口报告 `REPORT.md`；拿到 Windows 环境或额度后补 §7.3 / §7.4。
 - 2026-09-24 P7（审计 #2 复核轮）：第 2 个只读子代理的回归复核回来了，产出 **A-22（P1）/ A-23（P2）/ A-24（P2）**，并逐条复核了 A-17/A-18/A-19/A-20/A-21 四个提交：**P0 无、这四个提交本身没引入 P1**，三处被加固的用例各自临时突变全部变红（**不是只改绿**）。逐条按 P6 的方式修：A-23 先写失败用例看到红（note 真的是「every page in scope already had an image…」，而包里一张图都没有）→ `4a578c5`；A-24 把「缺 node 静默报绿」改成硬失败 → `c264ada`；A-22 先写失败用例看到红（包模式剧本回的是 `finish_packet` + 「找不到剧本指定的题面行」）→ 给 `repairPacketStepReply` 加 `packetRulingCall`（含 `observations` 去重，突变 M10 确认有效）→ `84325a1`。**重跑**：`cargo test --lib` **1102/0/11**、`vitest` 392、`tsc exit 0`、§6 对比未变。**仍未标 done**：① A-2（越界 P1）；② **A-22 只修掉了一半**——步骤 11b 的 L1 断言在这份 CDP 场景下结构性不可满足（题面类修复所需的原文行就在包内），要让 §7.3 在包模式下可满足必须改场景，属越界 + 设计决策，已写进「越界需求」6 等指示；③ CDP 链本机跑不了。下一步：P8 收口报告；等指示后再动场景。
 - 2026-09-24 P8：写本目录 `REPORT.md`（八节：用户可感知变化 / 22 个提交列表 / 逐项证据等级 / 先红后绿与 M1-M10 突变 / 全量数字与基线对比 / 审计 24 条最终状态 / 未执行项 + 偏离 + 越界需求 / 下一轮建议：真实模型验收怎么跑、云端优先级与原生 tool call 与 prompt cache 各从哪个接口入手）。写报告时**没有重跑门禁**（上一轮 `a6c75a0` 的全量数字就是当前 HEAD 的数字，报告里如实注明取自该轮）。**整条链未收口**：P7 仍 `blocked`，三条原因（A-2 越界 P1 / §7.3 步骤 11b 结构性未达成 / CDP 本机不可跑 / §7.4 无额度）全部需要外部输入才能推进，因此**不输出 `ALL_DONE`**。下一步：等指示——要么授权越界需求 1（`tools.rs` 引文校验）与 6（场景换靶子），要么提供 Windows 环境 / 真实模型额度。
+- 2026-09-24 P9：继续修复分支问题并提交 `1df51b7`（packet ID 纳入完整差异与阻断问题内容，避免差异值变化后重切包被 `done_packets` 跳过；包模式近灰度整页 PNG 转灰度并缩至最长边 600 px，彩色图保持原字节）。A-25/A-26 都先看到旧行为变红，再修复：重切集成用例从旧行为 3 包/预期 4 包变绿；两模式请求体从 packets 1191137 B > legacy 917173 B，压缩后 226697 B。最新门禁：`cargo test --lib` 1104/0/11；Vitest 392 tests passed、27 suites passed，1 suite 因缺 `selenium-webdriver` 加载失败；`npx tsc --noEmit` exit 0。`cargo fmt --check` 全仓仍受既有格式漂移影响，不通过；没有运行全仓格式化。证据为命令处理器/真实 HTTP 与单测，**不是产品端到端**；CDP 仍因本机 macOS 缺 WebView2/`ielts-author-studio.exe` 未执行，真实模型仍无额度。报告已更新 A-25/A-26 与本机最新输入量；P7 的原有阻塞未解除。

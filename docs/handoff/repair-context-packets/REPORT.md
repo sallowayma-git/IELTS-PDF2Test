@@ -13,13 +13,15 @@
 
 | 指标 | legacy（改造前） | packets（现在，默认） | 变化 |
 |---|---|---|---|
-| 整轮 `requestBytes` 合计 | **917173** | **83738** | **≈ 9.1%，缩小 10.95 倍** |
-| 逐包 `estimatedInputTokens` 合计 | 0（没有「包」这个概念） | **12956** | — |
+| 整轮 `requestBytes` 合计 | **917173** | **226697** | **≈ 24.7%，缩小 4.05 倍** |
+| 逐包 `estimatedInputTokens` 合计 | 0（没有「包」这个概念） | **12480** | — |
 | 每轮是否附整份 PDF base64 | 是（每轮都附） | **否**；只有升到 L3（每次运行最多 1 次）才退回整份附件 | — |
 
 用例：`cloud_repair::tests::packets_mode_sends_much_less_input_than_legacy_for_the_same_paper`（本机实测，`--nocapture` 打印）。
 
-同一份样本在 P4 首次量到的是 83531 B，现在是 83738 B，差的 207 B 来自 A-8 的修复（`paperMap` 每页多一行 `paragraphLabels`）——是**有意**增加的信息，不是回归。
+这次复测的请求路径为缺少 bbox 的页面附加了一张 **420174 B** 的整页 PNG；未压缩时包模式请求体合计达到 **1191137 B**，反而超过 legacy。于是包模式现在会将近灰度整页 PNG 转灰度并缩到最长边 600 px，彩色页图仍保留原样；图片细节不足时可再通过 `read_page_region` 按需读取原尺寸区域。压缩后的真实请求合计为 **226697 B**。
+
+P4/P7 曾记录的 **83738 B / 12956 tokens** 在本轮请求路径无法复现，因为本轮实际附带了整页 PNG。旧数值保留为历史记录，不再作为最新输入量结论。
 
 **证据等级：命令处理器层（含真实 HTTP）**。它走真实网关代码、真实请求体落盘记录，但没有经过 Tauri UI，也没有真实模型。
 
@@ -43,7 +45,7 @@
 
 ## 2. 提交列表
 
-`git log --oneline 34dfadd..HEAD --reverse`（22 个提交，**未 push**）：
+`git log --oneline 34dfadd..1df51b7 --reverse`（本轮代码修复后共 **24 个提交**；未 push。P9 文档更新另作文档提交）：
 
 | # | 提交 | 内容 |
 |---|---|---|
@@ -69,6 +71,8 @@
 | 20 | `c264ada` | **A-24（P2）**：缺 node 时用例硬失败，不再恒绿 |
 | 21 | `84325a1` | **A-22（P1）**：包模式剧本能裁定「当前稿对、候选错」的差异 |
 | 22 | `a6c75a0` | 记审计 #2 复核轮的 A-22/A-23/A-24 |
+| 23 | `ffb055e` | 本报告（P8 收尾） |
+| 24 | `1df51b7` | A-25 包内容变化时重建稳定 ID；A-26 压缩包模式近灰度页图 |
 
 ---
 
@@ -76,7 +80,7 @@
 
 | 结论 | 等级 | 具体是什么 | **不是**什么 |
 |---|---|---|---|
-| 一次校核少发 10.95 倍内容 | 命令处理器层（含真实 HTTP） | 真实网关代码 + 真实请求体落盘 + 212 KB 真实 PDF 样本 | 不是产品端到端；没有 UI，没有真实模型 |
+| 一次校核少发 4.05 倍内容 | 命令处理器层（含真实 HTTP） | 真实网关代码 + 真实请求体落盘 + 212 KB 真实 PDF 样本；压缩页图后 226697 B vs 917173 B | 不是产品端到端；没有 UI，没有真实模型 |
 | 包模式走完 L0→L1→编辑→收工 | 命令处理器层（含真实 HTTP） | 真起 node 跑 `scripts/controlled-llm-service.mjs`，真 HTTP 往返 | 不是产品端到端（无 WebView2） |
 | 「不够就说」有出口、L4 如实交给用户 | 命令处理器层 | `cargo test --lib` 的包模式用例 | 不是真实模型的行为证据 |
 | 切分规则、页号换算、抓取边界、预算退让 | **仅单元测试** | `packets::tests::*` / `grab::tests::*` 纯函数用例 | 不是端到端；这些用例**不**驱动 Tauri、WebView2、SQLite 真实写路径 |
@@ -103,6 +107,8 @@
 | A-22（P1） | `the_real_controlled_service_rules_on_a_ruling_type_difference_in_packet_mode` | 返回 `finish_packet` + 「找不到剧本指定的题面行」 |
 | A-23 | `the_l2_note_does_not_call_a_page_without_an_image_covered` | note 真的是「every page in scope already had an image in this packet」 |
 | A-24 | §7.2 用例 + 把 node 从 PATH 移除 | 修复前 `1 passed`（恒绿）；修复后 `本机 PATH 里没有 node…` 失败 |
+| A-25（P1） | `a_replanned_packet_with_changed_difference_values_is_not_skipped_as_done` | 修复前只处理 3 包，期望 4 包；q14 的新 canonical 值仍被旧 ID 过滤 |
+| A-26（P1） | `packets_mode_sends_much_less_input_than_legacy_for_the_same_paper` | 修复前 packets **1191137 B** > legacy **917173 B**；压缩后 **226697 B**。PNG 单测另验证灰度缩放和彩色保持原样 |
 
 ### 4.2 突变检查（改坏 → 确认变红 → 还原）
 
@@ -127,10 +133,10 @@
 
 ## 5. 全量数字与基线对比
 
-| 门禁 | 基线（`f13c75a`） | 本分支（`a6c75a0`） | 变化 |
+| 门禁 | 基线（`f13c75a`） | 本分支最新复测 | 变化 |
 |---|---|---|---|
-| `cd src-tauri && cargo test --lib` | 1046 passed / 0 failed / 11 ignored | **1102 passed / 0 failed / 11 ignored** | 净 **+56** |
-| `npx vitest run` | 391 passed（28 文件里 1 个加载失败） | **392 passed**（同样 1 个文件加载失败） | 净 **+1** |
+| `cd src-tauri && cargo test --lib` | 1046 passed / 0 failed / 11 ignored | **1104 passed / 0 failed / 11 ignored** | 净 **+58** |
+| `npx vitest run` | 391 passed（28 文件里 1 个加载失败） | **392 passed**（27 suites passed，1 suite 因缺 `selenium-webdriver` 加载失败） | 净 **+1** |
 | `npx tsc --noEmit` | `exit 0` | **`exit 0`** | 无变化 |
 
 **已知基线失败（非本任务引入，两提交一致）**：
@@ -171,8 +177,10 @@
 | A-22 | P1 | **fixed（链路级未执行）** | `84325a1`。包模式剧本能裁定了；但步骤 11b 仍差一半，见 §7 |
 | A-23 | P2 | **fixed** | `4a578c5` |
 | A-24 | P2 | **fixed** | `c264ada` |
+| A-25 | P1 | **fixed** | `1df51b7`。完整差异内容进入 packet ID；集成用例先红后绿，确认重切后的 q14 新值重新排队 |
+| A-26 | P1 | **fixed** | `1df51b7`。近灰度包页图转灰度并缩至最长边 600 px；真实 HTTP 两模式对比回到显著低于 legacy |
 
-**合计**：fixed 21 条（其中 A-18 / A-22 的实机判定未执行）、未修 1 条（A-2，越界）、不改但写明口径 1 条（A-10）。
+**合计**：fixed 23 条（其中 A-18 / A-22 的实机判定未执行）、未修 1 条（A-2，越界）、不改但写明口径 1 条（A-10）。A-5 已写入 CDP 步骤，但实机仍未执行。
 
 ---
 
@@ -206,7 +214,6 @@
 
 ### 7.4 仍未证实（写了原因，不算发现）
 
-- **`packetId` 不含内容指纹，重切后可能命中 `done_packets` 而被跳过**。id 只由「本地题组 + 差异键 + 阻断问题 id + 是否文档包」派生，而差异键 `(targetType, targetId, field)` 在**值变化时不变**。构造「键不变而值变、且该包已在 `done_packets` 里」需要一次真实 `apply_edits` 造成候选侧值变化——两轮都没稳定复现。**如果成立，后果是「重切后漏核」，属 P0 级**；它没有被证伪，只是没有被证实。
 - **`crop_page_image` 的 `bottom-left` 分支可达**。`bbox` 由 `pdf_ingest/coordinates.rs:137-155 display_rect` 产出、`origin` 恒为 `"top-left"`，`bottom-left` 只出现在 `nativeBBox`，而 `collect_bboxes` / `crop_page_image` 只读 `bbox`。没找到可达输入。
 
 ---
@@ -221,10 +228,10 @@
 
 **要记录什么**（全部从 `llm-calls.jsonl` 与 `repair_json` 的诊断区读，不要靠日志猜）：
 1. **逐包级别序列**（`packetId` + `escalationLevel`）：确认没有包一步跳到 L3/L4；
-2. **`requestBytes` / `estimatedInputTokens` 逐包合计**，与 legacy 同卷对比，确认倍数关系在本机复现（参考值 10.95×）；
+2. **`requestBytes` / `estimatedInputTokens` 逐包合计**，与 legacy 同卷对比；本机有整页 PNG 时当前参考值约为 **4.05×**，其他页图产物与环境需重新测量；
 3. **是否主动调用 `report_insufficient_context`**，以及它点名的页是不是真的不在包里——这是「回退真的在传内容」的唯一硬证据；
 4. **收敛**：总轮数、是否撞上 `PACKET_MAX_ROUNDS`、终态是 `completed` / `needs_attention` / `budget_exhausted`（三态必须分开看，`needs_attention` 不等于失败）；
-5. **重点观察 §7.4 的那条未证实项**：一次真实 `apply_edits` 之后，重切出的包 id 有没有因为「差异键不变」而落在 `done_packets` 里被跳过。做法是在 `plan_repair_packets` 的过滤处临时打印 `done_packets` 与 `next` 的 id 集合做差，比对「差异仍存在但包不再排队」的包。
+5. **重点观察重切语义**：代码回归已覆盖「已完成包中的差异值被其他包改动」这一情形；真实模型验收时仍记录包 ID、重切结果与剩余任务，确认实际裁定和重排行为一致。
 
 **通过标准**：裁定质量不降（对照人工确认的 golden 标注）、每次「上下文不足」都有 `packetId` + 页号 + 理由码可解释、总输入量显著低于 legacy。
 
