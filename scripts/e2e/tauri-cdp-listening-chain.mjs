@@ -458,12 +458,124 @@ function plannedTextValue(slot) {
   return "one";
 }
 
+/**
+ * 共享选项库（`unordered_set`）作答面。
+ *
+ * `<fieldset class="v2-shared-selection">` 里的 checkbox **没有 `name` 属性**
+ * （ExamCanvas 只给 `value={option.label}`），所以按 `input[name="qN"]` 找槽位的写法
+ * 永远看不到它——9 个槽会被误读成「产品渲染不出控件」。
+ *
+ * 产品把这一组的勾选按顺序摊到各槽上（`onChange` 里 `response.slotIds.forEach(...)`），
+ * 所以「勾 N 个选项」就等于「一轮填满 N 个槽」，真实用户也是这样一次勾完的。
+ * 断言只用产品自己的 `v2-slot-chip[data-question-id]`，不读脚本内部的账。
+ */
+function sharedSelectionExpr(fieldsetIndex) {
+  return `(() => {
+    const fieldset = document.querySelectorAll('.v2-shared-selection')[${fieldsetIndex}] ?? null;
+    if (!fieldset) return null;
+    return {
+      slots: [...fieldset.querySelectorAll('.v2-slot-chip')].map((chip) => {
+        const text = chip.textContent || '';
+        const separator = text.indexOf(':');
+        return {
+          slotId: chip.getAttribute('data-question-id'),
+          value: separator >= 0 ? text.slice(separator + 1).trim() : '',
+        };
+      }),
+      options: [...fieldset.querySelectorAll('input[type="checkbox"]')].map((el, index) => ({
+        index,
+        value: el.value,
+        checked: el.checked,
+        disabled: el.disabled,
+      })),
+    };
+  })()`;
+}
+
+function sharedSelectionOptionExpr(fieldsetIndex, optionIndex) {
+  return `(() => {
+    const fieldset = document.querySelectorAll('.v2-shared-selection')[${fieldsetIndex}] ?? null;
+    if (!fieldset) return null;
+    return [...fieldset.querySelectorAll('input[type="checkbox"]')][${optionIndex}] ?? null;
+  })()`;
+}
+
+/** 把当前页上每一组共享选项库都勾满；填不满就抛错，绝不静默放过。 */
+async function fillSharedSelections(actions) {
+  const groupCount = await session
+    .evaluate(`document.querySelectorAll('.v2-shared-selection').length`)
+    .catch(() => 0);
+  for (let fieldsetIndex = 0; fieldsetIndex < groupCount; fieldsetIndex += 1) {
+    const slotIds = [];
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      const state = await session.evaluate(sharedSelectionExpr(fieldsetIndex)).catch(() => null);
+      if (!state) break;
+      if (attempt === 0) slotIds.push(...state.slots.map((slot) => slot.slotId));
+      const unfilled = state.slots.filter((slot) => !slot.value || slot.value === "—");
+      if (unfilled.length === 0) break;
+      const next = state.options.find((option) => !option.checked && !option.disabled);
+      if (!next) break;
+      const box = await clickSlotControl(sharedSelectionOptionExpr(fieldsetIndex, next.index));
+      actions.push({
+        slotId: state.slots.map((slot) => slot.slotId).join("+"),
+        kind: "shared-option",
+        label: next.value,
+        text: box.text,
+      });
+      await sleep(150);
+    }
+    const settled = await session.evaluate(sharedSelectionExpr(fieldsetIndex)).catch(() => null);
+    if (!settled) continue;
+    const unfilled = settled.slots.filter((slot) => !slot.value || slot.value === "—");
+    if (unfilled.length) {
+      throw new Error(
+        `共享选项库第 ${fieldsetIndex + 1} 组（${slotIds.join(", ")}）仍有 ${unfilled.length} 个槽没填满：`
+        + unfilled.map((slot) => slot.slotId).join(", "),
+      );
+    }
+    actions.push({
+      slotId: slotIds.join("+"),
+      kind: "shared-filled",
+      value: settled.slots.map((slot) => `${slot.slotId}=${slot.value}`).join(","),
+    });
+  }
+}
+
+/**
+ * 用户遇到「保存失败 / 冲突」时会点的那个按钮。
+ *
+ * 实测（2026-09-24，11:25 那次运行）：识别收尾阶段后端仍会改写权威稿
+ * （`editVersion` 7→8→9），用户答题期间的保存会撞上版本冲突，界面如实报
+ * 「保存失败，请重试」并给出 `workspace-save-retry`。此时**本地修改仍在编辑器里**
+ * （截图 08b 可见 38/39/40 的输入框里已有值），但权威稿还没有它们——
+ * 所以脚本必须像用户那样**重试保存**，而不是重新打字（重打同一个值不会让
+ * 受控输入变脏，反而永远不会触发保存）。
+ */
+async function retrySaveIfOffered() {
+  const offered = await session
+    .evaluate(`!!document.querySelector('[data-testid="workspace-save-retry"]')`)
+    .catch(() => false);
+  if (!offered) return false;
+  await session.clickSelectorWhenStable('[data-testid="workspace-save-retry"]', { timeoutMs: 15000 });
+  const deadline = Date.now() + 60000;
+  while (Date.now() < deadline) {
+    const stillThere = await session
+      .evaluate(`!!document.querySelector('[data-testid="workspace-save-retry"]')`)
+      .catch(() => true);
+    if (!stillThere) return true;
+    await sleep(1000);
+  }
+  return false;
+}
+
 async function fillAnswersThroughUi({ plannedBySlot, ordinals, timeoutMs = 90000 }) {
   const deadline = Date.now() + timeoutMs;
   const actions = [];
   for (const ordinal of ordinals) {
     await session.clickSelectorWhenStable(`.listening-part-nav > button:nth-of-type(${ordinal})`);
     await sleep(250);
+    // 共享选项库先勾满：它的 checkbox 不带 name，下面的逐槽循环找不到它。
+    await fillSharedSelections(actions);
     for (const [slotId, plan] of plannedBySlot) {
       if (Date.now() > deadline) break;
       const state = await session.evaluate(slotControlExpr(slotId)).catch(() => null);
@@ -619,6 +731,75 @@ async function main() {
     return { itemIds: rows };
   });
 
+  // ── 第 6b 步：等 4 个 Part 的音频**全部**落库 ────────────────────────────
+  //
+  // 「条目建好了」不等于「音频绑好了」：`importFiles` 是「先建条目、再逐个 Part
+  // 调 bind_listening_audio」。它把每个 Part 的失败收进 `rejected`，而 `rejected`
+  // 只显示在**导入抽屉自己的 state** 里——抽屉在 `onImport` 时就被卸载了，于是
+  // 绑定失败在界面上**静默消失**，用户只看到「已建立 1 个题目」。
+  // 实测（2026-09-24）两次运行各丢 1 个 Part（一次 part-4、一次 part-2），
+  // 界面与抽屉都没有报错。这里把「4 个都绑上」变成一条**确定的期望值**断言，
+  // 失败时把应用输出与绑定实况一起写进报告，不留给下一跳去猜。
+  await recorder.run("all-four-part-audio-bindings-are-persisted", async () => {
+    const deadline = Date.now() + 30000;
+    let status = null;
+    let failure = null;
+    // 第一次往返的**原始信封**留证：这个命令读不到东西时，「库里没有」与「读错了层级」
+    // 是两种完全不同的结论，报告里必须能分辨。
+    let firstReply = null;
+    while (Date.now() < deadline) {
+      const reply = await call("get_listening_audio", { itemId, verify: false }).catch((error) => ({
+        ok: false,
+        error: String(error?.message ?? error),
+      }));
+      if (firstReply === null) firstReply = JSON.stringify(reply)?.slice(0, 1200) ?? "(undefined)";
+      if (!reply?.ok) {
+        failure = reply?.error ?? "(no reply)";
+      } else {
+        failure = null;
+        status = reply.value;
+        if (Array.isArray(status?.bindings) && status.bindings.length === EXPECTED_PARTS) break;
+      }
+      await sleep(1000);
+    }
+    const bindings = (status?.bindings ?? []).map((binding) => ({
+      partOrdinal: binding.partOrdinal,
+      sha256: binding.sha256,
+      originalName: binding.originalName,
+      playable: binding.playable,
+    }));
+    const ordinals = bindings.map((binding) => binding.partOrdinal).sort((a, b) => a - b);
+    const expectedOrdinals = Array.from({ length: EXPECTED_PARTS }, (_, index) => index + 1);
+    const problems = [];
+    if (failure) problems.push(`get_listening_audio 调用失败：${failure}`);
+    if (JSON.stringify(ordinals) !== JSON.stringify(expectedOrdinals)) {
+      problems.push(`已绑定的 Part 序号应为 ${JSON.stringify(expectedOrdinals)}，实际 ${JSON.stringify(ordinals)}`);
+    }
+    for (const binding of bindings) {
+      const want = expectedShaByPart[`part-${binding.partOrdinal}`];
+      if (want && binding.sha256 !== want) {
+        problems.push(`part-${binding.partOrdinal} 的 sha256 应为 ${want}，实际 ${binding.sha256}`);
+      }
+      if (!binding.playable) problems.push(`part-${binding.partOrdinal} 的探针没通过`);
+    }
+    report.postChecks.push({
+      name: "audio-bindings",
+      problems,
+      audioReady: status?.audioReady ?? null,
+      blockers: status?.blockers ?? null,
+      firstReply,
+      bindings,
+      appOutputTail: String(session.appOutput?.() ?? "").slice(-4000) || null,
+    });
+    if (problems.length) {
+      throw new Error(
+        `导入后 4 个 Part 的音频没有全部落库：${problems.join("；")}；`
+        + `audioReady=${JSON.stringify(status?.audioReady)} blockers=${JSON.stringify(status?.blockers)}`,
+      );
+    }
+    return { bindings, audioReady: status.audioReady };
+  });
+
   // ── 第 7 步：等识别真的结束，再断言草稿结构 ─────────────────────────────
   //
   // 这一步是 F1 的核心。旧版在这里就去点发布，于是「识别还没跑完」被当成
@@ -741,18 +922,33 @@ async function main() {
     }
 
     const actions = [];
-    // 逐 Part 视图填；共享选择（unordered_set）一轮只落一个槽，所以最多跑 3 轮。
-    for (let pass = 0; pass < 3; pass += 1) {
+    const saveRetries = [];
+    // 逐 Part 视图填；共享选择（unordered_set）一轮只落一个槽，所以最多跑 4 轮。
+    for (let pass = 0; pass < 4; pass += 1) {
       const remaining = readDraftShape((await readWorkspace()).ds).unresolved;
       if (remaining.length === 0) break;
       const planned = new Map([...plannedBySlot].filter(([slotId]) => remaining.includes(slotId)));
       actions.push(...await fillAnswersThroughUi({ plannedBySlot: planned, ordinals: [1, 2, 3, 4] }));
       // 编辑器是防抖保存的：等这一轮的写入落库再决定要不要再来一轮。
       const settleDeadline = Date.now() + 30000;
+      let progressed = false;
       while (Date.now() < settleDeadline) {
         const now = readDraftShape((await readWorkspace()).ds);
-        if (now.unresolved.length === 0 || now.answeredCount > before.answeredCount) break;
+        if (now.unresolved.length === 0 || now.answeredCount > before.answeredCount) { progressed = true; break; }
         await sleep(1000);
+      }
+      // 这一轮的修改没有落库：先看是不是保存失败/冲突（用户会点「重试保存」）。
+      if (!progressed) {
+        const retried = await retrySaveIfOffered();
+        saveRetries.push({ pass, retried });
+        if (retried) {
+          const afterRetry = Date.now() + 30000;
+          while (Date.now() < afterRetry) {
+            const now = readDraftShape((await readWorkspace()).ds);
+            if (now.unresolved.length === 0 || now.answeredCount > before.answeredCount) break;
+            await sleep(1000);
+          }
+        }
       }
     }
 
@@ -768,6 +964,7 @@ async function main() {
       name: "answer-fill",
       before: { slots: before.slotCount, unanswered: before.unresolved.length },
       after: { slots: after.slotCount, answered: after.answeredCount, unanswered: after.unresolved.length },
+      saveRetries,
       actions,
     });
     if (after.unresolved.length !== 0) {
@@ -898,6 +1095,9 @@ try {
   // 所以 main() 可能正常返回而某一步其实是红的 —— 只有从 steps 派生才不会写出
   // 「verdict=passed 却带着一条 failed」的自相矛盾报告。
   const baseVerdict = report.cannotRun ? "cannot-run" : failedSteps.length ? "failed" : "passed";
+  // 应用自身输出（stdout+stderr）是后端失败唯一的第一手证据，无条件落盘。
+  // 只在 cannot-run 分支写会丢掉「跑完了但后端报错」的那一半。
+  report.appOutput = session?.appOutput?.() ?? null;
   // 断线重连必须可见（F3）：默认「发生过重连就不算干净通过」，要接受得显式声明。
   report.cdpReattaches = summarizeReattaches(session, { acceptReattaches });
   const reattach = applyReattachPolicy(baseVerdict, report.cdpReattaches.entries, { acceptReattaches });

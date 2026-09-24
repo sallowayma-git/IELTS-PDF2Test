@@ -483,11 +483,26 @@ function dumpDb(outPath, label, { required = true } = {}) {
     cwd: repoRoot,
     encoding: "utf8",
   });
-  report[`db${label}`] = { path: outPath, status: result.status, stdout: String(result.stdout ?? "").trim(), stderr: String(result.stderr ?? "").trim() };
+  // `status === null` 不是「脚本退出码非零」，而是**进程根本没起来**（`spawnSync` 失败）。
+  // 两者的处置完全不同：前者是脚本或数据库的问题，后者是**运行环境**的问题。以前只记
+  // `status`，报告里就写「退出码 null」，读者只能猜，而且长得像产品缺陷 —— 实测在受限
+  // 环境里 `spawnSync` 会以 `EBUSY` 失败（连 `cmd.exe /c echo` 都起不来），却被记成
+  // 「取权威稿快照失败」。把真正的错误记下来，别让环境问题伪装成产品问题。
+  const spawnError = result.error ? String(result.error.message ?? result.error) : null;
+  report[`db${label}`] = {
+    path: outPath,
+    status: result.status,
+    spawnError,
+    interpreter: PYTHON,
+    stdout: String(result.stdout ?? "").trim(),
+    stderr: String(result.stderr ?? "").trim(),
+  };
   if (result.status !== 0) {
     if (required) {
       throw new ChainFailure(
-        `取权威稿快照失败（${label}）：dump-authoring-db.py 退出码 ${result.status}`,
+        spawnError
+          ? `取权威稿快照失败（${label}）：解释器没能启动（${spawnError}）。这是**运行环境**问题，不是产品缺陷。`
+          : `取权威稿快照失败（${label}）：dump-authoring-db.py 退出码 ${result.status}`,
         report[`db${label}`],
       );
     }
