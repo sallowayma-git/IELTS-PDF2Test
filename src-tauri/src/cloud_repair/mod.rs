@@ -605,10 +605,21 @@ fn describe_difference(difference: &Value) -> String {
 ///
 /// 边界（刻意如此）：被模型**改掉**（而非裁定掉）的差异不再出现在候选差异里，因此
 /// 不计入这里——它已经计入 `appliedCount`（「已自动修正 N 处」）。两个数字不重叠。
+///
+/// 第二条边界：理由码为 [`CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT`] 的裁定**不算**。
+/// 那一条的语义是「云端根本没拿到材料，这条差异没被核对过」——它确实会进用户清单
+/// （见 `remaining_tasks` 里 `contextInsufficient` 那一支），但把它同时算进「云端替用户
+/// 了结了多少争议」，用户就会一边看到「已了结 1 处差异」，一边看到「云端没能拿到足够的
+/// 原文来判断第 14-15 题」。TASK §2 的「上下文不足不得算作已核对」正是拦这个。
 fn effective_adjudicated_count(canonical: &Value, candidate: &Value, rulings: &[Value]) -> usize {
     candidate_differences(canonical, candidate)
         .iter()
-        .filter(|difference| fresh_ruling_for_difference(rulings, difference).is_some())
+        .filter(|difference| {
+            fresh_ruling_for_difference(rulings, difference).is_some_and(|ruling| {
+                ruling.get("reason").and_then(Value::as_str)
+                    != Some(crate::schema::cloud_repair_v1::CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT)
+            })
+        })
         .map(difference_key)
         .collect::<BTreeSet<_>>()
         .len()

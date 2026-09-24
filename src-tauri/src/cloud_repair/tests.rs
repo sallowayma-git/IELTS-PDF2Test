@@ -2416,6 +2416,29 @@ fn adjudicated_count_only_counts_rulings_that_still_hold() {
         0,
         "已失效的裁定不能计入「了结了多少争议」"
     );
+
+    // 「查过但定不了论」（`cannot_resolve`，理由不是 `CONTEXT_INSUFFICIENT`）仍然算一条：
+    // 云端确实看过材料并给出了结论，这条争议有了着落。
+    let mut cannot_resolve = ruling(&canonical_digest, &candidate_digest, &context_digest);
+    cannot_resolve["ruling"] = json!(crate::schema::cloud_repair_v1::CLOUD_RULING_CANNOT_RESOLVE);
+    cannot_resolve["reason"] = json!("原文件这一段本身自相矛盾，无法定论");
+    assert_eq!(
+        effective_adjudicated_count(&canonical, &candidate, &[cannot_resolve]),
+        1,
+        "「查过但定不了论」是云端给出的结论，要算进了结"
+    );
+
+    // 「上下文不足」不算：云端根本没拿到材料，这条差异**没有**被核对过。
+    // 三态不坍缩（not_executed / insufficient_context / passed）靠的就是这一条。
+    let mut insufficient = ruling(&canonical_digest, &candidate_digest, &context_digest);
+    insufficient["ruling"] = json!(crate::schema::cloud_repair_v1::CLOUD_RULING_CANNOT_RESOLVE);
+    insufficient["reason"] =
+        json!(crate::schema::cloud_repair_v1::CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT);
+    assert_eq!(
+        effective_adjudicated_count(&canonical, &candidate, &[insufficient]),
+        0,
+        "上下文不足不是裁定：算成已了结就是假完成"
+    );
 }
 
 /// 裁定必须绑定**它依赖的内容**，而不只是差异两侧的字面值。
@@ -3718,6 +3741,13 @@ fn a_packet_that_never_gets_enough_context_hands_the_difference_to_the_user_hone
 
     // 原稿一字未改：没有材料就不许猜。
     assert_eq!(read_answer(&root, "q14")["labels"], json!(["B"]));
+    // 「上下文不足」不是裁定：云端根本没拿到材料，争议还在用户手上。把它算进
+    // 「已了结」就是假完成 —— TASK §2 明写「上下文不足不得算作已核对」。
+    assert_eq!(
+        report.adjudicated_count, 0,
+        "上下文不足不得被算成「已了结」：report={:#?}",
+        report.packets
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
