@@ -3481,6 +3481,10 @@ fn a_packet_carries_only_its_own_scope_and_the_differences_inside_it() {
         .map(|items| items.iter().filter_map(|page| page.get("pageIndex").and_then(Value::as_u64)).collect())
         .unwrap_or_default();
     assert!(
+        !included.is_empty(),
+        "包里一页证据都没有时 `all(...)` 是空真，证明不了「范围自足」：{packet:#?}"
+    );
+    assert!(
         included.iter().all(|page| scope.contains(page)),
         "包里有范围外的页：scope={scope:?} included={included:?}"
     );
@@ -4070,9 +4074,16 @@ fn packets_mode_requests_carry_no_whole_pdf_and_the_fetched_page_reaches_the_mod
     );
     // ② 模型确实看到了「这是一个包」与包里要核的差异。
     assert!(seen[0].contains("RepairPacketV1"), "请求必须带上包本身");
+    // 只断言工具名是**恒真**的：工具清单无条件拼在 prompt 里，模型即使没被告知这条
+    // 出口也能通过。要断言的是「不够就说」这条出口的**说明**确实在，且写明不许猜。
     assert!(
-        seen[0].contains("report_insufficient_context"),
-        "prompt 必须告诉模型「不够就说」这条出口"
+        seen[0].contains("call `report_insufficient_context` with the exact pages"),
+        "prompt 必须告诉模型「不够就说」这条出口怎么用：{}",
+        &seen[0][..seen[0].len().min(600)]
+    );
+    assert!(
+        seen[0].contains("do NOT guess"),
+        "prompt 必须写明「上下文不够时不许猜」"
     );
     // ③ 第一轮里没有答案页那一行；第二轮里必须有（回退真的在传内容）。
     assert!(!seen[0].contains("14 A"), "第一轮不该凭空出现答案页内容");
@@ -4130,6 +4141,161 @@ fn packets_mode_requests_carry_no_whole_pdf_and_the_fetched_page_reaches_the_mod
     // 这个问题的答案。
     assert_eq!(packet_records[0]["escalationLevel"], json!(0), "{:#?}", packet_records[0]);
     assert_eq!(packet_records[1]["escalationLevel"], json!(1), "{:#?}", packet_records[1]);
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 给 `seed_packet_job` 的作业补一份**视觉缓存**（页图 + `pdf-images.json`）。
+///
+/// `grab::load_source_index` 只认这一个产物；没有它 `source.page_images` 是空的，
+/// 「区域图到底附没附上」就无从断言 —— A-15 / A-16 的覆盖缺口正在这里。
+fn seed_page_images(root: &Path, pages: &[u32]) {
+    let directory = crate::util::job_dir(root, ITEM_ID)
+        .join("cache")
+        .join("vision");
+    std::fs::create_dir_all(&directory).expect("vision 目录");
+    let mut entries = Vec::new();
+    for page in pages {
+        let path = directory.join(format!("page-{page}.png"));
+        let file = std::fs::File::create(&path).expect("页图文件");
+        let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), 595, 842);
+        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().expect("PNG 头");
+        writer
+            .write_image_data(&vec![255u8; 595 * 842 * 3])
+            .expect("PNG 数据");
+        writer.finish().expect("PNG 收尾");
+        entries.push(json!({
+            "pageIndex": page,
+            "width": 595.0,
+            "height": 842.0,
+            "images": [{"path": path.to_string_lossy(), "mimeType": "image/png"}]
+        }));
+    }
+    crate::util::write_json(&directory.join("pdf-images.json"), &json!({"pages": entries}))
+        .expect("视觉缓存");
+}
+
+/// 从捕获到的原始 HTTP 请求里取出「模型真正看到的输入 JSON」。
+///
+/// 对原始文本直接 `contains("\"regions\":")` 是**转义盲**的：prompt 里的 JSON 在请求体里
+/// 是 `\"regions\":`，而 prompt 的说明文字里又原样出现了 `regions[]` 这个词。两者都会
+/// 让「包里到底有没有区域图」这类断言变成恒真——A-14 那条就是同一个坑。
+fn request_input_json(raw: &str) -> Value {
+    let start = raw.find("{\"max_tokens").expect("请求体必须是 JSON");
+    let body: Value = serde_json::from_str(&raw[start..]).expect("请求体必须是合法 JSON");
+    let text = body["messages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find_map(|message| {
+            message["content"].as_array().and_then(|parts| {
+                parts.iter().find_map(|part| {
+                    part["text"]
+                        .as_str()
+                        .filter(|text| text.contains("Input JSON: "))
+                })
+            })
+        })
+        .expect("prompt 文本块必须存在");
+    let marker = "Input JSON: ";
+    let index = text.rfind(marker).expect("prompt 必须带输入 JSON") + marker.len();
+    serde_json::from_str(&text[index..]).expect("输入 JSON 必须合法")
+}
+
+/// 包模式真的会把区域图附上，并且**本机绝对路径绝不进 prompt**
+/// （审计发现 A-15 / A-16）。
+///
+/// 两件事都只在网关层看得见：① `sourceEvidence.regions` 非空且带图（§5.5 要求
+/// 「只有范围内页文本与**区域图**」）；② `strip_packet_image_paths` 把路径换成
+/// `imageAttached` —— 路径进 prompt 既无用又泄露目录结构。这条实现点原来零测试引用。
+#[test]
+fn packets_mode_attaches_the_region_image_and_keeps_local_paths_out_of_the_prompt() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+    seed_packet_job(&root);
+    seed_page_images(&root, &[1, 2, 3]);
+
+    let (base_url, requests) = spawn_scripted_repair_service_with(scripted_packet_reply);
+    crate::llm_profiles::save_profiles(
+        &root,
+        &[json!({
+            "profileId": "controlled-repair",
+            "name": "Controlled Repair Service",
+            "provider": "OpenAiCompatible",
+            "baseUrl": base_url,
+            "model": "controlled-repair-v1",
+            "temperature": 0,
+            "timeoutMs": 60000,
+            "forceJson": true,
+            "enabled": true
+        })],
+    )
+    .expect("profile 必须能落盘");
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    run_packets(&request, |context: &Value, observations: &[Value]| {
+        repair_authoring_step_through_gateway(
+            &root,
+            ITEM_ID,
+            Some("controlled-repair"),
+            context,
+            observations,
+        )
+    })
+    .expect("包模式循环必须跑完");
+
+    let seen = requests.lock().expect("requests");
+    let input = request_input_json(&seen[0]);
+    let regions = input
+        .pointer("/context/sourceEvidence/regions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !regions.is_empty(),
+        "§5.5 要求包里有范围内的区域图，实际一条都没有：{input:#?}"
+    );
+    assert!(
+        regions
+            .iter()
+            .any(|region| region["imageAttached"] == json!(true)),
+        "区域图必须真的附上（`imageAttached`）：{regions:#?}"
+    );
+    // 附图本身必须在请求里（图片部分），不能只写一句「已附」。
+    assert!(
+        seen[0].contains("image_url"),
+        "区域图必须作为图片部分附上，而不是只在文本里声称"
+    );
+    let job_dir = crate::util::job_dir(&root, ITEM_ID)
+        .to_string_lossy()
+        .to_string();
+    assert!(
+        !seen[0].contains(&job_dir),
+        "本机绝对路径不得进 prompt（既无用又泄露目录结构）：{}",
+        &seen[0][..seen[0].len().min(600)]
+    );
+    drop(seen);
+
+    let records: Vec<Value> = std::fs::read_to_string(
+        crate::util::job_dir(&root, ITEM_ID).join("llm-calls.jsonl"),
+    )
+    .expect("网关必须留下 llm-calls.jsonl")
+    .lines()
+    .filter_map(|line| serde_json::from_str(line).ok())
+    .collect();
+    let first = records
+        .iter()
+        .find(|record| record["commandName"] == json!("repair_authoring_step"))
+        .expect("至少一条修复调用记录");
+    assert!(
+        first["imageCount"].as_u64().unwrap_or(0) >= 1,
+        "调用记录必须数得出附图张数：{first:#?}"
+    );
 
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -4311,6 +4477,77 @@ fn an_over_budget_packet_drops_the_fewest_images_and_corrects_the_escalation_not
     assert!(
         note.contains("dropped"),
         "预算把图清掉之后，L2 的 note 必须改口，不能继续说「已附整页图」：{note}"
+    );
+}
+
+/// 图全丢完了还是超预算时，`budgetNote` 必须**如实说没得再退让**（审计发现 A-9）。
+///
+/// 单题组的正文既不裁也不拆（`packets.rs::plan_packets` 的拆分只按题组），所以这种情况
+/// 真的存在。静默超限会让「单包上限 24k」这句话变成一句没人核对的口号。
+#[test]
+fn a_packet_that_is_still_over_budget_says_it_cannot_concede_any_further() {
+    // 12 万字符 ≈ 30000 token，加 1 张图 1200 ⇒ 31200。图丢光后仍有 30000 > 24000。
+    let mut packet = json!({
+        "contextMode": "packets",
+        "packetId": "pkt-over-budget",
+        "filler": "x".repeat(120_000),
+        "scopeManifest": {},
+        "sourceEvidence": {
+            "regions": [
+                {"pageIndex": 1, "bbox": Value::Null, "image": "whole-1.png"},
+            ]
+        }
+    });
+    let estimate = packet_token_estimate(&packet);
+    assert!(
+        estimate > super::packets::PACKET_TOKEN_BUDGET,
+        "夹具必须先真的超预算：{estimate}"
+    );
+
+    enforce_packet_budget(&mut packet);
+
+    assert_eq!(
+        packet["sourceEvidence"]["regions"].as_array().map(Vec::len),
+        Some(0),
+        "图该丢光：{:#?}",
+        packet["sourceEvidence"]["regions"]
+    );
+    let note = packet["budgetNote"].as_str().unwrap_or_default();
+    assert!(
+        note.contains("still not enough"),
+        "丢光之后仍超预算时必须明说没得再退让，不能只写「丢了 N 张」：{note}"
+    );
+    assert!(
+        packet_token_estimate(&packet) > super::packets::PACKET_TOKEN_BUDGET,
+        "这条用例的前提就是「丢光也还超」，夹具本身不能自相矛盾"
+    );
+}
+
+/// 文档包（`task_ids` 为空）里的 `read_draft` **永远**被拒（审计发现 A-11）。
+///
+/// 这是**有意**的：文档包没有属于它的稿件切片，`draftSlice` 本身也是空的。把它固定成
+/// 测试，是为了让「文档包读不到稿」是一个决定，而不是一个没人注意的副作用。
+#[test]
+fn a_document_packet_never_hands_out_a_draft_slice() {
+    let source = super::packets::SourcePageIndex::default();
+    let mut budget = super::grab::GrabBudget::new();
+    let tools = super::PacketTools {
+        source: &source,
+        budget: &mut budget,
+        task_ids: std::collections::BTreeSet::new(),
+        question_numbers: Vec::new(),
+    };
+    let error = tools.scope_error(&[], &[]).expect("空选择器必须被拒");
+    assert!(
+        error.starts_with("CLOUD_DRAFT_SCOPE_REQUIRED"),
+        "文档包里没有可读的稿件切片，必须明说而不是返回整卷：{error}"
+    );
+    let error = tools
+        .scope_error(&["early-approaches-q14-15".to_string()], &[14])
+        .expect("不在包内的题组必须被拒");
+    assert!(
+        error.starts_with("CLOUD_DRAFT_OUTSIDE_PACKET"),
+        "文档包不含任何题组，带选择器也只能拿到「不在包内」：{error}"
     );
 }
 

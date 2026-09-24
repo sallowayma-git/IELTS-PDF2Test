@@ -34,6 +34,13 @@ use crate::reconcile::candidate::{expand_question_numbers, nodes_text, normalize
 /// 包上下文的粗略预算（估算 token）。超出时按 responseGroup 拆包。
 pub(crate) const PACKET_TOKEN_BUDGET: usize = 24_000;
 /// 字符 → token 的粗估系数。
+///
+/// **口径已知偏乐观，刻意不改**（审计发现 A-10）：`chars / 4` 对英文大致成立，
+/// 但中文约 1 token ≈ 1–1.5 字符，会被低估 3–4 倍。题面与说明里中文不少，所以
+/// `estimatedInputTokens` 偏小、`enforce_packet_budget` 的触发点比真实值晚。
+/// 不改的理由：这个数只用于**包内预算**与对外对账，不参与任何正确性判断；把它调大
+/// 会同时移动 §6 的对比基线，而收益只是「更早一点丢图」。真正的上限由
+/// `PACKET_TOKEN_BUDGET` 与逐包记录共同兜住。读这个数时按「乐观下界」理解。
 pub(crate) const PACKET_CHARS_PER_TOKEN: usize = 4;
 /// 一张图按固定值估算（区域图与整页图同量级，宁可高估）。
 pub(crate) const PACKET_IMAGE_TOKENS: usize = 1_200;
@@ -667,10 +674,36 @@ fn paper_map(
             if tags.is_empty() {
                 tags.push("passage".to_string());
             }
-            json!({"page": page, "has": tags})
+            json!({
+                "page": page,
+                "has": tags,
+                "paragraphLabels": paragraph_labels_on_page(source, page),
+            })
         })
         .collect();
     json!({"taskGroups": groups, "pages": pages})
+}
+
+/// 这一页上**看起来像段落标号**的行首字母（`C` / `C.`）。
+///
+/// 判据刻意与 [`super::grab::read_passage`] 的标签匹配保持一致：模型据 `paperMap`
+/// 知道「这一页有 C 段」，再用 `read_passage {"paragraphLabels":["C"]}` 就一定取得到。
+/// 两边判据不同才是真正危险的事——`paperMap` 说有、工具说没有，模型只会乱猜。
+fn paragraph_labels_on_page(source: &SourcePageIndex, page: u32) -> Vec<String> {
+    let mut labels: BTreeSet<String> = BTreeSet::new();
+    for line in source.lines.get(&page).into_iter().flatten() {
+        let head: String = line
+            .text
+            .trim_start()
+            .to_ascii_uppercase()
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric())
+            .collect();
+        if head.len() == 1 && head.chars().all(|ch| ch.is_ascii_uppercase()) {
+            labels.insert(head);
+        }
+    }
+    labels.into_iter().collect()
 }
 
 /// 一个包的内部形态（用于拆包与预算判断）。
@@ -825,6 +858,12 @@ pub(crate) fn plan_packets(input: &PacketPlanInput<'_>) -> Vec<Value> {
     }
     // 一条差异都没有时也要给模型**一次**机会：它可能读到原文件后发现「本地和候选都错了」，
     // 也可能留下疑问。这个包只带索引与诊断，不带任何稿件内容，代价很小。
+    //
+    // 注意（审计发现 A-11）：文档包 `task_ids` 是空的，因此 `read_draft` 在文档包里**永远
+    // 会被拒**（`mod.rs::scope_error`：空选择器 → `CLOUD_DRAFT_SCOPE_REQUIRED`）。这是有意
+    // 的——文档包没有「这个包内的稿件切片」可读，`draftSlice` 本身也是空的。想读稿的模型
+    // 必须用题号/题组 id 去 `read_draft`，而那会把目标落到真正拥有它的那个包上。
+    // 该行为由 `tests::a_document_packet_never_hands_out_a_draft_slice` 固定。
     if drafts.is_empty() {
         drafts.push(PacketDraft {
             task_ids: BTreeSet::new(),
@@ -1851,6 +1890,61 @@ mod tests {
             pages,
             vec![(1, true), (2, false), (3, true)],
             "缺 bbox 的那一页必须退成整页图，不能整组一起漏掉：{requests:#?}"
+        );
+    }
+
+    /// `paperMap` 必须告诉模型每一页有哪些段落标号（审计发现 A-8）。
+    ///
+    /// 判据要与 `read_passage` 的标签匹配一致：`paperMap` 说「这一页有 C」，
+    /// 用 `read_passage {"paragraphLabels":["C"]}` 就必须真的取得到。两边判据不同
+    /// 才是危险的事——`paperMap` 说有、工具说没有，模型只会乱猜。
+    #[test]
+    fn the_paper_map_names_the_paragraph_labels_on_each_page() {
+        let source = index_with_pages(&[
+            (
+                1,
+                &["The passage begins here.", "A First idea.", "B Second idea."],
+            ),
+            (2, &["Questions 14-15", "C Third idea."]),
+        ]);
+        let canonical = canonical_paper();
+        let index = GroupIndex::build(&canonical);
+        let map = paper_map(&canonical, &source, &index);
+        let labels_of = |page: u64| -> Vec<String> {
+            map["pages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["page"] == json!(page))
+                .and_then(|entry| entry["paragraphLabels"].as_array())
+                .map(|labels| {
+                    labels
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        assert_eq!(
+            labels_of(1),
+            vec!["A".to_string(), "B".to_string()],
+            "第 1 页有 A、B 两段：{map:#?}"
+        );
+        assert_eq!(labels_of(2), vec!["C".to_string()], "第 2 页只有 C 段：{map:#?}");
+
+        // 与工具判据一致：`paperMap` 报出来的标号必须真的能被 `read_passage` 取到。
+        let mut budget = crate::cloud_repair::grab::GrabBudget::new();
+        let found = crate::cloud_repair::grab::read_passage(
+            &source,
+            &json!({"paragraphLabels": ["C"]}),
+            &mut budget,
+        )
+        .expect("read_passage 必须能用标号定位");
+        assert_eq!(
+            found["paragraphs"][0]["lineId"],
+            json!("p2:l2"),
+            "`paperMap` 报了 C 段，工具就必须取得到：{found:#?}"
         );
     }
 

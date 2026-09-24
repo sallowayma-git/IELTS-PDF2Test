@@ -3358,16 +3358,29 @@ fn enforce_packet_budget(packet: &mut Value) {
     {
         *list = kept;
     }
+    let still_over = packet_token_estimate(packet) > packets::PACKET_TOKEN_BUDGET;
     if let Some(object) = packet.as_object_mut() {
-        object.insert(
-            "budgetNote".to_string(),
-            json!(format!(
+        let note = if still_over {
+            // 图全丢完了还是超预算：这时**没有**下一步退让可走。单题组的正文既不裁也不拆
+            // （`packets.rs::plan_packets` 的拆分只按题组），所以如实写清楚，而不是留一个
+            // 看起来已经退让到位的包。
+            format!(
+                "{must_drop} image(s) were dropped: the packet exceeded the {}-token budget. \
+                 Whole-page images go first, then region crops. Dropping every image was still \
+                 not enough — the text layer of one task group is never trimmed or split \
+                 further, so this packet goes out above the per-packet budget (still far below \
+                 the whole paper).",
+                packets::PACKET_TOKEN_BUDGET
+            )
+        } else {
+            format!(
                 "{must_drop} image(s) were dropped: the packet exceeded the {}-token \
                  budget. Whole-page images go first, then region crops. The text layer for \
                  the pages in scope is still below.",
                 packets::PACKET_TOKEN_BUDGET
-            )),
-        );
+            )
+        };
+        object.insert("budgetNote".to_string(), json!(note));
     }
 }
 
