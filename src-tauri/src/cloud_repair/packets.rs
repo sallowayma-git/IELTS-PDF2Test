@@ -839,18 +839,68 @@ pub(crate) fn plan_packets(input: &PacketPlanInput<'_>) -> Vec<Value> {
 
     // ── 5) 组装 ─────────────────────────────────────────────────────────
     split
-        .into_iter()
-        .enumerate()
-        .map(|(index, draft)| {
-            build_packet(
-                index + 1,
-                &draft,
-                input,
-                &canonical_index,
-                &candidate_index,
+        .iter()
+        .map(|draft| build_packet(draft, input, &canonical_index, &candidate_index))
+        .collect()
+}
+
+/// 包的稳定 id：由「本地题组 + 差异键 + 阻断问题 + 是否文档包」派生。
+///
+/// 为什么不能用序号：`apply_edits` 之后要**重切受影响的包**（任务书 §4.3），而序号会随
+/// 重排整体漂移——「哪些包已经做完」「哪条裁定属于哪个包」于是全部错位。用身份派生，
+/// 内容没变 id 就不变；内容变了才换 id，而那本来就该当成另一个包。
+fn packet_id_for(draft: &PacketDraft) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if draft.document_only {
+        parts.push("document".to_string());
+    }
+    if let Some(part_id) = &draft.part_id {
+        parts.push(format!("part:{part_id}"));
+    }
+    for task_id in &draft.task_ids {
+        parts.push(format!("task:{task_id}"));
+    }
+    let mut differences: Vec<String> = draft
+        .differences
+        .iter()
+        .map(|difference| {
+            format!(
+                "{}:{}:{}",
+                difference.get("targetType").and_then(Value::as_str).unwrap_or(""),
+                difference.get("targetId").and_then(Value::as_str).unwrap_or(""),
+                difference.get("field").and_then(Value::as_str).unwrap_or(""),
             )
         })
-        .collect()
+        .collect();
+    differences.sort();
+    differences.dedup();
+    parts.extend(differences.into_iter().map(|key| format!("diff:{key}")));
+    let mut issues: Vec<String> = draft
+        .blocking_issues
+        .iter()
+        .map(|issue| {
+            issue
+                .get("issueId")
+                .or_else(|| issue.get("code"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string()
+        })
+        .collect();
+    issues.sort();
+    issues.dedup();
+    parts.extend(issues.into_iter().map(|key| format!("issue:{key}")));
+    format!("pkt-{:08x}", fnv1a(&parts.join("|")))
+}
+
+/// FNV-1a。只为「同一份身份稳定给出同一个 id」，不需要抗碰撞强度。
+fn fnv1a(text: &str) -> u32 {
+    let mut hash: u32 = 0x811c_9dc5;
+    for byte in text.as_bytes() {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
 }
 
 /// 差异去重：合并后同一个题组可能被多个来源写进来同一条差异。
@@ -1033,13 +1083,12 @@ fn page_span(pages: &BTreeSet<u32>) -> Option<(u32, u32)> {
 
 /// 组装一个包的 JSON。
 fn build_packet(
-    index: usize,
     draft: &PacketDraft,
     input: &PacketPlanInput<'_>,
     canonical_index: &GroupIndex,
     candidate_index: &GroupIndex,
 ) -> Value {
-    let packet_id = format!("pkt-{index}");
+    let packet_id = packet_id_for(draft);
     let numbers = draft.numbers(canonical_index);
     let (pages, answer_pages_known) = scope_pages(draft, input, canonical_index, candidate_index);
     let needs_answer_pages = draft
@@ -1511,11 +1560,42 @@ mod tests {
             .iter()
             .filter_map(|packet| packet.get("packetId").and_then(Value::as_str))
             .collect();
-        assert_eq!(ids, vec!["pkt-1", "pkt-2"]);
+        assert_eq!(ids.len(), 2);
+        assert!(ids.iter().all(|id| id.starts_with("pkt-")), "{ids:?}");
+        assert_ne!(ids[0], ids[1], "不同内容必须有不同的包 id");
         for packet in &packets {
             let task_ids = packet["taskIds"].as_array().expect("taskIds");
             assert_eq!(task_ids.len(), 1, "每包只该带它自己的题组：{packet:#?}");
         }
+    }
+
+    /// 包 id 必须由**身份**派生，而不是序号：`apply_edits` 之后要重切受影响的包，
+    /// 序号会随重排整体漂移，于是「哪些包已经做完」全部错位。
+    #[test]
+    fn packet_ids_are_derived_from_identity_and_stay_stable_across_replanning() {
+        let canonical = canonical_paper();
+        let source = index_with_pages(&[(1, &["1 TRUE", "2 FALSE"]), (2, &["8 B"])]);
+        let differences = vec![
+            difference("slot", "q1", "answer", json!("TRUE"), json!("FALSE")),
+            difference("slot", "q8", "answer", json!("B"), json!("C")),
+        ];
+        let first = plan(&canonical, &Value::Null, &differences, &source);
+        // 同样的输入再切一次：id 必须逐字相同（否则重切就等于换了一批包）。
+        let again = plan(&canonical, &Value::Null, &differences, &source);
+        let ids = |packets: &[Value]| -> Vec<String> {
+            packets
+                .iter()
+                .filter_map(|packet| packet.get("packetId").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect()
+        };
+        assert_eq!(ids(&first), ids(&again), "同样的输入必须切出同样的 id");
+
+        // 只剩第二组的差异时，第二组的包 id 必须**没变**（第一组消失不影响它）。
+        let only_second = vec![difference("slot", "q8", "answer", json!("B"), json!("C"))];
+        let replanned = plan(&canonical, &Value::Null, &only_second, &source);
+        assert_eq!(replanned.len(), 1);
+        assert_eq!(ids(&replanned)[0], ids(&first)[1], "未受影响的包 id 不该漂移");
     }
 
     /// 规则 2 第三条：本地 1-5 / 6-7、云端 1-7 ⇒ 三个题组必须落进同一个包。

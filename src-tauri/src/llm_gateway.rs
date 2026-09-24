@@ -1608,6 +1608,14 @@ fn repair_step_prompt(input: &Value) -> String {
             object.remove(key);
         }
     }
+    // 区域图的 `image.path` 是本机绝对路径。图片**作为图片**附在请求里，路径本身进
+    // prompt 只会泄露本机目录结构，且模型没有任何办法用它。换成「有没有附图」这一位
+    // 模型真正需要的信息。
+    strip_packet_image_paths(&mut prompt_input);
+    let packet_mode = input
+        .pointer("/context/contextMode")
+        .and_then(Value::as_str)
+        == Some("packets");
     let repair = input
         .get("repairNote")
         .and_then(Value::as_str)
@@ -1618,11 +1626,29 @@ fn repair_step_prompt(input: &Value) -> String {
             )
         })
         .unwrap_or_default();
+    // 包模式下同一句话的含义变了：上下文**不是**整卷，而是一个本地预切出来的校核包。
+    // 必须说清楚，否则模型会照着「你看到的是整份文档」行事，凭印象对范围外的内容下结论。
+    let packet = if packet_mode {
+        "\nWHAT YOU ARE LOOKING AT\n\
+This request carries ONE REPAIR PACKET, not the whole paper. A packet is a self-contained slice built locally for the differences it contains: the draft slice, the cloud-candidate slice, the source lines of the pages in scope, and a picture of the anchored regions.\n\
+- `scopeManifest` says what was INCLUDED, what was OMITTED, and which tool fetches an omitted part.\n\
+- `scope.pages` / `scope.answerPages` are 1-based. `sourceEvidence.pages[].lines[].id` looks like `p4:l12` (page 4, line 12).\n\
+- `sourceEvidence.regions[]` carry `imageAttached`; when it is true the region picture is attached to this request as an image.\n\
+- `draftSlice` / `candidateSlice` are only this packet's targets. `paperMap` is a one-screen index of the whole paper.\n\
+If the packet does not contain what you need to judge a listed difference, do NOT guess and do NOT conclude from an impression:\n\
+- call `report_insufficient_context` with the exact pages / quotes / paragraphs you need, or\n\
+- fetch it yourself with `read_source` (a page range or a quote is REQUIRED; at most 3 pages per call), `search_source`, `read_page_region`, `read_passage`, `read_candidate` or `read_draft`.\n\
+Every quote you cite must be copied VERBATIM from a line you were actually returned, and you must give its line id and page. A quote you did not receive is not evidence.\n\
+Call `finish_packet` when this packet is done.\n"
+    } else {
+        ""
+    };
     format!(
         "You are repairing an {paper} authoring draft so it matches the ORIGINAL FILE.\n\
 Return JSON only: exactly one object {{\"callId\":\"call-1\",\"tool\":\"read_draft\",\"arguments\":{{}}}} (tool is one of the allowed tools; arguments follow the tools table in the input).\n\
 Do not return Markdown, prose, or several objects.\n\
 Allowed tools (and nothing else): {tools}.\n\
+{packet}\n\
 {repair}\n\
 Work like an editor: read what you need, then submit ONE batch of domain commands per turn, then read the result.\n\
 - apply_edits requires baseVersion: pass the editVersion you actually saw from read_draft.\n\
@@ -1647,6 +1673,31 @@ Input JSON: {}",
     )
 }
 
+/// 把包证据里区域图的**本机绝对路径**换成「有没有附图」。
+///
+/// 图片由 [`run_openai_compatible_repair_step_llm`] 作为 `image_url` 部分附上；路径进
+/// prompt 既无用又泄露目录结构。只动 `sourceEvidence.regions[].image`，其余字段（页号、
+/// bbox、note）原样保留——模型要靠它们知道自己拿到的是哪一块。
+fn strip_packet_image_paths(input: &mut Value) {
+    let Some(regions) = input
+        .pointer_mut("/context/sourceEvidence/regions")
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    for region in regions {
+        let Some(object) = region.as_object_mut() else {
+            continue;
+        };
+        let image = object.remove("image").unwrap_or(Value::Null);
+        let attached = image
+            .get("path")
+            .and_then(Value::as_str)
+            .is_some_and(|path| !path.trim().is_empty());
+        object.insert("imageAttached".to_string(), json!(attached));
+    }
+}
+
 /// 修复回合的执行体。证据面规则与完整候选识别一致（模型看到的必须是原文件）。
 fn run_openai_compatible_repair_step_llm(
     root: &Path,
@@ -1658,25 +1709,43 @@ fn run_openai_compatible_repair_step_llm(
     let model = llm_model(profile).ok_or_else(|| "llm_profile_model_missing".to_string())?;
     let mut warnings = Vec::<String>::new();
     let mut content = vec![json!({"type": "text", "text": repair_step_prompt(input)})];
-    let pdf_part = data_url_for_pdf(root, job_id, input)?;
-    let had_pdf = pdf_part.is_some();
-    if let Some(pdf_part) = pdf_part {
-        content.push(pdf_part);
-    } else if let Some(source_text) = input
-        .get("sourceText")
+    // 包模式下**不附整份原文件**：那正是这一轮要消掉的东西（每轮几十 MB base64，
+    // 而模型只用得上范围内那几页）。证据改为随请求附上包里的区域页图。
+    // 只有升级到 L3（`attachFullSource`，每次运行最多一次）才退回整份附件。
+    let packet_mode = input
+        .pointer("/context/contextMode")
         .and_then(Value::as_str)
-        .filter(|text| !text.trim().is_empty())
-    {
-        content.push(json!({
-            "type": "text",
-            "text": format!(
-                "The original file is not a PDF, so no page image is attached. \
+        == Some("packets");
+    let attach_full_source = !packet_mode
+        || input
+            .pointer("/context/attachFullSource")
+            .and_then(Value::as_bool)
+            == Some(true);
+    let mut had_pdf = false;
+    if attach_full_source {
+        let pdf_part = data_url_for_pdf(root, job_id, input)?;
+        had_pdf = pdf_part.is_some();
+        if let Some(pdf_part) = pdf_part {
+            content.push(pdf_part);
+        } else if let Some(source_text) = input
+            .get("sourceText")
+            .and_then(Value::as_str)
+            .filter(|text| !text.trim().is_empty())
+        {
+            content.push(json!({
+                "type": "text",
+                "text": format!(
+                    "The original file is not a PDF, so no page image is attached. \
 The extracted source text below is the ONLY evidence you may use; do not invent content.\n\
 --- SOURCE TEXT BEGIN ---\n{source_text}\n--- SOURCE TEXT END ---"
-            )
-        }));
+                )
+            }));
+        } else {
+            warnings.push("cloud_repair_source_unavailable".to_string());
+        }
     } else {
-        warnings.push("cloud_repair_source_unavailable".to_string());
+        let attached = append_packet_region_images(root, job_id, &mut content, input, &mut warnings)?;
+        with_trace(|trace| trace.image_count = Some(attached));
     }
     let mut body = json!({
         "model": model,
@@ -1713,10 +1782,72 @@ The extracted source text below is the ONLY evidence you may use; do not invent 
     Ok(parsed)
 }
 
+/// 把校核包里的区域页图附到请求上（`image_url` 部分）。
+///
+/// 单张图读不出来**不**让整轮失败：页文本仍然在包里，模型还能据它工作；但必须在
+/// warnings 里如实记下来，否则模型会以为自己看过那张图。
+fn append_packet_region_images(
+    root: &Path,
+    job_id: &str,
+    content: &mut Vec<Value>,
+    input: &Value,
+    warnings: &mut Vec<String>,
+) -> CommandResult<usize> {
+    let mut count = 0usize;
+    let mut inline_bytes = 0u64;
+    for region in input
+        .pointer("/context/sourceEvidence/regions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(image) = region.get("image").filter(|image| !image.is_null()) else {
+            continue;
+        };
+        let page = region.get("pageIndex").and_then(Value::as_u64).unwrap_or(0);
+        let label = region
+            .get("taskIds")
+            .and_then(Value::as_array)
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default();
+        let data_url = match data_url_for_image(root, job_id, image) {
+            Ok(data_url) => data_url,
+            Err(error) => {
+                warnings.push(format!("cloud_repair_packet_region_image_unavailable:{error}"));
+                continue;
+            }
+        };
+        inline_bytes = inline_bytes.saturating_add(data_url.len() as u64);
+        if inline_bytes > MAX_LLM_INLINE_BYTES {
+            return Err("vision_inline_payload_too_large".to_string());
+        }
+        content.push(json!({
+            "type": "text",
+            "text": format!("Packet source region: page {page}, taskIds [{label}]"),
+        }));
+        content.push(json!({"type": "image_url", "image_url": {"url": data_url}}));
+        count += 1;
+    }
+    Ok(count)
+}
+
 /// 修复回合输出的**结构**校验：形状不对就给出具体原因，让模型定向改好。
 ///
 /// 注意：这里**不**执行工具。执行发生在 `cloud_repair` 的分发器里，只有那里才知道
 /// 运行归属、取消状态与真实稿件。
+///
+/// 校验强度刻意分两档：
+/// - **新增的抓取类工具与 `report_insufficient_context`**：信封必填项在这里就查（省一个
+///   白跑的往返），错误码前缀 `cloud_repair_step_`，循环据此做**一次**带原因的受约束重试；
+/// - **原有工具**（`read_draft` / `read_source` / `apply_edits` / `record_ruling` /
+///   `finish`）：只查「arguments 是对象」，语义仍由分发器判。它们的拒绝语义（例如
+///   `apply_edits` 缺 `baseVersion`）是**模型的学习信号**，在这里提前拦掉会改变既有
+///   回归行为，而既有行为本身是对的。
 fn validate_repair_step_output(output: &mut Value) -> CommandResult<()> {
     let Some(object) = output.as_object() else {
         return Err("cloud_repair_step_not_object".to_string());
@@ -1736,12 +1867,70 @@ fn validate_repair_step_output(output: &mut Value) -> CommandResult<()> {
     if !crate::schema::cloud_repair_v1::CLOUD_REPAIR_TOOLS.contains(&tool) {
         return Err(format!("cloud_repair_step_tool_unknown:{tool}"));
     }
-    if let Some(arguments) = object.get("arguments") {
-        if !arguments.is_object() && !arguments.is_null() {
-            return Err("cloud_repair_step_arguments_not_object".to_string());
-        }
+    let arguments = object.get("arguments").cloned().unwrap_or(Value::Null);
+    if !arguments.is_object() && !arguments.is_null() {
+        return Err("cloud_repair_step_arguments_not_object".to_string());
     }
-    Ok(())
+    validate_repair_tool_arguments(tool, &arguments)
+}
+
+/// 新增工具的信封校验（**与分发器同源**，见 `cloud_repair::grab` 与
+/// `schema::cloud_repair_v1::CloudRepairContextNeedV1`）。
+fn validate_repair_tool_arguments(tool: &str, arguments: &Value) -> CommandResult<()> {
+    let empty = Value::Null;
+    let arguments = if arguments.is_null() { &empty } else { arguments };
+    let missing = |detail: &str| Err(format!("cloud_repair_step_tool_arguments_invalid:{tool}:{detail}"));
+    let non_empty_list = |key: &str| {
+        arguments
+            .get(key)
+            .and_then(Value::as_array)
+            .is_some_and(|items| !items.is_empty())
+    };
+    match tool {
+        "search_source" => match arguments.get("query").and_then(Value::as_str).map(str::trim) {
+            Some(query) if !query.is_empty() => Ok(()),
+            _ => missing("needs a non-empty \"query\""),
+        },
+        "read_page_region" => match arguments.get("pageIndex").and_then(Value::as_u64) {
+            Some(page) if page >= 1 => Ok(()),
+            _ => missing("needs {\"pageIndex\": N} (1-based)"),
+        },
+        "read_passage" => {
+            if non_empty_list("paragraphLabels") || non_empty_list("questionNumbers") {
+                Ok(())
+            } else {
+                missing("needs \"paragraphLabels\" or \"questionNumbers\"")
+            }
+        }
+        "read_candidate" => {
+            if non_empty_list("taskIds") || non_empty_list("questionNumbers") {
+                Ok(())
+            } else {
+                missing("needs \"taskIds\" or \"questionNumbers\"")
+            }
+        }
+        "report_insufficient_context" => {
+            let Some(needs) = arguments.get("needs").and_then(Value::as_array) else {
+                return missing("needs a \"needs\" array saying exactly what you are missing");
+            };
+            if needs.is_empty() {
+                return missing("\"needs\" must not be empty");
+            }
+            for need in needs {
+                let parsed = serde_json::from_value::<
+                    crate::schema::cloud_repair_v1::CloudRepairContextNeedV1,
+                >(need.clone())
+                .map_err(|error| {
+                    format!("cloud_repair_step_tool_arguments_invalid:{tool}:{error}")
+                })?;
+                parsed.validate().map_err(|error| {
+                    format!("cloud_repair_step_tool_arguments_invalid:{tool}:{error}")
+                })?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
 }
 
 /// A4：分歧裁决的 prompt。

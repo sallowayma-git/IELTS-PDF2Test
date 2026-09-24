@@ -744,17 +744,22 @@ fn normalize(value: &str) -> String {
 
 /// 把一次 `report_insufficient_context` 的需求清单翻译成**具体**的抓取动作。
 ///
-/// 返回「取到的证据」与「没取到的需求」，后者要如实回给模型——静默丢掉一条需求，
-/// 模型下一轮会以为它已经被满足了。
+/// 返回三份：
+/// - `satisfied`：取到的证据（下一轮并入本包）；
+/// - `unsatisfied`：没取到的需求与**具体原因**。必须如实回给模型——静默丢掉一条需求，
+///   模型下一轮会以为它已经被满足了；
+/// - `deferred`：`candidate` / `draft` 两类需求，本模块读不到（它只有原文索引），
+///   由编排层满足。它们**不**算「没取到」，所以不放进 `unsatisfied`。
 pub(crate) fn satisfy_needs(
     root: &Path,
     job_id: &str,
     source: &SourcePageIndex,
     needs: &[Value],
     budget: &mut GrabBudget,
-) -> (Vec<Value>, Vec<String>) {
+) -> (Vec<Value>, Vec<String>, Vec<Value>) {
     let mut satisfied: Vec<Value> = Vec::new();
     let mut unsatisfied: Vec<String> = Vec::new();
+    let mut deferred: Vec<Value> = Vec::new();
     for need in needs {
         let kind = need.get("kind").and_then(Value::as_str).unwrap_or("");
         let result = match kind {
@@ -795,7 +800,7 @@ pub(crate) fn satisfy_needs(
             }
             // 候选切片与稿件切片由编排层（那里才有 candidate 与 canonical）满足。
             "candidate" | "draft" => {
-                unsatisfied.push(format!("{kind}: handled by the orchestrator"));
+                deferred.push(need.clone());
                 continue;
             }
             other => {
@@ -808,7 +813,7 @@ pub(crate) fn satisfy_needs(
             Err(error) => unsatisfied.push(error),
         }
     }
-    (satisfied, unsatisfied)
+    (satisfied, unsatisfied, deferred)
 }
 
 #[cfg(test)]
@@ -960,7 +965,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("grab-needs-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&root).unwrap();
         let mut budget = GrabBudget::new();
-        let (satisfied, unsatisfied) = satisfy_needs(
+        let (satisfied, unsatisfied, deferred) = satisfy_needs(
             &root,
             "job-1",
             &source(),
@@ -974,6 +979,31 @@ mod tests {
         assert_eq!(satisfied[0]["result"]["pages"][0]["pageIndex"], json!(3));
         assert_eq!(unsatisfied.len(), 1, "越界页要如实报不满足");
         assert!(unsatisfied[0].starts_with("CLOUD_GRAB_PAGE_OUT_OF_RANGE"));
+        assert!(deferred.is_empty(), "原文需求不该被推迟");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `candidate` / `draft` 两类需求本模块读不到：必须**推迟**给编排层，而不是报成
+    /// 「没取到」——报成没取到会让模型以为后端也拿不到候选切片。
+    #[test]
+    fn satisfy_needs_defers_candidate_and_draft_to_the_orchestrator() {
+        let root = std::env::temp_dir().join(format!("grab-defer-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut budget = GrabBudget::new();
+        let (satisfied, unsatisfied, deferred) = satisfy_needs(
+            &root,
+            "job-1",
+            &source(),
+            &[
+                json!({"kind": "candidate", "questionNumbers": [14]}),
+                json!({"kind": "draft", "questionNumbers": [15]}),
+            ],
+            &mut budget,
+        );
+        assert!(satisfied.is_empty());
+        assert!(unsatisfied.is_empty(), "推迟不是失败：{unsatisfied:?}");
+        assert_eq!(deferred.len(), 2);
+        assert_eq!(deferred[0]["kind"], json!("candidate"));
         let _ = std::fs::remove_dir_all(&root);
     }
 

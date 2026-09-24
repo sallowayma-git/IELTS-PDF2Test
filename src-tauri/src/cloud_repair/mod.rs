@@ -42,6 +42,35 @@ pub(crate) const DEFAULT_MAX_REPAIR_ROUNDS: u32 = 6;
 pub(crate) const DEFAULT_REPAIR_TIMEOUT_MS: u64 = 10 * 60 * 1000;
 /// 连续多少次「完全相同的工具调用且没有产生任何进展」就停下。
 const REPEAT_LIMIT: u32 = 2;
+/// 每个**校核包**的模型回合预算（包模式下按包独立计数）。
+const PACKET_MAX_ROUNDS: u32 = 5;
+/// 升级阶梯的最高级别（L4 = 后端代记 `cannot_resolve`，理由码 `CONTEXT_INSUFFICIENT`）。
+const PACKET_MAX_ESCALATION: u32 = 4;
+
+/// 上下文管理方式。
+///
+/// - `Packets`（生产默认）：本地预切校核包，模型不够就报、就自己去取；
+/// - `Legacy`：改造前的行为（每轮附整份原文件 + 整卷上下文）。**只**保留给 L3 的最后
+///   手段与回归对照，不对用户暴露（见 [`configured_repair_context_mode`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RepairContextMode {
+    Packets,
+    Legacy,
+}
+
+/// 生产默认模式。
+pub(crate) const REPAIR_CONTEXT_MODE: RepairContextMode = RepairContextMode::Packets;
+
+/// 本次运行实际使用的模式。
+///
+/// 诊断用开关 `IELTS_REPAIR_CONTEXT_MODE=legacy` 可以把一次运行打回旧路径，用来做
+/// 「同一份卷子、两种模式」的输入量对比（任务书 §6）。它不是用户设置。
+pub(crate) fn configured_repair_context_mode() -> RepairContextMode {
+    match std::env::var("IELTS_REPAIR_CONTEXT_MODE").ok().as_deref() {
+        Some("legacy") => RepairContextMode::Legacy,
+        _ => REPAIR_CONTEXT_MODE,
+    }
+}
 
 pub(crate) const REPAIR_STATUS_RUNNING: &str = "running";
 pub(crate) const REPAIR_STATUS_COMPLETED: &str = "completed";
@@ -148,6 +177,11 @@ pub(crate) struct RepairRunReport {
     /// （`cloud_repair::tools::undo_repair`）。让前端自己拼 `cloud-repair:{batchId}`
     /// 等于把后端内部命名规则复制到前端——命名一变，撤销就静默失效。
     pub repair_run_id: String,
+    /// 包模式的**逐包诊断**（每个包的轮数、升级级别、裁定数、编辑数、上下文不足条数）。
+    ///
+    /// 只进 `repair_json` 的诊断区，前端展示不变。它存在的理由：包模式最怕的就是
+    /// 「输入量下来了、但模型其实什么都没核」——那只能靠逐包记录才看得出来。
+    pub packets: Vec<Value>,
 }
 
 impl RepairRunReport {
@@ -164,6 +198,7 @@ impl RepairRunReport {
             "lastError": self.last_error,
             "undoAvailable": undo_available,
             "repairRunId": self.repair_run_id,
+            "packets": self.packets,
         })
     }
 }
@@ -515,6 +550,25 @@ fn fresh_ruling_for_difference<'a>(rulings: &'a [Value], difference: &Value) -> 
     })
 }
 
+/// 「上下文不足」这条用户任务的固定文案。
+///
+/// 为什么必须与「云端查过但定不了」分开：前者是**云端没拿到材料**，后者是云端拿到了
+/// 材料但定不下结论。混成一句会让用户以为云端已经核过原文——那正是「上下文不足绝不
+/// 算作已核对」这条边界要挡住的东西。措辞按任务书 §4.2 固定。
+fn context_insufficient_message(ruling: &Value) -> String {
+    let numbers: Vec<u64> = ruling
+        .get("questionNumbers")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(Value::as_u64).collect())
+        .unwrap_or_default();
+    let subject = match numbers.as_slice() {
+        [] => "这处差异".to_string(),
+        [one] => format!("第 {one} 题"),
+        [first, .., last] => format!("第 {first}-{last} 题"),
+    };
+    format!("云端没能拿到足够的原文来判断{subject}，请对照原文确认")
+}
+
 /// 一条差异的人话说明（任务文案用）。
 fn describe_difference(difference: &Value) -> String {
     let (target_type, target_id, field) = difference_key(difference);
@@ -619,6 +673,7 @@ pub(crate) fn unavailable_summary(
         "lastError": error,
         "undoAvailable": false,
         "repairRunId": repair_run_id_for(batch_id),
+        "packets": [],
     })
 }
 
@@ -647,6 +702,7 @@ fn failure_report(request: &RepairRunRequest<'_>, error: String) -> RepairRunRep
         finish_note: None,
         last_error: Some(error),
         repair_run_id: request.repair_run_id.to_string(),
+        packets: Vec::new(),
     }
 }
 
@@ -1244,15 +1300,76 @@ fn parse_tool_call(raw: &Value) -> Result<CloudRepairToolCallV1, String> {
     Ok(call)
 }
 
+/// 包模式下执行一次工具调用需要的东西。
+///
+/// 抓取类工具全部只读、不接受路径、只作用于本 job，并**共用同一个包内预算**
+/// （[`grab::GrabBudget`]）：`read_source` 一次最多 3 页、每包累计最多 6 页、最多 3 次
+/// 抓取。这正是「包」这件事能成立的前提——否则模型只要反复 `read_source` 就能把整卷
+/// 重新读回来，预切就成了形式主义。
+struct PacketTools<'a> {
+    source: &'a packets::SourcePageIndex,
+    budget: &'a mut grab::GrabBudget,
+    /// 本包允许 `read_draft` / `read_candidate` 读到的题组。
+    task_ids: BTreeSet<String>,
+    /// 本包覆盖的题号。
+    question_numbers: Vec<u32>,
+}
+
+impl PacketTools<'_> {
+    /// 请求的题组 / 题号是否落在本包范围内。空请求 = 没给选择器。
+    fn scope_error(&self, task_ids: &[String], numbers: &[u32]) -> Option<String> {
+        if task_ids.is_empty() && numbers.is_empty() {
+            return Some(
+                "CLOUD_DRAFT_SCOPE_REQUIRED: this is a repair packet, so pass the taskGroupIds or \
+                 questionNumbers you saw in the packet; the whole paper is not available here"
+                    .to_string(),
+            );
+        }
+        let hits_task = task_ids.iter().any(|id| self.task_ids.contains(id));
+        let hits_number = numbers.iter().any(|number| self.question_numbers.contains(number));
+        if hits_task || hits_number {
+            return None;
+        }
+        Some(format!(
+            "CLOUD_DRAFT_OUTSIDE_PACKET: taskGroupIds={task_ids:?} questionNumbers={numbers:?} are \
+             not in this packet (packet taskIds={:?} questionNumbers={:?}); ask for what is in \
+             scope, or use read_candidate / report_insufficient_context",
+            self.task_ids.iter().cloned().collect::<Vec<_>>(),
+            self.question_numbers
+        ))
+    }
+}
+
 /// 执行一次允许的工具调用，返回**真实**结果。
 fn execute_tool(
     request: &RepairRunRequest<'_>,
     call: &CloudRepairToolCallV1,
     round: u32,
     context: &Value,
+    packet: Option<&mut PacketTools<'_>>,
 ) -> (CloudRepairToolResultV1, Option<usize>) {
+    let mut packet = packet;
     match call.tool.as_str() {
         "read_draft" => {
+            // 包模式下**默认范围限定本包**：这是任务书 §4.2 对 `read_draft` 的要求，
+            // 也是「一次调用不能把整卷拿回来」的又一道闸。模型只能读它正在核的那一块。
+            if let Some(tools) = packet.as_deref() {
+                let requested_groups: Vec<String> = call
+                    .arguments
+                    .get("taskGroupIds")
+                    .and_then(Value::as_array)
+                    .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                    .unwrap_or_default();
+                let requested_numbers: Vec<u32> = call
+                    .arguments
+                    .get("questionNumbers")
+                    .and_then(Value::as_array)
+                    .map(|items| items.iter().filter_map(Value::as_u64).map(|n| n as u32).collect())
+                    .unwrap_or_default();
+                if let Some(error) = tools.scope_error(&requested_groups, &requested_numbers) {
+                    return (CloudRepairToolResultV1::rejected(&call.call_id, vec![error]), None);
+                }
+            }
             let canonical = match current_canonical(request) {
                 Ok(Some((document, version))) => (document, version),
                 Ok(None) => {
@@ -1276,10 +1393,254 @@ fn execute_tool(
                 None,
             )
         }
-        "read_source" => match read_source_evidence(request.root, request.job_id, &call.arguments) {
-            Ok(value) => (CloudRepairToolResultV1::ok(&call.call_id, value), None),
-            Err(error) => (CloudRepairToolResultV1::rejected(&call.call_id, vec![error]), None),
+        "read_source" => {
+            // 包模式走**收紧版**：必须给页范围或引文，单次 ≤ 3 页。legacy 保留旧行为
+            // （L3 的最后手段与回归对照），否则「一次拿回整卷」这条路就还在。
+            let result = match packet.as_deref_mut() {
+                Some(tools) => grab::read_source(tools.source, &call.arguments, tools.budget),
+                None => read_source_evidence(request.root, request.job_id, &call.arguments),
+            };
+            match result {
+                Ok(value) => (CloudRepairToolResultV1::ok(&call.call_id, value), None),
+                Err(error) => (CloudRepairToolResultV1::rejected(&call.call_id, vec![error]), None),
+            }
+        }
+        "search_source" => match packet.as_deref_mut() {
+            Some(tools) => match grab::search_source(tools.source, &call.arguments, tools.budget) {
+                Ok(value) => (CloudRepairToolResultV1::ok(&call.call_id, value), None),
+                Err(error) => (CloudRepairToolResultV1::rejected(&call.call_id, vec![error]), None),
+            },
+            None => (
+                CloudRepairToolResultV1::rejected(
+                    &call.call_id,
+                    vec!["CLOUD_GRAB_ONLY_IN_PACKET_MODE:search_source".to_string()],
+                ),
+                None,
+            ),
         },
+        "read_page_region" => match packet.as_deref_mut() {
+            Some(tools) => match grab::read_page_region(
+                request.root,
+                request.job_id,
+                tools.source,
+                &call.arguments,
+                tools.budget,
+            ) {
+                Ok(value) => (CloudRepairToolResultV1::ok(&call.call_id, value), None),
+                Err(error) => (CloudRepairToolResultV1::rejected(&call.call_id, vec![error]), None),
+            },
+            None => (
+                CloudRepairToolResultV1::rejected(
+                    &call.call_id,
+                    vec!["CLOUD_GRAB_ONLY_IN_PACKET_MODE:read_page_region".to_string()],
+                ),
+                None,
+            ),
+        },
+        "read_passage" => match packet.as_deref_mut() {
+            Some(tools) => match grab::read_passage(tools.source, &call.arguments, tools.budget) {
+                Ok(value) => (CloudRepairToolResultV1::ok(&call.call_id, value), None),
+                Err(error) => (CloudRepairToolResultV1::rejected(&call.call_id, vec![error]), None),
+            },
+            None => (
+                CloudRepairToolResultV1::rejected(
+                    &call.call_id,
+                    vec!["CLOUD_GRAB_ONLY_IN_PACKET_MODE:read_passage".to_string()],
+                ),
+                None,
+            ),
+        },
+        "read_candidate" => {
+            let Some(tools) = packet.as_deref_mut() else {
+                return (
+                    CloudRepairToolResultV1::rejected(
+                        &call.call_id,
+                        vec!["CLOUD_GRAB_ONLY_IN_PACKET_MODE:read_candidate".to_string()],
+                    ),
+                    None,
+                );
+            };
+            let requested_groups: Vec<String> = call
+                .arguments
+                .get("taskIds")
+                .and_then(Value::as_array)
+                .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .unwrap_or_default();
+            let requested_numbers: Vec<u32> = call
+                .arguments
+                .get("questionNumbers")
+                .and_then(Value::as_array)
+                .map(|items| items.iter().filter_map(Value::as_u64).map(|n| n as u32).collect())
+                .unwrap_or_default();
+            // 候选切片的 id 是**云端** id，与本地 taskId 不同名，所以允许两套：包内本地
+            // taskId，以及候选切片里出现过的 taskId。
+            let mut allowed = tools.task_ids.clone();
+            for group in context
+                .pointer("/candidateSlice/taskGroups")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(task_id) = group.get("taskId").and_then(Value::as_str) {
+                    allowed.insert(task_id.to_string());
+                }
+            }
+            let scoped = PacketTools {
+                source: tools.source,
+                budget: tools.budget,
+                task_ids: allowed,
+                question_numbers: tools.question_numbers.clone(),
+            };
+            if let Some(error) = scoped.scope_error(&requested_groups, &requested_numbers) {
+                return (CloudRepairToolResultV1::rejected(&call.call_id, vec![error]), None);
+            }
+            let candidate = store::read_cloud_authoring_candidate(
+                request.root,
+                request.job_id,
+                request.batch_id,
+            )
+            .ok()
+            .flatten()
+            .and_then(|candidate| serde_json::to_value(&candidate.authoring).ok())
+            .unwrap_or(Value::Null);
+            if candidate.is_null() {
+                return (
+                    CloudRepairToolResultV1::rejected(
+                        &call.call_id,
+                        vec![format!("CLOUD_CANDIDATE_UNAVAILABLE:{}", request.batch_id)],
+                    ),
+                    None,
+                );
+            }
+            (
+                CloudRepairToolResultV1::ok(
+                    &call.call_id,
+                    read_draft_section(&candidate, 0, &call.arguments),
+                ),
+                None,
+            )
+        }
+        "report_insufficient_context" => {
+            let Some(tools) = packet.as_deref_mut() else {
+                return (
+                    CloudRepairToolResultV1::rejected(
+                        &call.call_id,
+                        vec![
+                            "CLOUD_REPAIR_INSUFFICIENT_CONTEXT_OUTSIDE_PACKET: there is no packet \
+                             to report against in this mode"
+                                .to_string(),
+                        ],
+                    ),
+                    None,
+                );
+            };
+            let needs = call
+                .arguments
+                .get("needs")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if needs.is_empty() {
+                return (
+                    CloudRepairToolResultV1::rejected(
+                        &call.call_id,
+                        vec![
+                            "CLOUD_REPAIR_INSUFFICIENT_CONTEXT_NO_NEEDS: say exactly what you are \
+                             missing (pages / quote / paragraph labels / candidate slice)"
+                                .to_string(),
+                        ],
+                    ),
+                    None,
+                );
+            }
+            let mut errors = Vec::new();
+            for need in &needs {
+                match serde_json::from_value::<
+                    crate::schema::cloud_repair_v1::CloudRepairContextNeedV1,
+                >(need.clone())
+                {
+                    Ok(parsed) => {
+                        if let Err(error) = parsed.validate() {
+                            errors.push(error);
+                        }
+                    }
+                    Err(error) => errors.push(format!("CLOUD_NEED_MALFORMED:{error}")),
+                }
+            }
+            if !errors.is_empty() {
+                return (CloudRepairToolResultV1::rejected(&call.call_id, errors), None);
+            }
+            let (satisfied, unsatisfied, deferred) = grab::satisfy_needs(
+                request.root,
+                request.job_id,
+                tools.source,
+                &needs,
+                tools.budget,
+            );
+            // `candidate` / `draft` 需求只有这一层能满足（它同时看得到权威稿与候选）。
+            let mut fetched = satisfied;
+            let mut unsatisfied = unsatisfied;
+            for need in deferred {
+                let kind = need.get("kind").and_then(Value::as_str).unwrap_or("");
+                let numbers: Vec<u32> = need
+                    .get("questionNumbers")
+                    .and_then(Value::as_array)
+                    .map(|items| items.iter().filter_map(Value::as_u64).map(|n| n as u32).collect())
+                    .unwrap_or_default();
+                let task_ids: Vec<String> = need
+                    .get("taskIds")
+                    .and_then(Value::as_array)
+                    .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                    .unwrap_or_default();
+                if let Some(error) = tools.scope_error(&task_ids, &numbers) {
+                    unsatisfied.push(error);
+                    continue;
+                }
+                let arguments = json!({"taskGroupIds": task_ids, "questionNumbers": numbers});
+                let slice = if kind == "candidate" {
+                    store::read_cloud_authoring_candidate(
+                        request.root,
+                        request.job_id,
+                        request.batch_id,
+                    )
+                    .ok()
+                    .flatten()
+                    .and_then(|candidate| serde_json::to_value(&candidate.authoring).ok())
+                    .map(|candidate| read_draft_section(&candidate, 0, &arguments))
+                } else {
+                    current_canonical(request)
+                        .ok()
+                        .flatten()
+                        .map(|(canonical, version)| read_draft_section(&canonical, version, &arguments))
+                };
+                match slice {
+                    Some(slice) => fetched.push(json!({"kind": kind, "result": slice})),
+                    None => unsatisfied.push(format!(
+                        "CLOUD_NEED_UNSATISFIED:{kind}: the {kind} slice could not be read"
+                    )),
+                }
+            }
+            (
+                CloudRepairToolResultV1::ok(
+                    &call.call_id,
+                    json!({
+                        "status": "needs_answered",
+                        "reason": call.arguments.get("reason").cloned().unwrap_or(Value::Null),
+                        "satisfied": fetched,
+                        "unsatisfied": unsatisfied,
+                        "budget": {
+                            "calls": tools.budget.calls,
+                            "pages": tools.budget.pages,
+                            "bytes": tools.budget.bytes,
+                        },
+                        "noteForModel": "The fetched evidence is merged into this packet and will \
+                                         be in your next request. Anything under \"unsatisfied\" was \
+                                         NOT fetched — do not assume it.",
+                    }),
+                ),
+                None,
+            )
+        }
         "apply_edits" => {
             let Some(commands) = call.arguments.get("commands").and_then(Value::as_array) else {
                 return (
@@ -1460,6 +1821,21 @@ fn execute_tool(
                 None,
             )
         }
+        "finish_packet" => (
+            CloudRepairToolResultV1::ok(
+                &call.call_id,
+                json!({
+                    "status": "packet_finished",
+                    "packetId": call.arguments.get("packetId").cloned().unwrap_or(Value::Null),
+                    "note": call.arguments.get("note").cloned().unwrap_or(Value::Null),
+                    "remaining": call.arguments.get("unresolved").cloned().unwrap_or_else(|| json!([])),
+                    "noteForModel": "This packet is closed. The backend still recomputes what is left \
+                                     from the current canonical, and it may open a new packet for a \
+                                     difference you changed.",
+                }),
+            ),
+            None,
+        ),
         "finish" => (
             CloudRepairToolResultV1::ok(
                 &call.call_id,
@@ -1708,27 +2084,37 @@ fn remaining_tasks(
                     // 已裁定「原文件不足以定论」：仍然要人看，但**带上模型的结论与出处**，
                     // 而不是让用户从零开始重新判断一遍。
                     Some(ruling) => {
-                        push_repair_task(
-                            &mut tasks,
-                            &mut by_key,
-                            json!({
-                                "userTaskId": task_id,
-                                "targetIds": [target_id],
-                                "message": format!(
-                                    "{}；云端已查过原文件但无法定论：{}",
-                                    describe_difference(&difference),
-                                    ruling.get("reason").and_then(Value::as_str).unwrap_or("未说明理由")
-                                ),
-                                "action": "review_difference",
-                                "blocking": false,
-                                // 当前值与云端值一并给前端：任务里要能直接看到「现在是什么、云端读到的是什么」。
-                                "field": field.clone(),
-                                "currentValue": difference.get("canonical").cloned().unwrap_or(Value::Null),
-                                "cloudValue": difference.get("candidate").cloned().unwrap_or(Value::Null),
-                                "evidence": ruling.get("evidence").cloned().unwrap_or_else(|| json!([])),
-                                "repairFamily": repair_family_for_difference_field(&field),
-                            }),
-                        );
+                        // 「上下文不足」与「查过但定不了」是两件事，必须分开说。
+                        let insufficient = ruling.get("reason").and_then(Value::as_str)
+                            == Some(crate::schema::cloud_repair_v1::CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT);
+                        let message = if insufficient {
+                            context_insufficient_message(&ruling)
+                        } else {
+                            format!(
+                                "{}；云端已查过原文件但无法定论：{}",
+                                describe_difference(&difference),
+                                ruling.get("reason").and_then(Value::as_str).unwrap_or("未说明理由")
+                            )
+                        };
+                        let mut task = json!({
+                            "userTaskId": task_id,
+                            "targetIds": [target_id],
+                            "message": message,
+                            "action": "review_difference",
+                            "blocking": false,
+                            // 当前值与云端值一并给前端：任务里要能直接看到「现在是什么、云端读到的是什么」。
+                            "field": field.clone(),
+                            "currentValue": difference.get("canonical").cloned().unwrap_or(Value::Null),
+                            "cloudValue": difference.get("candidate").cloned().unwrap_or(Value::Null),
+                            "evidence": ruling.get("evidence").cloned().unwrap_or_else(|| json!([])),
+                            "repairFamily": repair_family_for_difference_field(&field),
+                        });
+                        if insufficient {
+                            // 明标出来：**这条差异没有被核对过**。三态不坍缩
+                            // （not_executed / insufficient_context / passed）靠的就是它。
+                            task["contextInsufficient"] = json!(true);
+                        }
+                        push_repair_task(&mut tasks, &mut by_key, task);
                     }
                     // 没裁定过，或裁定已被内容变化作废：这才是真正需要用户看的差异。
                     None => {
@@ -1937,7 +2323,7 @@ pub(crate) fn refresh_repair_summary(
     refreshed
 }
 
-/// 修复循环的编排。
+/// 修复循环的编排（**对外入口**）。
 ///
 /// `step` 是**注入的**网关调用：`(context, observations) -> 模型原始 JSON`。
 /// 生产实现走真实网关（并附带原文件证据）；测试注入确定性桩。
@@ -1950,6 +2336,146 @@ pub(crate) fn refresh_repair_summary(
 /// 理由见 [`failure_report`]：循环开工就把批次行写成 running，任何提前返回都会让
 /// 批次行永久停在 running，而 job 行已经是 failed——两个界面互相矛盾。
 pub(crate) fn run_repair_loop<F>(
+    request: &RepairRunRequest<'_>,
+    step: F,
+) -> CommandResult<RepairRunReport>
+where
+    F: FnMut(&Value, &[Value]) -> CommandResult<Value>,
+{
+    run_repair_loop_in_mode(request, configured_repair_context_mode(), step)
+}
+
+/// 指定模式的编排入口（测试与两种模式对比用）。
+pub(crate) fn run_repair_loop_in_mode<F>(
+    request: &RepairRunRequest<'_>,
+    mode: RepairContextMode,
+    step: F,
+) -> CommandResult<RepairRunReport>
+where
+    F: FnMut(&Value, &[Value]) -> CommandResult<Value>,
+{
+    match mode {
+        RepairContextMode::Packets => run_packet_repair_loop(request, step),
+        RepairContextMode::Legacy => run_legacy_repair_loop(request, step),
+    }
+}
+
+/// 循环结束时的**共享收尾**：落盘裁定与疑问、按当前 canonical 重算剩余任务、判定终态。
+///
+/// 抽出来的理由：包模式与 legacy 模式的推进方式完全不同，但**收尾必须完全一样**。
+/// 「剩余问题按当前 canonical 重算」这条纪律一旦在两处各写一遍，迟早只改一处——
+/// 那正是「模型说修好了但用户清单里还挂着」这类矛盾的来源。
+fn finish_repair_run(
+    request: &RepairRunRequest<'_>,
+    outcome: RepairRunOutcome,
+) -> CommandResult<RepairRunReport> {
+    let RepairRunOutcome {
+        rounds,
+        applied_count,
+        observations,
+        rulings,
+        model_questions,
+        finish_note,
+        packets,
+        mut status,
+        mut last_error,
+    } = outcome;
+    // 裁定落盘。**即使这一轮没跑完也要写**：模型已经作出的判断是用户不必再回答的东西，
+    // 不能因为预算耗尽就把它们一起丢掉。
+    //
+    // 写失败同样不能提前 return：裁定是「报告」，已经落地的修改不因它失败而回滚，
+    // 但终态必须如实降级（否则用户会以为裁定都存住了）。
+    if let Err(error) = store::write_repair_rulings(
+        request.root,
+        request.job_id,
+        request.batch_id,
+        // 模型留下的疑问一并落盘：读路径要按当前稿重算剩余任务，没有它们就只能
+        // 在「丢掉模型的疑问」和「永远用冻结快照」之间二选一。
+        &json!({ "rulings": rulings, "modelQuestions": model_questions }),
+    ) {
+        last_error = Some(error);
+        if status == REPAIR_STATUS_COMPLETED {
+            status = REPAIR_STATUS_UNAVAILABLE;
+        }
+    }
+
+    // 最终完成状态由**后端**判定：模型说"都修好了"不算数。
+    let remaining = match remaining_tasks(
+        request.root,
+        request.item_id,
+        request.job_id,
+        request.batch_id,
+        &rulings,
+        &model_questions,
+    ) {
+        Ok(tasks) => tasks,
+        Err(error) => {
+            // 算不出剩余任务时**不能**返回空清单当「没问题」：空清单在前端等于
+            // 「没有需要你处理的事」。降级为 unavailable，让前端按**状态**判断，
+            // 而不是按清单长度判断（见 `repairHeadline`）。
+            last_error = Some(error);
+            if status == REPAIR_STATUS_COMPLETED {
+                status = REPAIR_STATUS_UNAVAILABLE;
+            }
+            Vec::new()
+        }
+    };
+    if status == REPAIR_STATUS_COMPLETED && !remaining.is_empty() {
+        status = REPAIR_STATUS_NEEDS_ATTENTION;
+    }
+    let edit_version = current_canonical(request)
+        .ok()
+        .flatten()
+        .map(|(_, version)| version)
+        .unwrap_or(0);
+
+    Ok(RepairRunReport {
+        status,
+        rounds,
+        edit_version,
+        applied_count,
+        observations,
+        remaining_tasks: remaining,
+        // 只数**此刻仍然有效**的裁定，不是 `rulings.len()`（那份是 append-only 的
+        // 累积记录，含历史 / 重复 / 已失效的条目，见 `effective_adjudicated_count`）。
+        adjudicated_count: adjudicated_count_now(
+            request.root,
+            request.item_id,
+            request.job_id,
+            request.batch_id,
+            &rulings,
+        ),
+        finish_note,
+        // 正常收工的运行不该带一条非空的 `lastError`：那会让界面把一次成功的修复
+        // 显示成失败。`last_error` 只描述**终态**失败原因。
+        last_error: if status == REPAIR_STATUS_COMPLETED {
+            None
+        } else {
+            last_error
+        },
+        repair_run_id: request.repair_run_id.to_string(),
+        packets,
+    })
+}
+
+/// 循环跑完之后的原始状态（收尾前的中间态）。
+struct RepairRunOutcome {
+    status: &'static str,
+    rounds: u32,
+    applied_count: usize,
+    observations: Vec<Value>,
+    rulings: Vec<Value>,
+    model_questions: Vec<Value>,
+    finish_note: Option<String>,
+    last_error: Option<String>,
+    packets: Vec<Value>,
+}
+
+/// 改造前的修复循环（legacy）：每轮附整份原文件 + 整卷上下文。
+///
+/// **只**保留给 L3 的最后手段与回归对照（任务书 §4.3）。生产默认走
+/// [`run_packet_repair_loop`]；这条路径的语义一字未改，正是为了「改造前后行为可比」。
+fn run_legacy_repair_loop<F>(
     request: &RepairRunRequest<'_>,
     mut step: F,
 ) -> CommandResult<RepairRunReport>
@@ -2107,7 +2633,7 @@ where
         }
 
         let is_finish = call.tool == "finish";
-        let (result, applied) = execute_tool(request, &call, rounds, &context);
+        let (result, applied) = execute_tool(request, &call, rounds, &context, None);
         // 裁定：从**工具真实返回**里取，不重新解释一遍模型输入——否则「记录了什么」
         // 与「回给模型什么」可能不一致，而落盘的必须是后者（模型据此继续推理）。
         if call.tool == "record_ruling" {
@@ -2190,81 +2716,821 @@ where
         status = REPAIR_STATUS_BUDGET_EXHAUSTED;
     }
 
-    // 裁定落盘。**即使这一轮没跑完也要写**：模型已经作出的判断是用户不必再回答的东西，
-    // 不能因为预算耗尽就把它们一起丢掉。
-    //
-    // 写失败同样不能提前 return：裁定是「报告」，已经落地的修改不因它失败而回滚，
-    // 但终态必须如实降级（否则用户会以为裁定都存住了）。
-    if let Err(error) = store::write_repair_rulings(
-        request.root,
-        request.job_id,
-        request.batch_id,
-        // 模型留下的疑问一并落盘：读路径要按当前稿重算剩余任务，没有它们就只能
-        // 在「丢掉模型的疑问」和「永远用冻结快照」之间二选一。
-        &json!({ "rulings": rulings, "modelQuestions": model_questions }),
-    ) {
-        last_error = Some(error);
-        if status == REPAIR_STATUS_COMPLETED {
-            status = REPAIR_STATUS_UNAVAILABLE;
-        }
-    }
+    finish_repair_run(
+        request,
+        RepairRunOutcome {
+            status,
+            rounds,
+            applied_count,
+            observations,
+            rulings,
+            model_questions,
+            finish_note,
+            last_error,
+            packets: Vec::new(),
+        },
+    )
+}
 
-    // 最终完成状态由**后端**判定：模型说"都修好了"不算数。
-    let remaining = match remaining_tasks(
+/// 包模式的修复循环：**逐包推进**。
+///
+/// 与 legacy 的三点根本差别：
+/// 1. 每轮的上下文是**一个校核包**（本地预切、范围明确），不是整卷 + 整份原文件；
+/// 2. 包内的观察**不跨包累积**（换包清空）——否则第 5 个包会背着前 4 个包的噪声，
+///    而它看到的上下文本该是自足的；
+/// 3. 上下文不够时有一条**明说的出口**（`report_insufficient_context`）与逐级升级的
+///    阶梯，最差也如实变成用户清单里的一条「云端没能拿到足够的原文」。
+///
+/// 全局约束仍是总超时 + 取消 + 运行归属；每包另有自己的回合与抓取预算。
+fn run_packet_repair_loop<F>(
+    request: &RepairRunRequest<'_>,
+    mut step: F,
+) -> CommandResult<RepairRunReport>
+where
+    F: FnMut(&Value, &[Value]) -> CommandResult<Value>,
+{
+    // 上下文建不出来就什么也做不了，但**仍然要返回报告**（见 `failure_report`）。
+    let mut context = match build_repair_context(
         request.root,
         request.item_id,
         request.job_id,
         request.batch_id,
-        &rulings,
-        &model_questions,
     ) {
-        Ok(tasks) => tasks,
+        Ok(context) => context,
+        Err(error) => return Ok(failure_report(request, error)),
+    };
+    let source_index = load_packet_source_index(request, &context);
+    let mut queue: std::collections::VecDeque<Value> =
+        match plan_repair_packets(request, &context, &source_index) {
+            Ok(packets) => packets.into(),
+            Err(error) => return Ok(failure_report(request, error)),
+        };
+
+    let mut rulings: Vec<Value> = match store::read_repair_rulings(
+        request.root,
+        request.job_id,
+        request.batch_id,
+    ) {
+        Ok(rulings) => rulings
+            .and_then(|value| value.get("rulings").and_then(Value::as_array).cloned())
+            .unwrap_or_default(),
         Err(error) => {
-            // 算不出剩余任务时**不能**返回空清单当「没问题」：空清单在前端等于
-            // 「没有需要你处理的事」。降级为 unavailable，让前端按**状态**判断，
-            // 而不是按清单长度判断（见 `repairHeadline`）。
-            last_error = Some(error);
-            if status == REPAIR_STATUS_COMPLETED {
-                status = REPAIR_STATUS_UNAVAILABLE;
-            }
+            // 读不回旧裁定不该让整次修复失败——但必须如实记下来（这次可能重复问了
+            // 用户一个上次已经回答过的问题）。
+            let _ = error;
             Vec::new()
         }
     };
-    if status == REPAIR_STATUS_COMPLETED && !remaining.is_empty() {
-        status = REPAIR_STATUS_NEEDS_ATTENTION;
-    }
-    let edit_version = current_canonical(request)
+    let mut model_questions: Vec<Value> = Vec::new();
+    let mut observations: Vec<Value> = Vec::new();
+    let mut applied_count = 0usize;
+    let mut rounds = 0u32;
+    let mut status = REPAIR_STATUS_COMPLETED;
+    let mut last_error: Option<String> = None;
+    let mut finish_note: Option<String> = None;
+    let mut finished = false;
+    let mut used_full_source = false;
+    let mut packet_reports: Vec<Value> = Vec::new();
+    // 有包**没做完**（轮数用尽 / 无进展 / 撞上全局闸）。它决定「队列跑空」之后该报
+    // `completed` 还是 `budget_exhausted`：每包都收工了却报「预算耗尽」，用户会以为
+    // 云端跑超时了——那和「云端跑完了」是两件事。
+    let mut incomplete = false;
+    // 已经收工的包（按**稳定 id**）。重切之后按 id 过滤，已做完的不会被重新排队。
+    let mut done_packets: BTreeSet<String> = BTreeSet::new();
+    // 全局回合上限按包数派生：任务书给的是「每包 5 轮」，而调用方的 `max_rounds`
+    // （legacy 默认 6）是**整卷**口径。若照搬，第二个包起就会被饿死——那会让「包」
+    // 反而比整卷更贵。真正的全局约束是总超时，这里只做一道防止无限重切的闸。
+    let mut global_round_cap = PACKET_MAX_ROUNDS * (queue.len().max(1) as u32);
+
+    let start_version = current_canonical(request)
         .ok()
         .flatten()
         .map(|(_, version)| version)
         .unwrap_or(0);
-
-    Ok(RepairRunReport {
-        status,
-        rounds,
-        edit_version,
-        applied_count,
-        observations,
-        remaining_tasks: remaining,
-        // 只数**此刻仍然有效**的裁定，不是 `rulings.len()`（那份是 append-only 的
-        // 累积记录，含历史 / 重复 / 已失效的条目，见 `effective_adjudicated_count`）。
-        adjudicated_count: adjudicated_count_now(
-            request.root,
-            request.item_id,
-            request.job_id,
-            request.batch_id,
-            &rulings,
-        ),
-        finish_note,
-        // 正常收工的运行不该带一条非空的 `lastError`：那会让界面把一次成功的修复
-        // 显示成失败。`last_error` 只描述**终态**失败原因。
-        last_error: if status == REPAIR_STATUS_COMPLETED {
-            None
-        } else {
-            last_error
+    report_progress(
+        request,
+        RepairProgress {
+            status: REPAIR_STATUS_RUNNING,
+            round: 0,
+            applied_count: 0,
+            adjudicated_count: adjudicated_count_now(
+                request.root,
+                request.item_id,
+                request.job_id,
+                request.batch_id,
+                &rulings,
+            ),
+            edit_version: start_version,
         },
-        repair_run_id: request.repair_run_id.to_string(),
-    })
+    );
+
+    while let Some(mut packet) = queue.pop_front() {
+        if (request.cancelled)() {
+            status = REPAIR_STATUS_CANCELLED;
+            break;
+        }
+        if Instant::now() >= request.deadline {
+            status = REPAIR_STATUS_BUDGET_EXHAUSTED;
+            break;
+        }
+        if rounds >= global_round_cap {
+            status = REPAIR_STATUS_BUDGET_EXHAUSTED;
+            break;
+        }
+
+        let packet_id = packet
+            .get("packetId")
+            .and_then(Value::as_str)
+            .unwrap_or("pkt-unknown")
+            .to_string();
+        let question_numbers: Vec<u32> = packet
+            .get("questionNumbers")
+            .and_then(Value::as_array)
+            .map(|items| items.iter().filter_map(Value::as_u64).map(|n| n as u32).collect())
+            .unwrap_or_default();
+        let task_ids: BTreeSet<String> = packet
+            .get("taskIds")
+            .and_then(Value::as_array)
+            .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .unwrap_or_default();
+        let mut level = packet
+            .get("escalationLevel")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32;
+        let mut budget = grab::GrabBudget::new();
+        // 包内观察：换包清空，不跨包累积。
+        let mut packet_observations: Vec<Value> = Vec::new();
+        let mut packet_rounds = 0u32;
+        let mut packet_rulings = 0usize;
+        let mut packet_edits = 0usize;
+        let mut packet_insufficient = 0usize;
+        let mut packet_status = "rounds_exhausted";
+        let mut repeats: BTreeMap<String, u32> = BTreeMap::new();
+        let mut escalated = false;
+        // 该收摊了：记录完本包诊断就退出外层循环（取消 / 超时 / 全局预算 / 模型 finish /
+        // 网关不可用）。用标志而不是 `break 'packets`，是为了**不让这一包的诊断丢掉**。
+        let mut stop_all = false;
+
+        loop {
+            if (request.cancelled)() {
+                status = REPAIR_STATUS_CANCELLED;
+                packet_status = "cancelled";
+                stop_all = true;
+                break;
+            }
+            if Instant::now() >= request.deadline {
+                status = REPAIR_STATUS_BUDGET_EXHAUSTED;
+                packet_status = "deadline";
+                stop_all = true;
+                break;
+            }
+            if rounds >= global_round_cap {
+                status = REPAIR_STATUS_BUDGET_EXHAUSTED;
+                packet_status = "global_round_budget";
+                stop_all = true;
+                break;
+            }
+            if packet_rounds >= PACKET_MAX_ROUNDS {
+                break;
+            }
+            packet_rounds += 1;
+            rounds += 1;
+            let raw = match step(&packet, &packet_observations) {
+                Ok(raw) => raw,
+                // 与 legacy 同一条规则：回复**收到了**但被校验器拒绝 ⇒ 同一回合内给
+                // **一次**带原因的受约束重试；传输类错误不重试。
+                Err(error)
+                    if is_constrained_retry_rejection(&error)
+                        && Instant::now() < request.deadline
+                        && !(request.cancelled)() =>
+                {
+                    packet_observations.push(json!({
+                        "schemaVersion": "CloudRepairToolResultV1",
+                        "callId": Value::Null,
+                        "status": "rejected",
+                        "errors": [error.clone()],
+                        "repairNote": error.clone(),
+                    }));
+                    match step(&packet, &packet_observations) {
+                        Ok(raw) => raw,
+                        Err(second) => {
+                            last_error = Some(format!("{second};first_rejection={error}"));
+                            status = REPAIR_STATUS_UNAVAILABLE;
+                            packet_status = "unavailable";
+                            break;
+                        }
+                    }
+                }
+                Err(error) => {
+                    last_error = Some(error);
+                    status = REPAIR_STATUS_UNAVAILABLE;
+                    packet_status = "unavailable";
+                    break;
+                }
+            };
+            let call = match parse_tool_call(&raw) {
+                Ok(call) => call,
+                Err(error) => {
+                    // 解析失败也算一个回合：把具体错误回给模型，让它改对再交。
+                    packet_observations.push(json!({
+                        "schemaVersion": "CloudRepairToolResultV1",
+                        "callId": raw.get("callId").cloned().unwrap_or(Value::Null),
+                        "status": "rejected",
+                        "errors": [error],
+                    }));
+                    continue;
+                }
+            };
+        // 指纹里带上**本包当前升级级别**。理由：模型连着两轮说「不够」时，后端在中间
+        // 已经给它加了材料（L2 整页图 / L3 整份原文）——那不是「原地打转」，而是升级
+        // 阶梯在推进。若不带上级别，L1 的第三次重复就会被判成 `no_progress` 而**掐断
+        // 阶梯**，本包永远到不了 L4，最后只好谎报「预算耗尽」。
+        let fingerprint = format!(
+            "{}:{}:{}",
+            call.tool,
+            level,
+            serde_json::to_string(&call.arguments).unwrap_or_default()
+        );
+        let counter = repeats.entry(fingerprint).or_insert(0);
+        *counter += 1;
+        if *counter > REPEAT_LIMIT {
+            packet_observations.push(
+                serde_json::to_value(CloudRepairToolResultV1::rejected(
+                    &call.call_id,
+                    vec![
+                        "CLOUD_REPAIR_NO_PROGRESS: repeated identical tool call with no new information"
+                            .to_string(),
+                    ],
+                ))
+                .unwrap_or(Value::Null),
+            );
+            packet_status = "no_progress";
+            break;
+        }
+
+            let is_finish_packet = call.tool == crate::schema::cloud_repair_v1::CLOUD_REPAIR_FINISH_PACKET_TOOL;
+            let is_finish = call.tool == "finish";
+            let is_insufficient =
+                call.tool == crate::schema::cloud_repair_v1::CLOUD_REPAIR_INSUFFICIENT_CONTEXT_TOOL;
+            // L1 = 模型主动去取材料（抓取工具）或明说不够（`report_insufficient_context`）。
+            // 记进级别是为了让诊断能回答「这一次输入量下降是不是靠模型自己补的」。
+            if is_insufficient
+                || matches!(
+                    call.tool.as_str(),
+                    "read_source" | "search_source" | "read_page_region" | "read_passage"
+                        | "read_candidate"
+                )
+            {
+                level = level.max(1);
+            }
+            let (result, applied) = {
+                let mut tools = PacketTools {
+                    source: &source_index,
+                    budget: &mut budget,
+                    task_ids: task_ids.clone(),
+                    question_numbers: question_numbers.clone(),
+                };
+                execute_tool(request, &call, rounds, &packet, Some(&mut tools))
+            };
+            if call.tool == "record_ruling" {
+                if let Some(recorded) = result.result.get("recorded").and_then(Value::as_array) {
+                    packet_rulings += recorded.len();
+                    rulings.extend(recorded.iter().cloned());
+                }
+            }
+            if is_insufficient {
+                packet_insufficient += 1;
+                // 取到的证据**并入本包**，下一轮请求就带着它。
+                merge_fetched_evidence(&mut packet, &result);
+                let unsatisfied = result
+                    .result
+                    .get("unsatisfied")
+                    .and_then(Value::as_array)
+                    .map(Vec::len)
+                    .unwrap_or(0);
+                if unsatisfied > 0 || budget.exhausted() {
+                    // 抓取预算用尽（或需求本身取不到）⇒ 升级一档，由后端加材料。
+                    level = escalate_packet(
+                        request,
+                        &source_index,
+                        &mut packet,
+                        level,
+                        &mut used_full_source,
+                    );
+                    escalated = true;
+                    if level >= PACKET_MAX_ESCALATION {
+                        packet_status = "context_insufficient";
+                        break;
+                    }
+                }
+            }
+            packet_observations.push(serde_json::to_value(&result).unwrap_or(Value::Null));
+            observations.push(serde_json::to_value(&result).unwrap_or(Value::Null));
+            if is_finish_packet || is_finish {
+                let unresolved = call.arguments.get("unresolved").and_then(Value::as_array);
+                if let Some(unresolved) = unresolved {
+                    model_questions.extend(unresolved.iter().map(|entry| match entry {
+                        Value::String(text) => json!({ "message": text }),
+                        other => other.clone(),
+                    }));
+                }
+                if is_finish {
+                    finished = true;
+                    finish_note = call
+                        .arguments
+                        .get("note")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
+                    packet_status = "run_finished";
+                    stop_all = true;
+                    break;
+                }
+                packet_status = "finished";
+                done_packets.insert(packet_id.clone());
+                break;
+            }
+            if let Some(count) = applied {
+                applied_count += count;
+                packet_edits += count;
+                // 写成功之后必须重读上下文（版本变了）并**重切受影响的包**。
+                match build_repair_context(
+                    request.root,
+                    request.item_id,
+                    request.job_id,
+                    request.batch_id,
+                ) {
+                    Ok(next) => context = next,
+                    Err(error) => {
+                        // 修改**已经落库**，只是读不回新上下文：不能提前 return（那样批次行
+                        // 会停在 running），记下错误、降级为 unavailable，走统一收尾。
+                        last_error = Some(error);
+                        status = REPAIR_STATUS_UNAVAILABLE;
+                        packet_status = "unavailable";
+                        break;
+                    }
+                }
+                match plan_repair_packets(request, &context, &source_index) {
+                    Ok(next) => {
+                        // 重切：已收工的包（按稳定 id）不再排队；本包若仍有差异会以**新切片**
+                        // 重新排队，`editVersion` 与目标 id 都刷新过。
+                        queue = next
+                            .into_iter()
+                            .filter(|candidate| {
+                                candidate
+                                    .get("packetId")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(|id| !done_packets.contains(id))
+                            })
+                            .collect();
+                        global_round_cap = rounds
+                            + PACKET_MAX_ROUNDS * (queue.len().max(1) as u32);
+                    }
+                    Err(error) => {
+                        last_error = Some(error);
+                        status = REPAIR_STATUS_UNAVAILABLE;
+                        packet_status = "unavailable";
+                        break;
+                    }
+                }
+                report_progress(
+                    request,
+                    RepairProgress {
+                        status: REPAIR_STATUS_RUNNING,
+                        round: rounds,
+                        applied_count,
+                        adjudicated_count: adjudicated_count_now(
+                            request.root,
+                            request.item_id,
+                            request.job_id,
+                            request.batch_id,
+                            &rulings,
+                        ),
+                        edit_version: context
+                            .get("editVersion")
+                            .and_then(Value::as_i64)
+                            .unwrap_or(0),
+                    },
+                );
+                packet_status = "edited";
+                break;
+            }
+        }
+
+        // ── L4：模型始终拿不到足够材料 ⇒ 后端**代记** cannot_resolve ─────────
+        //
+        // 这是「上下文不足绝不变成猜一个」的落点：既不编答案，也不假装核对过。剩下的
+        // 差异带着理由码 `CONTEXT_INSUFFICIENT` 进用户清单，文案明说云端没拿到材料。
+        if packet_status == "context_insufficient" {
+            let forced =
+                force_context_insufficient_rulings(&packet, &mut rulings, rounds.max(1) as u32);
+            packet_rulings += forced;
+        }
+        // 「这一包没做完」：轮数用尽、原地打转、或撞上全局闸。取消 / 网关不可用 / 截止
+        // 时间已经各自把 `status` 降级了，这里只管**队列跑空**时该怎么收尾。
+        if matches!(
+            packet_status,
+            "rounds_exhausted" | "no_progress" | "global_round_budget" | "deadline"
+        ) {
+            incomplete = true;
+        }
+        packet_reports.push(json!({
+            "packetId": packet_id,
+            "escalationLevel": level,
+            "escalated": escalated,
+            "status": packet_status,
+            "rounds": packet_rounds,
+            "rulings": packet_rulings,
+            "edits": packet_edits,
+            "insufficientContext": packet_insufficient,
+            "questionNumbers": question_numbers,
+            "scopePages": packet.pointer("/scope/pages").cloned().unwrap_or_else(|| json!([])),
+            "estimatedInputTokens": packet_token_estimate(&packet),
+        }));
+        if status == REPAIR_STATUS_UNAVAILABLE || stop_all {
+            break;
+        }
+    }
+
+    // 队列跑空之后，终态由**后端**按事实判定，三种情况必须分开：
+    //
+    // - 有包被判「上下文不足」⇒ `needs_attention`：不是预算不够，而是**材料不够**，
+    //   用户有事可做（对照原文确认）；报成 `budget_exhausted` 会被读成「云端跑超时了」。
+    // - 有包没做完（轮数用尽 / 原地打转 / 撞闸）⇒ `budget_exhausted`，如实说没跑完。
+    // - 每包都收工（`finish_packet` / 落地过编辑）且队列自然跑空 ⇒ `completed`。包模式下
+    //   `finish_packet` 就是**正常收工**，`finish` 只用来提前结束整次运行；此时再报
+    //   「预算耗尽」是在冤枉一次成功的校核。
+    //
+    // 注意 `remaining_tasks` 仍会在收尾处按当前 canonical 重算：稿子里还有没解决的差异
+    // 时，状态会被抬成 `needs_attention`（见 `finish_repair_run`）。
+    if status == REPAIR_STATUS_COMPLETED && !finished {
+        let any_context_insufficient = packet_reports
+            .iter()
+            .any(|packet| packet.get("status").and_then(Value::as_str) == Some("context_insufficient"));
+        status = if any_context_insufficient {
+            REPAIR_STATUS_NEEDS_ATTENTION
+        } else if incomplete {
+            REPAIR_STATUS_BUDGET_EXHAUSTED
+        } else {
+            REPAIR_STATUS_COMPLETED
+        };
+    }
+
+    finish_repair_run(
+        request,
+        RepairRunOutcome {
+            status,
+            rounds,
+            applied_count,
+            observations,
+            rulings,
+            model_questions,
+            finish_note,
+            last_error,
+            packets: packet_reports,
+        },
+    )
+}
+
+/// 读原文页索引（逐行文本 / 页图 / 答案页 / 段落）。
+///
+/// 读不到**不**让整次修复失败：包仍然带着稿件切片与差异，只是原文证据为空——那会被
+/// `scopeManifest` 如实写出来，模型据此可以 `report_insufficient_context`。
+fn load_packet_source_index(
+    request: &RepairRunRequest<'_>,
+    context: &Value,
+) -> packets::SourcePageIndex {
+    let source_meta = crate::auto_pipeline::cloud_source_evidence(request.root, request.job_id)
+        .unwrap_or(Value::Null);
+    let source_file_id = source_meta
+        .get("sourceFileId")
+        .and_then(Value::as_str)
+        .or_else(|| context.get("sourceFileId").and_then(Value::as_str))
+        .unwrap_or(request.job_id)
+        .to_string();
+    let kind = source_meta
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    grab::load_source_index(request.root, request.job_id, &source_file_id, kind)
+}
+
+/// 按当前差异切包，并把区域图裁剪出来。
+fn plan_repair_packets(
+    request: &RepairRunRequest<'_>,
+    context: &Value,
+    source_index: &packets::SourcePageIndex,
+) -> CommandResult<Vec<Value>> {
+    let canonical = current_canonical(request)?
+        .map(|(document, _)| document)
+        .unwrap_or(Value::Null);
+    let candidate = store::read_cloud_authoring_candidate(
+        request.root,
+        request.job_id,
+        request.batch_id,
+    )?
+    .and_then(|candidate| serde_json::to_value(&candidate.authoring).ok())
+    .unwrap_or(Value::Null);
+    let differences: Vec<Value> = context
+        .get("differences")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let blocking_issues = crate::authoring_v2_commands::unresolved_blocking_issues(&canonical);
+    let protected: BTreeSet<String> = context
+        .get("protectedTargets")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .unwrap_or_default();
+    let edit_version = context.get("editVersion").and_then(Value::as_i64).unwrap_or(0);
+
+    let planned = packets::plan_packets(&packets::PacketPlanInput {
+        canonical: &canonical,
+        candidate: &candidate,
+        differences: &differences,
+        blocking_issues: &blocking_issues,
+        protected: &protected,
+        source: source_index,
+        edit_version,
+    });
+    Ok(planned
+        .into_iter()
+        .map(|mut packet| {
+            let packet_id = packet
+                .get("packetId")
+                .and_then(Value::as_str)
+                .unwrap_or("pkt")
+                .to_string();
+            let regions: Vec<Value> = packet
+                .pointer("/sourceEvidence/regions")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let materialized = grab::materialize_regions(
+                request.root,
+                request.job_id,
+                &packet_id,
+                source_index,
+                &regions,
+            );
+            packet["sourceEvidence"]["regions"] = json!(materialized);
+            enforce_packet_budget(&mut packet);
+            packet
+        })
+        .collect())
+}
+
+/// 单包输入的粗估（字符 / 4 + 每张图固定值），与 `packets.rs` 同一套系数。
+fn packet_token_estimate(packet: &Value) -> usize {
+    let chars = serde_json::to_string(packet)
+        .map(|text| text.chars().count())
+        .unwrap_or(0);
+    let images = packet
+        .pointer("/sourceEvidence/regions")
+        .and_then(Value::as_array)
+        .map(|regions| regions.iter().filter(|region| !region["image"].is_null()).count())
+        .unwrap_or(0);
+    chars / packets::PACKET_CHARS_PER_TOKEN + images * packets::PACKET_IMAGE_TOKENS
+}
+
+/// 超预算时按「整页图 → 区域图」退让，并**如实写明**少了什么。
+///
+/// 静默丢图比丢文字更危险：文字还在包里，模型至少知道自己读到了什么；而一张「本该
+/// 附上但没附」的图会让模型以为自己看过那一块。
+fn enforce_packet_budget(packet: &mut Value) {
+    if packet_token_estimate(packet) <= packets::PACKET_TOKEN_BUDGET {
+        return;
+    }
+    if let Some(regions) = packet
+        .pointer_mut("/sourceEvidence/regions")
+        .and_then(Value::as_array_mut)
+    {
+        if regions.is_empty() {
+            return;
+        }
+        let dropped = regions.len();
+        regions.clear();
+        if let Some(object) = packet.as_object_mut() {
+            object.insert(
+                "budgetNote".to_string(),
+                json!(format!(
+                    "{dropped} region image(s) were dropped: the packet exceeded the {}-token \
+                     budget. The text layer for the pages in scope is still below.",
+                    packets::PACKET_TOKEN_BUDGET
+                )),
+            );
+        }
+    }
+}
+
+/// 把一次 `report_insufficient_context` 取到的证据并入本包。
+fn merge_fetched_evidence(packet: &mut Value, result: &CloudRepairToolResultV1) {
+    let Some(satisfied) = result.result.get("satisfied").and_then(Value::as_array) else {
+        return;
+    };
+    let mut fetched: Vec<Value> = packet
+        .pointer("/sourceEvidence/fetched")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for entry in satisfied {
+        let kind = entry.get("kind").and_then(Value::as_str).unwrap_or("");
+        let value = entry.get("result").cloned().unwrap_or(Value::Null);
+        match kind {
+            "pages" => {
+                for page in value
+                    .get("pages")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    upsert_packet_page(packet, page);
+                }
+                fetched.push(json!({"kind": "pages", "pageIndexes": value
+                    .get("pages")
+                    .and_then(Value::as_array)
+                    .map(|pages| pages.iter().filter_map(|page| page.get("pageIndex").cloned()).collect::<Vec<_>>())
+                    .unwrap_or_default()}));
+            }
+            "page_region" => {
+                // 取到的页图必须进 `regions`，网关才会把它作为图片附到下一轮请求上。
+                let mut regions: Vec<Value> = packet
+                    .pointer("/sourceEvidence/regions")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                regions.push(json!({
+                    "pageIndex": value.get("pageIndex").cloned().unwrap_or(Value::Null),
+                    "bbox": Value::Null,
+                    "taskIds": [],
+                    "image": value.get("image").cloned().unwrap_or(Value::Null),
+                    "note": "fetched by report_insufficient_context",
+                }));
+                packet["sourceEvidence"]["regions"] = json!(regions);
+                fetched.push(json!({"kind": "page_region", "pageIndex": value.get("pageIndex").cloned().unwrap_or(Value::Null)}));
+            }
+            other => {
+                fetched.push(json!({"kind": other, "result": value}));
+            }
+        }
+    }
+    packet["sourceEvidence"]["fetched"] = json!(fetched);
+    enforce_packet_budget(packet);
+}
+
+/// 把一页原文并入包的 `sourceEvidence.pages`（同页替换，不同页追加），并同步 `scope.pages`。
+fn upsert_packet_page(packet: &mut Value, page: &Value) {
+    let Some(index) = page.get("pageIndex").cloned() else {
+        return;
+    };
+    let mut pages: Vec<Value> = packet
+        .pointer("/sourceEvidence/pages")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut replaced = false;
+    for existing in pages.iter_mut() {
+        if existing.get("pageIndex") == Some(&index) {
+            *existing = json!({"pageIndex": index, "lines": page.get("lines").cloned().unwrap_or_else(|| json!([]))});
+            replaced = true;
+            break;
+        }
+    }
+    if !replaced {
+        pages.push(json!({"pageIndex": index, "lines": page.get("lines").cloned().unwrap_or_else(|| json!([]))}));
+    }
+    pages.sort_by_key(|page| page.get("pageIndex").and_then(Value::as_u64).unwrap_or(0));
+    packet["sourceEvidence"]["pages"] = json!(pages);
+
+    if let Some(number) = index.as_u64() {
+        let mut scope: Vec<u64> = packet
+            .pointer("/scope/pages")
+            .and_then(Value::as_array)
+            .map(|items| items.iter().filter_map(Value::as_u64).collect())
+            .unwrap_or_default();
+        if !scope.contains(&number) {
+            scope.push(number);
+            scope.sort_unstable();
+            packet["scope"]["pages"] = json!(scope);
+        }
+    }
+}
+
+/// 升级一档。返回新的级别。
+///
+/// - **L1** 抓取工具 / `report_insufficient_context`（模型自己取）；
+/// - **L2** 后端把本包范围内的页整页附上（模型不必再自己找）；
+/// - **L3** 本包附一次整份原文件（`attachFullSource`，每次运行最多一次）；
+/// - **L4** 不再升级，由调用方代记 `cannot_resolve`。
+fn escalate_packet(
+    request: &RepairRunRequest<'_>,
+    source_index: &packets::SourcePageIndex,
+    packet: &mut Value,
+    level: u32,
+    used_full_source: &mut bool,
+) -> u32 {
+    let next = (level + 1).min(PACKET_MAX_ESCALATION);
+    match next {
+        2 => {
+            // 整页图：包内范围的所有页，缺哪页补哪页。
+            let packet_id = packet
+                .get("packetId")
+                .and_then(Value::as_str)
+                .unwrap_or("pkt")
+                .to_string();
+            let mut regions: Vec<Value> = packet
+                .pointer("/sourceEvidence/regions")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let existing: BTreeSet<u64> = regions
+                .iter()
+                .filter_map(|region| region.get("pageIndex").and_then(Value::as_u64))
+                .collect();
+            let requests: Vec<Value> = packet
+                .pointer("/scope/pages")
+                .and_then(Value::as_array)
+                .map(|items| items.iter().filter_map(Value::as_u64).collect::<Vec<_>>())
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|page| !existing.contains(page))
+                .map(|page| json!({"pageIndex": page, "bbox": Value::Null, "taskIds": [], "image": Value::Null}))
+                .collect();
+            regions.extend(grab::materialize_regions(
+                request.root,
+                request.job_id,
+                &packet_id,
+                source_index,
+                &requests,
+            ));
+            packet["sourceEvidence"]["regions"] = json!(regions);
+            packet["scopeManifest"]["escalationNote"] = json!(
+                "L2: the backend attached whole-page images for every page in scope."
+            );
+        }
+        3 => {
+            if !*used_full_source {
+                *used_full_source = true;
+                packet["attachFullSource"] = json!(true);
+                packet["scopeManifest"]["escalationNote"] = json!(
+                    "L3: the whole original file is attached to this packet (last resort, once per run)."
+                );
+            }
+        }
+        _ => {}
+    }
+    packet["escalationLevel"] = json!(next);
+    enforce_packet_budget(packet);
+    next
+}
+
+/// L4：对本包**仍然没有有效裁定**的差异，后端代记 `cannot_resolve`。
+///
+/// 为什么必须由后端代记：模型没做到这一步时（预算用尽、或它只是沉默），那些差异会
+/// 原样落进用户清单而**没有任何说明**——用户看到的是「云端跑完了但没告诉我为什么」。
+/// 代记之后每一条都带上理由码，清单里的文案明说「云端没能拿到足够的原文」。
+fn force_context_insufficient_rulings(
+    packet: &Value,
+    rulings: &mut Vec<Value>,
+    round: u32,
+) -> usize {
+    let numbers: Vec<Value> = packet
+        .get("questionNumbers")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let packet_id = packet.get("packetId").cloned().unwrap_or(Value::Null);
+    let mut forced = 0usize;
+    for difference in packet
+        .get("differences")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if fresh_ruling_for_difference(rulings, difference).is_some() {
+            continue;
+        }
+        let (target_type, target_id, field) = difference_key(difference);
+        let (canonical_digest, candidate_digest, context_digest) =
+            difference_digests(difference);
+        rulings.push(json!({
+            "targetType": target_type,
+            "targetId": target_id,
+            "field": field,
+            "ruling": crate::schema::cloud_repair_v1::CLOUD_RULING_CANNOT_RESOLVE,
+            "reason": crate::schema::cloud_repair_v1::CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT,
+            // 题号让用户清单能说清「第几题」，也让「上下文不足」这条记录可解释。
+            "questionNumbers": numbers,
+            "evidence": [],
+            "canonicalDigest": canonical_digest,
+            "candidateDigest": candidate_digest,
+            "contextDigest": context_digest,
+            "recordedAtRound": round,
+            "packetId": packet_id,
+            "recordedBy": "backend",
+        }));
+        forced += 1;
+    }
+    forced
 }
 
 #[cfg(test)]

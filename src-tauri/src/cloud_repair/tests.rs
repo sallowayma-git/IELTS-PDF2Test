@@ -72,6 +72,11 @@ fn read_answer(root: &Path, slot: &str) -> Value {
 /// 造一份「云端完整候选」草稿：结构与 golden 对齐，但 q14 的答案由 B 改成 A。
 /// 这样候选与当前稿之间**恰好**只有一处实质差异，便于断言「修好之后不再复活」。
 fn cloud_draft(q14_label: &str) -> Value {
+    cloud_draft_with(q14_label, "D")
+}
+
+/// 同上，但 q15 也能改：包模式要验证「改完一处差异后重新切包」，那需要**两个**差异。
+fn cloud_draft_with(q14_label: &str, q15_label: &str) -> Value {
     let node = |id: &str, child: &str, text: &str| {
         json!({
             "type": "paragraph",
@@ -146,7 +151,7 @@ fn cloud_draft(q14_label: &str) -> Value {
         },
         "answerKey": {
             "cloud-q14": {"kind": "option", "labels": [q14_label], "assignment": "unordered_set"},
-            "cloud-q15": {"kind": "option", "labels": ["D"], "assignment": "unordered_set"}
+            "cloud-q15": {"kind": "option", "labels": [q15_label], "assignment": "unordered_set"}
         },
         "assets": []
     })
@@ -154,6 +159,10 @@ fn cloud_draft(q14_label: &str) -> Value {
 
 /// 把候选规范化并落盘到独立 artifact（供 `build_repair_context` 读取）。
 fn store_candidate(root: &Path, q14_label: &str) {
+    store_candidate_with(root, q14_label, "D")
+}
+
+fn store_candidate_with(root: &Path, q14_label: &str, q15_label: &str) {
     let canonical = golden_authoring();
     let source_sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let identity = CloudAuthoringIdentity {
@@ -169,7 +178,7 @@ fn store_candidate(root: &Path, q14_label: &str) {
         source_document_id: "early-approaches-document",
         extraction_mode: "pdf_native",
     };
-    let raw = json!({"authoring": cloud_draft(q14_label)});
+    let raw = json!({"authoring": cloud_draft_with(q14_label, q15_label)});
     let normalized =
         normalize_cloud_authoring(&identity, Some(&canonical), &raw).expect("标准化必须成功");
     let candidate =
@@ -236,6 +245,30 @@ fn first_text_in_value(value: &Value) -> Option<(String, String)> {
 
 fn request<'a>(root: &'a Path, cancelled: &'a dyn Fn() -> bool, max_rounds: u32) -> RepairRunRequest<'a> {
     request_for_batch(root, BATCH_ID, "run-1", cancelled, max_rounds)
+}
+
+/// 跑 **legacy** 模式的循环。
+///
+/// 本文件里绝大多数用例断言的是**循环纪律**（取消 / 超时 / 无进展 / 终态 / 裁定落盘 /
+/// 剩余任务重算），它们必须在「改造前的行为一字未变」这条基线上继续绿。默认模式已经
+/// 切到 `packets`（见 `REPAIR_CONTEXT_MODE`），所以这些用例显式指定 legacy——**不是**
+/// 把测试改绿，而是把模式显式化：模式一换，上下文形状就换了，不显式指定的话断言会
+/// 在两种语义之间漂移。
+///
+/// 包模式有自己的一组用例（见文件末尾「包模式」一节）与真实 HTTP 集成用例。
+fn run_legacy<F>(request: &RepairRunRequest<'_>, step: F) -> CommandResult<RepairRunReport>
+where
+    F: FnMut(&Value, &[Value]) -> CommandResult<Value>,
+{
+    run_repair_loop_in_mode(request, RepairContextMode::Legacy, step)
+}
+
+/// 跑 **packets** 模式的循环（默认模式）。
+fn run_packets<F>(request: &RepairRunRequest<'_>, step: F) -> CommandResult<RepairRunReport>
+where
+    F: FnMut(&Value, &[Value]) -> CommandResult<Value>,
+{
+    run_repair_loop_in_mode(request, RepairContextMode::Packets, step)
 }
 
 fn request_for_batch<'a>(
@@ -315,7 +348,7 @@ fn repair_loop_rejects_bad_edit_then_applies_the_real_fix() {
     let request = request(&root, &not_cancelled, 6);
 
     let mut calls = 0u32;
-    let report = run_repair_loop(&request, |context: &Value, _observations: &[Value]| {
+    let report = run_legacy(&request, |context: &Value, _observations: &[Value]| {
         calls += 1;
         let version = context.get("editVersion").and_then(Value::as_i64).unwrap_or(0);
         Ok(match calls {
@@ -382,7 +415,7 @@ fn repair_loop_never_executes_unknown_tools() {
     let not_cancelled = || false;
     let request = request(&root, &not_cancelled, 4);
     let mut calls = 0u32;
-    let report = run_repair_loop(&request, |_context: &Value, _observations: &[Value]| {
+    let report = run_legacy(&request, |_context: &Value, _observations: &[Value]| {
         calls += 1;
         Ok(match calls {
             1 => json!({"callId": "x1", "tool": "resolveIssue",
@@ -418,7 +451,7 @@ fn repair_loop_stops_on_cancel_and_never_claims_completion() {
     let cancelled = || true;
     let request = request(&root, &cancelled, 6);
     let mut calls = 0u32;
-    let report = run_repair_loop(&request, |_context: &Value, _observations: &[Value]| {
+    let report = run_legacy(&request, |_context: &Value, _observations: &[Value]| {
         calls += 1;
         Ok(json!({"callId": "c1", "tool": "finish", "arguments": {}}))
     })
@@ -440,7 +473,7 @@ fn repair_loop_reports_unavailable_without_touching_the_draft() {
 
     let not_cancelled = || false;
     let request = request(&root, &not_cancelled, 6);
-    let report = run_repair_loop(&request, |_context: &Value, _observations: &[Value]| {
+    let report = run_legacy(&request, |_context: &Value, _observations: &[Value]| {
         Err("llm_http_500:upstream".to_string())
     })
     .expect("修复循环必须返回结果");
@@ -462,7 +495,7 @@ fn repair_loop_stops_on_repeated_identical_calls() {
     let not_cancelled = || false;
     let request = request(&root, &not_cancelled, 20);
     let mut calls = 0u32;
-    let report = run_repair_loop(&request, |_context: &Value, _observations: &[Value]| {
+    let report = run_legacy(&request, |_context: &Value, _observations: &[Value]| {
         calls += 1;
         // 每次都是同一个「读同一段、什么都不改」的调用。
         Ok(json!({"callId": format!("c{calls}"), "tool": "read_draft",
@@ -518,7 +551,7 @@ fn a_ruling_that_the_candidate_is_wrong_retires_the_difference_for_good() {
     let not_cancelled = || false;
     let request = request(&root, &not_cancelled, 4);
     let mut calls = 0u32;
-    let report = run_repair_loop(&request, |_context: &Value, _observations: &[Value]| {
+    let report = run_legacy(&request, |_context: &Value, _observations: &[Value]| {
         calls += 1;
         Ok(match calls {
             1 => ruling_call(
@@ -552,7 +585,7 @@ fn a_ruling_that_the_candidate_is_wrong_retires_the_difference_for_good() {
 
     // 再跑一轮（模型这次什么都不做）：差异仍然不回来。
     let mut second_calls = 0u32;
-    let second = run_repair_loop(&request, |_context: &Value, _observations: &[Value]| {
+    let second = run_legacy(&request, |_context: &Value, _observations: &[Value]| {
         second_calls += 1;
         Ok(json!({"callId": "s1", "tool": "finish", "arguments": {"note": "再核一遍"}}))
     })
@@ -576,7 +609,7 @@ fn when_both_sides_are_wrong_the_third_content_is_written_and_the_candidate_is_n
     let not_cancelled = || false;
     let request = request(&root, &not_cancelled, 6);
     let mut calls = 0u32;
-    let report = run_repair_loop(&request, |context: &Value, _observations: &[Value]| {
+    let report = run_legacy(&request, |context: &Value, _observations: &[Value]| {
         calls += 1;
         let version = context.get("editVersion").and_then(Value::as_i64).unwrap_or(0);
         Ok(match calls {
@@ -642,7 +675,7 @@ fn a_reported_doubt_survives_even_when_nothing_else_is_wrong() {
 
     let not_cancelled = || false;
     let request = request(&root, &not_cancelled, 2);
-    let report = run_repair_loop(&request, |_context: &Value, _observations: &[Value]| {
+    let report = run_legacy(&request, |_context: &Value, _observations: &[Value]| {
         Ok(json!({"callId": "q1", "tool": "finish", "arguments": {
             "note": "整卷核完",
             "unresolved": [{
@@ -704,7 +737,7 @@ fn a_ruling_is_re_evaluated_once_the_content_changes_again() {
     let request = request(&root, &not_cancelled, 4);
     // 第一轮：裁定「当前稿 B 是对的」，差异了结。
     let mut calls = 0u32;
-    let first = run_repair_loop(&request, |_context: &Value, _observations: &[Value]| {
+    let first = run_legacy(&request, |_context: &Value, _observations: &[Value]| {
         calls += 1;
         Ok(match calls {
             1 => ruling_call(
@@ -727,7 +760,7 @@ fn a_ruling_is_re_evaluated_once_the_content_changes_again() {
 
     // 内容又变了（这里走真实写入路径改 q14 → C）：旧裁定当时的前提不存在了。
     let mut second_calls = 0u32;
-    let second = run_repair_loop(&request, |context: &Value, _observations: &[Value]| {
+    let second = run_legacy(&request, |context: &Value, _observations: &[Value]| {
         second_calls += 1;
         let version = context.get("editVersion").and_then(Value::as_i64).unwrap_or(0);
         Ok(match second_calls {
@@ -766,7 +799,7 @@ fn progress_is_reported_at_start_and_after_every_effective_commit() {
     request.progress = Some(&sink);
 
     let mut calls = 0u32;
-    run_repair_loop(&request, |context: &Value, _observations: &[Value]| {
+    run_legacy(&request, |context: &Value, _observations: &[Value]| {
         calls += 1;
         let version = context.get("editVersion").and_then(Value::as_i64).unwrap_or(0);
         Ok(match calls {
@@ -1136,7 +1169,7 @@ fn real_docx_import_reaches_cloud_repair_with_original_source_evidence() {
     let requests = start_repair_service(&root, scripted_docx_finish_reply);
     let not_cancelled = || false;
     let request = request_for_batch(&root, &batch_id, "run-docx-repair", &not_cancelled, 2);
-    let repair = run_repair_loop(&request, |context, observations| {
+    let repair = run_legacy(&request, |context, observations| {
         repair_authoring_step_through_gateway(
             &root,
             ITEM_ID,
@@ -1211,7 +1244,7 @@ fn controlled_model_service_drives_a_real_repair_round_through_the_real_gateway(
     };
     let not_cancelled = || false;
     let request = request(&root, &not_cancelled, 6);
-    let report = run_repair_loop(&request, |context: &Value, observations: &[Value]| {
+    let report = run_legacy(&request, |context: &Value, observations: &[Value]| {
         repair_authoring_step_through_gateway(
             &root,
             ITEM_ID,
@@ -1760,7 +1793,7 @@ fn cloud_repair_overrules_a_wrong_local_answer_through_the_real_chain() {
     // ③ 真实修复循环：真实网关 → 受控服务 → 真实工具执行 → 真实事务写入。
     let not_cancelled = || false;
     let request = request(&root, &not_cancelled, 6);
-    let report = run_repair_loop(&request, |context, observations| {
+    let report = run_legacy(&request, |context, observations| {
         repair_authoring_step_through_gateway(
             &root,
             ITEM_ID,
@@ -1833,7 +1866,7 @@ fn cloud_repair_cannot_overwrite_a_human_edited_target_on_the_real_chain() {
 
     let not_cancelled = || false;
     let request = request(&root, &not_cancelled, 6);
-    let report = run_repair_loop(&request, |context, observations| {
+    let report = run_legacy(&request, |context, observations| {
         repair_authoring_step_through_gateway(
             &root,
             ITEM_ID,
@@ -1993,7 +2026,7 @@ fn retry_recognition_preserves_human_edit_and_applies_a_new_improvement() {
         &not_cancelled,
         8,
     );
-    let report = run_repair_loop(&request, |context, observations| {
+    let report = run_legacy(&request, |context, observations| {
         repair_authoring_step_through_gateway(
             &root,
             ITEM_ID,
@@ -2058,7 +2091,7 @@ fn cloud_repair_writes_option_bank_and_response_structure_through_the_real_chain
 
     let not_cancelled = || false;
     let request = request(&root, &not_cancelled, 6);
-    let report = run_repair_loop(&request, |context, observations| {
+    let report = run_legacy(&request, |context, observations| {
         repair_authoring_step_through_gateway(
             &root,
             ITEM_ID,
@@ -2150,7 +2183,7 @@ fn cloud_repair_cannot_invent_an_ungrounded_task_group_and_says_so() {
 
     let not_cancelled = || false;
     let request = request(&root, &not_cancelled, 6);
-    let report = run_repair_loop(&request, |context, observations| {
+    let report = run_legacy(&request, |context, observations| {
         repair_authoring_step_through_gateway(
             &root,
             ITEM_ID,
@@ -2252,7 +2285,7 @@ fn every_exit_path_returns_a_terminal_report_and_never_leaves_running() {
     request.progress = Some(&sink);
 
     // 注入一个「第一回合就返回 Err」的模型调用：以前这条路径会让循环直接返回 Err。
-    let report = run_repair_loop(&request, |_context: &Value, _observations: &[Value]| {
+    let report = run_legacy(&request, |_context: &Value, _observations: &[Value]| {
         Err("llm_http_500:upstream".to_string())
     })
     .expect("循环内部失败必须转成报告，不能返回 Err");
@@ -2283,7 +2316,7 @@ fn a_model_that_finishes_without_a_note_is_not_reported_as_budget_exhausted() {
     let not_cancelled = || false;
     // 预算恰好 1 回合，模型在第 1 回合就 finish，且**不写 note**。
     let request = request(&root, &not_cancelled, 1);
-    let report = run_repair_loop(&request, |_context: &Value, _observations: &[Value]| {
+    let report = run_legacy(&request, |_context: &Value, _observations: &[Value]| {
         Ok(json!({"callId": "f1", "tool": "finish", "arguments": {}}))
     })
     .expect("修复循环必须返回结果");
@@ -2312,7 +2345,7 @@ fn a_recovered_tool_error_does_not_leave_a_last_error_on_a_successful_run() {
     let not_cancelled = || false;
     let request = request(&root, &not_cancelled, 4);
     let mut calls = 0u32;
-    let report = run_repair_loop(&request, |_context: &Value, _observations: &[Value]| {
+    let report = run_legacy(&request, |_context: &Value, _observations: &[Value]| {
         calls += 1;
         Ok(match calls {
             // 第 1 回合交了个不认识的工具：错误回给模型（observations 里有），
@@ -2798,7 +2831,7 @@ fn a_rejected_repair_reply_gets_one_constrained_retry_carrying_the_reason() {
     let request = request(&root, &not_cancelled, 4);
     let mut calls = 0u32;
     let mut note_seen_on_retry: Option<String> = None;
-    let report = run_repair_loop(&request, |_context: &Value, observations: &[Value]| {
+    let report = run_legacy(&request, |_context: &Value, observations: &[Value]| {
         calls += 1;
         if calls == 1 {
             return Err("cloud_repair_step_tool_unknown:edit_everything".to_string());
@@ -2838,7 +2871,7 @@ fn a_second_rejection_or_a_transport_error_still_ends_the_loop_unavailable() {
 
     let request_twice = request(&root, &not_cancelled, 4);
     let mut calls = 0u32;
-    let report = run_repair_loop(&request_twice, |_context: &Value, _observations: &[Value]| {
+    let report = run_legacy(&request_twice, |_context: &Value, _observations: &[Value]| {
         calls += 1;
         Err(format!("llm_json_parse_failed:attempt-{calls}"))
     })
@@ -2853,7 +2886,7 @@ fn a_second_rejection_or_a_transport_error_still_ends_the_loop_unavailable() {
 
     let request_transport = request(&root, &not_cancelled, 4);
     let mut transport_calls = 0u32;
-    let report = run_repair_loop(&request_transport, |_context: &Value, _observations: &[Value]| {
+    let report = run_legacy(&request_transport, |_context: &Value, _observations: &[Value]| {
         transport_calls += 1;
         Err("llm_timeout_budget_exhausted:llm_http_timeout:stalled".to_string())
     })
@@ -2886,7 +2919,7 @@ fn a_rejected_reply_is_retried_through_the_real_gateway_with_the_rejection_in_th
 
     let not_cancelled = || false;
     let request = request(&root, &not_cancelled, 4);
-    let report = run_repair_loop(&request, |context: &Value, observations: &[Value]| {
+    let report = run_legacy(&request, |context: &Value, observations: &[Value]| {
         repair_authoring_step_through_gateway(
             &root,
             ITEM_ID,
@@ -3008,7 +3041,7 @@ fn remaining_tasks_are_recomputed_on_read_so_a_fixed_problem_disappears() {
 
     let not_cancelled = || false;
     let request = request(&root, &not_cancelled, 2);
-    let report = run_repair_loop(&request, |_context: &Value, _observations: &[Value]| {
+    let report = run_legacy(&request, |_context: &Value, _observations: &[Value]| {
         Ok(json!({"callId": "f1", "tool": "finish", "arguments": {"note": "q15 原文没有答案"}}))
     })
     .expect("修复循环必须返回结果");
@@ -3305,4 +3338,724 @@ fn a_part_ruling_dies_when_the_boundary_it_depended_on_changes() {
         0,
         "分段边界变了，基于旧边界的裁定必须失效重评"
     );
+}
+
+// ── 包模式（默认）：本地预切 → 不够就说 → 自己去取 → 最差如实交给用户 ──────────
+//
+// 这一节守的是任务书 §5 的 1-8 条。与上一节的分工：上一节跑 **legacy**（改造前的行为
+// 一字未变），这一节跑 **packets**（生产默认）。两节的断言都必须在，缺一节就等于
+// 「新模式上线、老行为没人看」或「老行为还在、新模式没人看」。
+
+/// 包模式要用的原文夹具：三页，**答案页故意不在文本层模式里**（只有一行 `14 A`，
+/// 少于「两条以上带题号的行」这条判据），于是切包时定位不到答案页 → `answerPagesUnknown`。
+///
+/// 这正是要验的场景：包**不知道**答案在哪，模型必须自己报「不够」并要回那一页。
+fn seed_packet_job(root: &Path) {
+    use crate::job_store::{make_job, save_job};
+    use crate::util::{ensure_job_dirs, job_dir, write_json};
+    use crate::{CreateJobInput, SourceFile, WorkflowStep};
+
+    let mut job = make_job(CreateJobInput {
+        title: Some("Early Approaches".to_string()),
+        category: Some("P1".to_string()),
+        frequency: Some("medium".to_string()),
+        tags: Some(vec!["packets".to_string()]),
+        llm_profile_id: None,
+    });
+    job.job_id = ITEM_ID.to_string();
+    job.current_step = WorkflowStep::Authoring;
+    job.active_llm_profile_id = Some("controlled-repair".to_string());
+    job.source_files = vec![SourceFile {
+        file_id: "early-approaches-pdf".to_string(),
+        original_name: "early-approaches.pdf".to_string(),
+        stored_name: "early-approaches.pdf".to_string(),
+        file_type: "pdf".to_string(),
+        sha256: "a".repeat(64),
+        size_bytes: 8,
+        role: "MainQuestion".to_string(),
+        imported_at: chrono::Utc::now(),
+    }];
+    save_job(root, &job).expect("save job");
+    let dir = job_dir(root, ITEM_ID);
+    ensure_job_dirs(&dir).expect("job dirs");
+    std::fs::create_dir_all(dir.join("uploads")).expect("uploads dir");
+    std::fs::write(dir.join("uploads").join("early-approaches.pdf"), b"%PDF-1.4\n")
+        .expect("write source");
+    write_json(
+        &dir.join("document-ir.json"),
+        &json!({"pages": [
+            // 0-based：pageIndex 0 → 1-based 第 1 页。
+            {"pageIndex": 0, "lines": [
+                {"text": "Questions 14-15"},
+                {"text": "Which TWO factors influenced early organisational design?"}
+            ]},
+            {"pageIndex": 1, "lines": [
+                {"text": "Section 2"},
+                {"text": "Notes on the reading passage"}
+            ]},
+            // 答案页：只有**一行**带题号，因此文本层判据认不出它是答案区。
+            {"pageIndex": 2, "lines": [
+                {"text": "Answer key"},
+                {"text": "14 A"}
+            ]}
+        ]}),
+    )
+    .expect("document-ir");
+}
+
+/// 默认模式必须是 packets，且 legacy 只能靠诊断开关进入。
+#[test]
+fn the_default_context_mode_is_packets_and_legacy_is_diagnostic_only() {
+    assert_eq!(REPAIR_CONTEXT_MODE, RepairContextMode::Packets);
+    assert_eq!(configured_repair_context_mode(), RepairContextMode::Packets);
+}
+
+/// 包模式下每轮的上下文是**一个校核包**：范围自足、带差异、带稿件切片与行 id；
+/// 范围外的页一律不在包里（那正是输入量下降的来源）。
+#[test]
+fn a_packet_carries_only_its_own_scope_and_the_differences_inside_it() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+    seed_packet_job(&root);
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let mut seen: Vec<Value> = Vec::new();
+    let report = run_packets(&request, |context: &Value, _observations: &[Value]| {
+        seen.push(context.clone());
+        Ok(json!({"callId": "p1", "tool": "finish_packet", "arguments": {}}))
+    })
+    .expect("包模式循环必须返回结果");
+
+    let packet = seen.first().expect("必须至少有一轮").clone();
+    assert_eq!(packet["contextMode"], json!("packets"));
+    assert_eq!(packet["schemaVersion"], json!("RepairPacketV1"));
+    assert_eq!(
+        packet["taskIds"],
+        json!(["early-approaches-q14-15"]),
+        "差异必须归属到本地题组：{packet:#?}"
+    );
+    assert!(
+        packet["differences"]
+            .as_array()
+            .is_some_and(|differences| !differences.is_empty()),
+        "包里必须带着要核的差异：{packet:#?}"
+    );
+    assert!(
+        packet["draftSlice"]["editVersion"].as_i64().unwrap_or(0) > 0,
+        "稿件切片必须带当前 editVersion（apply_edits 要用它）：{packet:#?}"
+    );
+
+    // 范围自足：包里出现的页**只能**是 scope.pages 里的页。
+    let scope: Vec<u64> = packet["scope"]["pages"]
+        .as_array()
+        .map(|items| items.iter().filter_map(Value::as_u64).collect())
+        .unwrap_or_default();
+    let included: Vec<u64> = packet["sourceEvidence"]["pages"]
+        .as_array()
+        .map(|items| items.iter().filter_map(|page| page.get("pageIndex").and_then(Value::as_u64)).collect())
+        .unwrap_or_default();
+    assert!(
+        included.iter().all(|page| scope.contains(page)),
+        "包里有范围外的页：scope={scope:?} included={included:?}"
+    );
+
+    // 答案页定位不到时必须**如实说明**，不能拿空数组冒充「这份卷子没有答案页」。
+    assert_eq!(packet["scope"]["answerPages"], json!([]));
+    assert_eq!(packet["scope"]["answerPagesUnknown"], json!(true));
+
+    // 逐包诊断：级别、轮数、范围都记下来了。
+    assert_eq!(report.packets.len(), 1, "{:#?}", report.packets);
+    assert_eq!(report.packets[0]["status"], json!("finished"));
+    assert_eq!(report.packets[0]["escalationLevel"], json!(0));
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 包的「行 id」必须与页号一致：模型引用 `p3:l2` 时，后端能对到真实那一行。
+///
+/// 页号 0-based / 1-based 混淆在这里最要命——模型会引到隔壁页的句子，看起来有出处，
+/// 出处却是错的。
+#[test]
+fn packet_source_lines_carry_one_based_page_ids_matching_the_text_layer() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+    seed_packet_job(&root);
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let mut first: Option<Value> = None;
+    run_packets(&request, |context: &Value, _observations: &[Value]| {
+        if first.is_none() {
+            first = Some(context.clone());
+        }
+        Ok(json!({"callId": "p1", "tool": "finish_packet", "arguments": {}}))
+    })
+    .expect("包模式循环必须返回结果");
+
+    let packet = first.expect("必须至少有一轮");
+    let pages = packet["sourceEvidence"]["pages"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(!pages.is_empty(), "包里必须有原文页：{packet:#?}");
+
+    // 文本层（`document-ir.json`）是 0-based，包里对外一律 1-based。断言不能只对着
+    // 常量喊话，要**对着文本层**核：包里的第 N 页必须逐字等于文本层 pageIndex=N-1。
+    let dir = crate::util::job_dir(&root, ITEM_ID);
+    let text_layer = crate::util::read_json_opt(&dir.join("document-ir.json"))
+        .expect("读 document-ir")
+        .expect("document-ir 必须存在")["pages"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(!text_layer.is_empty(), "夹具的文本层不能是空的");
+
+    // 题组锚点是 0-based `pageIndex: 1` ⇒ 包里必须出现第 **2** 页。若换算漏做一次，
+    // 这里会看到第 1 页——那正是「模型引到隔壁页的句子」这个坑的入口。
+    let anchor_page = pages
+        .iter()
+        .find(|page| page["pageIndex"] == json!(2))
+        .unwrap_or_else(|| panic!("锚点页（0-based 1 → 1-based 2）必须在包里：{packet:#?}"));
+    assert_eq!(anchor_page["lines"][0]["id"], json!("p2:l1"));
+    assert_eq!(anchor_page["lines"][0]["text"], json!("Section 2"));
+
+    for page in &pages {
+        let page_index = page["pageIndex"].as_u64().expect("页号必须是数字");
+        let expected = text_layer
+            .iter()
+            .find(|entry| entry["pageIndex"] == json!(page_index - 1))
+            .unwrap_or_else(|| panic!("第 {page_index} 页在文本层里不存在：{text_layer:#?}"));
+        let lines = page["lines"].as_array().expect("逐行文本");
+        assert_eq!(
+            lines.len(),
+            expected["lines"].as_array().map(Vec::len).unwrap_or(0),
+            "第 {page_index} 页的行数必须与文本层一致"
+        );
+        for (position, line) in lines.iter().enumerate() {
+            assert_eq!(
+                line["id"],
+                json!(format!("p{page_index}:l{}", position + 1)),
+                "行 id 的页号必须与所在页对象一致（1-based）"
+            );
+            assert_eq!(
+                line["text"], expected["lines"][position]["text"],
+                "行文本必须逐字来自该页文本层，不能是隔壁页的句子"
+            );
+        }
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 包**不知道**答案页在哪时，模型必须能说「不够」并要回那一页；下一轮请求里必须
+/// 真的出现那一页的原文——否则「回退真的在传内容」这句话就没有证据。
+///
+/// 这一条同时钉住 §6 的防自证要求：假模型在拿到那一页**之前**绝不可能说出 `14 A`。
+#[test]
+fn a_packet_that_lacks_the_answer_page_says_so_and_gets_it_next_round() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    // 候选说 q14=A；原文件（第 3 页）也说 A ⇒ 当前稿的 B 是错的，模型应当改稿。
+    store_candidate(&root, "A");
+    seed_packet_job(&root);
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let mut rounds: Vec<Value> = Vec::new();
+    let mut saw_answer_before_fetching = false;
+    let mut version_after_fetch = -1i64;
+    let report = run_packets(&request, |context: &Value, observations: &[Value]| {
+        rounds.push(context.clone());
+        let answer_visible = context.to_string().contains("14 A");
+        match rounds.len() {
+            1 => {
+                saw_answer_before_fetching = answer_visible;
+                Ok(json!({
+                    "callId": "c1",
+                    "tool": "report_insufficient_context",
+                    "arguments": {
+                        "packetId": context["packetId"],
+                        "reason": "the answer page is not in scope",
+                        "needs": [{"kind": "pages", "from": 3, "to": 3}]
+                    }
+                }))
+            }
+            2 => {
+                // 拿到那一页之后才可能知道答案；引文必须逐字来自返回的行。
+                assert!(answer_visible, "第 3 页必须已经并入本包：{context:#?}");
+                // 上一轮的「不够」必须收到**结构化回应**：取到了什么、什么没取到，都在里面。
+                // 只回一句「已处理」是不够的——模型得知道自己下一轮手里有什么。
+                let answer = observations.last().cloned().unwrap_or(Value::Null);
+                assert_eq!(answer["status"], json!("ok"), "报「不够」必须收到结果：{answer:#?}");
+                assert_eq!(
+                    answer["result"]["status"],
+                    json!("needs_answered"),
+                    "{answer:#?}"
+                );
+                assert!(
+                    answer["result"]["satisfied"]
+                        .as_array()
+                        .is_some_and(|items| !items.is_empty()),
+                    "取回的内容必须回给模型：{answer:#?}"
+                );
+                assert_eq!(
+                    answer["result"]["unsatisfied"],
+                    json!([]),
+                    "这一条需求是能满足的：{answer:#?}"
+                );
+                version_after_fetch = context["draftSlice"]["editVersion"].as_i64().unwrap_or(-1);
+                Ok(json!({
+                    "callId": "c2",
+                    "tool": "apply_edits",
+                    "arguments": {
+                        "baseVersion": version_after_fetch,
+                        "commands": [set_answer("q14", "A")],
+                        "evidence": [{
+                            "sourceFileId": "early-approaches-pdf",
+                            "pageIndex": 3,
+                            "quote": "14 A"
+                        }]
+                    }
+                }))
+            }
+            // 编辑落地 ⇒ 差异归零 ⇒ 重切出一个**只带索引**的收尾包（任务书 §4.1：一条
+            // 差异都没有时也给模型一次机会）。它的观察是空的，所以这一轮不碰 observations。
+            _ => Ok(json!({"callId": "c3", "tool": "finish_packet", "arguments": {}})),
+        }
+    })
+    .expect("包模式循环必须返回结果");
+
+    assert!(
+        !saw_answer_before_fetching,
+        "答案页不在请求里时，模型不可能知道答案——夹具必须证明这一点"
+    );
+    assert!(version_after_fetch > 0, "必须读到真实的 editVersion");
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["A"]), "编辑必须真的落库");
+    assert_eq!(report.applied_count, 1);
+    assert_eq!(report.packets[0]["insufficientContext"], json!(1));
+    assert_eq!(
+        report.packets[0]["escalationLevel"],
+        json!(1),
+        "模型主动报「不够」就是 L1：{:#?}",
+        report.packets[0]
+    );
+    assert_eq!(report.packets[0]["status"], json!("edited"));
+    assert_eq!(
+        report.packets[0]["edits"],
+        json!(1),
+        "逐包诊断必须记下这一包落了几个编辑：{:#?}",
+        report.packets[0]
+    );
+    assert_eq!(
+        report.packets.len(),
+        2,
+        "差异修完之后的收尾包也要出现在诊断里：{:#?}",
+        report.packets
+    );
+    assert_eq!(report.packets[1]["status"], json!("finished"));
+    assert_eq!(
+        report.status,
+        REPAIR_STATUS_COMPLETED,
+        "每包都收工、队列自然跑空 ⇒ 这是一次**完成**，不是预算耗尽"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 始终拿不到材料 ⇒ 后端**代记** `cannot_resolve`（理由码 `CONTEXT_INSUFFICIENT`），
+/// 差异进用户清单且文案明说「云端没能拿到足够的原文」。
+///
+/// 三态不坍缩就落在这里：这条差异**没有**被核对过，绝不能被算成已核对、也不能变成
+/// 「云端猜了一个」。
+#[test]
+fn a_packet_that_never_gets_enough_context_hands_the_difference_to_the_user_honestly() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+    seed_packet_job(&root);
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let report = run_packets(&request, |context: &Value, _observations: &[Value]| {
+        // 要一个**不存在**的页：需求永远满足不了 ⇒ 每轮升级一档，直到 L4。
+        Ok(json!({
+            "callId": "c1",
+            "tool": "report_insufficient_context",
+            "arguments": {
+                "packetId": context["packetId"],
+                "reason": "the page I need is missing",
+                "needs": [{"kind": "pages", "from": 99, "to": 99}]
+            }
+        }))
+    })
+    .expect("包模式循环必须返回结果");
+
+    assert_ne!(report.status, REPAIR_STATUS_COMPLETED, "上下文不足**不得**报成完成");
+    assert_eq!(report.status, REPAIR_STATUS_NEEDS_ATTENTION);
+    assert_eq!(
+        report.packets[0]["escalationLevel"],
+        json!(4),
+        "必须走完 L1→L4：{:#?}",
+        report.packets[0]
+    );
+
+    let task = report
+        .remaining_tasks
+        .iter()
+        .find(|task| task["contextInsufficient"] == json!(true))
+        .unwrap_or_else(|| panic!("必须有一条「上下文不足」的用户任务：{:#?}", report.remaining_tasks));
+    assert_eq!(
+        task["message"],
+        json!("云端没能拿到足够的原文来判断第 14-15 题，请对照原文确认")
+    );
+
+    // 原稿一字未改：没有材料就不许猜。
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["B"]));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 抓取边界（§5.7）：无页范围被拒、超页数被拒、越界页被拒、`search_source` 返回行 id。
+/// 每一条的**原因必须具体**，模型才能据此改对而不是反复瞎试。
+#[test]
+fn grab_tools_reject_out_of_bounds_requests_with_specific_reasons() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+    seed_packet_job(&root);
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let mut round = 0usize;
+    let report = run_packets(&request, |_context: &Value, observations: &[Value]| {
+        round += 1;
+        Ok(match round {
+            1 => json!({"callId": "g1", "tool": "read_source", "arguments": {}}),
+            2 => json!({"callId": "g2", "tool": "read_source",
+                        "arguments": {"pageIndex": 1, "pageTo": 9}}),
+            3 => json!({"callId": "g3", "tool": "read_source",
+                        "arguments": {"pageIndex": 99}}),
+            4 => json!({"callId": "g4", "tool": "search_source",
+                        "arguments": {"query": "organisational design"}}),
+            5 => {
+                // 前四轮的拒绝/命中必须都在本包观察里（不跨包、不丢）。
+                let errors: Vec<String> = observations
+                    .iter()
+                    .filter_map(|observation| observation.get("errors").and_then(Value::as_array))
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect();
+                assert!(
+                    errors.iter().any(|error| error.starts_with("CLOUD_GRAB_PAGE_RANGE_REQUIRED")),
+                    "无选择器的 read_source 必须被拒：{errors:?}"
+                );
+                assert!(
+                    errors.iter().any(|error| error.starts_with("CLOUD_GRAB_PAGE_LIMIT_EXCEEDED")),
+                    "超过单次页数上限必须被拒：{errors:?}"
+                );
+                assert!(
+                    errors.iter().any(|error| error.starts_with("CLOUD_GRAB_PAGE_OUT_OF_RANGE")),
+                    "越界页必须被拒：{errors:?}"
+                );
+                let hits = observations
+                    .iter()
+                    .find_map(|observation| observation.pointer("/result/hits"))
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                assert!(!hits.is_empty(), "search_source 必须真的搜到行：{observations:#?}");
+                assert_eq!(hits[0]["lineId"], json!("p1:l2"));
+                assert_eq!(hits[0]["pageIndex"], json!(1));
+                json!({"callId": "g5", "tool": "finish_packet", "arguments": {}})
+            }
+            _ => json!({"callId": "g6", "tool": "finish_packet", "arguments": {}}),
+        })
+    })
+    .expect("包模式循环必须返回结果");
+    assert_eq!(report.applied_count, 0);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `read_draft` 在包里**默认范围限定本包**：范围外的题组要被明确拒绝（而不是偷偷把
+/// 整卷返回回来——那等于包白切了）。
+#[test]
+fn read_draft_outside_the_packet_is_rejected_instead_of_returning_the_whole_paper() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+    seed_packet_job(&root);
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let mut round = 0usize;
+    let report = run_packets(&request, |_context: &Value, observations: &[Value]| {
+        round += 1;
+        match round {
+            1 => Ok(json!({"callId": "d1", "tool": "read_draft", "arguments": {}})),
+            2 => Ok(json!({"callId": "d2", "tool": "read_draft",
+                           "arguments": {"taskGroupIds": ["not-in-this-packet"]}})),
+            3 => {
+                let errors: Vec<&str> = observations
+                    .iter()
+                    .filter_map(|observation| observation.get("errors").and_then(Value::as_array))
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .collect();
+                assert!(
+                    errors.iter().any(|error| error.starts_with("CLOUD_DRAFT_SCOPE_REQUIRED")),
+                    "不给选择器必须被拒：{errors:?}"
+                );
+                assert!(
+                    errors.iter().any(|error| error.starts_with("CLOUD_DRAFT_OUTSIDE_PACKET")),
+                    "范围外的题组必须被拒：{errors:?}"
+                );
+                Ok(json!({"callId": "d3", "tool": "read_draft",
+                          "arguments": {"taskGroupIds": ["early-approaches-q14-15"]}}))
+            }
+            4 => {
+                assert_eq!(
+                    observations.last().map(|value| value["status"].clone()),
+                    Some(json!("ok")),
+                    "包内题组必须能读：{observations:#?}"
+                );
+                Ok(json!({"callId": "d4", "tool": "finish_packet", "arguments": {}}))
+            }
+            _ => Ok(json!({"callId": "d5", "tool": "finish_packet", "arguments": {}})),
+        }
+    })
+    .expect("包模式循环必须返回结果");
+    assert_eq!(report.packets.len(), 1);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 编辑之后必须**重切受影响的包**：下一轮的 `editVersion` 是新的，已经修掉的差异
+/// 不再出现在包里，剩下的差异仍然在（否则就是「改完就不管了」）。
+#[test]
+fn an_applied_edit_reslices_the_packet_with_a_fresh_version_and_fewer_differences() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    // 两处差异：q14（B→A）与 q15（D→C）。修掉 q14 之后包里只剩 q15。
+    store_candidate_with(&root, "A", "C");
+    seed_packet_job(&root);
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let mut rounds: Vec<Value> = Vec::new();
+    let report = run_packets(&request, |context: &Value, _observations: &[Value]| {
+        rounds.push(context.clone());
+        match rounds.len() {
+            1 => {
+                let version = context["draftSlice"]["editVersion"].as_i64().unwrap_or(-1);
+                assert_eq!(
+                    context["differences"].as_array().map(Vec::len),
+                    Some(2),
+                    "两处差异必须同包：{context:#?}"
+                );
+                Ok(json!({"callId": "e1", "tool": "apply_edits",
+                          "arguments": {"baseVersion": version, "commands": [set_answer("q14", "A")]}}))
+            }
+            2 => {
+                let version = context["draftSlice"]["editVersion"].as_i64().unwrap_or(-1);
+                let first = rounds[0]["draftSlice"]["editVersion"].as_i64().unwrap_or(-1);
+                assert!(
+                    version > first,
+                    "重切之后必须带**新**版本（{first} -> {version}）"
+                );
+                let differences = context["differences"].as_array().cloned().unwrap_or_default();
+                assert_eq!(differences.len(), 1, "已修掉的差异不得再出现：{context:#?}");
+                // 差异的目标是**本地**答案槽 id（候选的 `cloud-q15` 在标准化时已经映射回
+                // 本地槽），否则用户清单会指向一个稿件里根本不存在的 id。
+                assert_eq!(differences[0]["targetId"], json!("q15"));
+                assert!(
+                    context["draftSlice"]["answerKey"]["q14"]["labels"] == json!(["A"]),
+                    "新切片必须反映刚落库的编辑：{context:#?}"
+                );
+                Ok(json!({"callId": "e2", "tool": "finish_packet", "arguments": {}}))
+            }
+            _ => Ok(json!({"callId": "e3", "tool": "finish_packet", "arguments": {}})),
+        }
+    })
+    .expect("包模式循环必须返回结果");
+
+    assert_eq!(report.applied_count, 1);
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["A"]));
+    assert!(
+        report.packets.len() >= 2,
+        "重切之后应当多出一个包（剩下的差异）：{:#?}",
+        report.packets
+    );
+    assert_eq!(
+        report.packets[0]["status"],
+        json!("edited"),
+        "{:#?}",
+        report.packets[0]
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 循环纪律在包模式下同样成立：取消立刻停、网关不可用如实降级、终态不留 running。
+#[test]
+fn the_packet_loop_keeps_the_loop_discipline_of_cancel_unavailable_and_terminal_state() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+    seed_packet_job(&root);
+
+    // 取消：一次模型调用都不许发生。
+    let cancelled = || true;
+    let cancelled_request = request(&root, &cancelled, 6);
+    let mut calls = 0u32;
+    let report = run_packets(&cancelled_request, |_context: &Value, _observations: &[Value]| {
+        calls += 1;
+        Ok(json!({"callId": "x", "tool": "finish_packet", "arguments": {}}))
+    })
+    .expect("必须返回结果");
+    assert_eq!(report.status, REPAIR_STATUS_CANCELLED);
+    assert_eq!(calls, 0);
+
+    // 网关不可用：如实 unavailable，稿子不动。
+    let not_cancelled = || false;
+    let live_request = request(&root, &not_cancelled, 6);
+    let report = run_packets(&live_request, |_context: &Value, _observations: &[Value]| {
+        Err("llm_http_500:upstream".to_string())
+    })
+    .expect("必须返回结果");
+    assert_eq!(report.status, REPAIR_STATUS_UNAVAILABLE);
+    assert_eq!(report.last_error.as_deref(), Some("llm_http_500:upstream"));
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["B"]));
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 剧本（包模式）：第一包**故意**不含答案页 → `report_insufficient_context` →
+/// 拿到那一页后 `apply_edits` → `finish_packet`。
+///
+/// 引文 `14 A` **只能**从第 3 页的真实返回里读出来：第一轮的请求体里没有它。
+fn scripted_packet_reply(body: &str, round: usize) -> String {
+    let input = repair_request_input(body);
+    let version = input
+        .as_ref()
+        .and_then(|value| value.pointer("/context/draftSlice/editVersion"))
+        .and_then(Value::as_i64)
+        .unwrap_or(-1);
+    let answer_page_in_scope = input
+        .as_ref()
+        .and_then(|value| value.pointer("/context/scope/pages"))
+        .and_then(Value::as_array)
+        .map(|pages| pages.iter().any(|page| page == &json!(3)))
+        .unwrap_or(false);
+    match round {
+        1 => json!({
+            "callId": "p1",
+            "tool": "report_insufficient_context",
+            "arguments": {
+                "packetId": input.as_ref().and_then(|value| value.pointer("/context/packetId")).cloned().unwrap_or(Value::Null),
+                "reason": "the answer page is not in scope",
+                "needs": [{"kind": "pages", "from": 3, "to": 3}]
+            }
+        }),
+        2 if answer_page_in_scope => json!({
+            "callId": "p2",
+            "tool": "apply_edits",
+            "arguments": {
+                "baseVersion": version,
+                "commands": [set_answer("q14", "A")],
+                "evidence": [{
+                    "sourceFileId": "early-approaches-pdf",
+                    "pageIndex": 3,
+                    "quote": "14 A"
+                }]
+            }
+        }),
+        _ => json!({
+            "callId": "p3",
+            "tool": "finish_packet",
+            "arguments": {"note": "受控服务：q14 已按原文件改为 A"}
+        }),
+    }
+    .to_string()
+}
+
+/// 包模式 + **真实 HTTP 网关**：请求体里**没有**整份 PDF 附件，只有范围内页文本与
+/// 区域图；`report_insufficient_context` 取回的那一页在下一轮请求里真实出现。
+///
+/// 这一条是 §5.5 的可执行版本（只在网关层看得到「附了什么」），也是 macOS 上能做到的
+/// 最强证据：产品端到端那条 CDP 链只跑在 Windows（见报告）。
+#[test]
+fn packets_mode_requests_carry_no_whole_pdf_and_the_fetched_page_reaches_the_model() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+    seed_packet_job(&root);
+
+    let (base_url, requests) = spawn_scripted_repair_service_with(scripted_packet_reply);
+    crate::llm_profiles::save_profiles(
+        &root,
+        &[json!({
+            "profileId": "controlled-repair",
+            "name": "Controlled Repair Service",
+            "provider": "OpenAiCompatible",
+            "baseUrl": base_url,
+            "model": "controlled-repair-v1",
+            "temperature": 0,
+            "timeoutMs": 60000,
+            "forceJson": true,
+            "enabled": true
+        })],
+    )
+    .expect("profile 必须能落盘");
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let report = run_packets(&request, |context: &Value, observations: &[Value]| {
+        repair_authoring_step_through_gateway(
+            &root,
+            ITEM_ID,
+            Some("controlled-repair"),
+            context,
+            observations,
+        )
+    })
+    .expect("包模式循环必须跑完");
+
+    let seen = requests.lock().expect("requests");
+    assert!(seen.len() >= 2, "至少要有两轮真实 HTTP 请求，实际 {}", seen.len());
+    // ① 包模式下**不附**整份原文件：那正是这一轮要消掉的输入量。
+    assert!(
+        !seen[0].contains("application/pdf"),
+        "包模式的请求不得携带整份 PDF 附件：{}",
+        &seen[0][..seen[0].len().min(600)]
+    );
+    // ② 模型确实看到了「这是一个包」与包里要核的差异。
+    assert!(seen[0].contains("RepairPacketV1"), "请求必须带上包本身");
+    assert!(
+        seen[0].contains("report_insufficient_context"),
+        "prompt 必须告诉模型「不够就说」这条出口"
+    );
+    // ③ 第一轮里没有答案页那一行；第二轮里必须有（回退真的在传内容）。
+    assert!(!seen[0].contains("14 A"), "第一轮不该凭空出现答案页内容");
+    assert!(
+        seen[1].contains("14 A"),
+        "第二轮必须带上模型要回来的那一页：{}",
+        &seen[1][..seen[1].len().min(600)]
+    );
+    drop(seen);
+
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["A"]), "编辑必须真的落库");
+    assert_eq!(report.applied_count, 1);
+    assert_eq!(report.packets[0]["insufficientContext"], json!(1));
+
+    let _ = std::fs::remove_dir_all(&root);
 }

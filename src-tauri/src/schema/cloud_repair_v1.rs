@@ -35,6 +35,22 @@ pub const CLOUD_AUTHORING_CANDIDATE_V1_SCHEMA_VERSION: &str = "CloudAuthoringCan
 pub const CLOUD_REPAIR_TOOL_CALL_V1_SCHEMA_VERSION: &str = "CloudRepairToolCallV1";
 pub const CLOUD_REPAIR_TOOL_RESULT_V1_SCHEMA_VERSION: &str = "CloudRepairToolResultV1";
 
+/// `report_insufficient_context`：模型认为手里的校核包**不够**时唯一的正确表达。
+///
+/// 为什么必须有它：以前模型只有「改稿」「裁定」「闭嘴」三种表达。上下文不够时它只有
+/// 两条路——硬猜（伪造出处）或者沉默（差异留给用户）。两者都是错的：前者的引文经不起
+/// 核对，后者的用户永远不知道云端其实缺了材料。有了这个工具，「不够」变成一条**可记录、
+/// 可满足、可升级**的事实。
+pub const CLOUD_REPAIR_INSUFFICIENT_CONTEXT_TOOL: &str = "report_insufficient_context";
+/// `finish_packet`：声明**本包**处理完毕（整次运行的收尾由后端汇总）。
+pub const CLOUD_REPAIR_FINISH_PACKET_TOOL: &str = "finish_packet";
+
+/// 上下文不足时代为落盘的裁定理由码。
+///
+/// 它同时是「这条差异**没有**被核对过」的标记：预算用尽仍不足时，后端对本包剩余差异
+/// 写一条 `cannot_resolve`，理由就是这个码。**绝不能**把它折叠成「已核对」。
+pub const CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT: &str = "CONTEXT_INSUFFICIENT";
+
 /// 修复循环允许模型调用的工具名（**唯一真源**）。
 ///
 /// 提示词构造与分发器都必须引用这里，避免「提示词里写了一个、分发器不认」这类漂移。
@@ -46,13 +62,120 @@ pub const CLOUD_REPAIR_TOOL_RESULT_V1_SCHEMA_VERSION: &str = "CloudRepairToolRes
 /// 工具，模型只有两种表达方式——改稿（`apply_edits`）或闭嘴（`finish`）。于是「候选
 /// 错了、当前稿是对的」这种判断无处安放，差异会被逐条变成人工任务回来问用户，哪怕
 /// 模型已经看过原文并确定候选是错的。裁定记录的是**结论**，不是编辑。
-pub const CLOUD_REPAIR_TOOLS: [&str; 5] = [
+///
+/// 抓取类工具（`search_source` / `read_page_region` / `read_passage` /
+/// `read_candidate`）全部只读、不接受路径、只作用于本 job，且受每包预算约束
+/// （见 `cloud_repair::grab::GrabBudget`）。它们存在的理由与校核包是同一件事：
+/// 上下文不再一次性给全，模型必须能**主动**取回它真正需要的那一块。
+pub const CLOUD_REPAIR_TOOLS: [&str; 11] = [
     "read_draft",
     "read_source",
+    "search_source",
+    "read_page_region",
+    "read_passage",
+    "read_candidate",
     "apply_edits",
     "record_ruling",
+    "report_insufficient_context",
+    "finish_packet",
     "finish",
 ];
+
+/// 模型可以声明的「我需要什么」的种类（**唯一真源**，prompt 与满足器都引用这里）。
+pub const CLOUD_CONTEXT_NEED_KINDS: [&str; 6] = [
+    "pages",
+    "search",
+    "page_region",
+    "passage",
+    "candidate",
+    "draft",
+];
+
+/// 一条「上下文不足」的需求。
+///
+/// 结构刻意宽松（不 `deny_unknown_fields`）：这是从自由文本里的 JSON 解析出来的，
+/// 多一个无害字段不该白烧一个模型回合。但 `kind` 必须是 [`CLOUD_CONTEXT_NEED_KINDS`]
+/// 之一，且**该带的字段必须带**——否则后端只能猜，而猜出来的上下文正是要避免的东西。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudRepairContextNeedV1 {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quote: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_index: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bbox: Option<Value>,
+    #[serde(default)]
+    pub paragraph_labels: Vec<String>,
+    #[serde(default)]
+    pub question_numbers: Vec<u32>,
+    #[serde(default)]
+    pub task_ids: Vec<String>,
+}
+
+impl CloudRepairContextNeedV1 {
+    /// 结构校验。错误必须**具体到该补哪个字段**，模型才能一次改对。
+    pub fn validate(&self) -> Result<(), String> {
+        if !CLOUD_CONTEXT_NEED_KINDS.contains(&self.kind.as_str()) {
+            return Err(format!(
+                "CLOUD_NEED_UNKNOWN_KIND:{}: allowed are {}",
+                self.kind,
+                CLOUD_CONTEXT_NEED_KINDS.join(", ")
+            ));
+        }
+        match self.kind.as_str() {
+            "pages" => match (self.from, self.to) {
+                (Some(from), _) if from >= 1 => Ok(()),
+                _ => Err("CLOUD_NEED_MALFORMED:pages: needs {\"from\": N} (and optionally \"to\")".to_string()),
+            },
+            "search" => match self.quote.as_deref().map(str::trim) {
+                Some(quote) if !quote.is_empty() => Ok(()),
+                _ => Err("CLOUD_NEED_MALFORMED:search: needs a non-empty \"quote\"".to_string()),
+            },
+            "page_region" => match self.page_index {
+                Some(page) if page >= 1 => Ok(()),
+                _ => Err("CLOUD_NEED_MALFORMED:page_region: needs {\"pageIndex\": N} (1-based)".to_string()),
+            },
+            "passage" => {
+                if self.paragraph_labels.is_empty() && self.question_numbers.is_empty() {
+                    Err(
+                        "CLOUD_NEED_MALFORMED:passage: needs \"paragraphLabels\" or \"questionNumbers\""
+                            .to_string(),
+                    )
+                } else {
+                    Ok(())
+                }
+            }
+            "candidate" => {
+                if self.task_ids.is_empty() && self.question_numbers.is_empty() {
+                    Err(
+                        "CLOUD_NEED_MALFORMED:candidate: needs \"taskIds\" or \"questionNumbers\""
+                            .to_string(),
+                    )
+                } else {
+                    Ok(())
+                }
+            }
+            "draft" => {
+                if self.task_ids.is_empty() && self.question_numbers.is_empty() {
+                    Err(
+                        "CLOUD_NEED_MALFORMED:draft: needs \"taskIds\" or \"questionNumbers\""
+                            .to_string(),
+                    )
+                } else {
+                    Ok(())
+                }
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
 
 /// 裁定的两种结论。**只有这两种**：模型不能通过裁定声称「已修好」。
 ///
@@ -239,5 +362,81 @@ impl CloudRepairToolResultV1 {
             result: Value::Null,
             errors,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn need(value: Value) -> Result<(), String> {
+        serde_json::from_value::<CloudRepairContextNeedV1>(value)
+            .expect("need 必须能反序列化")
+            .validate()
+    }
+
+    /// 六种需求各自「该带的字段必须带」——缺了就报**具体到该补哪个字段**的错误。
+    /// 后端没法替模型猜它想要哪一页；猜出来的上下文正是这套协议要避免的东西。
+    #[test]
+    fn every_context_need_kind_requires_its_own_fields() {
+        for kind in CLOUD_CONTEXT_NEED_KINDS {
+            let error = need(json!({"kind": kind}))
+                .expect_err("只给 kind 必须被拒（该带什么都没说）");
+            assert!(
+                error.starts_with(&format!("CLOUD_NEED_MALFORMED:{kind}")),
+                "{kind}: 错误必须具体到该补什么：{error}"
+            );
+        }
+    }
+
+    /// 每种需求的**合法**形状必须通过——否则模型照契约交也会被拒，等于死循环。
+    #[test]
+    fn the_declared_shape_of_every_context_need_kind_passes() {
+        for value in [
+            json!({"kind": "pages", "from": 7, "to": 7}),
+            json!({"kind": "search", "quote": "Questions 14-20"}),
+            json!({"kind": "page_region", "pageIndex": 3, "bbox": [0, 0, 1, 1]}),
+            json!({"kind": "passage", "paragraphLabels": ["C", "D"]}),
+            json!({"kind": "candidate", "taskIds": ["cloud-tg-1"]}),
+            json!({"kind": "draft", "questionNumbers": [14, 15]}),
+        ] {
+            need(value.clone()).unwrap_or_else(|error| panic!("{value} 必须通过：{error}"));
+        }
+    }
+
+    /// 未知 kind 必须被拒，且把允许的取值列出来。
+    #[test]
+    fn an_unknown_context_need_kind_is_rejected_with_the_allowed_list() {
+        let error = need(json!({"kind": "everything"})).expect_err("未知 kind 必须被拒");
+        assert!(error.starts_with("CLOUD_NEED_UNKNOWN_KIND:everything"), "{error}");
+        assert!(error.contains("pages"), "必须列出允许的取值：{error}");
+    }
+
+    /// 空白引文不算引文：拿空白去搜原文只会得到「搜不到」，白烧一个回合。
+    #[test]
+    fn a_blank_search_quote_is_not_a_quote() {
+        let error = need(json!({"kind": "search", "quote": "   "})).expect_err("空白引文必须被拒");
+        assert!(error.starts_with("CLOUD_NEED_MALFORMED:search"), "{error}");
+    }
+
+    /// 第 0 页不存在：页号一律 1-based，0 是无效页索引。
+    #[test]
+    fn page_numbers_are_one_based() {
+        assert!(need(json!({"kind": "pages", "from": 0})).is_err());
+        assert!(need(json!({"kind": "page_region", "pageIndex": 0})).is_err());
+        assert!(need(json!({"kind": "pages", "from": 1})).is_ok());
+    }
+
+    /// 上下文不足是**三态**里独立的一态：它必须有自己的工具名与理由码，
+    /// 不能被折叠成「已核对」。
+    #[test]
+    fn insufficient_context_has_its_own_tool_and_reason_code() {
+        assert!(CLOUD_REPAIR_TOOLS.contains(&CLOUD_REPAIR_INSUFFICIENT_CONTEXT_TOOL));
+        assert!(CLOUD_REPAIR_TOOLS.contains(&CLOUD_REPAIR_FINISH_PACKET_TOOL));
+        assert_eq!(CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT, "CONTEXT_INSUFFICIENT");
+        // 裁定语义只有两种，理由码不在其中——它描述的是「没核对过」，不是一种结论。
+        assert_ne!(CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT, CLOUD_RULING_CURRENT_IS_CORRECT);
+        assert_ne!(CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT, CLOUD_RULING_CANNOT_RESOLVE);
     }
 }

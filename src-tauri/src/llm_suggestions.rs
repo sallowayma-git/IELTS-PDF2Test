@@ -599,69 +599,153 @@ pub(crate) fn make_repair_authoring_step_input(
         "context": context,
         "observations": recent,
         "omittedObservationCount": omitted,
-        "tools": {
-            "read_draft": {
-                "purpose": "Read the CURRENT draft (authoritative canonical) for specific task groups.",
-                "arguments": {"taskGroupIds": ["optional task id list"], "questionNumbers": [1, 2]}
-            },
-            "read_source": {
-                "purpose": "Read the ORIGINAL FILE evidence. You cannot choose a path.",
-                "arguments": {"pageIndex": 1, "pageTo": 2, "quote": "optional exact quote to locate"}
-            },
-            "apply_edits": {
-                "purpose": "Submit a batch of domain commands. This really writes to the authoritative draft.",
-                "arguments": {
-                    "baseVersion": "the editVersion you based this batch on (REQUIRED)",
-                    "commands": [{"op": "setAnswer", "slotId": "slot-27", "value": {"kind": "text", "values": ["example"]}}],
-                    "evidence": [{"sourceFileId": "answer-source", "pageIndex": 1, "quote": "27 example"}]
-                }
-            },
-            "record_ruling": {
-                "purpose": "Adjudicate a difference that is listed in the context, WITHOUT editing anything. \
-Use it when you have checked the original file and the difference does not need the user.",
-                "arguments": {
-                    "rulings": [{
-                        "targetType": "slot | task_group | response_group | part",
-                        "targetId": "the targetId exactly as listed in differences",
-                        "field": "the field exactly as listed in differences",
-                        "ruling": "current_is_correct | cannot_resolve",
-                        "reason": "why, in one sentence",
-                        "evidence": [{"sourceFileId": "answer-source", "pageIndex": 1, "quote": "the exact text you relied on"}]
-                    }]
-                }
-            },
-            "finish": {
-                "purpose": "Declare that you have done what you can. The backend still recomputes what is left.",
-                "arguments": {
-                    "note": "short explanation",
-                    "unresolved": [{
-                        "targetId": "optional stable id when the doubt is about one target",
-                        "message": "what you could not settle, in the user's language",
-                        "evidence": [{"sourceFileId": "answer-source", "pageIndex": 1, "quote": "what you saw"}]
-                    }]
-                }
-            }
-        },
+        "tools": repair_tools_table(),
         // 唯一真源：分发器真正放行的 op 清单。手抄一份迟早漂移。
         "allowedOps": crate::cloud_repair::tools::MODEL_ALLOWED_OPS,
-        "rules": [
-            "Return JSON only: exactly one object {\"callId\":\"call-1\",\"tool\":\"read_draft\",\"arguments\":{}} (arguments per the tools table).",
-            "tool MUST be one of read_draft, read_source, apply_edits, record_ruling, finish. There is no other tool.",
-            "You may only use the ops listed in allowedOps. resolveIssue and any quality/audit/provenance flag are NOT available.",
-            "apply_edits REQUIRES baseVersion. Call read_draft first and pass back the editVersion you actually saw.",
-            "Target ids MUST be the stable ids you got from read_draft or the context. Never invent an id.",
-            "Attach evidence from the original file to content changes: evidence entries are {sourceFileId, 1-based pageIndex, exact non-empty quote}. A malformed entry rejects the whole batch. An empty evidence list is accepted, but the change then carries no source support for the reviewer.",
-            "Never invent an answer the original file does not provide. Leave it unresolved instead.",
-            "Some targets are protected because a human edited them. If a batch is rejected for that reason, narrow the batch instead of retrying the same commands.",
-            "The context lists the WHOLE document. Do not claim the paper is verified just because you handled the listed differences.",
-            "When a batch is rejected you get the specific error in the next observation. Fix exactly that and try again.",
-            "A difference is NOT automatically the user's problem. The first-pass candidate can be wrong. If the file shows the current draft is right, record_ruling \"current_is_correct\" instead of leaving the difference for the user.",
-            "record_ruling only accepts differences that are actually listed in the context, and only for a pair of contents you have checked. It cannot remove structural problems found by the backend validator.",
-            "If neither side is right, apply_edits to the correct content and then rule the difference \"current_is_correct\" (the candidate stays wrong).",
-            "Put every doubt you could NOT settle into finish.unresolved. Those become user-visible items, so omitting them hides real uncertainty.",
-            "Call finish when you are done; the backend recomputes the remaining work from the current draft."
-        ]
+        "rules": repair_tool_rules(context)
     })
+}
+
+/// 修复工具表（**给模型看的信封形状**，唯一真源）。
+///
+/// 键集合必须与 [`crate::schema::cloud_repair_v1::CLOUD_REPAIR_TOOLS`] 一致：提示词里
+/// 写了一个工具、分发器不认（或反过来），是这类循环最典型的漂移，而且后果是「模型
+/// 永远改不对」——它照着表交，每次都被拒。有测试逐项核对。
+///
+/// 抓取类工具（`search_source` / `read_page_region` / `read_passage` / `read_candidate`）
+/// 与 `report_insufficient_context` 是「上下文不够时」的正式出口：包里的范围是**故意**
+/// 收窄的，模型必须能要回它真正需要的那一块，而不是凭印象下结论。
+pub(crate) fn repair_tools_table() -> Value {
+    json!({
+        "read_draft": {
+            "purpose": "Read the CURRENT draft (authoritative canonical) for specific task groups.",
+            "arguments": {"taskGroupIds": ["optional task id list"], "questionNumbers": [1, 2]}
+        },
+        "read_source": {
+            "purpose": "Read the ORIGINAL FILE evidence. You cannot choose a path. \
+In packet mode a page range or a quote is REQUIRED and one call returns at most 3 pages.",
+            "arguments": {"pageIndex": 1, "pageTo": 2, "quote": "optional exact quote to locate"}
+        },
+        "search_source": {
+            "purpose": "Search the extracted text layer of the ORIGINAL FILE. Returns matching line ids with their page and a couple of context lines.",
+            "arguments": {"query": "a phrase you remember from the file"}
+        },
+        "read_page_region": {
+            "purpose": "Get the rendered image of one page (optionally one region of it) as picture evidence.",
+            "arguments": {"pageIndex": 1, "bbox": {"x": 0, "y": 0, "width": 100, "height": 20}}
+        },
+        "read_passage": {
+            "purpose": "Read the passage text of the paper by paragraph label or by question number.",
+            "arguments": {"paragraphLabels": ["C", "D"], "questionNumbers": [14, 15]}
+        },
+        "read_candidate": {
+            "purpose": "Read the first-pass CLOUD CANDIDATE slice for specific targets. The candidate is an input, not the truth.",
+            "arguments": {"taskIds": ["optional task id list"], "questionNumbers": [14, 15]}
+        },
+        "apply_edits": {
+            "purpose": "Submit a batch of domain commands. This really writes to the authoritative draft.",
+            "arguments": {
+                "baseVersion": "the editVersion you based this batch on (REQUIRED)",
+                "commands": [{"op": "setAnswer", "slotId": "slot-27", "value": {"kind": "text", "values": ["example"]}}],
+                "evidence": [{"sourceFileId": "answer-source", "pageIndex": 1, "quote": "27 example"}]
+            }
+        },
+        "record_ruling": {
+            "purpose": "Adjudicate a difference that is listed in the context, WITHOUT editing anything. \
+Use it when you have checked the original file and the difference does not need the user.",
+            "arguments": {
+                "rulings": [{
+                    "targetType": "slot | task_group | response_group | part",
+                    "targetId": "the targetId exactly as listed in differences",
+                    "field": "the field exactly as listed in differences",
+                    "ruling": "current_is_correct | cannot_resolve",
+                    "reason": "why, in one sentence",
+                    "evidence": [{"sourceFileId": "answer-source", "pageIndex": 1, "quote": "the exact text you relied on"}]
+                }]
+            }
+        },
+        "report_insufficient_context": {
+            "purpose": "Say that the evidence you were given is NOT enough to judge, and ask for exactly what you need. \
+Use this instead of guessing: a guess that cannot be checked against the file is worse than saying you do not know.",
+            "arguments": {
+                "packetId": "the packetId you were given",
+                "reason": "why the current evidence is not enough, in one sentence",
+                "needs": [
+                    {"kind": "pages", "from": 7, "to": 7},
+                    {"kind": "search", "quote": "Questions 14-20"},
+                    {"kind": "page_region", "pageIndex": 3, "bbox": {"x": 0, "y": 0, "width": 100, "height": 20}},
+                    {"kind": "passage", "paragraphLabels": ["C", "D"]},
+                    {"kind": "candidate", "taskIds": ["task-id"]},
+                    {"kind": "draft", "questionNumbers": [14, 15]}
+                ]
+            }
+        },
+        "finish_packet": {
+            "purpose": "Declare that you are done with THIS packet. The backend still recomputes what is left.",
+            "arguments": {
+                "note": "short explanation",
+                "unresolved": [{
+                    "targetId": "optional stable id when the doubt is about one target",
+                    "message": "what you could not settle, in the user's language",
+                    "evidence": [{"sourceFileId": "answer-source", "pageIndex": 1, "quote": "what you saw"}]
+                }]
+            }
+        },
+        "finish": {
+            "purpose": "Declare that you have done what you can. The backend still recomputes what is left.",
+            "arguments": {
+                "note": "short explanation",
+                "unresolved": [{
+                    "targetId": "optional stable id when the doubt is about one target",
+                    "message": "what you could not settle, in the user's language",
+                    "evidence": [{"sourceFileId": "answer-source", "pageIndex": 1, "quote": "what you saw"}]
+                }]
+            }
+        }
+    })
+}
+
+/// 修复规则（给模型看的文字约束）。
+///
+/// `context.contextMode == "packets"` 时，上下文**不是**整卷：它是本地预切的一个校核包。
+/// 同一句话在两种模式下含义相反（「你看到的是整份文档」vs「你看到的是一个包」），
+/// 所以规则必须按模式生成，而不是两套手抄的文案。
+pub(crate) fn repair_tool_rules(context: &Value) -> Value {
+    let packet_mode = context.get("contextMode").and_then(Value::as_str) == Some("packets");
+    let tools = crate::schema::cloud_repair_v1::CLOUD_REPAIR_TOOLS.join(", ");
+    let mut rules: Vec<String> = vec![
+        "Return JSON only: exactly one object {\"callId\":\"call-1\",\"tool\":\"read_draft\",\"arguments\":{}} (arguments per the tools table).".to_string(),
+        format!("tool MUST be one of {tools}. There is no other tool."),
+        "You may only use the ops listed in allowedOps. resolveIssue and any quality/audit/provenance flag are NOT available.".to_string(),
+        "apply_edits REQUIRES baseVersion. Call read_draft first and pass back the editVersion you actually saw.".to_string(),
+        "Target ids MUST be the stable ids you got from read_draft or the context. Never invent an id.".to_string(),
+        "Attach evidence from the original file to content changes: evidence entries are {sourceFileId, 1-based pageIndex, exact non-empty quote}. A malformed entry rejects the whole batch. An empty evidence list is accepted, but the change then carries no source support for the reviewer.".to_string(),
+        "Never invent an answer the original file does not provide. Leave it unresolved instead.".to_string(),
+        "Some targets are protected because a human edited them. If a batch is rejected for that reason, narrow the batch instead of retrying the same commands.".to_string(),
+    ];
+    rules.push(if packet_mode {
+        "The context is ONE repair packet, not the whole paper. It lists what was included, what was omitted and which tool fetches it. Do not claim anything outside the packet is verified.".to_string()
+    } else {
+        "The context lists the WHOLE document. Do not claim the paper is verified just because you handled the listed differences.".to_string()
+    });
+    rules.extend([
+        "When a batch is rejected you get the specific error in the next observation. Fix exactly that and try again.".to_string(),
+        "A difference is NOT automatically the user's problem. The first-pass candidate can be wrong. If the file shows the current draft is right, record_ruling \"current_is_correct\" instead of leaving the difference for the user.".to_string(),
+        "record_ruling only accepts differences that are actually listed in the context, and only for a pair of contents you have checked. It cannot remove structural problems found by the backend validator.".to_string(),
+        "If neither side is right, apply_edits to the correct content and then rule the difference \"current_is_correct\" (the candidate stays wrong).".to_string(),
+        "Put every doubt you could NOT settle into finish.unresolved. Those become user-visible items, so omitting them hides real uncertainty.".to_string(),
+    ]);
+    rules.push(if packet_mode {
+        "If the packet does not contain what you need, call report_insufficient_context with the exact pages/quotes you need, or fetch it yourself with the read-only tools. NEVER conclude from an impression of a file you were not shown.".to_string()
+    } else {
+        "If the evidence is not enough to judge, call report_insufficient_context with the exact pages/quotes you need. NEVER conclude from an impression.".to_string()
+    });
+    rules.push(if packet_mode {
+        "Call finish_packet when this packet is done. Use finish only to end the whole run early.".to_string()
+    } else {
+        "Call finish when you are done; the backend recomputes the remaining work from the current draft.".to_string()
+    });
+    json!(rules)
 }
 
 pub(crate) fn save_llm_suggestion(
