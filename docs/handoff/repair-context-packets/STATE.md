@@ -10,7 +10,7 @@
 | P0 | 基线：环境探测、全量测试数字、核对 TASK.md §3 行号 | done | 原始基线 worktree `/tmp/pdf2test-baseline-34dfadd` @ `f13c75a`；本轮已在 HEAD `24eaa98` 复核平台、三项门禁、§3 行号、受控服务和 CDP 可用性，详见本日志；数字见「基线数字」 |
 | P1 | `packets.rs` 切分 + 范围 + 包内容（TASK §4.1，测试 1-4） | done | `fe15917`（`85f5064` 修升级阶梯）。命令处理器层，`cargo test --lib cloud_repair::` 89 passed |
 | P2 | `grab.rs` 抓取工具 + `report_insufficient_context` + 升级阶梯（§4.2，测试 6-7） | done | `fe15917`。同上 |
-| P3 | 编排改造 + prompt + 请求体去整份 PDF（§4.3/4.4，测试 5、8、9） | done | `fe15917`、`85f5064`。含真实 HTTP 集成用例 `packets_mode_requests_carry_no_whole_pdf_...` |
+| P3 | 编排改造 + prompt + 请求体去整份 PDF（§4.3/4.4，测试 5、8、9） | done | `fe15917`、`85f5064`、复核修正 `1d79409`、`a70e3e0`。命令处理器层 + 真实 HTTP；全量 Rust `1111/0/11` |
 | P4 | 可观测性 + 受控模型剧本 + 真实 HTTP 集成测试 + 两模式对比（§4.5/§6/§7） | done | `ee524f2`（§4.5 可观测性 + 文案）；`38ec89b`（§6 受控剧本 + 两模式对比）；`P6` 补 §7 的题面类剧本分支与 CDP 步骤（见 A-4 / A-5）。**CDP 步骤已写入但本机未执行**（macOS 无 CDP 通道，如实记） |
 | P5 | 独立审计 #1（子代理，只读，对抗式） | done | 见「审计发现」；3 个只读子代理 + 3 处突变检查 + 逐条源码复核 |
 | P6 | 修复审计 #1 发现 | done | A-1 `b821ae2`；A-3/A-12 `71814c2`；A-6/A-7/A-13 `3e4a5dd`；A-8/A-9/A-10/A-11/A-14/A-15/A-16 `c617f7a`；A-4/A-5 见本条日志。**A-2 未修**（越界，见「越界需求」1） |
@@ -312,3 +312,23 @@ P6 另有两处「对着旧行为跑红」的验证（不是独立突变，而�
 - 2026-09-24 P0 复核（HEAD `24eaa98`）：无未提交改动。平台为 Darwin 22.6.0 arm64 / Node v24.21.0。重跑 `cd src-tauri && cargo test --lib`：**1104 passed / 0 failed / 11 ignored**；`npx vitest run`：**392 passed / 0 failed tests**，27 suites passed，1 suite 加载失败（缺 `selenium-webdriver`，属环境问题）；`npx tsc --noEmit`：exit 0。对照 `34dfadd` 核验 TASK §3：`repair_authoring_step_through_gateway` 2866、`make_repair_authoring_step_input` 573、`run_openai_compatible_repair_step_llm` 1651、`build_repair_context` 843；12 条 observation / 6 轮、锚点结构、页号口径均符合快照。基线 `read_source` 无 `pageIndex` 会返回 PDF 全部页；当前包模式改为强制页范围或引文，legacy 保留旧行为。TASK §3 行号与描述在基线均无事实偏差，**未加 P0 更正**；实现后的行号变化（网关 1856、上下文 912）是新增代码造成的漂移。
 - 2026-09-24 P0 复核：group-6 缺少选项 E-G（以及 group-5 少六行）是 `7b644b2` 在基线 `34dfadd` 之前已修复的历史问题（该提交是基线祖先），故不记作当前测试失败或本任务引入。当前真实听力探针 `real_listening_split_evidence_covers_every_claimed_block` 依赖私有 fixture `fixtures/golden/private-real/listening-vol7-t9.pdf`；本机 fixture 不存在，用例提前返回，因此本轮**未复核真实卷**，不能把它的绿灯当成该问题的当前端到端证据。
 - 2026-09-24 P0 复核：已实际运行 `node scripts/controlled-llm-service.mjs`，默认监听 `127.0.0.1:11435`，base URL 为 `http://127.0.0.1:11435/v1`；`GET /health` 返回 `ok: true`，结束后确认服务已停止。P4 修复剧本使用 `--candidate <file> --plan <file>`。本机不是 Windows 且没有 `src-tauri/target/debug/ielts-author-studio.exe`，所以 WebView2 CDP 产品链**不能执行**；不报通过。下一未完成阶段 P7 仍受既有阻塞：A-2 要改 `tools.rs`，场景要改 TASK §8 未列出的 `scripts/e2e/lib/cloud-repair-scenario.mjs`，且本机无 Windows/WebView2 与真实模型额度；本轮未越界改动。
+- 2026-09-24 P3 复核/修正（`1d79409`）：STATE 原标 P3 done；源码复核发现 prompt 的空参数 `read_draft` 示例会被包范围执行器拒绝、包模式还误称上下文是整份文档、`apply_edits` 没说可用包内 `draftSlice.editVersion`、L0-L2 input 仍携带 PDF 路径、`report_insufficient_context` 表列了但校验器不要求 `packetId`/`reason`，且旧 packetId 请求仍会被实际取材/算作 L1。先加回归测试并看到红，再修正这些协议点；既有测试/断言未删减或放宽，旧调用已提供新增必填字段。全量 `cd src-tauri && cargo test --lib`：**1110 passed / 0 failed / 11 ignored**。证据等级：命令处理器 + 真实 HTTP 受控服务测试；**不是** Tauri UI/CDP 端到端。P7 仍 blocked，外部条件未变化。
+
+  工具信封核对表（prompt `tools` 表 ↔ `CloudRepairToolCallV1` / `validate_repair_tool_arguments` / `execute_tool` / `grab`）：反序列化后 gateway 要求顶层 `callId` 非空、`tool` 属 `CLOUD_REPAIR_TOOLS`、显式 `arguments` 对象（缺失/null 拒绝）；以下工具参数键逐项对照，分模式约束保留。
+
+  | 工具 | prompt 参数键 | 解析/校验/分发核对 |
+  |---|---|---|
+  | `read_draft` | `taskGroupIds`, `questionNumbers` | 包模式至少一个本包选择器；`PacketTools::scope_error` 拒绝空范围/越界。prompt 现在明确说明，示例用包内 id。 |
+  | `read_source` | `pageIndex`, `pageTo`, `quote` | 包模式页范围或 quote 必填，最多 3 页；legacy 保留旧全页行为。 |
+  | `search_source` | `query` | validator 要求非空字符串。 |
+  | `read_page_region` | `pageIndex`, `bbox` | validator 要求 1-based `pageIndex`；`bbox` 可选，grab 按对象裁剪/否则整页。 |
+  | `read_passage` | `paragraphLabels`, `questionNumbers` | 至少一个非空数组；validator 与 grab 一致。 |
+  | `read_candidate` | `taskIds`, `questionNumbers` | 至少一个非空数组；分发器再限制在本包范围。 |
+  | `apply_edits` | `baseVersion`（number）, `commands`, `evidence` | prompt 现以数字示例；分发器要求整数版本和 commands 数组，evidence 继续走既有校验。 |
+  | `record_ruling` | `rulings` | 分发器要求差异存在且 ruling 值合法；表内 reason/evidence 为裁定内容。 |
+  | `report_insufficient_context` | `packetId`, `reason`, `needs` | validator 要非空 packetId/reason 与非空且按 kind 校验的 needs；分发器要求 packetId 等于当前包。 |
+  | `finish_packet` | `note`, `unresolved` | 两项可选；循环结束当前包，后端仍重算剩余任务。 |
+  | `finish` | `note`, `unresolved` | 两项可选；legacy/提前结束整次运行，后端仍重算剩余任务。 |
+
+  P3 红绿证据：`packet_repair_prompt_does_not_show_an_unscoped_read_draft_call`、`packet_repair_rules_explain_the_read_draft_scope_selector`、`packet_repair_input_carries_pdf_path_only_for_the_l3_fallback`、`insufficient_context_validator_requires_the_declared_packet_and_reason_fields`、`insufficient_context_report_must_name_the_active_packet` 均先红后绿；工具名/参数键表一致性由 `repair_tools_table_names_and_argument_keys_match_the_dispatch_contract` 固定。测试 5/6/8/9 与 cloud_repair/tools 回归在上述全量 Rust 测试中通过。下一未完成阶段 P7 仍需越界事项裁定、Windows CDP 环境与真实模型额度，未执行项不记通过。
+- 2026-09-24 P3 协议严格性补正 / P7 本机门禁复核（`a70e3e0`）：顶层 prompt 要求 `arguments` 对象，但 gateway 原来把缺失/null 当空参数；`repair_tool_envelope_requires_arguments_to_be_an_object` 先红后绿，空对象仍通过。最终全量 Rust：**1111/0/11**；`npx vitest run`：**392 tests passed**，27 suites passed、1 suite 因缺 `selenium-webdriver` 无法加载（与 P0 已知问题一致）；`npx tsc --noEmit` exit 0。产品端 CDP/真实模型未执行；P7 仍 blocked，未把不可执行事项计为通过。
