@@ -5816,6 +5816,19 @@ fn dynamic_trailing_row_prompt(group_blocks: &[Value], number: u32) -> Option<St
     let needle = number.to_string();
     for block in group_blocks {
         let text = collapse_whitespace(&dynamic_block_text(block));
+        // A range heading prints its **end** number in exactly the same shape as a
+        // row (`Questions 36 - 40`), and its banner word sits at the *front*, so
+        // the stop-word check below cannot see it: the prefix trims to
+        // `Questions 36 -`, whose last word is `36`, not `questions`.  Reject it
+        // by shape instead — a heading parses as a question range, a row does not.
+        //
+        // This is not theoretical.  `demanding-reading-passage-3.pdf` prints
+        // `Questions 36 - 40` as its own block; without this guard q40's prompt
+        // became the literal string `Questions 36 -` and the paper lost the
+        // footer-merged stem the cloud-repair golden is built on.
+        if detect_dynamic_question_heading_range(&text).is_some() {
+            continue;
+        }
         let Some(prefix) = text.strip_suffix(needle.as_str()) else {
             continue;
         };
@@ -10341,6 +10354,45 @@ mod tests {
         assert_eq!(
             dynamic_trailing_row_prompt(&group_blocks, 21),
             Some("PEST".to_string())
+        );
+    }
+
+    /// The range banner above covers the tight form (`Questions 21-25`), where the
+    /// trailing token is glued to the dash.  A paper may space the dash out
+    /// (`Questions 36 - 40`), and then the end number *is* its own
+    /// whitespace-separated token — the shape a trailing row has.  The stop-word
+    /// list cannot catch it either, because it inspects the last word of the
+    /// prefix (`36`), while the banner word sits at the front.
+    ///
+    /// `demanding-reading-passage-3.pdf` prints exactly this block, so the bug is
+    /// not hypothetical: q40's prompt came out as the literal `Questions 36 -`.
+    #[test]
+    fn a_spaced_range_heading_is_not_a_row_with_a_trailing_number() {
+        let group_blocks = [
+            json!({"blockId":"h","text":"Questions 36 - 40"}),
+            json!({"blockId":"i","text":"Choose the correct letter, A, B, C or D."}),
+            json!({"blockId":"q36","text":"36 What point is made about the nostalgia industry?"}),
+        ];
+        // The heading's end number must never be read as a row number ...
+        assert_eq!(dynamic_trailing_row_prompt(&group_blocks, 40), None);
+        // ... and q40 must keep the generic window, which reads the numbered stem
+        // rather than the heading.
+        let group_text = group_blocks
+            .iter()
+            .map(dynamic_block_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (prompt, _) = dynamic_question_prompt_and_options(
+            &group_blocks,
+            &group_text,
+            40,
+            "Questions 36 - 40",
+            40,
+            "single_choice",
+        );
+        assert!(
+            !prompt.contains("Questions 36"),
+            "q40 must not take the range heading as its prompt, got {prompt:?}"
         );
     }
 
