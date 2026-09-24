@@ -288,3 +288,72 @@ TASK §4.3 已经把前提写好了：每包请求 = **固定前缀**（规则 +
 - **A-2 是个真问题**，不是理论问题：`apply_edits` 带一条凭空编造的 `quote` 会被判 `Applied`。§2 说「校验仍对照完整原文」，实现里没有。要么改实现（越界需求 1），要么把 §2 那句话改准——**两选一，不能两头都不动**。
 - **§7.3 的场景调整**（越界需求 6）建议选方案 ②：保留现有题面类场景，**另加**一份答案类场景专门喂包模式的 L1 断言。理由是换靶子会同时改变 legacy 分支的回合形状，而 legacy 分支现在逐条保留着改造前的断言，是重要的回归对照。
 - **`PACKET_CHARS_PER_TOKEN = 4` 对中文低估 3–4 倍**（A-10，未改）。接真实模型时如果遇到「单包超 24k 预算」的告警，先怀疑这个系数，而不是怀疑预算本身。
+
+---
+
+## 9. 收尾轮（P9-Q / P10 / P11，HEAD `542e660`）
+
+> 本轮在 P8 报告之后执行三项收尾：A-2 的授权落地（引文核验）、答案类场景（L1 抓取路径）、多包总时限。进度真源仍是 `STATE.md`。
+
+### 9.1 用户能感知到的变化
+
+1. **「云端说它改对了」现在必须拿原文对得上号的证据**（A-2 落地）。以前 `apply_edits` 带一句凭空编造的 `quote` 也会被判 `Applied`；现在每条证据引文都要在**完整原文**的文本层里逐字找到（规范化空白/弯引号/连字符、忽略大小写；声明页与实际页允许 ±1 的跨页差），找不到整批拒绝、错误码点名是哪一条（`CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:<index>`）。裁定（record_ruling）走同一套校验——编造引文的裁定不予记录。原文没有文本层（扫描件）时不拒绝，但每条证据被如实标为 `unverifiable`：裁定标记随裁定记录落盘，编辑侧计入运行摘要（`repair_json.unverifiedEvidence`），**不算已核验**。
+2. **「模型自己去取材料」这条路有了可执行的证明**。新增答案类场景：某题答案错了、正确答案印在题组锚点页之外的答案页上——包第一轮拿不到它，模型用 `read_source` 抓取之后才改对。真实 HTTP 用例硬断言：第一轮请求里没有答案行（模型此时不可能知道答案）、后续轮带着抓取结果、最终答案正确、全程无整份 PDF。与既有 `report_insufficient_context` 路径互补，L1 的两条腿都有了链路级证据。
+3. **多包校核不再轻易撞上十分钟墙**。包模式总时限按包数放宽（每包 +25% 的基础时限，封顶 3×——基础 10 分钟 ⇒ 最多 30 分钟）。10 个包的受控用例：旧时限下跑到第 5 个包就 `budget_exhausted`，放宽后 11 轮全部完成、状态 `completed`。包内仍严格串行；CAS 串行写入不变——后到的包用过期版本提交会被拒（`EDIT_VERSION_CONFLICT`），用重切后刷新的版本重试才能落地，先到包的修改不会被覆盖。
+
+### 9.2 提交列表
+
+| # | 提交 | 内容 |
+|---|---|---|
+| 33 | `b6c0370` | **P9-Q（A-2 落地）**：引文对照完整原文核验（apply_edits + record_ruling）；无文本层标 unverifiable；prompt 与剧本引文同步；TASK.md §2 描述修正 |
+| 34 | `a8e1678` | **P10**：受控服务 `answerFetch: read_source` 分支；场景库 `deriveAnswerRepairScenario`（纯新增）；CDP 链答案场景派生步骤（独立 `answerScenario` 三态段）；Mac 端真实 HTTP 抓取路径用例 |
+| 35 | `542e660` | **P11（方案 b）**：包模式总时限按包数线性放宽（+25%/包、封顶 3×）；10 包时限用例；跨包写冲突回归用例 |
+
+### 9.3 逐项结论的证据等级
+
+| 结论 | 等级 | 具体是什么 | **不是**什么 |
+|---|---|---|---|
+| 编造引文整批拒绝、真实引文（含空白/弯引号/连字符/大小写差异）通过、页差 ±1 放行 / 差 2 页拒绝、无文本层标 unverifiable | 命令处理器层（含真实 HTTP） | tools.rs 写入层 7 条单测 + 3 条循环级用例（其中真实 HTTP 链路用例覆盖 apply_edits 拒绝→重试落地）；record_ruling 同一套校验由链路用例覆盖 | 不是产品 UI 端到端；「引文能证明答案正确」的**语义**判断仍不存在——核验只保证引文真实存在于原文 |
+| 答案类场景走 L1 抓取路径、最终答案正确、无整份 PDF | 命令处理器层（含真实 HTTP） | 真起 node 跑 `scripts/controlled-llm-service.mjs`（真 HTTP），逐包 `llm-calls.jsonl` 与受控服务请求日志双重对账 | 不是 CDP 产品端到端（Windows only） |
+| CDP 链答案场景步骤 | **未执行** | macOS 无 WebView2 CDP 通道；且当前唯一 golden 无答案页标注（`answerKeyAbsence`），答案场景在该 fixture 上结构性 not-executable | 步骤已写入并做派生冒烟（node 4 分支全过），实机判定留待 Windows + 带 `answerErrors` 标注的 fixture |
+| 多包总时限放宽后 10 包能完成；跨包写冲突被 CAS 裁决 | 命令处理器层 | 受控（脚本内）循环 + 真实 SQLite 写路径；时限缩短模拟真实延迟 | 不是真实模型时长的实测（16–50s/轮的换算见 8.1 的真实模型验收清单） |
+| 全量门禁数字 | 命令处理器层 + 单测 | 见 9.5 | — |
+
+### 9.4 亲眼看到「先红后绿」的测试
+
+| 项 | 用例 | 看到红时的实际输出 |
+|---|---|---|
+| P9-Q | `a_fabricated_quote_rejects_the_whole_batch_and_names_the_entry`、`a_quote_two_pages_away_from_the_declared_page_is_rejected`、`evidence_without_a_text_layer_is_marked_unverifiable_not_rejected_or_verified` | 把核验临时 stub 成旧行为（只查结构）后 3 条全红：编造引文被判 Applied、差 2 页被判 Applied、`evidence_unverifiable` 为空（`left: [] / right: [0]`）；还原后全绿 |
+| P9-Q（链路） | `an_edit_with_a_fabricated_quote_is_rejected_and_a_real_quote_lands`、`a_ruling_with_a_fabricated_quote_is_rejected_and_a_grounded_one_is_recorded`、`rulings_recorded_without_a_text_layer_carry_the_unverifiable_mark` | 随实现一并落地后绿；对旧行为的红由上面 3 条 stub 运行代表（同一核验函数） |
+| P10 | `an_answer_difference_fetches_the_answer_page_through_read_source_before_fixing` | stash 掉受控服务的 `answerFetch` 分支后红：观察里没有任何 `read_source` 结果（服务走了 `report_insufficient_context` 老路径）；恢复后绿 |
+| P11 | `ten_packets_with_fixed_round_delay_finish_within_a_deadline_scaled_to_the_packet_count` | 临时禁用换算（ratio=1）后红：2.5s 内只处理 5 包即 `budget_exhausted`（`left: 5 / right: 11`；复核轮变异 M3 独立复现 `left: 4 / right: 11`）；放宽后 11 轮全部完成 |
+| P11（回归） | `a_conflicting_edit_from_a_later_packet_is_rejected_and_recovers_without_overwriting` | 锁定既有 CAS 行为（预期常绿）：确认后到包收到 `EDIT_VERSION_CONFLICT:current=2:base=1`、重试落地、先到包修改保留 |
+
+复核子代理的变异检查（独立于上表，全新执行）：M-新1 删连字符规范化 → `a_real_quote_survives_...` 红；M-新2 把页一致性判断放宽成「任何页出现即放行」 → `a_quote_two_pages_away_...` 红；M-新3 时限比例置 1 → `ten_packets_...` 红。三处全部还原（`git diff --name-only -- src-tauri scripts` 复空）。
+
+### 9.5 全量数字与基线对比
+
+| 门禁 | P0 复核基线（`24eaa98` 前，即 1111 那轮） | 本轮（HEAD `542e660`） | 变化 |
+|---|---|---|---|
+| `cd src-tauri && cargo test --lib` | 1111 passed / 0 failed / 11 ignored | **1125 passed / 0 failed / 11 ignored** | 净 **+14** |
+| `cargo test --lib cloud_repair` | 117 passed | **130 passed** | 净 **+13** |
+| `npx vitest run` | 392 passed（1 suite 因缺 `selenium-webdriver` 加载失败） | **392 passed**（27 suites passed，同一 suite 加载失败） | 无变化（已知环境基线问题） |
+| `npx tsc --noEmit` | `exit 0` | **`exit 0`** | 无变化 |
+| §6 两模式对比（本轮重跑） | 917857 B / 227766 B / 12480 tokens（历史轮） | legacy **919691 B**，packets **88447 B**（≈ **10.4×**），packets tokens **12998** | 结论不变；本轮本机未生成整页页图，与历史 227766 B 的差异属环境差异 |
+
+### 9.6 未执行项及原因
+
+| 项 | 状态 | 原因 |
+|---|---|---|
+| CDP 链实机（含答案场景步骤） | **未执行** | macOS 无 WebView2 CDP 通道 |
+| CDP 答案场景的端到端判定 | **结构性未达成** | 当前唯一 golden 明确标注 `answerKeyAbsence`（原文件没有答案页）；需要一份带答案页的原文件 + 对应 `answerErrors` 人工标注 golden。派生函数与链路步骤已就绪（冒烟 4 分支全过），fixture 落库后即可切换为判定步骤 |
+| 真实模型验收 | **未执行** | 无额度 |
+| `editor_journal_v1` 携带证据核验标记 | **未做（越界）** | `library/repository.rs` 不在本轮授权文件内；edits 的 unverifiable 标记如实落在工具结果、逐包诊断与 `repair_json.unverifiedEvidence`，rulings 的随裁定 artifact 落盘 |
+
+### 9.7 偏离本任务之处及理由
+
+1. **STATE 阶段编号**：STATE 表里已有一个前任的 P9（A-25/A-26），为避免编号冲突，本轮引文核验记作 **P9-Q**，其余沿用 P10/P11，收尾记 P12。
+2. **P10 的 Mac 等价证据选了「抓取工具路径」**：既有 `the_real_controlled_service_..._l0_l1_and_finish` 已覆盖 `report_insufficient_context` 路径的同一组断言；新用例专门钉住 `read_source` 抓取路径（任务书「report_insufficient_context **或** 抓取工具」的另一条腿），并额外断言 `insufficientContext == 0` 以区分两条路径。
+3. **CDP 答案场景判定段的落位**：写进独立 `report.answerScenario`（三态）而非 `report.scenarios`——当前 fixture 上该场景必然 not-executable，若计入 verdict 会把题面类验收一起拖成 not-executable（等于用一个缺失的 fixture 否掉整条链）。切换条件写在脚本里。
+4. **P11 二选一选了方案 b**（时限放宽）而非方案 a（不相交包并行 ≤2）：并行会让重切、done_packets、升级预算、L3 计数这些单线程循环状态进入并发路径，CAS 之外的不变量风险大；方案 b 改动集中一处、直接命中真实瓶颈，且保持「包内串行 + CAS 串行写入」的全部既有语义。选择理由已按任务书要求记入 STATE。
+5. **A-2 状态更新**：REPORT §6 的 A-2 从「未修（越界）」改为 **fixed（`b6c0370`）**，越界需求 1 解除；TASK.md §2 的描述同步修正为已实现语义并注明历史差距。
