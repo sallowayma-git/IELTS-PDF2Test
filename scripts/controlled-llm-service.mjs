@@ -68,7 +68,7 @@
 // 只允许 localhost / *.local / 回环与私有地址，所以这里绑定 127.0.0.1。
 
 import http from 'node:http';
-import { readFileSync, existsSync } from 'node:fs';
+import { appendFileSync, readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -84,6 +84,7 @@ function parseArgs(argv) {
     fixture: path.join(repoRoot, 'fixtures', 'controlled-llm', 'reading-outline.json'),
     candidate: null,
     plan: null,
+    requestLog: null,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -93,8 +94,9 @@ function parseArgs(argv) {
     else if (arg === '--fixture') options.fixture = path.resolve(argv[++index]);
     else if (arg === '--candidate') options.candidate = path.resolve(argv[++index]);
     else if (arg === '--plan') options.plan = path.resolve(argv[++index]);
+    else if (arg === '--request-log') options.requestLog = path.resolve(argv[++index]);
     else if (arg === '--help' || arg === '-h') {
-      console.log('usage: node scripts/controlled-llm-service.mjs [--port N] [--host H] [--mode normal|decline|partial|fail|garbage] [--fixture FILE] [--candidate FILE] [--plan FILE]');
+      console.log('usage: node scripts/controlled-llm-service.mjs [--port N] [--host H] [--mode normal|decline|partial|fail|garbage] [--fixture FILE] [--candidate FILE] [--plan FILE] [--request-log FILE]');
       process.exit(0);
     }
   }
@@ -931,6 +933,7 @@ const server = http.createServer(async (request, response) => {
   }
 
   const raw = await readBody(request);
+  if (options.requestLog) appendFileSync(options.requestLog, `${raw}\n`, 'utf8');
   const { model, text, attachedParts } = textOf(raw);
   const task = detectTask(text);
 
@@ -989,4 +992,3 @@ server.listen(options.port, options.host, () => {
     ),
   );
 });
-

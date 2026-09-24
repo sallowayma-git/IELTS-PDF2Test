@@ -4467,6 +4467,7 @@ fn the_real_controlled_service_drives_the_packet_loop_through_l0_l1_and_finish()
     seed_packet_job(&root);
 
     let plan_path = root.join("repair-plan.json");
+    let request_log_path = root.join("controlled-llm-requests.jsonl");
     crate::util::write_json(
         &plan_path,
         &json!({
@@ -4487,6 +4488,8 @@ fn the_real_controlled_service_drives_the_packet_loop_through_l0_l1_and_finish()
         .arg(port.to_string())
         .arg("--plan")
         .arg(&plan_path)
+        .arg("--request-log")
+        .arg(&request_log_path)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -4533,6 +4536,20 @@ fn the_real_controlled_service_drives_the_packet_loop_through_l0_l1_and_finish()
     })
     .expect("包模式循环必须跑完（受控服务真的被驱动过）");
 
+    let captured_requests = std::fs::read_to_string(&request_log_path)
+        .expect("真实受控服务必须记录它实际收到的 HTTP 请求体");
+    let request_bodies: Vec<&str> = captured_requests.lines().collect();
+    assert!(
+        request_bodies.len() >= 3,
+        "应记录 L0 / L1 / finish_packet 请求：{request_bodies:#?}"
+    );
+    assert!(
+        request_bodies
+            .iter()
+            .all(|body| !body.contains("data:application/pdf;base64,")),
+        "包模式的真实受控服务请求不得携带整份 PDF"
+    );
+
     // ① 编辑真的落库，且值是**从包里那一行**读出来的（剧本里没有 "A"）。
     assert_eq!(
         read_answer(&root, "q14")["labels"],
@@ -4540,6 +4557,29 @@ fn the_real_controlled_service_drives_the_packet_loop_through_l0_l1_and_finish()
         "编辑必须真的落库"
     );
     assert_eq!(report.applied_count, 1);
+    assert!(
+        report
+            .packets
+            .iter()
+            .any(|packet| packet["status"] == json!("finished")),
+        "真实受控服务必须在编辑后调用 finish_packet 并结束一个包：{:#?}",
+        report.packets
+    );
+    let edited_packet = report
+        .packets
+        .iter()
+        .position(|packet| packet["edits"].as_u64().unwrap_or(0) > 0)
+        .expect("逐包诊断必须记录实际编辑的包");
+    let finished_packet = report
+        .packets
+        .iter()
+        .position(|packet| packet["status"] == json!("finished"))
+        .expect("逐包诊断必须记录 finish_packet");
+    assert!(
+        finished_packet > edited_packet,
+        "finish_packet 必须发生在编辑包之后：{:#?}",
+        report.packets
+    );
     // ② 「不够就说」这条出口真的被走过：L1 在逐包诊断里看得见。
     assert_eq!(
         report.packets[0]["insufficientContext"],
