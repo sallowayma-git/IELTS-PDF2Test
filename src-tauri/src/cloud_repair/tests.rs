@@ -5836,3 +5836,215 @@ fn the_l2_note_does_not_call_a_page_without_an_image_covered() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ── P10：答案类场景 —— 包模式真的会「自己去取」（L1 的抓取工具路径） ─────────────
+//
+// 与上面的 `the_real_controlled_service_drives_the_packet_loop_through_l0_l1_and_finish`
+// 互补：那条证明的是 `report_insufficient_context` 路径（模型说「不够」，后端替它取）。
+// 这条证明的是**抓取工具**路径：模型用 `read_source` 主动把答案页取回来，然后才改。
+// 两者合起来才覆盖「必须经过 report_insufficient_context **或** 抓取工具取到之后才能改对」。
+//
+// 场景前提（与 CDP 答案类场景同一形状）：承载 q14 的题组锚点页是第 1 页，正确答案
+// 印在第 3 页的答案区（「14 A」）——**不在锚点页上**，所以第一轮的包里没有它；
+// 本地稿的 B 是真实存在的错误值（candidate 是 A，原文件是 A）。
+//
+// 反自证与既有纪律一致：剧本（plan）里没有答案值；受控服务在第一轮请求里**看不到**
+// 答案行，它只能先抓页——第一轮请求体里没有「14 A」是这条用例的硬前提。
+#[test]
+fn an_answer_difference_fetches_the_answer_page_through_read_source_before_fixing() {
+    let Some(node) = node_binary() else {
+        panic!("本机 PATH 里没有 node：P10 的真实受控服务用例无法执行——这不是通过（见 node_binary 的说明）");
+    };
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("src-tauri 必须有父目录")
+        .join("scripts/controlled-llm-service.mjs");
+    assert!(script.is_file(), "受控服务脚本必须在仓库里：{script:?}");
+
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+    seed_packet_job(&root);
+
+    // 前提自检：本地稿的 q14 是 B（错误值），答案页（第 3 页）在文本层里确实印着「14 A」，
+    // 而且这一页不在题组锚点页上（否则包第一轮就带着它，L1 无从发生）。
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["B"]), "前提：本地答案必须是错误的 B");
+    let text_layer = crate::util::read_json_opt(
+        &crate::util::job_dir(&root, ITEM_ID).join("document-ir.json"),
+    )
+    .expect("读 document-ir")
+    .expect("document-ir 必须存在");
+    let answer_page_lines: Vec<String> = text_layer["pages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|page| page["pageIndex"] == json!(2))
+        .flat_map(|page| page["lines"].as_array().unwrap().iter())
+        .filter_map(|line| line["text"].as_str().map(str::to_string))
+        .collect();
+    assert!(
+        answer_page_lines.iter().any(|line| line.trim() == "14 A"),
+        "前提：答案页的文本层里必须有「14 A」这一行：{answer_page_lines:?}"
+    );
+
+    let plan_path = root.join("repair-plan-answer-fetch.json");
+    let request_log_path = root.join("controlled-llm-requests.jsonl");
+    crate::util::write_json(
+        &plan_path,
+        &json!({
+            // 剧本里**没有**答案值：只有「改哪个槽、答案印在哪一页」和「用抓取工具去取」。
+            "fixSlotIds": ["q14"],
+            "questionNumber": 14,
+            "sourcePageOneBased": 3,
+            "answerFetch": "read_source",
+            "rulings": [],
+            "unresolved": [],
+            "finishNote": "受控服务：q14 已按抓取到的答案页改为 A"
+        }),
+    )
+    .expect("写剧本");
+
+    // 与 L0→L1 用例相同的显式启动：多带 `--request-log`，受控服务会把它收到的
+    // **每一轮真实 HTTP 请求体**落盘——「第一轮请求里没有答案行」靠它对账。
+    let port = free_local_port();
+    let child = std::process::Command::new(&node)
+        .arg(&script)
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--plan")
+        .arg(&plan_path)
+        .arg("--request-log")
+        .arg(&request_log_path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap_or_else(|error| panic!("起受控服务失败 node={node:?}: {error}"));
+    let _guard = ChildGuard(child);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let mut ready = false;
+    while std::time::Instant::now() < deadline {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            ready = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(ready, "受控服务 15 秒内没有起来（端口 {port}）");
+
+    crate::llm_profiles::save_profiles(
+        &root,
+        &[json!({
+            "profileId": "controlled-repair",
+            "name": "Controlled Repair Service",
+            "provider": "OpenAiCompatible",
+            "baseUrl": format!("http://127.0.0.1:{port}/v1"),
+            "model": "controlled-repair-v1",
+            "temperature": 0,
+            "timeoutMs": 60000,
+            "forceJson": true,
+            "enabled": true
+        })],
+    )
+    .expect("profile 必须能落盘");
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let report = run_packets(&request, |context: &Value, observations: &[Value]| {
+        repair_authoring_step_through_gateway(
+            &root,
+            ITEM_ID,
+            Some("controlled-repair"),
+            context,
+            observations,
+        )
+    })
+    .expect("包模式循环必须跑完（受控服务真的被驱动过）");
+
+    // ① 最终答案正确，且是从抓取到的页里读出来的。
+    assert_eq!(
+        read_answer(&root, "q14")["labels"],
+        json!(["A"]),
+        "抓取到答案页之后必须把答案改对"
+    );
+
+    // ② 真实请求体对账（受控服务的 --request-log 落盘了它收到的每一轮请求）：
+    //    第一轮请求里**没有**答案行（模型此时不可能知道答案），也没有整份 PDF；
+    //    第二轮请求带着上一轮抓取结果（答案行在观察里真实出现）。
+    let captured = std::fs::read_to_string(&request_log_path)
+        .expect("真实受控服务必须记录它实际收到的 HTTP 请求体");
+    let bodies: Vec<&str> = captured.lines().collect();
+    assert!(bodies.len() >= 2, "至少要有「抓取」与「修复」两轮请求：{bodies:#?}");
+    assert!(
+        !bodies[0].contains("14 A"),
+        "第一轮请求里不得出现答案行「14 A」——出现即自证：{}",
+        &bodies[0][..bodies[0].len().min(600)]
+    );
+    assert!(
+        bodies.iter().all(|body| !body.contains("data:application/pdf;base64,")),
+        "整个过程不得附整份 PDF"
+    );
+    assert!(
+        bodies[1].contains("read_source") && bodies[1].contains("14 A"),
+        "第二轮请求必须带着上一轮 read_source 抓回的答案页（观察里真实出现「14 A」）"
+    );
+
+    // ③ 抓取动作真的发生了：观察里有 read_source 的 ok 结果，且带着第 3 页的行文本。
+    assert!(
+        report.observations.iter().any(|observation| {
+            observation["status"] == json!("ok")
+                && observation["result"]["pages"]
+                    .as_array()
+                    .is_some_and(|pages| pages
+                        .iter()
+                        .any(|page| page["pageIndex"] == json!(3)
+                            && page["lines"]
+                                .as_array()
+                                .is_some_and(|lines| lines.iter().any(|line| line["text"] == json!("14 A")))))
+        }),
+        "必须真的有一轮 read_source 把第 3 页的行文本带了回来：{:#?}",
+        report.observations
+    );
+
+    // ④ L1 走的是**抓取工具**而不是「报告不够」：级别 ≥ 1，但 insufficientContext == 0。
+    assert_eq!(
+        report.packets[0]["insufficientContext"],
+        json!(0),
+        "这条路径没有调用 report_insufficient_context：{:#?}",
+        report.packets[0]
+    );
+    assert!(
+        report.packets[0]["escalationLevel"].as_u64().unwrap_or(0) >= 1,
+        "用抓取工具取页也是 L1：{:#?}",
+        report.packets[0]
+    );
+
+    // ⑤ 逐包请求记录对账：第一轮是 L0、包内页不含答案页；第二轮级别抬到 L1
+    //（抓取工具也是 L1）。注意 `pagesIncluded` 记的是**包 scope**——抓取结果并不到包里
+    //（那是 report_insufficient_context 的待遇），「取回的页到了模型手上」由 ②③ 证明。
+    let records: Vec<Value> = std::fs::read_to_string(
+        crate::util::job_dir(&root, ITEM_ID).join("llm-calls.jsonl"),
+    )
+    .expect("网关必须留下 llm-calls.jsonl")
+    .lines()
+    .filter_map(|line| serde_json::from_str(line).ok())
+    .filter(|record: &Value| record["commandName"] == json!("repair_authoring_step"))
+    .collect();
+    assert!(records.len() >= 2, "至少两轮修复调用要落记录：{records:#?}");
+    assert_eq!(records[0]["escalationLevel"], json!(0), "{:#?}", records[0]);
+    assert_eq!(
+        records[1]["escalationLevel"], json!(1),
+        "read_source 抓页的那一轮必须是 L1：{:#?}",
+        records[1]
+    );
+    let first_pages = records[0]["pagesIncluded"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !first_pages.contains(&json!(3)),
+        "第一轮请求里没有答案页（它不在题组锚点页上）：{first_pages:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}

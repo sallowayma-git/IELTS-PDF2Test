@@ -61,7 +61,7 @@ import {
   writeReport,
 } from "./lib/tauri-cdp-harness.mjs";
 import { computeScenarioVerdict, SCENARIO_STATUS } from "./lib/chain-verdict.mjs";
-import { deriveRepairScenario, loadRepairGolden, textOfNodes } from "./lib/cloud-repair-scenario.mjs";
+import { deriveAnswerRepairScenario, deriveRepairScenario, loadRepairGolden, textOfNodes } from "./lib/cloud-repair-scenario.mjs";
 import { loadPublishedPackageWithRealProviderAsync } from "./lib/student-real-provider.mjs";
 
 const exePath = path.join(repoRoot, "src-tauri", "target", "debug", "ielts-author-studio.exe");
@@ -114,6 +114,8 @@ const report = {
   },
   service: { started: false, health: null, modes: [], requestLines: [] },
   scenario: { derived: false, differences: [], fix: null, rule: null, unresolved: [], golden: null },
+  // P10 答案类场景的独立判定段（三态：ready / not-executable / failed）。不进 scenarios，见 2b 的说明。
+  answerScenario: null,
   observed: {
     localDraft: null,
     firstCycle: null,
@@ -905,6 +907,57 @@ async function main() {
     record("derive-scenario-from-real-draft", SCENARIO_STATUS.FAILED, { problems: deriveProblems });
     writeFinalReport();
     return;
+  }
+
+  // ---- 2b. P10 答案类场景：答案页不在题组锚点页上 ⇒ 包模式必须走 L1 才能改对 ----
+  //
+  // 与题面类场景并行的第二条场景线：修复靶子是**答案类**差异，且正确答案所在的
+  // 答案页不在该题组的锚点页上——包第一轮拿不到答案页，必须走
+  // `report_insufficient_context` 或抓取工具（`read_source`）才能改对。这是步骤
+  // 「至少一个包走了 L1」真正可满足的形状（题面类场景的包天然自足，见 REPORT §7.1）。
+  //
+  // 判定语义（刻意与 report.scenarios 分开）：这一步的判定写进 `report.answerScenario`
+  // （独立的三态），**不进** `report.scenarios`——当前仓库唯一的 golden 明确标注
+  // `answerKeyAbsence`（原文件没有答案页），答案类场景在这份 fixture 上必然是
+  // 「前提不成立」。若把它计入 scenarios，整条链的 verdict 会被这份 fixture 拖成
+  // not-executable，题面类验收反而不可能通过。等一份带 `answerErrors` 标注的
+  // golden 落库后，把这里的记录切进 scenarios（或用 `--scenario answer` 单独跑）
+  // 即可成为判定性步骤。
+  const answerCandidatePath = path.join(scenarioDir, "authoring-candidate-answer.json");
+  const answerPlanPath = path.join(scenarioDir, "repair-plan-answer.json");
+  const answerDerived = deriveAnswerRepairScenario(prepassDraft.ds, golden);
+  if (!answerDerived.ok) {
+    report.answerScenario = {
+      status: SCENARIO_STATUS.NOT_EXECUTABLE,
+      reason: answerDerived.reason,
+      fixtureId: answerDerived.fixtureId ?? report.scenario.golden?.fixtureId ?? null,
+      observed: answerDerived.observed ?? null,
+      expected: answerDerived.expected ?? null,
+    };
+    console.log(`[scenario] NOT_EXECUTABLE derive-answer-scenario :: ${answerDerived.reason}`);
+  } else {
+    fs.writeFileSync(answerCandidatePath, JSON.stringify(answerDerived.candidate, null, 2));
+    fs.writeFileSync(answerPlanPath, JSON.stringify(answerDerived.plan, null, 2));
+    // 反自证守卫与场景定义性前提，全部作为事实记录：
+    //   · plan 里没有答案值（受控服务必须抓取答案页才知道答案）；
+    //   · 答案页不在题组锚点页上（包第一轮拿不到它，L1 必然发生）。
+    report.answerScenario = {
+      status: "ready",
+      candidate: answerCandidatePath,
+      plan: answerPlanPath,
+      fix: answerDerived.fix,
+      golden: answerDerived.golden,
+      planCarriesNoAnswerValue: !JSON.stringify(answerDerived.plan).includes(
+        JSON.stringify(answerDerived.fix.after),
+      ),
+      answerPageOffAnchorPages: !answerDerived.fix.anchorPagesOneBased.includes(
+        answerDerived.fix.answerPageOneBased,
+      ),
+      note:
+        "派生就绪。端到端运行（重启受控服务带 answer 剧本 → 重导入 → 断言至少一个包走 L1 且答案改正）"
+        + "待带 answerErrors 标注的 golden fixture 落库后接入。",
+    };
+    console.log(`[scenario] READY derive-answer-scenario :: answerPage=${answerDerived.fix.answerPageOneBased}`);
   }
 
   // ---- 3. 重启受控服务（这次带样本与剧本）----

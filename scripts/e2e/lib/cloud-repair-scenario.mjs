@@ -269,3 +269,149 @@ export function deriveRepairScenario(draft, golden) {
     },
   };
 }
+
+/**
+ * 答案类场景（P10）的**期望值装载 + 场景装配**。
+ *
+ * ## 场景定义
+ *
+ * 某题的答案错了（本地识别真实产生的错误），而正确答案所在的**答案页**不在该题组的
+ * 锚点页上。包模式第一轮拿不到答案页 ⇒ 模型必须先 `report_insufficient_context`
+ * 或用抓取工具（`read_source`）把答案页取回来，**之后**才能改对。
+ * 这正是 CDP 步骤 11b「至少一个包走了 L1」在这份场景下可满足的形状——
+ * 题面类场景的原文行就在题组自己的锚点页上，包天然自足，升级永远不会发生。
+ *
+ * ## 期望值来源与反自证（与题面类场景同一条纪律）
+ *
+ *   · 期望值只来自 golden fixture 新增的 `answerErrors` 标注（人工核对答案页后写下）；
+ *   · 错误必须是本地识别真实产生的：`draft.answerKey[slotId]` 的当前值 ≠ 标注的
+ *     原文件真值，否则场景前提不成立；
+ *   · **剧本里没有任何答案值**：plan 只带「改哪个槽、答案印在哪一页、用哪个抓取工具」。
+ *     候选样本带真值（候选本就是「云端独立识别」的建模），但受控服务的修复依据是
+ *     **抓取回来的原文行**（如 `14 A`），不是候选切片里的值；
+ *   · `plan` 与 `answerErrors[].originalAnswer` 的包含关系是本场景的反自证守卫，
+ *     由派生函数自己检查，`plan` 里出现答案值直接判前提不成立。
+ *
+ * ## 为什么当前仓库里这条场景是 not-executable
+ *
+ * 唯一的 golden（demanding-reading-passage-3）明确标注了 `answerKeyAbsence`：
+ * 那份原文件**没有答案页**。要跑答案类场景，需要一份带答案页的原文件 + 对应的
+ * `answerErrors` 人工标注。在此之前本函数如实返回 `ok:false` 并给出原因——
+ * 这不是失败，也不是通过，是「前提不成立」。
+ */
+export function deriveAnswerRepairScenario(draft, golden) {
+  const entries = Array.isArray(golden?.answerErrors) ? golden.answerErrors : [];
+  if (entries.length === 0) {
+    return {
+      ok: false,
+      reason:
+        'golden fixture 没有标注答案类错误（answerErrors）：这份卷子派生不出「答案页不在锚点页上」的场景',
+      fixtureId: golden?.fixtureId ?? null,
+    };
+  }
+  const annotated = entries[0];
+  for (const field of ['slotIds', 'questionNumber', 'localAnswer', 'originalAnswer', 'answerPage']) {
+    if (annotated?.[field] === undefined || annotated?.[field] === null) {
+      return { ok: false, reason: `answerErrors[0].${field} 缺失：答案类场景的标注不完整` };
+    }
+  }
+  const answerPageOneBased = Number(annotated.answerPage?.oneBased);
+  if (!Number.isInteger(answerPageOneBased) || answerPageOneBased < 1) {
+    return { ok: false, reason: 'answerErrors[0].answerPage.oneBased 必须是 >= 1 的整数' };
+  }
+
+  const groups = Array.isArray(draft?.taskGroups) ? draft.taskGroups : [];
+  const wantedSlots = Array.isArray(annotated.slotIds) ? annotated.slotIds : [];
+  let group = null;
+  for (const candidate of groups) {
+    const owned = (candidate.answerSlots ?? []).length > 0;
+    const responseSlotIds = (candidate.responseGroups ?? [])
+      .flatMap((response) => (Array.isArray(response.slotIds) ? response.slotIds : []));
+    if (wantedSlots.every((slot) => responseSlotIds.includes(slot))) { group = candidate; break; }
+    if (owned && wantedSlots.every((slot) => slot in (draft.answerKey ?? {}))) { group = group ?? candidate; }
+  }
+  if (!group) {
+    return { ok: false, reason: `真实稿里找不到承载 ${JSON.stringify(wantedSlots)} 的题组` };
+  }
+
+  // 场景的定义性前提：答案页不在该题组的锚点页上。锚点的 pageIndex 是 0-based
+  // （SourceAnchorV2），答案页给的是 1-based——与 read_source / 包 scope 的口径一致。
+  const anchorPagesOneBased = (group.sourceAnchors ?? [])
+    .map((anchor) => Number(anchor?.pageIndex ?? 0) + 1)
+    .filter((page) => page >= 1);
+  if (anchorPagesOneBased.includes(answerPageOneBased)) {
+    return {
+      ok: false,
+      reason: `答案页（第 ${answerPageOneBased} 页）就在题组锚点页上：包第一轮就会带着它，派生不出「需要抓取」的场景`,
+      anchorPagesOneBased,
+    };
+  }
+
+  // 核对「答案错误是本地识别真实产生的」：当前稿的答案值必须等于标注的 localAnswer。
+  const slotId = wantedSlots[0];
+  const currentLabels = draft?.answerKey?.[slotId]?.labels ?? null;
+  const normalized = (value) => JSON.stringify(Array.isArray(value) ? value.slice().sort() : value);
+  if (!currentLabels || normalized(currentLabels) !== normalized(annotated.localAnswer)) {
+    return {
+      ok: false,
+      reason: '本地识别没有产出标注的那个答案错误（当前稿的答案值与标注不符）',
+      observed: currentLabels,
+      expected: annotated.localAnswer,
+      slotId,
+    };
+  }
+
+  // 候选样本：整卷照抄真实稿，只把该题答案改成云端独立识别的真值（= 标注值）。
+  // 与题面类场景同构：候选带真值、剧本不带，受控服务的依据必须是抓回的原文行。
+  const candidate = {
+    passage: clone(draft.passage ?? {}),
+    taskGroups: clone(groups),
+    answerSlots: clone(draft.answerSlots ?? {}),
+    answerKey: clone(draft.answerKey ?? {}),
+    unresolvedRegions: [],
+    sourceCoverageNotes: [],
+  };
+  candidate.answerKey[slotId] = {
+    ...clone(draft.answerKey?.[slotId] ?? {}),
+    labels: clone(annotated.originalAnswer),
+  };
+
+  const plan = {
+    _comment:
+      '答案类场景的修复剧本。**刻意不含答案值**：originalAnswer 只进候选样本，'
+      + '受控服务必须先抓取答案页（answerFetch: read_source），从返回的原文行（如「14 A」）里读出答案与引文。',
+    fixSlotIds: wantedSlots.slice(),
+    questionNumber: annotated.questionNumber,
+    // 答案页号（1-based）：read_source / report_insufficient_context 的页口径。
+    sourcePageOneBased: answerPageOneBased,
+    answerFetch: 'read_source',
+    rulings: [],
+    unresolved: [],
+    finishNote: `受控服务：第 ${annotated.questionNumber} 题答案已按抓取到的答案页改正`,
+  };
+  // 反自证守卫：剧本里出现答案值 ⇒ 受控服务不再需要抓取，场景退回自证。
+  if (JSON.stringify(plan).includes(JSON.stringify(annotated.originalAnswer))) {
+    return { ok: false, reason: '剧本里出现了答案值（originalAnswer）：受控服务就不再需要抓取答案页，场景退回自证' };
+  }
+
+  return {
+    ok: true,
+    kind: 'answer',
+    candidate,
+    plan,
+    fix: {
+      taskId: group.taskId ?? null,
+      slotId,
+      questionNumber: annotated.questionNumber,
+      before: clone(annotated.localAnswer),
+      after: clone(annotated.originalAnswer),
+      answerPageOneBased,
+      anchorPagesOneBased,
+    },
+    golden: {
+      path: golden.path ?? null,
+      fixtureId: golden.fixtureId ?? null,
+      errorId: annotated.id ?? null,
+    },
+  };
+}

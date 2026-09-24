@@ -554,6 +554,47 @@ function repairPacketStepReply(context, plan, round, observations) {
     return giveUp('剧本没有指定答案页，受控服务不知道要去要哪一页');
   }
 
+  // ⓪ 抓取工具路径（`plan.answerFetch === 'read_source'`，答案类场景专用）：
+  //    与「报告不够」并行的另一条 L1 路——模型用 `read_source` **主动**取答案页。
+  //    没设这个键的剧本行为一字不变（仍走 ① 的 `report_insufficient_context`）。
+  //    纪律与整个剧本一致：答案值与引文只能来自**上一轮 `read_source` 的真实返回**，
+  //    没抓到之前连答案是什么都不知道。
+  if (plan.answerFetch === 'read_source' && !inScope.includes(answerPage)) {
+    const version = context?.draftSlice?.editVersion;
+    const fetched = answerLineFromSourceObservations(observations, plan.questionNumber);
+    if (fetched) {
+      // 抓到了：答案与引文逐字取自观察里 `read_source` 返回的那一行，页号用它真实所在的页。
+      const slotIds = Array.isArray(plan.fixSlotIds) ? plan.fixSlotIds : [];
+      if (slotIds.length === 0 || typeof version !== 'number') {
+        return giveUp('受控服务没有读到真实 editVersion / 要改的答案槽，本轮不做任何修改');
+      }
+      return {
+        callId: `p${round}`,
+        tool: 'apply_edits',
+        arguments: {
+          baseVersion: version,
+          commands: slotIds.map((slotId) => ({
+            op: 'setAnswer',
+            slotId,
+            value: { kind: 'option', labels: [fetched.label], assignment: 'unordered_set' },
+          })),
+          evidence: [
+            {
+              sourceFileId: context?.sourceEvidence?.sourceFileId ?? null,
+              pageIndex: fetched.pageIndex,
+              quote: fetched.line,
+            },
+          ],
+        },
+      };
+    }
+    return {
+      callId: `p${round}`,
+      tool: 'read_source',
+      arguments: { pageIndex: answerPage },
+    };
+  }
+
   // ① 目标页还不在包里 ⇒ 只能说「不够」，并点名要哪一页。**不猜**。
   if (!inScope.includes(answerPage)) {
     return {
@@ -793,6 +834,32 @@ function answerLineFromPacket(context, questionNumber) {
     if (!matched) continue;
     const label = matched[1].trim();
     if (label) return { label, line: entry.text, lineId: entry.lineId, pageIndex: entry.pageIndex };
+  }
+  return null;
+}
+
+/**
+ * 从**观察里**（上一轮 `read_source` 的真实返回）读「题号 + 答案值」那一行。
+ *
+ * 抓取工具路径用：答案页不在包里时，模型用 `read_source` 主动取页，返回落在
+ * `observations` 里（不会并进包的 `sourceEvidence`——那是 `report_insufficient_context`
+ * 的待遇）。取不到就返回 null（调用方先抓页再修），**不编**。
+ */
+function answerLineFromSourceObservations(observations, questionNumber) {
+  const source = lastSourceObservation(observations);
+  if (!source) return null;
+  const number = Number(questionNumber);
+  if (!Number.isInteger(number) || number <= 0) return null;
+  const prefix = new RegExp(`^${number}\\s+(.+)$`);
+  for (const page of Array.isArray(source.pages) ? source.pages : []) {
+    const pageIndex = Number(page?.pageIndex ?? 0);
+    for (const line of Array.isArray(page?.lines) ? page.lines : []) {
+      const text = typeof line?.text === 'string' ? line.text.trim() : '';
+      const matched = prefix.exec(text);
+      if (matched && matched[1].trim()) {
+        return { label: matched[1].trim(), line: text, pageIndex };
+      }
+    }
   }
   return null;
 }
