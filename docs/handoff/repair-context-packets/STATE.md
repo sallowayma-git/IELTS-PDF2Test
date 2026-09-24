@@ -14,7 +14,7 @@
 | P4 | 可观测性 + 受控模型剧本 + 真实 HTTP 集成测试 + 两模式对比（§4.5/§6/§7） | done | `ee524f2`（§4.5 可观测性 + 文案）；`38ec89b`（§6 受控剧本 + 两模式对比）；`P6` 补 §7 的题面类剧本分支与 CDP 步骤（见 A-4 / A-5）。**CDP 步骤已写入但本机未执行**（macOS 无 CDP 通道，如实记） |
 | P5 | 独立审计 #1（子代理，只读，对抗式） | done | 见「审计发现」；3 个只读子代理 + 3 处突变检查 + 逐条源码复核 |
 | P6 | 修复审计 #1 发现 | done | A-1 `b821ae2`；A-3/A-12 `71814c2`；A-6/A-7/A-13 `3e4a5dd`；A-8/A-9/A-10/A-11/A-14/A-15/A-16 `c617f7a`；A-4/A-5 见本条日志。**A-2 未修**（越界，见「越界需求」1） |
-| P7 | 最终验收 + 独立审计 #2 + 修复 | **blocked（原因见下）** | 干净状态重跑数字见「基线数字」；审计 #2 的发现见「P7 处置」；修复提交 `391294f` / `2a5dc64` / `208afd9` / `7430a71`。**未标 done**：① A-2 仍是未修的 P1（越界，见「越界需求」1）；② CDP 链在本机跑不了（macOS 无 WebView2 CDP 通道），§7.3 与 A-5 / A-18 的实机验证缺失 |
+| P7 | 最终验收 + 独立审计 #2 + 修复 | **blocked（原因见下）** | 干净状态重跑数字见「基线数字」；审计 #2 的发现见「P7 处置」；修复提交 `391294f` / `2a5dc64` / `208afd9` / `7430a71` / `4a578c5` / `c264ada` / `84325a1`。**未标 done**：① A-2 仍是未修的 P1（越界，见「越界需求」1）；② **§7.3 在包模式下仍差一步**：A-22 修掉了「包模式剧本从不裁定」这一半，但步骤 11b 要求的「至少一个包走了 L1」在这份 CDP 场景下**结构性不可满足**——题面类修复所需的原文行就在包内（`sourceEvidence.pages[]` 来自题组锚点页），模型没有升级的理由；要让它可满足必须改场景（把修复靶子换成答案类差异，答案页不在题组锚点页里），属**设计决策**，且本机无 CDP 通道无法验证；③ CDP 链在本机跑不了（macOS 无 WebView2 CDP 通道），§7.3 与 A-5 / A-18 / A-22 的实机验证全部缺失 |
 | P8 | 收口报告 `REPORT.md` | todo | |
 
 ## 基线数字（P0 填）
@@ -22,7 +22,7 @@
 - **平台**：macOS（darwin，aarch64-apple-darwin）。Rust 工具链在 `~/.cargo/bin`（需显式 export PATH）；node 22.22.2；前端依赖已在 `node_modules/.bin`。
 - **基线提交不是 `34dfadd`**：`34dfadd` 在 macOS 上**根本无法编译** —— `src-tauri/src/parser.rs:2184` `E0425: cannot find value '_asset_dir'`，只出现在 macOS 的 sips 渲染分支，仓库此前只在 Windows 构建过。本分支第一个提交 `f13c75a`（一行改动，把 `_asset_dir` 改回真实存在的 `asset_dir`）修掉了它，**无任何行为变更**。因此基线数字取 `f13c75a`。
   - 复现方式（worktree 已用完清理，需要时重建）：`git worktree add /tmp/base f13c75a`，把主工作区的 `src-tauri/lib`（pdfium，gitignore 里，worktree 拿不到）和 `node_modules` 软链进去，再 `cd /tmp/base/src-tauri && CARGO_TARGET_DIR=<主 target> cargo test --lib`（共享 target 可复用依赖产物，整轮约 1 分钟）。
-- Rust `cargo test --lib`：基线（`f13c75a`）**1046 passed / 0 failed / 11 ignored** → 本分支 **1095 passed / 0 failed / 11 ignored**（净 +49）
+- Rust `cargo test --lib`：基线（`f13c75a`）**1046 passed / 0 failed / 11 ignored** → 本分支 **1102 passed / 0 failed / 11 ignored**（净 +56）
 - Vitest：基线 **391 passed**（28 个测试文件里 1 个加载失败）→ 本分支 **392 passed**（同样 1 个文件加载失败；净 +1）
 - tsc：基线 `exit 0` → 本分支 `exit 0`
 - 已知基线失败（**非本任务引入，两提交一致**）：
@@ -42,6 +42,13 @@
   - §6 两模式对比：见上一条，未变
   - §7.2 真实 HTTP + **真实受控服务**：`the_real_controlled_service_drives_the_packet_loop_through_l0_l1_and_finish` **passed**（本机真起 node 跑 `scripts/controlled-llm-service.mjs`）
   - CDP 链：`node scripts/e2e/tauri-cdp-cloud-repair-chain.mjs` → `[scenario] FAILED harness :: ENOENT ... src-tauri/target/debug/ielts-author-studio.exe`，即 **未执行**（macOS 没有 WebView2 CDP 通道）。改动前后失败形态一致，说明新改的步骤 10b / 11 没有引入脚本级错误（另做 `node --check` 通过）
+- **P7 审计 #2 处置后的重跑（HEAD `84325a1`）**：
+  - Rust `cargo test --lib`：**1102 passed / 0 failed / 11 ignored**（P7 上一轮是 1099；+3 = A-23 的 L2 note 用例、A-22 的两条包模式裁定用例）。A-24 不新增用例（改的是缺 node 时的行为）
+  - Vitest：**392 passed**（28 个文件里 1 个加载失败，与基线一致：缺 `selenium-webdriver`）
+  - tsc：`exit 0`
+  - §6 两模式对比：**917173 / 83738 / 12956，一字未变**（A-23 只影响「有 region 条目但无图」这条升级路径，本样本走不到）
+  - A-22 的两条用例真的起 node 跑 `scripts/controlled-llm-service.mjs`（真 HTTP）：`the_real_controlled_service_rules_on_a_ruling_type_difference_in_packet_mode`、`the_controlled_service_stops_ruling_once_it_already_has`，均 passed
+  - A-24 验证方式：把 PATH 换成 `$HOME/.cargo/bin:/usr/bin:/bin`（`which node` = not found）后跑 §7.2 用例 → **失败**（`本机 PATH 里没有 node…`），修复前同样条件下报的是 `1 passed`
 
 ## 审计发现（P5/P7 填，逐条带状态）
 
@@ -87,11 +94,29 @@
 | A-20 | P2 | **fixed** | `208afd9`。三条弱证据用例（crop / 文档包 / paperMap）各自加固，并各做一次突变确认能变红（M6 / M7 / M8） |
 | A-21 | P2 | **fixed** | `7430a71`。§7.2 原来打的是测试内 TCP stub，不是任务书点名的受控服务脚本。新用例真起 node 跑 `scripts/controlled-llm-service.mjs`；突变 M9 确认它真的在驱动 L1 |
 
+**P7 审计 #2 的复核轮（第 2 个只读子代理的回归复核，产出 A-22/A-23/A-24）**：
+
+> 复核范围：`git diff 6149443..HEAD`（即 A-17 / A-18 / A-19 / A-20 / A-21 四个提交），只给范围不给结论。结论：**P0 无**；**这四个提交本身没有引入 P1**；三处「被加固的用例」各自做临时突变全部确认变红（未只改绿）。
+
+| # | 级别 | 状态 | 提交 / 证据 |
+|---|---|---|---|
+| A-22 | P1 | **fixed（链路级未执行）** | `84325a1`。包模式剧本从不 `record_ruling` ⇒ CDP 链 `cloud-fixed-content-on-its-own` 的 `adjudicatedCount >= 1` 在默认（包）模式下**恒红**。先写失败用例看到红（返回 `finish_packet` + 「找不到剧本指定的题面行」），再给剧本加裁定分支。**链路级未执行**：① 本机无 CDP 通道；② 步骤 11b 仍是结构性阻断，见下 |
+| A-23 | P2 | **fixed** | `4a578c5`。`escalate_packet` 的 L2 `existing` 只按 `pageIndex` 收集、不看 `image` 是否为 `null` ⇒ 「有 region 条目但无图」时写出假 note。先写失败用例看到红（note 真的是「every page in scope already had an image…」），再修 |
+| A-24 | P2 | **fixed** | `c264ada`。§7.2 用例缺 node 时只 `eprintln!` 后 `return` ⇒ 恒绿但什么都没证，且注释自称「不静默当通过」。改成硬失败；实测把 node 从 PATH 移除后由 `1 passed` 变成失败 |
+
 **A-17 是什么（P1，P6 的修复自己带进来的回归）**：`packets.rs::region_requests` 在 A-7 的修法里引入 `pages_requested`，却把它声明在 `for task_id` **外面**，判据于是从「整组」滑到「整包」：包内任一题组在某一页有 bbox，其他题组在这一页的「缺 bbox 退整页图」就被吞掉。两条 bbox 覆盖的版面未必重叠，本组要核的内容可能整块落在对方裁剪范围之外。顺带修掉一处顺序依赖：`draft.task_ids` 是 `BTreeSet`，谁先遍历取决于 id 字典序，同一个包可能给 1 张图、也可能给 2 张（旧代码下两种顺序结果不同）。修法：判据下沉到组内（`covered`），去重（`seen`）仍跨组。
 
 **A-18 是什么（P1，CDP 链在默认模式下必红）**：`REPAIR_CONTEXT_MODE` 的默认值已经是 `Packets`，而 `scripts/` 里**没有任何一处**设 `IELTS_REPAIR_CONTEXT_MODE`（已全仓 grep 确认）—— 也就是说 CDP 链默认跑在包模式下。可是步骤 10b 要求「整条回合里至少一次 `read_source`」（包模式的原文是**随包**发来的，这个计数天然是 0），步骤 11 要求回合形状是 `read_draft → read_source → 被拒的 apply_edits → 带 baseVersion 重交 → record_ruling → finish`（包模式没有 `read_draft`，收工是 `finish_packet`）。两条都改成了按模式分流，且两种模式证明**同一件事**：写进稿子的 `baseVersion` 是模型从**真实请求**里读到的、不是剧本常量（包模式读 `draftSlice.editVersion`，legacy 读顶层 `editVersion`，两个值都来自请求体落盘文件）。步骤 11b 的 L1 断言保留（§7 的硬要求），但失败载荷补上逐包诊断（每个包的 `pagesIncluded`、升级级别序列、「承载正确答案的那一页在不在这一包的首次请求里」）——原来那句「全是 0」看不出是「这一卷的包恰好自足」还是「模型没敢要」，两者处置完全不同。
 
 **A-21 是什么（P2，§7.2 的缺口）**：任务书 §7.2 点名「用真实网关代码打 `scripts/controlled-llm-service.mjs` 起 HTTP」。仓库里那条真实 HTTP 用例的对端是**测试内的 TCP stub**，只够量输入量与断言请求体形状；受控服务自己的包模式分支（A-4 补的）此前只有一份**未提交**的临时脚本验证过，CDP 链又只跑 Windows —— 这段代码在仓库里没有任何可执行证据。新用例真的起 node 跑那个脚本，剧本里**不给正确答案**（只给「改哪个槽、答案在哪一页」），断言编辑落库的值是包里那一行读出来的、`insufficientContext == 1`、`escalationLevel >= 1`、以及逐包记录里第一轮 L0 不含答案页 / 第二轮 L1 带着取回的答案页。
+
+**A-22 是什么（P1，包模式剧本缺一条腿）**：`cloud-fixed-content-on-its-own` 要求 `adjudicatedCount >= 1`，而这个数字只数**裁定**（`effective_adjudicated_count`）——被编辑改掉的差异进的是 `appliedCount`，两者刻意不重叠。CDP 场景里恰好有一条「当前稿对、候选错」的差异（`cloud-repair-scenario.mjs:235-246`，`task_group` + `instructions`），只能靠 `record_ruling` 了结；可包模式剧本（`repairPacketStepReply`）只会 `report_insufficient_context` / `apply_edits` / `finish_packet`，**从不** `record_ruling`。修法：加 `packetRulingCall`，把 `plan.rulings` 与**本包的** `context.differences` 对上、引文逐字取自 `sourceEvidence.pages[].lines[]`，并用 `observations[].result.recorded[]` 去重。去重不是可选项：裁定**不会**让差异从 `context.differences` 里消失（`build_repair_context` 返回的是原始 `candidate_differences`），少了它包会每轮重复同一次调用 → `REPEAT_LIMIT` → 整个 run 报成 `budget_exhausted`。两条用例都真起 node 打真 HTTP，去重那条用突变 M10 确认有效。
+
+**A-22 仍未达成的那一半（必须写清楚，否则「已修」是误导）**：步骤 11b 要求「至少一个包走了 L1」。包模式下 `plan_packets` 会把题组的**锚点页原文**随包发出（`sourceEvidence.pages`，见 `packets.rs:1243-1246`），而 CDP 场景的修复靶子是**题面类**差异（`setResponseGroup` 改写 prompt）——题面行就在题组自己的锚点页上，模型第一轮就拿到了，**没有升级的理由**。也就是说 11b 在这份场景下不是「模型没敢要」，而是**这一卷的包天然自足**；要让它可满足，只能把场景的修复靶子换成**答案类**差异（答案页不在题组锚点页里，正是 §7.2 那条用例的情形）——这属于改验收场景的设计决策，且本机无 CDP 通道无法验证。审计子代理与我都只能做到源码级判定，**未实测**。因此 §7.3 仍记「未执行」，P7 不标 done。
+
+**A-23 是什么（P2，A-19 的修复自己带进来的一处倒退）**：A-19 把 L2 的 `attached` 从「整包带图的 region」改成「这一次新加的」，方向是对的；但同一个分支里 `existing`（判断「这一页是不是已经有图」）仍然只按 `pageIndex` 收集。`grab::materialize_regions` 在这一卷没有页图产物时会给每条 region 写 `"image": null`，而 `enforce_packet_budget` 只删**带图**的条目 —— null 条目原样留着。于是 `scope.pages ⊆ region 页` 时 `wanted == 0`，note 写「every page in scope already had an image in this packet」，而包里**一张图都没有**；A-19 之前这条路径说的是诚实的「no page image was available」。修法：`existing` 加 `!image.is_null()` 过滤。这条路径原本零覆盖（那句话只出现在生产代码里）。
+
+**A-24 是什么（P2，一条恒绿但什么都没证的验收用例）**：§7.2 那条真实受控服务用例在 `node_binary()` 返回 `None` 时只 `eprintln!` 一句就 `return`。`cargo test` 默认捕获**通过**用例的 stderr，所以在没有 node 的机器上它是 `1 passed` —— 而它的注释自称「不静默当成通过」，代码与注释不符。与仓库里 pdfium 用例的区别是有意的：pdfium 是**可选**渲染器，node 是这个仓库的**必需**工具链（vitest、全部 `scripts/e2e/*.mjs`、`npm run check`）。改成 `panic!`，并同步改掉 `node_binary` 的说明。A-22 的两条新用例沿用同一处理。
 
 **审计 A 的 §5/§7 逐条结论（修复后）**：
 
@@ -105,10 +130,10 @@
 | §5.6 上下文不足 → 用户任务 | 通过 | `a_packet_that_never_gets_enough_context_hands_the_difference_to_the_user_honestly`（突变 M2） |
 | §5.7 抓取边界 | 通过 | `grab::tests::*`（突变 M3） |
 | §5.8 编辑后重切 | 通过 | `packets.rs::tests::packet_ids_are_derived_from_identity_and_stay_stable_across_replanning` |
-| §5.9 既有测试全绿 | 通过 | `cargo test --lib` 1099/0/11 |
+| §5.9 既有测试全绿 | 通过 | `cargo test --lib` 1102/0/11 |
 | §7.1 命令处理器层三项 | 通过 | 见「基线数字」 |
-| §7.2 真实 HTTP + 受控服务 | **通过（P7 补齐）** | `the_real_controlled_service_drives_the_packet_loop_through_l0_l1_and_finish` |
-| §7.3 CDP 13/13 + 新增一步 | **未执行** | macOS 无 WebView2 CDP 通道；脚本报 `ENOENT ... ielts-author-studio.exe`。步骤已按模式分流（A-18），实机判定留待 Windows |
+| §7.2 真实 HTTP + 受控服务 | **通过（P7 补齐）** | `the_real_controlled_service_drives_the_packet_loop_through_l0_l1_and_finish`；A-22 又补两条裁定用例 |
+| §7.3 CDP 13/13 + 新增一步 | **未执行（且包模式下仍差一步，见 A-22 的「未达成的那一半」）** | macOS 无 WebView2 CDP 通道；脚本报 `ENOENT ... ielts-author-studio.exe`。步骤已按模式分流（A-18）、包模式剧本已能裁定（A-22），但步骤 11b 的 L1 断言在这份场景下结构性不可满足，实机判定与场景调整留待 Windows |
 | §7.4 真实模型 | **未执行** | 无额度 |
 
 ### P0
@@ -224,6 +249,12 @@ P7 追加（同样：临时改坏 → 确认变红 → 还原，`grep -c "TEMP-M
 | M8 | `grab.rs::crop_page_image` 还原 A-13 的混算（像素 `top` + 页单位 `height*3`） | `grab::tests::a_region_crop_keeps_the_bbox_height_it_promised` | 1 条变红（`裁剪高度 62 点…`），**由新加的「需求」断言**抓住而不是靠那个具体像素值，已还原 |
 | M9 | `tests.rs` 的 §7.2 剧本把答案页指到**范围内**的页 | `tests::the_real_controlled_service_drives_the_packet_loop_through_l0_l1_and_finish` | 1 条变红（`left: ["B"] / right: ["A"]`，服务找不到答案行、什么也没改），已还原 |
 
+审计 #2 复核轮追加（临时改坏 → 确认变红 → 还原；`grep -c "TEMP-M" scripts/controlled-llm-service.mjs` = 0）：
+
+| # | 改坏的点 | 变红的用例 | 结果 |
+|---|---|---|---|
+| M10 | `controlled-llm-service.mjs::packetRulingCall` 删掉 `rulingAlreadyRecorded(...)` 去重 | `tests::the_controlled_service_stops_ruling_once_it_already_has` | 1 条变红（第 2 轮仍回 `record_ruling`，即真实存在的原地打转），已还原 |
+
 P6 另有两处「对着旧行为跑红」的验证（不是独立突变，而是修 A-3 / A-12 时临时还原旧实现）：A-3 探针 `left: 0 / right: 2`、A-12 探针打印出 `TEMP-A12-PROBE-L2` 并变红，两处均已还原、**未提交**。
 
 **未证实（写了原因，不算发现）**：
@@ -246,6 +277,7 @@ P6 另有两处「对着旧行为跑红」的验证（不是独立突变，而�
 4. **A-4 的真实 HTTP 验证脚本不落仓库** —— §8 不允许在 `scripts/` 下新增文件，所以 A-4 的验证脚本放在 `/tmp/verify-packet-prompt-rewrite.mjs`（临时，未提交）。命令与 10/10 输出记在本条日志里，可据此复现。若希望它成为常驻用例，需要授权在 `scripts/` 下新增文件（或并入 `scripts/e2e/` 既有文件的某个步骤）。
    - **P7 更新**：这条**已不需要**了。§7.2 的真实受控服务用例（`7430a71`）现在真的起 node 跑 `scripts/controlled-llm-service.mjs`，A-4 补的答案类分支由它常驻覆盖；题面类分支由 CDP 链的 `packetPromptRewrite` 走（实机判定留待 Windows）。`/tmp` 那份脚本可以丢掉。
 5. **`scripts/e2e/tauri-cdp-cloud-repair-chain.mjs` 的步骤 11 被**改写**（超出「仅新增步骤」）** —— §8 只允许该文件「仅新增步骤」，但审计 #2 查明：默认模式已是 `packets`，而步骤 10b / 11 写死的是 legacy 的回合形状，硬断言在包模式下必红（见 A-18）。要让这条链在默认模式下有意义，只能改这两步（步骤 10b 也动了：包模式下的前提换成「至少一轮请求带着承载那一页的原文文本」）。改动**没有删除任何原有断言**：legacy 分支逐条保留，包模式分支是新写的等价物。另外 `llmTraces` 的 `repairRounds` 补了 `draftEditVersion` / `packetId` / `escalationLevel` / `packetMode` / `packetPages` 五个**新增**字段（旧字段一个没删）。如认为仍越界请指示回退。
+6. **`scripts/e2e/lib/cloud-repair-scenario.mjs`（§8 未授权）** —— 要让 §7.3 在**包模式**下真正可满足，必须改这份场景本身：把修复靶子从**题面类**差异换成**答案类**差异（答案页不在题组锚点页里 ⇒ 包天然缺材料 ⇒ 模型必须走 L1）。理由见「A-22 仍未达成的那一半」。不改场景的话，步骤 11b 的「至少一个包走了 L1」在这份卷子上永远为假——而 §2 又禁止把这条断言放宽。这是**设计决策**（换靶子会同时改变 legacy 分支的回合形状），所以 P7 没有擅自动手：**等指示**。可选方案：① 换靶子（改 `cloud-repair-scenario.mjs`）；② 保留现有场景，另加一份「答案类」场景专门喂包模式的 L1 断言。
 
 ## 日志（只追加：时间、agent 做了什么、提交、下一步）
 
@@ -255,3 +287,4 @@ P6 另有两处「对着旧行为跑红」的验证（不是独立突变，而�
 - 2026-09-24 P5：3 个只读子代理并行审计（边界与正确性 / 上下文质量 / 测试可信度）+ 3 处突变检查（M1-M3 均确认变红后还原）+ 逐条源码复核 + A-1 实测复现（临时断言变红 `left: 1 / right: 0`，已删除）。结果见「审计发现」：P0 ×1、P1 ×4、P2 ×11、未证实 ×3。下一步：P6 先修 A-1 / A-3 / A-4（A-4 是 CDP 验收的前置阻断），再补 A-5 的 CDP 步骤。
 - 2026-09-24 P6：逐条处置「审计发现」。**fixed 14 条**（A-1 `b821ae2`；A-3/A-12 `71814c2`；A-6/A-7/A-13 `3e4a5dd`；A-8/A-9/A-10/A-11/A-14/A-15/A-16 `c617f7a`），**未修 1 条**（A-2：越界，见「越界需求」1，已写出源码证据），**不改但写明口径 1 条**（A-10），**已写入未执行 1 条**（A-5）。每条都先写失败测试并**看到红**（A-1/A-6/A-7/A-13 实测红；A-3/A-12 用临时还原旧行为的方式确认用例有效；M4 确认 `strip_packet_image_paths` 用例有效）。A-4 的题面类分支用**真实 HTTP** 验证：`/tmp/verify-packet-prompt-rewrite.mjs` 起 `scripts/controlled-llm-service.mjs`（`--plan` 用 CDP 剧本形状：无答案行），POST 真实 `repair_authoring_step` 请求体，**10/10 checks passed** —— 题面取自包内那一行、`sourceAnchors` 原样带回、`baseVersion` 取自包的 `editVersion`、引文逐字来自本轮请求；反自证分支（包内无题面行）只 `finish_packet` 并带上 `unresolved`；答案类差异仍走 `setAnswer`（回归）。**全量重跑**：`cargo test --lib` **1095/0/11**（基线 1046）、`vitest` **392**（基线 391，仍 1 个文件因缺 `selenium-webdriver` 加载失败）、`tsc exit 0`。§6 两模式对比重跑：legacy 917173 → packets **83738**（10.95×），差异来自 A-8（`paperMap` 多了一行 `paragraphLabels`）。下一步：P7（独立审计 #2 + Windows 上跑 CDP 13/13 → 14/14）。
 - 2026-09-24 P7：**干净状态重跑**（`cargo test --lib` 1099/0/11、`vitest` 392、`tsc exit 0`、§6 对比 917173→83738 未变、CDP 未执行）+ **2 个全新只读子代理**（A 按 §5/§7 逐条验收；B 专查「P6 的修复有没有引入回归 / 是不是只把测试改绿了」，只给范围不给结论）。发现 **P1 ×2**（A-17 `region_requests` 的判据被 A-7 的修法从「整组」滑到「整包」；A-18 CDP 步骤 10b/11 写死 legacy 形状而默认模式已是 `packets`）、**P2 ×3**（A-19 L2 note 的 `attached` 数了整包带图的 region；A-20 三条弱证据用例；A-21 §7.2 打的是测试内 stub 而不是任务书点名的受控服务）。逐条按 P6 的方式修：先写失败断言**看到红**（A-17 `left: [(1, true)] / right: [(1, true), (1, false)]`；A-19 note 真的是「attached whole-page images for 1 page(s)」），再修，然后重跑受影响的测试。提交 `391294f`（A-17 + §5.1 用例）、`2a5dc64`（A-18）、`208afd9`（A-19/A-20）、`7430a71`（A-21）。**5 处突变检查 M5-M9 全部确认变红后还原**（`grep -c "TEMP-M"` 在四个文件上均为 0）。**P7 不标 done**：A-2 仍是未修的 P1（越界，见「越界需求」1），且 CDP 链在本机跑不了（§7.3 未执行）。另有一条 P0 级的**未证实**项仍未证实（`packetId` 不含内容指纹 → 重切后可能漏核），P7 没有真实模型额度，无法推进，见「未证实」。下一步：P8 收口报告 `REPORT.md`；拿到 Windows 环境或额度后补 §7.3 / §7.4。
+- 2026-09-24 P7（审计 #2 复核轮）：第 2 个只读子代理的回归复核回来了，产出 **A-22（P1）/ A-23（P2）/ A-24（P2）**，并逐条复核了 A-17/A-18/A-19/A-20/A-21 四个提交：**P0 无、这四个提交本身没引入 P1**，三处被加固的用例各自临时突变全部变红（**不是只改绿**）。逐条按 P6 的方式修：A-23 先写失败用例看到红（note 真的是「every page in scope already had an image…」，而包里一张图都没有）→ `4a578c5`；A-24 把「缺 node 静默报绿」改成硬失败 → `c264ada`；A-22 先写失败用例看到红（包模式剧本回的是 `finish_packet` + 「找不到剧本指定的题面行」）→ 给 `repairPacketStepReply` 加 `packetRulingCall`（含 `observations` 去重，突变 M10 确认有效）→ `84325a1`。**重跑**：`cargo test --lib` **1102/0/11**、`vitest` 392、`tsc exit 0`、§6 对比未变。**仍未标 done**：① A-2（越界 P1）；② **A-22 只修掉了一半**——步骤 11b 的 L1 断言在这份 CDP 场景下结构性不可满足（题面类修复所需的原文行就在包内），要让 §7.3 在包模式下可满足必须改场景，属越界 + 设计决策，已写进「越界需求」6 等指示；③ CDP 链本机跑不了。下一步：P8 收口报告；等指示后再动场景。
