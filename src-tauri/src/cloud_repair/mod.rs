@@ -20,6 +20,8 @@
 //! 4. 原文没有提供的答案不得以"识别修复"的名义生成；
 //! 5. 模型 `finish` **不等于**产品完成：剩余问题一律由后端按当前 canonical 重算。
 
+pub(crate) mod grab;
+pub(crate) mod packets;
 pub(crate) mod tools;
 
 use std::collections::{BTreeMap, BTreeSet};
