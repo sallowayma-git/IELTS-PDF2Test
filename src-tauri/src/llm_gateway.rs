@@ -753,6 +753,148 @@ fn data_url_for_image(root: &Path, job_id: &str, image: &Value) -> CommandResult
     ))
 }
 
+/// PDF 渲染出的黑白页常以 RGB PNG 存储，直接附上会把每张页图膨胀到数百 KB。
+/// 包模式的文本层已经保留逐行内容；对近灰度 PNG 将像素转成灰度、把整页最长边缩到
+/// 600 像素以内，再用较强 DEFLATE 压缩。页面结构图仍随首包提供，细节不足时模型可以
+/// 通过 `read_page_region` 再取原尺寸范围，避免一张整页图抵消包模式省下的上下文。
+fn compact_packet_grayscale_png(bytes: &[u8]) -> Option<Vec<u8>> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    let mut reader = decoder.read_info().ok()?;
+    let mut decoded = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut decoded).ok()?;
+    if info.bit_depth != png::BitDepth::Eight {
+        return None;
+    }
+    let (input_channels, output_color, output_channels) = match info.color_type {
+        png::ColorType::Grayscale => (1usize, png::ColorType::Grayscale, 1usize),
+        png::ColorType::GrayscaleAlpha => (2usize, png::ColorType::GrayscaleAlpha, 2usize),
+        png::ColorType::Rgb => (3usize, png::ColorType::Grayscale, 1usize),
+        png::ColorType::Rgba => (4usize, png::ColorType::GrayscaleAlpha, 2usize),
+        png::ColorType::Indexed => return None,
+    };
+    let expected_line_size = info.width as usize * input_channels;
+    if info.line_size != expected_line_size {
+        return None;
+    }
+    let pixels = &decoded[..info.buffer_size()];
+    let mut compacted =
+        Vec::with_capacity(info.width as usize * info.height as usize * output_channels);
+    for pixel in pixels.chunks_exact(input_channels) {
+        match input_channels {
+            1 => compacted.push(pixel[0]),
+            2 => compacted.extend_from_slice(pixel),
+            3 | 4 => {
+                let red = pixel[0];
+                let green = pixel[1];
+                let blue = pixel[2];
+                let spread = red.max(green).max(blue) - red.min(green).min(blue);
+                // 有明确颜色的题图保留原样；近灰度渲染的抗锯齿差异仅有 1–2 个色阶。
+                if spread > 2 {
+                    return None;
+                }
+                let gray = ((u32::from(red) * 299 + u32::from(green) * 587 + u32::from(blue) * 114)
+                    / 1000) as u8;
+                compacted.push(gray);
+                if input_channels == 4 {
+                    compacted.push(pixel[3]);
+                }
+            }
+            _ => return None,
+        }
+    }
+
+    let max_dimension = 600u32;
+    let longest = info.width.max(info.height);
+    let (output_width, output_height) = if longest > max_dimension {
+        let scale = f64::from(max_dimension) / f64::from(longest);
+        (
+            (f64::from(info.width) * scale).round().max(1.0) as u32,
+            (f64::from(info.height) * scale).round().max(1.0) as u32,
+        )
+    } else {
+        (info.width, info.height)
+    };
+    let output_pixels = if (output_width, output_height) == (info.width, info.height) {
+        compacted
+    } else {
+        let mut resized =
+            Vec::with_capacity(output_width as usize * output_height as usize * output_channels);
+        for target_y in 0..output_height {
+            let top =
+                (u64::from(target_y) * u64::from(info.height) / u64::from(output_height)) as u32;
+            let bottom = ((((u64::from(target_y) + 1) * u64::from(info.height)
+                + u64::from(output_height)
+                - 1)
+                / u64::from(output_height))
+                .min(u64::from(info.height))) as u32;
+            for target_x in 0..output_width {
+                let left =
+                    (u64::from(target_x) * u64::from(info.width) / u64::from(output_width)) as u32;
+                let right = ((((u64::from(target_x) + 1) * u64::from(info.width)
+                    + u64::from(output_width)
+                    - 1)
+                    / u64::from(output_width))
+                    .min(u64::from(info.width))) as u32;
+                let mut sums = [0u64; 2];
+                let mut samples = 0u64;
+                for source_y in top..bottom.max(top + 1) {
+                    for source_x in left..right.max(left + 1) {
+                        let offset = (source_y as usize * info.width as usize + source_x as usize)
+                            * output_channels;
+                        sums[0] += u64::from(compacted[offset]);
+                        if output_channels == 2 {
+                            sums[1] += u64::from(compacted[offset + 1]);
+                        }
+                        samples += 1;
+                    }
+                }
+                resized.push((sums[0] / samples.max(1)) as u8);
+                if output_channels == 2 {
+                    resized.push((sums[1] / samples.max(1)) as u8);
+                }
+            }
+        }
+        resized
+    };
+
+    let mut encoded = Vec::new();
+    {
+        let cursor = std::io::Cursor::new(&mut encoded);
+        let mut encoder = png::Encoder::new(cursor, output_width, output_height);
+        encoder.set_color(output_color);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_compression(png::Compression::Best);
+        encoder.set_filter(png::FilterType::Paeth);
+        let mut writer = encoder.write_header().ok()?;
+        writer.write_image_data(&output_pixels).ok()?;
+        writer.finish().ok()?;
+    }
+    (encoded.len() < bytes.len()).then_some(encoded)
+}
+
+/// 包模式优先压缩黑白页图；其余图片仍按原字节发送。
+fn packet_image_data_url(root: &Path, job_id: &str, image: &Value) -> CommandResult<String> {
+    let raw_path = image
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "vision_image_path_missing".to_string())?;
+    let (_path, bytes) = read_llm_file(root, job_id, raw_path, MAX_LLM_IMAGE_BYTES, "image")?;
+    let mime_type = image
+        .get("mimeType")
+        .and_then(Value::as_str)
+        .unwrap_or("application/octet-stream");
+    let compacted = if mime_type == "image/png" {
+        compact_packet_grayscale_png(&bytes).unwrap_or(bytes)
+    } else {
+        bytes
+    };
+    Ok(format!(
+        "data:{};base64,{}",
+        mime_type,
+        general_purpose::STANDARD.encode(compacted)
+    ))
+}
+
 fn data_url_for_pdf(root: &Path, job_id: &str, input: &Value) -> CommandResult<Option<Value>> {
     let Some(raw_path) = input.get("pdfPath").and_then(Value::as_str) else {
         return Ok(None);
@@ -1868,7 +2010,7 @@ fn append_packet_region_images(
                     .join(", ")
             })
             .unwrap_or_default();
-        let data_url = match data_url_for_image(root, job_id, image) {
+        let data_url = match packet_image_data_url(root, job_id, image) {
             Ok(data_url) => data_url,
             Err(error) => {
                 warnings.push(format!("cloud_repair_packet_region_image_unavailable:{error}"));
@@ -3040,6 +3182,54 @@ fn validate_cloud_outline_output(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn encode_test_rgb_png(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        {
+            let cursor = std::io::Cursor::new(&mut encoded);
+            let mut encoder = png::Encoder::new(cursor, width, height);
+            encoder.set_color(png::ColorType::Rgb);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(pixels).unwrap();
+            writer.finish().unwrap();
+        }
+        encoded
+    }
+
+    #[test]
+    fn packet_images_compact_grayscale_pages_but_keep_color_pages_unchanged() {
+        let (width, height) = (595u32, 842u32);
+        let mut gray_pixels = Vec::with_capacity(width as usize * height as usize * 3);
+        let mut state = 17u32;
+        for _ in 0..(width * height) {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let gray = (state >> 24) as u8;
+            gray_pixels.extend_from_slice(&[gray, gray, gray]);
+        }
+        let gray_png = encode_test_rgb_png(width, height, &gray_pixels);
+        let compacted =
+            compact_packet_grayscale_png(&gray_png).expect("黑白整页应转成更小的灰度图");
+        assert!(
+            compacted.len() < gray_png.len(),
+            "页图应压缩：{} -> {}",
+            gray_png.len(),
+            compacted.len()
+        );
+        let mut reader = png::Decoder::new(std::io::Cursor::new(&compacted))
+            .read_info()
+            .expect("压缩后的 PNG 有效");
+        let mut decoded = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut decoded).expect("页图应可解码");
+        assert_eq!(info.color_type, png::ColorType::Grayscale);
+        assert!(info.width <= 600 && info.height <= 600);
+
+        let color_png = encode_test_rgb_png(2, 2, &[255, 0, 0, 0, 255, 0, 0, 0, 255, 1, 2, 3]);
+        assert!(
+            compact_packet_grayscale_png(&color_png).is_none(),
+            "彩色图不能被转成灰度或缩放"
+        );
+    }
 
     fn request(ids: &[&str]) -> Value {
         json!({

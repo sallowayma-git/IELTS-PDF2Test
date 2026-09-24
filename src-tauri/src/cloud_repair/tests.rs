@@ -157,12 +157,98 @@ fn cloud_draft_with(q14_label: &str, q15_label: &str) -> Value {
     })
 }
 
+/// 在 [`cloud_draft_with`] 之上再加一个**本地完全没有的**云端题组（题号 21-22）。
+///
+/// 用途：`packets::owner_of` 对「云端有、本地没有的题号」返回 `Owner::Document`，于是切包
+/// 时会多出一个**文档包**。这是不引入第二份夹具就能造出「两个包」的最短路径——而
+/// 「一个包收工后、它的差异被**别的包**改掉」正需要两个包。
+fn cloud_draft_with_extra_group(q14_label: &str, q15_label: &str) -> Value {
+    let mut draft = cloud_draft_with(q14_label, q15_label);
+    let node = |id: &str, child: &str, text: &str| {
+        json!({
+            "type": "paragraph",
+            "id": id,
+            "sourceAnchors": [],
+            "provenanceStatus": "source",
+            "children": [{
+                "type": "text",
+                "id": child,
+                "sourceAnchors": [],
+                "provenanceStatus": "source",
+                "text": text
+            }]
+        })
+    };
+    let options: Vec<Value> = ["A", "B", "C"]
+        .iter()
+        .map(|label| {
+            json!({
+                "optionId": format!("cloud-ob2-{label}"),
+                "label": label,
+                "content": [{
+                    "type": "text",
+                    "id": format!("cloud-ob2-{label}-text"),
+                    "sourceAnchors": [],
+                    "provenanceStatus": "source",
+                    "text": format!("extra factor {label}")
+                }],
+                "sourceAnchors": []
+            })
+        })
+        .collect();
+    let extra = json!({
+        "taskId": "cloud-tg-2",
+        "displayRange": {"kind": "set", "values": [21, 22]},
+        "taskType": "multiple_choice",
+        "instructions": [node("cloud-ins-2", "cloud-ins-2-text", "Choose TWO letters, A-C.")],
+        "optionBank": {
+            "optionBankId": "cloud-ob-2",
+            "scope": "task_group",
+            "options": options,
+            "allowReuse": false,
+            "sourceAnchors": []
+        },
+        "responseGroups": [{
+            "responseGroupId": "cloud-rg-2",
+            "kind": "choice",
+            "prompt": [node("cloud-prompt-2", "cloud-prompt-2-text", "Which TWO extra factors were identified?")],
+            "slotIds": ["cloud-q21", "cloud-q22"],
+            "optionBankRef": "cloud-ob-2",
+            "cardinality": {"min": 2, "max": 2, "exact": 2},
+            "assignment": "unordered_set",
+            "scoringPolicy": "per_slot_ielts_normalized",
+            "duplicatePolicy": "reject_submission",
+            "allowOptionReuse": false,
+            "sourceAnchors": []
+        }],
+        "sourceAnchors": []
+    });
+    draft["taskGroups"]
+        .as_array_mut()
+        .expect("候选必须有 taskGroups")
+        .push(extra);
+    for (slot, number) in [("cloud-q21", 21), ("cloud-q22", 22)] {
+        draft["answerSlots"][slot] = json!({
+            "slotId": slot, "questionNumber": number, "displayLabel": number.to_string(),
+            "hostNodeId": "cloud-prompt-2", "hostType": "prompt", "interaction": "checkbox",
+            "participation": "scoring", "sourceAnchors": [], "confidence": 0.9
+        });
+    }
+    draft["answerKey"]["cloud-q21"] = json!({"kind": "option", "labels": ["A"], "assignment": "unordered_set"});
+    draft["answerKey"]["cloud-q22"] = json!({"kind": "option", "labels": ["C"], "assignment": "unordered_set"});
+    draft
+}
+
 /// 把候选规范化并落盘到独立 artifact（供 `build_repair_context` 读取）。
 fn store_candidate(root: &Path, q14_label: &str) {
     store_candidate_with(root, q14_label, "D")
 }
 
 fn store_candidate_with(root: &Path, q14_label: &str, q15_label: &str) {
+    store_candidate_draft(root, cloud_draft_with(q14_label, q15_label));
+}
+
+fn store_candidate_draft(root: &Path, draft: Value) {
     let canonical = golden_authoring();
     let source_sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let identity = CloudAuthoringIdentity {
@@ -178,7 +264,7 @@ fn store_candidate_with(root: &Path, q14_label: &str, q15_label: &str) {
         source_document_id: "early-approaches-document",
         extraction_mode: "pdf_native",
     };
-    let raw = json!({"authoring": cloud_draft_with(q14_label, q15_label)});
+    let raw = json!({"authoring": draft});
     let normalized =
         normalize_cloud_authoring(&identity, Some(&canonical), &raw).expect("标准化必须成功");
     let candidate =
@@ -3933,6 +4019,88 @@ fn an_applied_edit_reslices_the_packet_with_a_fresh_version_and_fewer_difference
         json!("edited"),
         "{:#?}",
         report.packets[0]
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 已完成包不能只按差异键跳过：另一个包的成功编辑可能让相同差异键带上了新值。
+/// 重切后内容已变化的包必须重新排队，避免 `done_packets` 把仍存在的差异误当作已核。
+#[test]
+fn a_replanned_packet_with_changed_difference_values_is_not_skipped_as_done() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    // 本地 q14 差异先收工；候选额外的 21–22 题组会形成第二个文档包。
+    store_candidate_draft(&root, cloud_draft_with_extra_group("A", "D"));
+    seed_packet_job(&root);
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let mut packets_seen: Vec<Value> = Vec::new();
+    let report = run_packets(&request, |packet: &Value, _observations: &[Value]| {
+        packets_seen.push(packet.clone());
+        match packets_seen.len() {
+            1 => {
+                assert_eq!(packet["documentOnly"], json!(false), "本地差异包应先处理");
+                Ok(json!({"callId": "stale-1", "tool": "finish_packet", "arguments": {}}))
+            }
+            2 => {
+                assert_eq!(packet["documentOnly"], json!(true), "候选独有题组应形成文档包");
+                // 真实工具执行仍校验 CAS 与证据；这里刻意编辑一个其他包仍有差异的答案，
+                // 让它保持同一差异键、但 canonical 值发生变化。
+                let version = packet["draftSlice"]["editVersion"].as_i64().unwrap_or(-1);
+                Ok(json!({"callId": "stale-2", "tool": "apply_edits", "arguments": {
+                    "baseVersion": version,
+                    "commands": [set_answer("q14", "E")]
+                }}))
+            }
+            3 => {
+                if packet["documentOnly"] == json!(false) {
+                    assert_eq!(packet["differences"][0]["targetId"], json!("q14"));
+                    assert_eq!(packet["differences"][0]["canonical"]["labels"], json!(["E"]));
+                }
+                // 旧实现会把 q14 包当成已做完而跳过，只剩文档包；修复后先重跑 q14，
+                // 再收工文档包。两种情况下本回合都可以结束当前包。
+                Ok(json!({"callId": "stale-3", "tool": "finish_packet", "arguments": {}}))
+            }
+            4 => {
+                assert_eq!(packet["documentOnly"], json!(true));
+                Ok(json!({"callId": "stale-4", "tool": "finish_packet", "arguments": {}}))
+            }
+            _ => panic!("循环不应重复或额外处理包: {packet:#?}"),
+        }
+    })
+    .expect("包模式循环必须返回结果");
+
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["E"]));
+    assert_eq!(
+        packets_seen.len(),
+        4,
+        "重切后 q14 的差异仍存在且值已变，必须重新排队：{:#?}",
+        report.packets
+    );
+    assert!(
+        packets_seen.iter().any(|packet| {
+            packet["documentOnly"] == json!(false)
+                && packet["differences"][0]["targetId"] == json!("q14")
+                && packet["differences"][0]["canonical"]["labels"] == json!(["E"])
+        }),
+        "q14 新内容的差异包必须重新出现：{packets_seen:#?}"
+    );
+    assert_eq!(report.packets.len(), 4);
+    assert_ne!(
+        report.status,
+        REPAIR_STATUS_COMPLETED,
+        "候选差异仍在时不得误报整次校核 completed"
+    );
+    assert!(
+        report.remaining_tasks.iter().any(|task| {
+            task["targetIds"]
+                .as_array()
+                .is_some_and(|targets| targets.iter().any(|target| target == "q14"))
+        }),
+        "仍未解决的 q14 差异必须留给用户：{:#?}",
+        report.remaining_tasks
     );
     let _ = std::fs::remove_dir_all(&root);
 }

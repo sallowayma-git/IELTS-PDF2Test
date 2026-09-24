@@ -900,11 +900,13 @@ pub(crate) fn plan_packets(input: &PacketPlanInput<'_>) -> Vec<Value> {
         .collect()
 }
 
-/// 包的稳定 id：由「本地题组 + 差异键 + 阻断问题 + 是否文档包」派生。
+/// 包的稳定 id：由「本地题组 + 差异身份与内容 + 阻断问题 + 是否文档包」派生。
 ///
 /// 为什么不能用序号：`apply_edits` 之后要**重切受影响的包**（任务书 §4.3），而序号会随
 /// 重排整体漂移——「哪些包已经做完」「哪条裁定属于哪个包」于是全部错位。用身份派生，
-/// 内容没变 id 就不变；内容变了才换 id，而那本来就该当成另一个包。
+/// 未受影响的包 id 不变；同一差异的 canonical / candidate 值或阻断诊断内容变了，
+/// id 就换新。否则一个已完成的包只被别包改动了差异值，仍会因旧 id 命中 `done_packets`
+/// 而被跳过，留下尚未核对的差异。
 fn packet_id_for(draft: &PacketDraft) -> String {
     let mut parts: Vec<String> = Vec::new();
     if draft.document_only {
@@ -916,47 +918,36 @@ fn packet_id_for(draft: &PacketDraft) -> String {
     for task_id in &draft.task_ids {
         parts.push(format!("task:{task_id}"));
     }
-    let mut differences: Vec<String> = draft
+    let mut differences: Vec<(String, String)> = draft
         .differences
         .iter()
         .map(|difference| {
-            format!(
+            let identity = format!(
                 "{}:{}:{}",
                 difference.get("targetType").and_then(Value::as_str).unwrap_or(""),
                 difference.get("targetId").and_then(Value::as_str).unwrap_or(""),
                 difference.get("field").and_then(Value::as_str).unwrap_or(""),
-            )
+            );
+            let content = serde_json::to_string(difference).unwrap_or_default();
+            (identity, content)
         })
         .collect();
     differences.sort();
-    differences.dedup();
-    parts.extend(differences.into_iter().map(|key| format!("diff:{key}")));
+    parts.extend(
+        differences
+            .into_iter()
+            .map(|(identity, content)| format!("diff:{identity}:{content}")),
+    );
     let mut issues: Vec<String> = draft
         .blocking_issues
         .iter()
-        .map(|issue| {
-            issue
-                .get("issueId")
-                .or_else(|| issue.get("code"))
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string()
-        })
+        .map(|issue| serde_json::to_string(issue).unwrap_or_default())
         .collect();
     issues.sort();
     issues.dedup();
-    parts.extend(issues.into_iter().map(|key| format!("issue:{key}")));
-    format!("pkt-{:08x}", fnv1a(&parts.join("|")))
-}
-
-/// FNV-1a。只为「同一份身份稳定给出同一个 id」，不需要抗碰撞强度。
-fn fnv1a(text: &str) -> u32 {
-    let mut hash: u32 = 0x811c_9dc5;
-    for byte in text.as_bytes() {
-        hash ^= u32::from(*byte);
-        hash = hash.wrapping_mul(0x0100_0193);
-    }
-    hash
+    parts.extend(issues.into_iter().map(|content| format!("issue:{content}")));
+    let identity = serde_json::to_vec(&parts).unwrap_or_default();
+    format!("pkt-{}", crate::hash_bytes(&identity))
 }
 
 /// 差异去重：合并后同一个题组可能被多个来源写进来同一条差异。
