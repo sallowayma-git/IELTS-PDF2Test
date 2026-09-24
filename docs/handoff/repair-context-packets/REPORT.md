@@ -13,13 +13,13 @@
 
 | 指标 | legacy（改造前） | packets（现在，默认） | 变化 |
 |---|---|---|---|
-| 整轮 `requestBytes` 合计 | **917173** | **226697** | **≈ 24.7%，缩小 4.05 倍** |
+| 整轮 `requestBytes` 合计 | **917857** | **227766** | **≈ 24.8%，缩小 4.03 倍** |
 | 逐包 `estimatedInputTokens` 合计 | 0（没有「包」这个概念） | **12480** | — |
 | 每轮是否附整份 PDF base64 | 是（每轮都附） | **否**；只有升到 L3（每次运行最多 1 次）才退回整份附件 | — |
 
-用例：`cloud_repair::tests::packets_mode_sends_much_less_input_than_legacy_for_the_same_paper`（本机实测，`--nocapture` 打印）。
+用例：`cloud_repair::tests::packets_mode_sends_much_less_input_than_legacy_for_the_same_paper`（本机实测，`--nocapture` 打印）。本次复核复跑值为 **917857 B / 227766 B / 12480 tokens**；P9 当时记录的 917173 B / 226697 B 是此前一轮的历史实测，不覆盖本次最新值。没有足够证据解释两轮字节数的细小差异，因此不推断其原因。
 
-这次复测的请求路径为缺少 bbox 的页面附加了一张 **420174 B** 的整页 PNG；未压缩时包模式请求体合计达到 **1191137 B**，反而超过 legacy。于是包模式现在会将近灰度整页 PNG 转灰度并缩到最长边 600 px，彩色页图仍保留原样；图片细节不足时可再通过 `read_page_region` 按需读取原尺寸区域。压缩后的真实请求合计为 **226697 B**。
+P9 的复测请求路径为缺少 bbox 的页面附加了一张 **420174 B** 的整页 PNG；未压缩时包模式请求体合计达到 **1191137 B**，反而超过 legacy。于是包模式现在会将近灰度整页 PNG 转灰度并缩到最长边 600 px，彩色页图仍保留原样；图片细节不足时可再通过 `read_page_region` 按需读取原尺寸区域。P9 当时压缩后的真实请求合计为 **226697 B**；本次复核复跑合计为 **227766 B**。
 
 P4/P7 曾记录的 **83738 B / 12956 tokens** 在本轮请求路径无法复现，因为本轮实际附带了整页 PNG。旧数值保留为历史记录，不再作为最新输入量结论。
 
@@ -45,7 +45,7 @@ P4/P7 曾记录的 **83738 B / 12956 tokens** 在本轮请求路径无法复现�
 
 ## 2. 提交列表
 
-`git log --oneline 34dfadd..1df51b7 --reverse`（本轮代码修复后共 **24 个提交**；未 push。P9 文档更新另作文档提交）：
+`git log --oneline 34dfadd..a5300ad --reverse`（本次复核的 HEAD 快照共 **32 个提交**；未 push）：
 
 | # | 提交 | 内容 |
 |---|---|---|
@@ -73,6 +73,14 @@ P4/P7 曾记录的 **83738 B / 12956 tokens** 在本轮请求路径无法复现�
 | 22 | `a6c75a0` | 记审计 #2 复核轮的 A-22/A-23/A-24 |
 | 23 | `ffb055e` | 本报告（P8 收尾） |
 | 24 | `1df51b7` | A-25 包内容变化时重建稳定 ID；A-26 压缩包模式近灰度页图 |
+| 25 | `24eaa98` | 复核 P0 基线证据 |
+| 26 | `b1b91d1` | 补记 P0 基线复核 |
+| 27 | `1d79409` | 对齐 packet prompt 信封与分发协议 |
+| 28 | `a70e3e0` | 强制工具调用的 `arguments` 为对象 |
+| 29 | `8e09749` | 记录 P3 协议复核证据 |
+| 30 | `1b76667` | 真实请求断言不带整份 PDF，并验证编辑后收尾包 |
+| 31 | `a19c378` | 记录 P4 复核和 P7 阻塞 |
+| 32 | `a5300ad` | 记录 P3 证据复核 |
 
 ---
 
@@ -80,7 +88,7 @@ P4/P7 曾记录的 **83738 B / 12956 tokens** 在本轮请求路径无法复现�
 
 | 结论 | 等级 | 具体是什么 | **不是**什么 |
 |---|---|---|---|
-| 一次校核少发 4.05 倍内容 | 命令处理器层（含真实 HTTP） | 真实网关代码 + 真实请求体落盘 + 212 KB 真实 PDF 样本；压缩页图后 226697 B vs 917173 B | 不是产品端到端；没有 UI，没有真实模型 |
+| 一次校核少发 4.03 倍内容 | 命令处理器层（含真实 HTTP） | 真实网关代码 + 真实请求体落盘 + 212 KB 真实 PDF 样本；本次复核压缩页图后 227766 B vs 917857 B | 不是产品端到端；没有 UI，没有真实模型 |
 | 包模式走完 L0→L1→编辑→收工 | 命令处理器层（含真实 HTTP） | 真起 node 跑 `scripts/controlled-llm-service.mjs`，真 HTTP 往返 | 不是产品端到端（无 WebView2） |
 | 「不够就说」有出口、L4 如实交给用户 | 命令处理器层 | `cargo test --lib` 的包模式用例 | 不是真实模型的行为证据 |
 | 切分规则、页号换算、抓取边界、预算退让 | **仅单元测试** | `packets::tests::*` / `grab::tests::*` 纯函数用例 | 不是端到端；这些用例**不**驱动 Tauri、WebView2、SQLite 真实写路径 |
@@ -135,9 +143,11 @@ P4/P7 曾记录的 **83738 B / 12956 tokens** 在本轮请求路径无法复现�
 
 | 门禁 | 基线（`f13c75a`） | 本分支最新复测 | 变化 |
 |---|---|---|---|
-| `cd src-tauri && cargo test --lib` | 1046 passed / 0 failed / 11 ignored | **1104 passed / 0 failed / 11 ignored** | 净 **+58** |
+| `cd src-tauri && cargo test --lib` | 1046 passed / 0 failed / 11 ignored | **1111 passed / 0 failed / 11 ignored** | 净 **+65** |
 | `npx vitest run` | 391 passed（28 文件里 1 个加载失败） | **392 passed**（27 suites passed，1 suite 因缺 `selenium-webdriver` 加载失败） | 净 **+1** |
 | `npx tsc --noEmit` | `exit 0` | **`exit 0`** | 无变化 |
+
+最新全量门禁结果来自 `1b76667` 后的复核：Rust **1111/0/11**；Vitest **392 tests passed**、27 suites passed，另 1 suite 因缺 `selenium-webdriver` 无法加载；`npx tsc --noEmit` 为 `exit 0`。Vitest 的加载失败仍是已知环境基线问题，不计为通过。
 
 **已知基线失败（非本任务引入，两提交一致）**：
 1. `scripts/e2e/lib/tauri-harness.mjs` 加载失败：`Failed to load url selenium-webdriver` —— 本机 `node_modules` 缺这个依赖，属环境问题。
@@ -228,7 +238,7 @@ P4/P7 曾记录的 **83738 B / 12956 tokens** 在本轮请求路径无法复现�
 
 **要记录什么**（全部从 `llm-calls.jsonl` 与 `repair_json` 的诊断区读，不要靠日志猜）：
 1. **逐包级别序列**（`packetId` + `escalationLevel`）：确认没有包一步跳到 L3/L4；
-2. **`requestBytes` / `estimatedInputTokens` 逐包合计**，与 legacy 同卷对比；本机有整页 PNG 时当前参考值约为 **4.05×**，其他页图产物与环境需重新测量；
+2. **`requestBytes` / `estimatedInputTokens` 逐包合计**，与 legacy 同卷对比；本次复核值约为 **4.03×**，其他页图产物与环境需重新测量；
 3. **是否主动调用 `report_insufficient_context`**，以及它点名的页是不是真的不在包里——这是「回退真的在传内容」的唯一硬证据；
 4. **收敛**：总轮数、是否撞上 `PACKET_MAX_ROUNDS`、终态是 `completed` / `needs_attention` / `budget_exhausted`（三态必须分开看，`needs_attention` 不等于失败）；
 5. **重点观察重切语义**：代码回归已覆盖「已完成包中的差异值被其他包改动」这一情形；真实模型验收时仍记录包 ID、重切结果与剩余任务，确认实际裁定和重排行为一致。
