@@ -6,7 +6,7 @@ use crate::environment::{
     cloud_pdf_vision_enabled, command_failure, find_sidecar, local_ocr_enabled,
     pdf_renderer_setting, resolve_python_command,
 };
-use crate::util::{read_json, write_json};
+use crate::util::{read_json, read_json_opt, write_json};
 use crate::{hash_bytes, html_escape, main_source_file, CommandResult, ImportJob, SourceFile};
 use chrono::Utc;
 use quick_xml::{events::Event, Reader};
@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use std::{
     collections::{BTreeSet, HashMap},
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     process::Command,
 };
 
@@ -2451,7 +2451,105 @@ fn render_pdf_pages_with_macos_sips(
     Ok(extraction)
 }
 
+/// 视觉页图抽取的正式入口：**渲染失败绝不覆盖已经生成好的页图缓存**。
+///
+/// 所有抽取/渲染兜底都先写到同目录的临时文件（staging）；只有「真的有页图」的结果才
+/// 替换正式缓存（`output_path`）。失败时（0 页图或整链报错）：
+/// - 已有好缓存 ⇒ 原样保留并**复用**它，返回值如实带上这次失败的原因（警告）；
+/// - 没有旧缓存 ⇒ 如实返回失败结果/错误，不往缓存路径写任何东西。
+///
+/// 否则一次渲染失败会把好缓存覆盖成 `pages: []`——之后包模式永远拿不到区域图，
+/// 而且没有任何提示（2026-09-25 质量方复核）。作业内的上传文件不可变，复用缓存
+/// 永远对应同一份 PDF。
 pub(crate) fn extract_pdf_images_for_vision(
+    job_id: &str,
+    input_path: &Path,
+    output_path: &Path,
+    asset_dir: &Path,
+) -> CommandResult<Value> {
+    let staging_path = staging_extraction_path(output_path);
+    let result = extract_pdf_images_for_vision_into(job_id, input_path, &staging_path, asset_dir);
+    match result {
+        Ok(extraction) if image_count_from_extraction(&extraction) > 0 => {
+            // staging 里的就是最终产物：同目录 rename 是原子替换；失败再兜底重写。
+            if fs::rename(&staging_path, output_path).is_err() {
+                write_json(output_path, &extraction)?;
+            }
+            let _ = fs::remove_file(&staging_path);
+            Ok(extraction)
+        }
+        Ok(failed) => {
+            let _ = fs::remove_file(&staging_path);
+            match reusable_cached_extraction(output_path) {
+                Some(cached) => Ok(reuse_cached_page_images(cached, cached_reuse_warnings(&failed))),
+                None => Ok(failed),
+            }
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&staging_path);
+            match reusable_cached_extraction(output_path) {
+                Some(cached) => Ok(reuse_cached_page_images(
+                    cached,
+                    vec![format!("PDF page rendering failed: {}", error)],
+                )),
+                None => Err(error),
+            }
+        }
+    }
+}
+
+/// staging 路径：与正式缓存同目录（同一文件系统，rename 才原子）。
+fn staging_extraction_path(output_path: &Path) -> PathBuf {
+    let mut name = output_path
+        .file_name()
+        .map(|name| name.to_os_string())
+        .unwrap_or_default();
+    name.push(".staging");
+    output_path.with_file_name(name)
+}
+
+/// 已有缓存里确实有页图时才值得保留/复用。
+fn reusable_cached_extraction(output_path: &Path) -> Option<Value> {
+    read_json_opt(output_path)
+        .ok()
+        .flatten()
+        .filter(|cached| image_count_from_extraction(cached) > 0)
+}
+
+fn cached_reuse_warnings(failed_extraction: &Value) -> Vec<String> {
+    failed_extraction
+        .get("warnings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|warning| !warning.trim().is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+/// 渲染失败但已有好缓存：返回缓存内容 + 如实的警告；缓存本体与页图文件不动。
+fn reuse_cached_page_images(mut cached: Value, failure_warnings: Vec<String>) -> Value {
+    if let Some(obj) = cached.as_object_mut() {
+        let mut warnings = obj
+            .get("warnings")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        for warning in failure_warnings {
+            warnings.push(json!(warning));
+        }
+        warnings.push(json!(
+            "PDF page rendering failed this time; kept and reused the previously cached page images."
+        ));
+        obj.insert("warnings".to_string(), Value::Array(warnings));
+    }
+    cached
+}
+
+/// [`extract_pdf_images_for_vision`] 的实际抽取链：写盘目标由调用方决定
+/// （正式入口传的是 staging 路径）。
+fn extract_pdf_images_for_vision_into(
     job_id: &str,
     input_path: &Path,
     output_path: &Path,
