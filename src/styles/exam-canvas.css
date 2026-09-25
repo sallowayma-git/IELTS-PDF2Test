@@ -551,6 +551,9 @@
   white-space: nowrap;
 }
 .exam-canvas-v2 .part-nav-section.active .part-nav-name { font-weight: 600; }
+/* 听力 Part 音频不可播放：红色名字（旧 .listening-part-tab.is-blocked 语义搬进导航）；
+   「缺音频」标记是名字后缀「 ·」（QuestionNavBar 渲染），无需专门样式。 */
+.exam-canvas-v2 .part-nav-section.is-blocked .part-nav-name { color: var(--paper-danger, #b3261e); }
 .exam-canvas-v2 .part-nav-status {
   font-size: 12px;
   line-height: 14px;

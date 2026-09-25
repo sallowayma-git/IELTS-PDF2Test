@@ -19,8 +19,8 @@ const baseInput = (): QuestionNavInput => ({
   studentAnswers: {}
 });
 
-const listeningPart = (ordinal: number, taskIds: string[]): ListeningPartView =>
-  ({ ordinal, label: `Part ${ordinal}`, taskIds }) as ListeningPartView;
+const listeningPart = (ordinal: number, taskIds: string[], audio?: { playable: boolean }): ListeningPartView =>
+  ({ ordinal, label: `Part ${ordinal}`, taskIds, audio }) as ListeningPartView;
 
 describe("reading nav model", () => {
   it("produces a single active Part 1 section in pane order", () => {
@@ -134,15 +134,44 @@ describe("listening nav model", () => {
     expect(model.sections[2].status).toBe("0 of 3");
   });
 
-  it("degrades to a single section when no part maps tasks", () => {
+  it("keeps every part switchable when no part maps tasks (all groups show)", () => {
+    // 回退修复：完全无映射的听力稿不再退化成单一 Part 1——四个 Part 都可切换，
+    // 每个 section 的题目集合与 visibleTaskIds 一致（显示全部题组）。
     const model = buildQuestionNavModel({
       ...baseInput(),
       listeningParts: [listeningPart(1, []), listeningPart(2, []), listeningPart(3, []), listeningPart(4, [])],
       selectedPart: 2
     });
-    expect(model.sections).toHaveLength(1);
-    expect(model.sections[0]).toMatchObject({ ordinal: 1, name: "Part 1", active: true, switchable: false });
-    expect(model.sections[0].questions).toHaveLength(3);
+    expect(model.sections).toHaveLength(4);
+    expect(model.sections.map((section) => [section.ordinal, section.active, section.switchable])).toEqual([
+      [1, false, true],
+      [2, true, false],
+      [3, false, true],
+      [4, false, true]
+    ]);
+    for (const section of model.sections) {
+      expect(section.questions.map((question) => question.slotId)).toEqual(["q1", "q2", "q3"]);
+      expect(section.status).toBe("0 of 3");
+    }
+  });
+
+  it("carries audio markers from part bindings (blocked / missing)", () => {
+    const model = buildQuestionNavModel({
+      ...baseInput(),
+      listeningParts: [
+        listeningPart(1, ["g1"], { playable: false }),
+        listeningPart(2, ["g2"], { playable: true }),
+        listeningPart(3, []),
+        listeningPart(4, [])
+      ],
+      selectedPart: 1
+    });
+    expect(model.sections[0].audioBlocked).toBe(true);
+    expect(model.sections[0].audioMissing).toBe(false);
+    expect(model.sections[1].audioBlocked).toBe(false);
+    expect(model.sections[1].audioMissing).toBe(false);
+    expect(model.sections[2].audioMissing).toBe(true);
+    expect(model.sections[3].audioMissing).toBe(true);
   });
 });
 

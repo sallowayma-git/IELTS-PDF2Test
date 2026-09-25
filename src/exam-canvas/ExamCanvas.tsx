@@ -1,7 +1,8 @@
-import { createContext, useContext, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { InlineTextEditor } from "./editors/InlineTextEditor";
 import { MatchingMatrix, matchingRowsFor } from "./renderers/MatchingMatrix";
 import { resolveAuthoringAssetPreview, type AuthoringAssetPreview } from "../api/tauriCommands";
+import { getListeningAudio, type ListeningAudioStatus } from "../api/listeningAudioClient";
 import { buildReadingInteractionModelV2, buildRuntimeViewModelV2 } from "../services/runtimeViewModelV2";
 import { taskTypeLabel } from "../utils/displayLabels";
 import { ListeningHeader } from "./ListeningHeader";
@@ -431,7 +432,18 @@ export function ExamCanvas(props: ExamCanvasProps) {
   // Part 映射到题组时只显示该 Part 的题组；底部导航与这里共用同一个 selectedPart state。
   const listening = isListening(props.authoring);
   const [selectedPart, setSelectedPart] = useState<number>(1);
-  const listeningPartViews = useMemo(() => (listening ? listeningParts(props.authoring, []) : undefined), [listening, props.authoring]);
+  // 音频绑定状态上提到画布：listeningPartViews 是底部导航（Part section 的音频标记）
+  // 与 ListeningHeader（音频行）**同一份**数据源，两边不允许各拉各的。
+  const [audioStatus, setAudioStatus] = useState<ListeningAudioStatus>();
+  const jobId = props.authoring.jobId;
+  const reloadAudio = useCallback((verify: boolean) => {
+    getListeningAudio(jobId, verify).then(setAudioStatus).catch(() => setAudioStatus(undefined));
+  }, [jobId]);
+  useEffect(() => reloadAudio(true), [reloadAudio]);
+  const listeningPartViews = useMemo(
+    () => (listening ? listeningParts(props.authoring, audioStatus?.bindings ?? []) : undefined),
+    [listening, props.authoring, audioStatus]
+  );
   const shownTaskIds = listening
     ? new Set(visibleTaskIds(runtime.taskGroups.map((task) => task.taskId), listeningPartViews ?? [], selectedPart))
     : undefined;
@@ -455,9 +467,10 @@ export function ExamCanvas(props: ExamCanvasProps) {
     {listening ? (
       <ListeningHeader
         itemId={props.authoring.jobId}
-        authoring={props.authoring}
         mode={props.mode}
         selectedPart={selectedPart}
+        parts={listeningPartViews ?? []}
+        onAudioChanged={() => reloadAudio(false)}
       />
     ) : (
       <>
