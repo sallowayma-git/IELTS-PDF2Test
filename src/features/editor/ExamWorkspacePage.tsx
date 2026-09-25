@@ -253,17 +253,52 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   }
 
   // 云端修复后剩下的条目：读取时后端已按当前稿重算，版本 / 处理事件一变就重读。
+  // W2（2026-09-25 真实链证据）：修复循环的收尾阶段处理事件会先停下，而本 effect 只在
+  // 依赖变化时重跑——若最后一次读到的 `repair.status` 仍是 `running`，清单被置空后就
+  // 再也没有人重读，`cloud-question:*`（云端交还用户的疑问）整个会话都不出现。
+  // 处理小字会因另一次读取而消失，用户看到的是「处理完了但清单少一截」。所以这里
+  // 读到「未完成」必须自己安排重读：定时重读兜的正是「事件停了」的那个窗口。
   useEffect(() => {
     let cancelled = false;
-    getRecognitionDecision(itemId)
-      .then((view) => {
-        if (cancelled) return;
-        const repair = view.repair;
-        // 修复进行中清单本来就是空的；进行中不挂任何云端条目。
-        setRepairAids(repair && repair.status !== "running" ? (repair.remainingTasks ?? []) as RepairAidInputV1[] : []);
-      })
-      .catch(() => { if (!cancelled) setRepairAids([]); });
-    return () => { cancelled = true; };
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    // 连续 IPC 失败计数。重试上限 20 次 × 1.5s ≈ 30s：足够跨过一次 IPC 抖动或后端
+    // 短暂繁忙，又不会在后端持续不可用时退化成无限热轮询；失败不清空旧条目，
+    // 所以到达上限也只是停止刷新，用户已看到的清单还在。
+    let consecutiveFailures = 0;
+    const read = () => {
+      getRecognitionDecision(itemId)
+        .then((view) => {
+          if (cancelled) return;
+          const repair = view.repair;
+          if (!repair) {
+            // 本题从没跑过云端修复：没有条目就是终态，不轮询。
+            setRepairAids([]);
+            return;
+          }
+          if (repair.status === "running") {
+            // 修复进行中不挂任何云端条目，清单此刻必然不完整：置空但**安排重读**。
+            // 收尾阶段处理事件停了之后，这次重读是 cloud-question 条目进入清单的唯一机会；
+            // 成功读到（哪怕是 running）说明链路是通的，失败计数归零。
+            consecutiveFailures = 0;
+            retryTimer = setTimeout(read, 1500);
+            return;
+          }
+          // 终态：remainingTasks 就是后端按当前稿算好的完整清单，读到即停止轮询，
+          // 之后的重读仍交给依赖变化（版本 / 处理事件）触发。
+          setRepairAids((repair.remainingTasks ?? []) as RepairAidInputV1[]);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          // 一次瞬态失败不能把用户正看着的清单洗掉：保留旧值，安排重读。
+          consecutiveFailures += 1;
+          if (consecutiveFailures <= 20) retryTimer = setTimeout(read, 1500);
+        });
+    };
+    read();
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   }, [itemId, editor.version, processingTick]);
 
   // 发布门禁是后端对「已保存的权威稿」的判断，也是点「发布」时真正会拦下的东西。
