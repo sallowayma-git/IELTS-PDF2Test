@@ -276,9 +276,12 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             return;
           }
           if (repair.status === "running") {
-            // 修复进行中不挂任何云端条目，清单此刻必然不完整：置空但**安排重读**。
-            // 收尾阶段处理事件停了之后，这次重读是 cloud-question 条目进入清单的唯一机会；
-            // 成功读到（哪怕是 running）说明链路是通的，失败计数归零。
+            // 修复进行中不挂任何云端条目：上一轮留下的旧条目必须**立刻**清掉，
+            // 不能挂着让人去点（W2 返工：running 分支漏了置空，重跑修复时旧条目
+            // 还在清单里）。置空之后**安排重读**——收尾阶段处理事件停了之后，
+            // 这次重读是 cloud-question 条目进入清单的唯一机会；成功读到（哪怕是
+            // running）说明链路是通的，失败计数归零。
+            setRepairAids([]);
             consecutiveFailures = 0;
             retryTimer = setTimeout(read, 1500);
             return;
