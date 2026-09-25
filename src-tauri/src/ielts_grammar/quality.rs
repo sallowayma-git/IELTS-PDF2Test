@@ -3751,7 +3751,7 @@ fn source_coverage_summary(
             .or_default()
             .insert(asset_id.to_string());
     }
-    let ignored = physical_ignored_reasons(physical);
+    let ignored = physical_ignored_reasons(physical, &anchored_page_indices(authoring));
     let mut ledger = Vec::new();
     let mut unassigned_ids = Vec::new();
     let mut assigned_count = 0usize;
@@ -3928,7 +3928,115 @@ fn collect_anchor_targets(
     }
 }
 
-fn physical_ignored_reasons(physical: &Value) -> BTreeMap<String, String> {
+/// 封面 / 前置页上的「考生须知」用语。**只在整页满足封面前提时**才用它判定
+/// （见 [`physical_ignored_reasons`]），不是逐区域匹配。
+const EXAM_FRONT_MATTER_MARKERS: &[&str] = &[
+    "instructionstocandidates",
+    "informationforcandidates",
+    "candidatenumber",
+    "candidatename",
+    "internationalenglishlanguagetestingsystem",
+];
+
+/// 一页的正文有没有「题号声明」（`Questions 1-4` / `boxes 17-20`）。
+///
+/// 判定的是**声明**而不是出现「question」这个词：封面上也有
+/// `Do not open this question paper`、`Answer all the questions.` 这类句子，
+/// 但它们后面不接题号，不能因此把封面判成内容页。
+fn declares_question_numbers(page_text_key: &str) -> bool {
+    ["questions", "boxes"].iter().any(|keyword| {
+        let mut rest = page_text_key;
+        while let Some(position) = rest.find(keyword) {
+            let after = &rest[position + keyword.len()..];
+            if after.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
+                return true;
+            }
+            rest = after;
+        }
+        false
+    })
+}
+
+/// `【VOL7-T9】` 这类卷标：**整块就是一对书名号夹住的一段短标签**，别无他物。
+///
+/// 有意写得这么窄：一个区域只要还带着别的正文，就不是卷标，不该被忽略。
+fn is_volume_label(region_text: &str) -> bool {
+    let trimmed = region_text.trim();
+    trimmed.starts_with('【')
+        && trimmed.ends_with('】')
+        && !trimmed.contains('\n')
+        && trimmed.chars().count() <= 40
+        && trimmed.matches('【').count() == 1
+        && trimmed.matches('】').count() == 1
+}
+
+/// 权威稿里被任何来源锚点指过的页码。
+///
+/// 用来给「封面前置页」加第二道闸：**一页只要挂着任何答案槽 / 题组 / 任务锚点，
+/// 它就不是封面**，哪怕正文里恰好出现了考生须知用语。这样规则只会收窄、不会放宽：
+/// 它只可能少忽略，不可能多忽略。
+fn anchored_page_indices(authoring: &Value) -> BTreeSet<i64> {
+    fn walk(value: &Value, out: &mut BTreeSet<i64>) {
+        match value {
+            Value::Object(object) => {
+                if let Some(page_index) = object.get("pageIndex").and_then(Value::as_i64) {
+                    out.insert(page_index);
+                }
+                for nested in object.values() {
+                    walk(nested, out);
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    walk(item, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = BTreeSet::new();
+    walk(authoring, &mut out);
+    out
+}
+
+/// 一页上所有可能成为「显著物理节点」的 id（区域 / 表格 / 行 / 段 / 字形 / 矢量路径 /
+/// 注释 / 图片 / 标记内容）。
+///
+/// 封面前置页要把**整页**标成 `exam_front_matter`，而显著节点并不只有区域：
+/// 实测这一页上的显著节点里既有 14 个区域，也有一个合成表格（`p-table-0001`）。
+/// 这里取的是超集，多出来的 id 永远不会被查（`ignored` 只按 id 命中），所以安全。
+fn page_node_ids(page: &Value) -> Vec<String> {
+    const SINGLE_ID_FIELDS: &[&str] = &[
+        "regions",
+        "tables",
+        "lines",
+        "spans",
+        "glyphs",
+        "vectorPaths",
+        "annotations",
+        "imagePlacements",
+        "markedContent",
+    ];
+    let mut ids = Vec::new();
+    for field in SINGLE_ID_FIELDS {
+        for item in page
+            .get(*field)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(id) = item.get("id").and_then(Value::as_str) {
+                ids.push(id.to_string());
+            }
+        }
+    }
+    ids
+}
+
+fn physical_ignored_reasons(
+    physical: &Value,
+    anchored_pages: &BTreeSet<i64>,
+) -> BTreeMap<String, String> {
     let mut ignored = physical
         .get("coverageLedger")
         .and_then(Value::as_array)
@@ -3947,12 +4055,19 @@ fn physical_ignored_reasons(physical: &Value) -> BTreeMap<String, String> {
         })
         .collect::<BTreeMap<_, _>>();
 
-    for page in physical
+    for (page_position, page) in physical
         .get("pages")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
+        .enumerate()
     {
+        // 页码优先取页对象自己的 `pageIndex`；没有时退回数组下标（两者在本仓库的
+        // DocumentIRV2 里一致，`p001-*` 前缀就是下标 0）。
+        let page_index = page
+            .get("pageIndex")
+            .and_then(Value::as_i64)
+            .unwrap_or(page_position as i64);
         let line_texts = page
             .get("lines")
             .and_then(Value::as_array)
@@ -3972,6 +4087,35 @@ fn physical_ignored_reasons(physical: &Value) -> BTreeMap<String, String> {
                 .pointer("/quality/requiresOcrRegions")
                 .and_then(Value::as_array)
                 .is_some_and(|regions| !regions.is_empty());
+
+        // ── 封面前置页：整页忽略，且**必须**同时满足三个前提 ────────────────────
+        //
+        // 这是一条**收窄**规则，不是放宽：它只把「本来会被判 unassigned」的封面，
+        // 改判成 `ignored_with_reason=exam_front_matter`（有理由的忽略），
+        // 从来不会让任何原本已分配的节点变得可忽略。
+        //
+        // 三个前提缺一不可：
+        // 1) 整页没有题号声明（`Questions a-b` / `boxes a-b`）——封面正文里
+        //    `Do not open this question paper` / `Answer all the questions.` 都会出现，
+        //    所以判的是「声明」而不是「出现 question 这个词」；
+        // 2) 整页没有被任何来源锚点指过（没有答案槽 / 题组 / 任务落在这一页）；
+        // 3) 整页出现考生须知用语（`INSTRUCTIONS TO CANDIDATES` 等）。
+        //
+        // 反向例子：一张「正文里恰好印着 Questions 1-5」的封面不满足 1)，保持
+        // unassigned；阅读卷封面同样适用本规则（同一套用语、同样没有锚点）。
+        let page_text_key = source_text_key(&line_texts.values().cloned().collect::<Vec<_>>().join(" "));
+        let front_matter_page = !declares_question_numbers(&page_text_key)
+            && !anchored_pages.contains(&page_index)
+            && EXAM_FRONT_MATTER_MARKERS
+                .iter()
+                .any(|marker| page_text_key.contains(marker));
+        if front_matter_page {
+            for id in page_node_ids(page) {
+                ignored
+                    .entry(id)
+                    .or_insert_with(|| "exam_front_matter".to_string());
+            }
+        }
 
         for region in page
             .get("regions")
@@ -4013,6 +4157,14 @@ fn physical_ignored_reasons(physical: &Value) -> BTreeMap<String, String> {
                 .and_then(|bbox| bbox.get("width"))
                 .and_then(Value::as_f64)
                 .is_some_and(|width| width <= 8.0);
+
+            // 卷标（`【VOL7-T9】`）：整块就是一对书名号夹住的短标签，别无他物。
+            // 它印在正文页眉上，所以**不**受封面前置页那三道闸约束——它本来就是
+            // 页码/卷号一类的东西，不是题目内容。
+            if is_volume_label(&region_text) {
+                ignored.insert(region_id.to_string(), "paper_label".to_string());
+                continue;
+            }
 
             // The PDF extractor can materialize a one-column sliver as a table
             // with an empty line and a synthetic table object. It carries no
@@ -4860,6 +5012,252 @@ fn round(value: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── 封面前置页 / 卷标 这两条**收窄**规则 ────────────────────────────────────
+    //
+    // 背景（真实听力卷实测）：PDF 做过一次增量更新，在卷首插入了一张封面。识别把那
+    // 一页读成了 14 个区域 + 1 个合成表格，而权威稿里没有任何锚点指过这一页，
+    // 于是 17 个显著节点被判 `unassigned`，`SIGNIFICANT_REGION_UNASSIGNED` 直接把
+    // 发布门禁顶死。下面这些用例把「什么才算封面」钉死，并给出**反向例子**：
+    // 一张正文里印着 `Questions 1-5` 的封面**不许**被忽略。
+
+    /// 最小可用的文档影子：只带 `physical_shadow_is_usable` 要求的字段。
+    fn shadow_with_pages(pages: Vec<Value>) -> Value {
+        json!({
+            "schemaVersion": "DocumentIRV2",
+            "documentId": "doc-gate-test",
+            "jobId": "job-gate-test",
+            "sourceFiles": [{"fileId": "file-gate-test", "originalName": "gate-test.pdf"}],
+            "pages": pages,
+        })
+    }
+
+    /// 一页：每行文本各自成区（`kind: text`），区域 id 形如 `p001-r0003`。
+    fn text_page(page_index: usize, lines: &[&str]) -> Value {
+        let prefix = format!("p{:03}", page_index + 1);
+        let line_values = lines
+            .iter()
+            .enumerate()
+            .map(|(index, text)| {
+                json!({"id": format!("{prefix}-l{:04}", index + 1), "text": text, "spanIds": []})
+            })
+            .collect::<Vec<_>>();
+        let regions = lines
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                json!({
+                    "id": format!("{prefix}-r{:04}", index + 1),
+                    "kind": "text",
+                    "childLineIds": [format!("{prefix}-l{:04}", index + 1)],
+                    "childObjectIds": [],
+                    "bbox": {"width": 220.0, "height": 20.0},
+                })
+            })
+            .collect::<Vec<_>>();
+        json!({"pageIndex": page_index, "lines": line_values, "regions": regions})
+    }
+
+    /// 没有任何来源锚点的最小稿件。
+    fn unanchored_authoring() -> Value {
+        json!({"schemaVersion": "IeltsAuthoringIRV2", "exam": {"title": "gate"}, "assets": [], "taskGroups": []})
+    }
+
+    fn entry<'a>(summary: &'a SourceCoverageSummary, id: &str) -> &'a Value {
+        summary
+            .ledger
+            .iter()
+            .find(|entry| entry.get("sourceNodeId").and_then(Value::as_str) == Some(id))
+            .unwrap_or_else(|| panic!("{id} 必须出现在覆盖台账里：{:?}", summary.ledger))
+    }
+
+    fn reason_of(summary: &SourceCoverageSummary, id: &str) -> Option<String> {
+        entry(summary, id)
+            .get("reason")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    }
+
+    fn disposition_of(summary: &SourceCoverageSummary, id: &str) -> String {
+        entry(summary, id)
+            .get("disposition")
+            .and_then(Value::as_str)
+            .unwrap_or("?")
+            .to_string()
+    }
+
+    /// 封面：整页没有题号声明、没有任何锚点、正文是考生须知 ⇒ 整页都有理由。
+    #[test]
+    fn a_candidate_notice_cover_is_explained_as_exam_front_matter() {
+        let cover = text_page(
+            0,
+            &[
+                "Candidate N u m b e r",
+                "Candidate N a m e",
+                "INTERNATIONAL E N G L I S H L A N G U A G E T E S T I N G S Y S T E M",
+                "Approximately 3 0 m i n u t e s",
+                "INSTRUCTIONS T O C A N D I D A T E S",
+                "Do n o t o p e n t h i s q u e s t i o n p a p e r u n t i l y o u a r e t o l d t o d o s o .",
+                "Answer a l l t h e q u e s t i o n s .",
+                "INFORMATION F O R C A N D I D A T E S",
+            ],
+        );
+        let shadow = shadow_with_pages(vec![cover]);
+        let summary = source_coverage_summary(&unanchored_authoring(), Some(&shadow));
+
+        assert!(
+            summary.unassigned_ids.is_empty(),
+            "封面这一页不该留下未分配节点：{:?}",
+            summary.unassigned_ids
+        );
+        for ordinal in 1..=8 {
+            let id = format!("p001-r{ordinal:04}");
+            assert_eq!(
+                disposition_of(&summary, &id),
+                "ignored_with_reason",
+                "{id} 应被有理由地忽略"
+            );
+            assert_eq!(reason_of(&summary, &id).as_deref(), Some("exam_front_matter"));
+        }
+    }
+
+    /// 反向例子（评审指定）：封面正文里印着 `Questions 1-5` ⇒ **不许**当成封面忽略。
+    #[test]
+    fn a_cover_that_declares_question_numbers_is_never_ignored_as_front_matter() {
+        let cover = text_page(
+            0,
+            &[
+                "Candidate N u m b e r",
+                "INSTRUCTIONS T O C A N D I D A T E S",
+                "Questions 1-5",
+            ],
+        );
+        let shadow = shadow_with_pages(vec![cover]);
+        let summary = source_coverage_summary(&unanchored_authoring(), Some(&shadow));
+
+        for ordinal in 1..=3 {
+            let id = format!("p001-r{ordinal:04}");
+            assert_ne!(
+                reason_of(&summary, &id).as_deref(),
+                Some("exam_front_matter"),
+                "{id}：页面上有题号声明，就不具备封面前提"
+            );
+            assert_eq!(disposition_of(&summary, &id), "unassigned", "{id}");
+        }
+        assert!(
+            !summary.unassigned_ids.is_empty(),
+            "有题号声明的页面必须如实留下未分配节点"
+        );
+    }
+
+    /// 第二道闸：整页只要被任何来源锚点指过，就不是封面。
+    #[test]
+    fn a_page_that_carries_a_source_anchor_is_not_treated_as_a_cover() {
+        let mut authoring = unanchored_authoring();
+        authoring["answerSlots"] = json!({
+            "slot-1": {
+                "sourceAnchors": [{
+                    "sourceFileId": "file-gate-test",
+                    "pageIndex": 0,
+                    "nodeIds": ["p001-r0002"],
+                    "extractionMode": "pdf_native",
+                    "sourceHash": "b".repeat(64)
+                }]
+            }
+        });
+        let cover = text_page(0, &["Candidate N u m b e r", "INSTRUCTIONS T O C A N D I D A T E S"]);
+        let shadow = shadow_with_pages(vec![cover]);
+        let summary = source_coverage_summary(&authoring, Some(&shadow));
+
+        for ordinal in 1..=2 {
+            let id = format!("p001-r{ordinal:04}");
+            assert_ne!(
+                reason_of(&summary, &id).as_deref(),
+                Some("exam_front_matter"),
+                "{id}：这一页挂着答案槽锚点，不属于前置页"
+            );
+        }
+    }
+
+    /// 卷标：`【VOL7-T9】` 印在正文页上，不受封面那三道闸约束。
+    #[test]
+    fn a_volume_label_on_a_content_page_is_explained_as_a_paper_label() {
+        let page = text_page(1, &["【VOL7-T9】", "SECTION1", "Questions1-4", "Completetheformbelow"]);
+        let shadow = shadow_with_pages(vec![page]);
+        let summary = source_coverage_summary(&unanchored_authoring(), Some(&shadow));
+
+        assert_eq!(disposition_of(&summary, "p002-r0001"), "ignored_with_reason");
+        assert_eq!(reason_of(&summary, "p002-r0001").as_deref(), Some("paper_label"));
+        // 同一页的正文不能跟着被忽略：这一页有题号声明，压根不是封面。
+        for id in ["p002-r0002", "p002-r0003", "p002-r0004"] {
+            assert_ne!(reason_of(&summary, &id).as_deref(), Some("paper_label"), "{id}");
+            assert_ne!(
+                reason_of(&summary, &id).as_deref(),
+                Some("exam_front_matter"),
+                "{id}"
+            );
+        }
+    }
+
+    /// 段落指令（`Read the text and answer questions 1-10`）**不许**被忽略：
+    /// 它不是版式碎片，是这一段的题面说明，要由所属 Part 的来源锚点收下。
+    #[test]
+    fn a_section_instruction_is_never_ignored_by_these_rules() {
+        let page = text_page(
+            1,
+            &[
+                "SECTION1",
+                "Readthetextandanswerquestions1-10",
+                "Questions1-4",
+                "Completetheformbelow",
+            ],
+        );
+        let shadow = shadow_with_pages(vec![page]);
+        let summary = source_coverage_summary(&unanchored_authoring(), Some(&shadow));
+
+        assert_eq!(reason_of(&summary, "p002-r0002"), None, "段落指令必须保持可分配");
+        assert_eq!(disposition_of(&summary, "p002-r0002"), "unassigned");
+    }
+
+    /// 阅读卷封面走同一套规则：规则只看「这一页有没有题号声明 / 锚点 / 考生须知」，
+    /// 与科目无关。
+    #[test]
+    fn the_same_cover_rule_applies_to_a_reading_paper() {
+        let cover = text_page(
+            0,
+            &[
+                "Candidate N u m b e r",
+                "INTERNATIONAL E N G L I S H L A N G U A G E T E S T I N G S Y S T E M",
+                "INFORMATION F O R C A N D I D A T E S",
+            ],
+        );
+        let mut authoring = unanchored_authoring();
+        // 阅读稿：有 passage / answerSlots，但锚点都在后面几页。
+        authoring["passage"] = json!({"title": "Reading", "paragraphs": []});
+        authoring["answerSlots"] = json!({
+            "slot-1": {
+                "sourceAnchors": [{
+                    "sourceFileId": "file-gate-test",
+                    "pageIndex": 1,
+                    "nodeIds": ["p002-r0001"],
+                    "extractionMode": "pdf_native",
+                    "sourceHash": "c".repeat(64)
+                }]
+            }
+        });
+        let shadow = shadow_with_pages(vec![cover]);
+        let summary = source_coverage_summary(&authoring, Some(&shadow));
+
+        for ordinal in 1..=3 {
+            let id = format!("p001-r{ordinal:04}");
+            assert_eq!(
+                reason_of(&summary, &id).as_deref(),
+                Some("exam_front_matter"),
+                "{id}：阅读卷封面同样成立"
+            );
+        }
+    }
+
     // 这两个码定义在识别侧（`direct_canonical`），不在 `issue_codes` 词表里；测试要按
     // 真实码构造阻塞，不能就地复制字面量（否则词表改名时测试会静默失配）。
     use crate::recognition::direct_canonical::{

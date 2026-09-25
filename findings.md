@@ -804,7 +804,13 @@ CANNOT-RUN 时 `recorder` 还是 `null`，于是这种运行**根本不执行判
 实测暴露：一次 `staleBuild` 的 CANNOT-RUN 报出 `verdict=failed exit=undefined`。
 已改为**无条件判定**，并把 `verdictReason` 一并写进报告。
 
-### F-R8-2（FACT）本沙箱下「默认档案」（不带测试专用安全参数）跑不起来
+### F-R8-2（FACT，**更正于 2026-09-24**）「默认档案」跑不起来**只限执行方沙箱**
+
+> **更正**：本条原写「本沙箱内所有可得证据都是 `runProfile=cdp-diagnostic`」，措辞越界了。
+> 质量方在本机（非本执行沙箱）用**同一批脚本、默认产品档**（`securityArgs: []`，
+> `--no-diagnostic-args`）复跑，R4 单文件导入 6/6、R6 听力链 7/7、阅读链 13/13 全部通过。
+> 因此准确结论是：**需要 `--no-sandbox --disable-gpu` 的是本执行方的沙箱环境，不是产品，也不是别的机器。**
+> 见 `docs/handoff/2026-09-23-wave3-rework2.md` §1.1。
 
 任务书要求「不含测试专用安全参数的运行证据，与 CDP 诊断运行分开记录」。
 为此把 `--no-sandbox --disable-gpu` 从默认值改成**显式开启**（`--diagnostic-args`），
@@ -812,17 +818,17 @@ CANNOT-RUN 时 `recorder` 还是 `null`，于是这种运行**根本不执行判
 
 **受控对照实验**（假设 → 运行 → 结果）：
 
-- 假设：`--no-sandbox --disable-gpu` 在本沙箱是必需项，不是可选项。
+- 假设：`--no-sandbox --disable-gpu` 在**本执行沙箱**是必需项，不是可选项。
 - 运行 A：`--pdf demanding-reading-passage-3.pdf`（默认档案，`securityArgs: []`）
   → 12 步中 11 步 **failed**，全部报 `CDP 连接已关闭`；`library-page-loads` 就在等
   `library-page-after-reload` 时超时，app 输出停在 `[library] v2 migration: scanned=0 …`，
   `appProcessExitCode=null`。即 renderer 在第一步之前就死了。
 - 运行 B：同一夹具 + `--diagnostic-args` → 11 passed / 1 blocked（正常）。
-- 结果：假设成立。**本沙箱内所有可得证据都是 `runProfile=cdp-diagnostic`。**
-- 停止条件：已确认差异可归因于这两个参数（唯一变量），不再重复试验。
+- 结果：假设在**本沙箱**成立。停止条件：已确认差异可归因于这两个参数（唯一变量），不再重复试验。
 
-**如实记录**：因此本轮**没有**任何 `cdp-default` 的通过证据；默认档案在本环境
-只能得到 CANNOT-RUN 级别的失败。这一条不得被表述为「默认产品路径已验证」。
+**如实记录**：本执行方在 `cdp-default` 档**没有**任何通过证据；默认档在本沙箱只能得到
+CANNOT-RUN 级别的失败。这一条不得被表述为「默认产品路径在本环境已验证」，同样也不得
+被表述为「默认产品路径不可用」——后者是环境结论，不是产品结论。
 
 ### F-R8-3（FACT，工具摩擦）`package.json` 的脚本级改动会触发 staleBuild
 
@@ -3789,7 +3795,14 @@ Q1 改写后的第 7/8 步这次实打实跑过：第 7 步等到识别结束才
 第 8 步逐个 part 读到播放器 `src=…/audio/<itemId>/<sha256>.wav`、`readyState=4`、
 时长 6/7/8/9 s。**旧的恒过断言（任何 kind 都算通过）已被替换。**
 
-### F-Q2-1（P0，识别/授权稿，**未修**）：`form_completion` / `note_completion` 的 canonical stimulus 里根本没有填空位
+### F-Q2-1（P0，识别/授权稿，**已于 `7aaca61` 修复**）：`form_completion` / `note_completion` 的 canonical stimulus 里根本没有填空位
+
+> **更正于 2026-09-24**：本条描述的是 `015688c` 那一版实测（当时 stimulus 只有
+> `heading`/`paragraph`/`text`）。`7aaca61`（「close the listening answer-surface gaps」）
+> 之后，同一份夹具的 `group-8` stimulus 里已有 **10 个 `answer_slot` 节点**
+> （`slot-node-q31`…`slot-node-q40`，`inline: true`），`group-1/group-3` 同样补齐；
+> 第 9 步因此从 31/40 变成 37/40（剩余 3 个是另一条原因，见 F-Q2-6）。
+> 下面的原文保留作为**修复前**的证据。
 
 门禁判据在 `quality.rs:2493-2513`：文本 completion 的 **canonical stimulus** 必须为每个题号
 提供唯一 inline answer slot。实测该稿的 stimulus **只有 `heading` / `paragraph` / `text` 三种节点**，
@@ -3807,7 +3820,15 @@ group-8 stimulus nodeTypes= ['heading', 'paragraph', 'text']   q hits 全 0
 而且就算强行发布，**学生端读到的题干里也没有可填空的位置**。
 门禁给的动作是 `["edit_text","split_prompt"]`，其中 `edit_text` 已有运行时证据是死路（F-R9-6）。
 
-### F-Q2-2（P0，门禁规则，**未修**，建议改判据）：用户上传的听力音频永远过不了 physical shadow 比对
+### F-Q2-2（P0，门禁规则，**已不再触发**）：用户上传的听力音频永远过不了 physical shadow 比对
+
+> **更正于 2026-09-24**：本轮（`015688c` 之后）实测门禁里**已经没有**
+> `authoring asset 在 physical shadow 中不存在` 这一条。同一条目、同一份夹具的
+> `PublishVerdictV1.reasons` 从 34 条降到 **3 条**（`QUALITY_NOT_READY`、
+> `group-5 PROMPT_BOUNDARY_AMBIGUOUS`、`document SIGNIFICANT_REGION_UNASSIGNED`），
+> 且第 7/8 步的四个 part `media` 与资产清单逐条对上。判据本身仍按原文保留登记
+> （「shadow 比对要不要排除 `user_upload` 资产」这个问题没有被本轮回答）。
+> 下面的原文保留作为**修复前**的证据。
 
 `validate_assets`（`quality.rs:3194-3212`）把 authoring 里的**每个** asset 都拿去和
 physical shadow（`document-ir-v2.shadow.json`，由 PDF 解析产出）按 `assetId` 比对，
@@ -3819,7 +3840,23 @@ PDF 里不可能有它 ⇒ **四个 Part 各一条 `ASSET_REFERENCE_MISSING`（b
 **建议**：shadow 比对只适用于有 physical 来源的资产（`extractionMode != "user_upload"`）。
 按质量方要求，**本轮不改门禁**，只报原因。
 
-### F-Q2-3（P0，识别，**未修**）：matching/select 被识别成空选项库的 `unordered_set`，界面上没有可作答控件
+### F-Q2-3（P0，识别，**已于 `7aaca61` 修复**）：matching/select 被识别成空选项库的 `unordered_set`，界面上没有可作答控件
+
+> **更正于 2026-09-24（重要）**：本条的两句结论在当前构建上都**不成立**，必须按实测改写：
+>
+> 1. 「**`options=0`**」不成立。`7aaca61` 之后同一条目的 `group-5` 是
+>    `matching_features`、`bank=6`（A–F），`group-6` 是 `matching_features`、`bank=7`（A–G）；
+>    `assignment` 仍是 `unordered_set`，`optionBankRef` 也已指向该组自己的库。
+> 2. 「**界面上没有可作答控件**」不成立。`ExamCanvas.tsx:504` 对 `unordered_set` 渲染
+>    `<fieldset class="v2-shared-selection">`，里面**有** checkbox；只是那些 checkbox
+>    **没有 `name` 属性**（只给 `value={option.label}`），所以「按 `input[name="qN"]` 找槽位」
+>    的探测写法看不到它。9 个槽被误读成「产品渲染不出控件」，根因在探测写法。
+>    听力链第 9 步已补 `fillSharedSelections`（勾满一轮 = 产品把选中项按顺序摊到各槽），
+>    实测该组一次勾满。
+>
+> 真正剩下的是**另一条**缺陷（`dynamic_late_passage_question_block_count` 把组自己的
+> A–F 选项库误判成字母阅读段，导致 q18/q19/q20 被推出题组），见 F-Q2-5。
+> 下面的原文保留作为**修复前**的证据。
 
 `group-5`（q17–q20）、`group-6`（q21–q25）识别产出：
 `taskType=multiple_choice`、`responseGroups[].assignment=unordered_set`、
@@ -3837,7 +3874,248 @@ PDF 里不可能有它 ⇒ **四个 Part 各一条 `ASSET_REFERENCE_MISSING`（b
 夹具元数据 `fixtures/golden/metadata/listening-vol7-t9.json` 自己也写着这几题
 「canonical task type still to be decided」，期望是 `select`/`matching_features` + 选项库 A–F/A–G。
 
-### F-Q2-4（结论，Q2 未达成）：`published` 在这份夹具上不可达，且不是「脚本没走到」
+### F-Q2-5（P0，识别，**已修**）：组自己的 A–F 选项库被误判成字母阅读段，把题组的行推出题组
+
+私卷第 5 页的块序是 `[3] Information / [4] Collections / [5] 18th-century paintings17 /
+[6] Farnley collection 18 / [7] Kitchen appliances 19 / [8] Fashion gallery 20 / [9..14] A..F`。
+
+**两条启发式、同一个误判。** `dynamic_question_block_count_for_group`（`authoring_pipeline.rs:3811`）
+依次试三条路，前两条不命中时：
+
+1. `dynamic_late_passage_question_block_count` → `is_dynamic_late_passage_tail_start`；
+2. 若第 1 条把整组都留下了（`specific >= blocks.len()`），**退回**
+   `dynamic_generic_passage_tail_question_block_count` → `find_dynamic_prose_passage_tail_start`。
+
+两条都以「字母串 + 后续小标题」判阅读段起点，而**一个选项库和一段字母阅读段形状完全相同**。
+
+实测裁剪点（用 `cargo test` 探针打印，块序如上）：
+
+| 状态 | 第 1 条 | 第 2 条（兜底） | 实际裁剪点 | 被推出的行 |
+| --- | --- | --- | --- | --- |
+| 未修 | 5（`18th-century paintings17`） | 未执行 | **5** | q18/q19/q20 |
+| 只修第 1 条 | 15（全留） | **8（`Fashion gallery 20`）** | **8** | q20 |
+| 两条都修 | 15 | 15 | 无 | 无 |
+
+中间那一行是关键教训：**只挡住第一条不够** —— 挡住之后代码会退到兜底，而兜底犯同一个错。
+`run-listening-chain-2026-09-24T11-51-29-055Z` 正好落在中间态：canonical DS 里
+q17/q18/q19 的题干分别是 `18th-century paintings` / `Farnley collection` / `Kitchen appliances`
+（锚点各自正确），而 **q20 的题干是 `[prompt pending review]`、锚点等于指令块首锚点
+（x=93, y=65.58）**。所以「哪几条被推出」随裁剪点漂移，但缺陷是同一个。
+
+后果是**一个缺陷、两条门禁码**：出组的行 → `SIGNIFICANT_REGION_UNASSIGNED`；
+拿不到锚点的那条 → 空题干 → `PROMPT_BOUNDARY_AMBIGUOUS`。
+
+**修法**：指令里以**连续区间**声明了选项库时（`Choose FOUR correct answers, A-F`），
+用 `declared_dynamic_option_bank_range` 解出区间、`lettered_run_matches_declared_bank` 校验
+命中的字母串**恰好**是那个区间（A…F 各一次、顺序一致），然后在**两条**路径上都把这段字母串排除：
+
+- `dynamic_late_passage_question_block_count`：命中即 `continue`（不当尾部起点）；
+- `find_dynamic_prose_passage_tail_start`：先算出选项库的块区间 `declared_option_bank_run`，
+  候选散文段与该区间**相交**就跳过。
+
+`declared_dynamic_option_bank_range` 只认 `a-f`…`a-n` 这种区间写法，**不**退化成
+「显式字母清单」（`A, B, C or D`）—— 那个形状在阅读指令里太常见，放宽会把真阅读段读成选项库。
+两条边界各有回归测试：`a_declared_option_bank_is_not_a_lettered_passage_tail`（断言
+`dynamic_question_block_count_for_group("matching_features", …) == blocks.len()`，
+即**调用方真正消费的那个值**，而不是某条内部启发式的返回值）与
+`a_lettered_passage_without_a_declared_bank_is_still_a_tail`。
+
+### F-Q2-6（P1，产品行为，**已如实提示，未修**）：识别收尾期间用户答题会撞上保存冲突，最后一次编辑留在本地
+
+`run-listening-chain-2026-09-24T11-25-20-011Z`：第 9 步填完 40 个答案后，
+权威稿里只有 **37** 个。界面（截图 `08b-unfilled-answers.png`）同时给出两个提示：
+
+- 顶栏 `保存失败，请重试`；
+- 横幅 `这份题稿在别处已被更新（版本 8）。你的修改正在保存，保存完成后会自动加载最新版本。`
+  （`describeDeferredRemoteRefresh`，`remoteVersion.ts:77`）
+
+而 38/39/40 三个输入框里**已经有值** —— 也就是说**本地修改没有丢**，只是没落库。
+`library_items_v2.current_edit_version` 最终是 9，说明识别收尾阶段后端在用户答题期间
+仍改写了两次权威稿（7→8→9），用户保存撞上 CAS。产品**如实报了**（没有静默丢失），
+并给出 `workspace-save-retry` 按钮，所以这不是「数据被吞」，而是**用户必须点一次重试**。
+
+脚本侧已按真实用户行为修（`retrySaveIfOffered()`：检测到 `workspace-save-retry` 就点它、
+等它消失，报告里记 `saveRetries`）。**产品侧未改**：是否要在识别完全收尾前
+禁用/排队用户编辑，属于产品决定，本轮只登记。
+
+### F-Q2-7（P0，发布链，**已修**）：`audit.revision=0` 让发布包必然加载不了，而回执写着 `studentLoadable: true`
+
+机器抽取出来的稿 `audit.revision` 是 **0**（从没有人编辑过；`ielts_grammar/mod.rs:465`、
+`recognition/direct_canonical.rs:878` 都硬写 0），DB 编辑链
+（`library/repository.rs` 的 `cas_write_canonical`）**从不碰 `audit`**，所以这个 0 会一路
+带到发布包。而学生端的听力加载器要求正整数：
+
+```
+server/src/lib/library/listening/listening-v1-loader.ts:240
+  if (!Number.isInteger(audit.sourceRevision) || Number(audit.sourceRevision) < 1)
+    fail('listening_v1_audit_invalid', 'audit.sourceRevision must be a positive integer', ...)
+```
+
+⇒ 第 11 步的真实 provider 报 `listening-getAsset-does-not-throw(audit.sourceRevision: …)`，
+**发布包的学生端加载在第一个断言就断了**。讽刺的是作者端的 `studentLoadable` 是 `true`：
+Rust 侧 `validate_listening_exam_source_v1` 允许 0，而 `contracts/listening-exam-source-v1.schema.json`
+也写 `"minimum": 0`（该契约与学生端仓库的镜像**逐字节相同**）—— 契约说 0 合法、消费者拒 0，
+两边不一致，而消费者是权威。
+
+**修法**（`authoring_v2_commands.rs` 的 `stamp_published_audit_revision`）：**发布**这件事本身
+就把这份稿绑定到条目当前的编辑版本上（manifest 里的 `editVersion` 就是同一个数），
+所以发布时把它盖进 `audit.revision`，包内回执与运行时源从此说同一个版本。
+**只盖听力**：阅读的加载器接受 0，而学生端**已存档**的阅读作答是按当时的 `sourceRevision`
+绑定的（`RUNTIME_ATTEMPT_REVISION_MISMATCH`），把阅读的 0 改成 1 会让那些作答无法续答；
+听力从来没能以 0 加载过，不存在这种存量。三条单测锁住这条边界。
+
+### F-Q2-8（P2，UI，**未修**）：工作区副标题对听力卷也写死 `READING`
+
+`ExamWorkspacePage.tsx:471` 是硬编码的 `<span className="workspace-sub-header-label">READING</span>`，
+不看 `authoring.modality`。听力卷的工作区因此显示「READING 编辑」，与同一页上的
+`ListeningHeader`（4 个 SECTION 页签 + 逐 part 播放器）自相矛盾。
+截图证据：`artifacts/e2e-cdp/run-listening-chain-2026-09-24T11-25-20-011Z/08b-unfilled-answers.png`
+左上角。纯文案，不影响任何判据，登记待办。
+
+### F-Q2-9（P0，覆盖台账，**未修 —— 按任务书要求只报原因，不改门禁**）：封面页与前置页眉**无人认领**，`SIGNIFICANT_REGION_UNASSIGNED` 因此常驻
+
+`F-Q2-5` 修好后门禁从 3 条降到 **2** 条（`QUALITY_NOT_READY` + document 级
+`SIGNIFICANT_REGION_UNASSIGNED`），`published` 仍不可达。剩下这一条的**内容**已逐条查明。
+
+未分配 + 显著的节点共 **17** 个（`library_final_versions_v2.evidence_json` 的
+`nodeCoverage.unassignedSourceNodeIds`），把它们与物理影子的区域文本对起来（做法见下）：
+
+| 区域 id | 内容 |
+| --- | --- |
+| `p001-r0001` | 问道雅思模考卷 1 |
+| `p001-r0002` / `p001-r0003` | `Candidate Number` / `Candidate Name` |
+| `p001-r0004` | `INTERNATIONAL ENGLISH LANGUAGE TESTING SYSTEM` |
+| `p001-r0005` / `p001-r0006` | `Listening 179` / `Approximately 30 minutes` |
+| `p001-r0007` / `p001-r0008` | `Additional materials: …` / `Time Approximately 30 minutes …` |
+| `p001-r0009` | `INSTRUCTIONS TO CANDIDATES …`（整段考生须知） |
+| `p001-r0010` / `p001-r0011` | `You will have 10 minutes …` / `Use a pencil. …` |
+| `p001-r0012` / `p001-r0013` / `p001-r0014` | `INFORMATION FOR CANDIDATES …` |
+| `p-table-0001` | 封面那张表的容器 |
+| `p002-r0001` | `【VOL7-T9】` |
+| `p002-r0003` | `Read the text and answer questions 1-10` |
+
+⇒ **14 个区域 + 1 张表 = 整张封面页**，加 **2 条前置页眉**。没有一个是题目内容、
+passage 或有理由的忽略记录 —— 门禁说的正是这个，判据没错。
+
+**这不是本轮引入的**：同一条目在 `11-25-20`、`11-51-29` 两轮里未分配集合完全一致
+（那两轮多一个 `p006-r0002`，正是 F-Q2-5 的那一行，本轮已消除）。
+更早的 `34dfadd`（提交信息里）已经记过它：
+
+> Effect on the real paper: unassigned significant regions 25 -> 18 … (the remaining 18
+> are **all cover / front-matter regions and the three section banners, a separate pre-existing gap**)
+
+**机制**（已定位到行）：
+- 区域 id 由 `pdf_ingest/region_builder.rs:190` 生成：`p{line_anchor.pageIndex + 1}-r{row + 1}`；
+- 台账由 `pdf_facts_shadow.rs:2719 coverage_ledger_from_pages` 铺底（每个 glyph/span/line/
+  region/table 默认 `unassigned`），再由 `quality.rs:3931 physical_ignored_reasons` +
+  `quality.rs:4058 significant_physical_nodes` 判「有人认领 / 有理由忽略」；
+- 封面页是 PDF **增量更新**新增的第 8 页（`/Pages` 被重定义为 `/Count 8`，新增 `176 0 R`），
+  `34dfadd` 已让解析器保留它 —— 保留是对的，缺的是**它的归属**。
+- 该页没有题号、没有答案槽、没有任何 group 锚点引用它，所以 17 个区域全部落空。
+
+**为什么本轮不改**：
+1. 任务书 Q2 原文就是「若仍不是，**报出门禁原因，不要改门禁**」；
+2. 让它变绿只有两条路 ——（i）给封面/前置页眉一个 canonical 归属，（ii）按门禁**已有**的
+   一等公民通道记为 `ignored_with_reason` + 非空 `reason`（既有先例：
+   `exam_instruction_layout_fragment`、`narrow_empty_table_layout_artifact`）。两条都是
+   **「封面页到底算不算需要解释的源区域」这一产品决定**，不是机械修补；
+3. 盲改的代价明确：`physical_ignored_reasons` 是**全 PDF 共用**的，放宽它会同时改变阅读夹具的
+   `sourceCoverage` 与 golden 基线，而阅读链是质量方 §5 的硬指标（13/13，见 F-Q2-10）。
+
+**交给下一步的可执行配方**（本轮已把材料备齐）：
+1. 影子在发布后会被源清理删掉（`library_final_versions_v2.source_purged_at`），
+   所以要么在发布前把 `appdata/data/jobs/<jobId>/document-ir-v2.shadow.json` 拷出来，
+   要么直接跑影子提取器的单测（本轮就是这么做的：临时单测调用
+   `extract_pdf_facts_shadow` 打全部页的 `regions[].id/kind/childLineIds` → 行文本）；
+2. 对上面 17 个区域逐条裁定「归属某 group」还是「`ignored_with_reason` + 理由」；
+3. 若选后者，在 `physical_ignored_reasons` 里加规则（并补单测），然后复跑
+   `tauri-cdp-listening-chain.mjs`，期望第 10 步 `data-publish-outcome="published"`。
+
+### F-Q2-10（P0，识别，**已修 `9ecaf8c`**）：`8f378d7` 的「尾随题号」读法把**范围标题**读成了表格行，阅读链因此从 13/13 掉到场景推导就失败
+
+**症状**：`tauri-cdp-cloud-repair-chain.mjs` 在第 2 步 `derive-scenario-from-real-draft` 失败：
+
+```
+本地识别产出的题面是退化的：7 个题面里 0 个是占位符、1 个是空的（例如 ""）
+blocking 代码 ["ANSWER_KEY_MISSING_SLOT","RUNTIME_COMPILER_FAILED"]
+```
+
+`observed.goldenMismatch` 给出真正的差异：
+
+```
+reason   "本地识别没有产出 golden fixture 标注的那个错误"
+observed "Questions 36 -"          ← q40 的题面
+expected "The writer recommends that to be effective, social history must 14 BLANK PAGE"
+target   group-3 / group-3-response-40 / ["q40"]
+```
+
+**先做的责任对照实验（关键，避免误伤）**：把本轮两处 Rust 改动 `git stash` 掉，用
+**纯 `8f378d7` 源码**重建 exe `0c67e163`（`backendInputs=80a03fb6d613`，
+`inputsDriftedDuringBuild=false`），再跑一次阅读链：
+
+| exe | 源码 | 场景推导 | `observed` |
+| --- | --- | --- | --- |
+| `e0c1dfff`（`10-22-18` / `10-30-08` / `10-31-42`，3 次） | `8f582ab` 一档 | **passed** ×3 | q40 = `…must 14 BLANK PAGE`（golden 那个错误**在**） |
+| `0c67e163`（`12-34-51`） | `8f378d7`，**不含本轮改动** | **failed** | `Questions 36 -` |
+| `acae312b`（`12-30-40`） | `8f378d7` + 本轮改动 | **failed** | `Questions 36 -` |
+
+⇒ **不是本轮改动引起的**，回归落在 `8f378d7`（那正是质量方 §5「阅读链保持 13/13」要守的东西）。
+
+**根因（已用单测钉死）**：`8f378d7` 新增的 `dynamic_trailing_row_prompt`
+（`authoring_pipeline.rs`）要读「题号印在题面**后面**」的表格行（`PEST 21`、`Drill Down 22`）。
+它用两条守卫排除范围标题：
+
+1. 尾号必须是**独立的空白分隔 token** —— 于是紧贴形式 `Questions 21-25` 被挡住
+   （`21-25` 尾是 `-25`，不是 token）；
+2. 前缀的**最后一个词**不能是横幅词（`questions`/`section`/`part`/…）。
+
+阅读夹具印的是**带空格的范围标题** `Questions 36 - 40`，两条守卫**同时漏过**：
+
+- `strip_suffix("40")` → 前缀 `Questions 36 - `，**以空格结尾** ⇒ 守卫 1 通过；
+- 前缀 trim 后是 `Questions 36 -`，`rsplit` 取到的最后一个词是 **`36`**，不是 `questions`
+  ⇒ 守卫 2 通过（**横幅词在句首，而这个检查只看句尾**）。
+
+于是 `dynamic_trailing_row_prompt(blocks, 40)` 返回 `Some("Questions 36 -")`，q40 的题面
+被整体替换成这句标题片段，那份稿子从此**丢掉了 golden 标注的页脚残留**
+（`The writer recommends … must 14 BLANK PAGE`），云端修复场景的前提就不成立了。
+
+**证明**（临时探针 → 转正为回归测试）：
+
+```
+tmp_proof: trailing(40) = Some("Questions 36 -")     ← 修复前
+assertion failed: a spaced range heading (Questions 36 - 40) must not be read as a <item> <number> row
+```
+
+**修法**：**按形状**排除范围标题 —— 标题能解析成一个题号区间，行不能。
+
+```rust
+// dynamic_trailing_row_prompt 里，取到 text 之后、strip_suffix 之前
+if detect_dynamic_question_heading_range(&text).is_some() {
+    continue;
+}
+```
+
+`detect_dynamic_question_range` 本就接受 `36 - 40`（含空格/`–`/`—`）与 `36 and 40`，
+所以这是复用既有判据，不是新造规则。对听力侧**零影响**：`PEST 21` / `Drill Down 22` /
+`Fashion gallery 20` 都不含 question 词，`detect_dynamic_question_heading_range` 返回 `None`。
+
+**回归测试**：`a_spaced_range_heading_is_not_a_row_with_a_trailing_number`
+（断言 `dynamic_trailing_row_prompt(…, 40) == None`，且 q40 走通用窗口、题面里不含
+`Questions 36`）；同时断言既有两条仍在：
+`range_banners_and_headings_are_not_rows_with_a_trailing_number`（紧贴形式）、
+`a_row_that_prints_its_number_last_keeps_its_own_prompt`（听力 `PEST 21` 一档）。
+
+**教训（值得记住）**：`8f378d7` 的守卫 2 用的是「前缀的最后一个词」，而横幅词在**句首**；
+用「最后一个词」判「这是不是标题」，只要标题里还带一个数字就必然判错。凡是
+「标题 vs 内容行」的判别，都应该按**形状**（能不能解析成区间）来判，而不是按词表位置。
+
+### F-Q2-4（结论，**更正于 2026-09-24**）：`published` 在这份夹具上曾经不可达，且不是「脚本没走到」
+
+> **更正于 2026-09-24**：本条记录的 34 条 reasons 是 `015688c` 那一版。同一条目、
+> 同一份夹具在 `7aaca61` 之后降到 **3 条**（见下表后半段），第 11 步也从「无包可读」
+> 变成**真的走到了学生端真实 provider**（`manifest-entries total=1 listening=1`、
+> `reading-library-excludes-the-listening-exam` OK），只剩 F-Q2-7 挡着。
+> 下面的原文与 34 条明细保留作为**修复前**的证据。
 
 门禁权威结论 `PublishVerdictV1.status=blocked`、`ready=false`，34 条 reasons，构成为：
 
@@ -3851,20 +4129,47 @@ PDF 里不可能有它 ⇒ **四个 Part 各一条 `ASSET_REFERENCE_MISSING`（b
 | `SIGNIFICANT_REGION_UNASSIGNED`、`V1_COMPATIBILITY_COMPILER_FAILED` | 1 + 1 | document 级，未单独归因 |
 | `QUALITY_NOT_READY` | 1 | 上面这些的汇总 |
 
-⇒ **Q2 的两个前置事实要分清**：
+**`7aaca61` 之后的同一条目（3 条）**：
+
+| reasons 码 | 目标 | 归因 |
+| --- | --- | --- |
+| `QUALITY_NOT_READY` | — | 下面两条的汇总 |
+| `ISSUE_UNRESOLVED`：`题干边界无法从 source evidence 中确定` | `group-5` | **F-Q2-5** |
+| `ISSUE_UNRESOLVED`：`仍有显著源区域未被题目、passage 或有理由的忽略记录解释` | `document` | **F-Q2-5**（同源：一个缺陷、两条码） |
+
+**F-Q2-5 修好之后（2 条，`run-listening-chain-2026-09-24T12-01-10-613Z`）**：
+
+| reasons 码 | 目标 | 归因 |
+| --- | --- | --- |
+| `QUALITY_NOT_READY` | — | 下面那条的汇总 |
+| `ISSUE_UNRESOLVED`：`仍有显著源区域未被题目、passage 或有理由的忽略记录解释` | `document` | **F-Q2-9**（封面页 14 区域 + 1 表 + 2 条前置页眉，与 F-Q2-5 无关） |
+
+⇒ **Q2 的三个前置事实要分清**：
 （a）质量方说「无答案 key 故不可达」不成立 **是对的** —— 产品流程本来就由用户补答案，
-测试这次扮演用户补了 **31/40**；
-（b）但补完答案也**到不了** `published`，因为剩下的 9 个槽**在界面上没有控件**（F-Q2-3），
-另有 F-Q2-1 / F-Q2-2 两条结构性阻断。第 11 步（学生端真实 provider 逐 part 取音频）
-因此**没有真实发布包可读**：`manifest.js` 存在但**零条目**（`total=0 listening=0`）。
-它的代码已就绪并被端到端接上，缺的是**一个能干净发布的听力卷**。
+测试这次扮演用户补答案（`7aaca61` 后 37/40，剩下 3 个是保存冲突，见 F-Q2-6；
+F-Q2-5 修好后 **40/40**，`saveRetries=[]`）；
+（b）补完答案之后挡路的**不是**「界面上没有控件」：那是探测写法读错层级（F-Q2-3 更正），
+真正挡路的是 q18/q19/q20 被推出题组（F-Q2-5，**已修**，`group-5` 的 `hardFailures` 已空、
+四条题干全部接上）；
+（c）第 11 步（学生端真实 provider 逐 part 取音频）**已经真的跑到了 provider**：
+`manifest-entries total=1 listening=1`、`listening-provider-constructs` OK、
+`reading-library-excludes-the-listening-exam` OK（`ids=(empty)`）、`reading-count-matches-reading-list` OK；
+`audit.sourceRevision` 的失败（F-Q2-7，已修）在 `12-01-10` 那轮**已消失，第 11 步整步 PASSED**；
+（d）**`published` 仍不可达**，但挡路的已经换成另一条独立缺陷（F-Q2-9：封面页无人认领），
+与 F-Q2-5 无关，也非本轮引入。
 
 ### 本轮明确没有做的事（避免被读成已解决）
 
 - **没有改门禁**（质量方要求：报原因、不改判据）。
+- **没有为了让 `published` 变绿而改覆盖台账**：F-Q2-9 的 17 个未分配区域已逐条查明是
+  封面页与前置页眉，把它们记成 `ignored_with_reason` 就能让门禁转绿，但那是产品决定，
+  任务书 Q2 明说要报原因而不是改判据 —— 因此只登记 + 给出可执行配方，不动
+  `physical_ignored_reasons`。
 - **没有换夹具绕过**：仓库里只有一份听力 PDF（`fixtures/golden/private-real/listening-vol7-t9.pdf`，
   private-real 未跟踪），没有第二份可替代品；合成 `ListeningExamSourceV1` 夹具
   （`phase7-listening-four-part-media-source-v1.json`）只能喂学生端 provider，
   喂不进「真实 App 一键发布」，用它顶替就是偷换验收通道。
 - **没有把第 11 步的失败写成环境问题**：`cause="no-listening-package"` 与「学生端没构建」
   是两种结论，报告里已分开（前者是链条失败，后者才是 cannot-run）。
+- **没有覆盖拖拽上传**：CDP 无法合成真实文件拖放，4 段音频仍走真实按钮 → picker 路径，
+  报告里如实标注（任务书 Q2 也认可这条）。

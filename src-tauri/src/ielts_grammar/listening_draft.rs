@@ -56,6 +56,53 @@ fn group_question_numbers(group: &Value) -> Vec<u32> {
         .unwrap_or_default()
 }
 
+/// 一个 Part 的来源锚点：段落标题本身，**加上这一段自己的指令行**。
+///
+/// 指令行（`Read the text and answer questions 1-10`）印在段落标题与第一个
+/// `Questions a-b` 之间，属于**这一部分的材料**。识别会把它读成一行语义文本，却没有
+/// 任何任务组落在它上面，于是来源覆盖门禁把它记成 `unassigned`（听力真实链实测：
+/// `p002-r0003` 就是这一行）。按评审裁决它**不该被忽略**——它不是版式碎片，而是
+/// 这一段的题面说明——所以要显式挂到所属 Part 的 `sourceAnchors` 上，让它成为
+/// 「有主的来源节点」。
+fn part_source_anchors(
+    part: &DetectedListeningPart,
+    lines: &[SemanticLine],
+    source_file_id: &str,
+    source_hash: &str,
+    source_type: &str,
+) -> Vec<Value> {
+    let mut anchors = vec![part_anchor(part, lines, source_file_id, source_hash, source_type)];
+    let first_group = part
+        .groups
+        .iter()
+        .map(|group| group.heading_line_index)
+        .min()
+        .unwrap_or(lines.len());
+    for line in lines
+        .iter()
+        .take(first_group)
+        .skip(part.heading_line_index + 1)
+    {
+        if is_section_instruction(&line.text) && line.source_anchor.is_object() {
+            anchors.push(line.source_anchor.clone());
+        }
+    }
+    anchors
+}
+
+/// 「Read the text and answer questions 1-10」这一类**明确指向题号范围**的段落指令。
+///
+/// 有意只认这一种句式：`Choose the correct answer.` / `Complete the form below`
+/// 属于题组的指令区，另有一套机制，不能在这里一并吸收。
+fn is_section_instruction(text: &str) -> bool {
+    let key = text
+        .chars()
+        .filter(|ch| ch.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    key.contains("answerquestions") || key.contains("answerthequestions")
+}
+
 fn part_anchor(
     part: &DetectedListeningPart,
     lines: &[SemanticLine],
@@ -149,7 +196,7 @@ pub(crate) fn build_listening_structure(
             "displayLabel": part.display_label,
             "expectedQuestionNumbers": numbers,
             "taskIds": task_ids,
-            "sourceAnchors": [part_anchor(part, lines, source_file_id, source_hash, source_type)],
+            "sourceAnchors": part_source_anchors(part, lines, source_file_id, source_hash, source_type),
         }));
     }
 
@@ -297,6 +344,43 @@ mod tests {
         assert_eq!(draft.structure["parts"], json!([]));
     }
 
+    /// 段落指令行（`Read the text and answer questions 1-10`）必须挂到**所属 Part** 的
+    /// `sourceAnchors` 上；而题组自己的指令（`Choose the correct answer.`）不属于
+    /// 这一分支，不能被顺手吸收。
+    #[test]
+    fn a_section_instruction_line_becomes_part_evidence() {
+        let owned = [
+            "SECTION 1",
+            "Read the text and answer questions 1-10",
+            "Questions 1-4",
+            "Choose the correct answer.",
+            "1 The speaker says the section is open",
+        ];
+        let refs = owned.to_vec();
+        let draft = build_listening_structure(
+            &lines(&refs),
+            &[task_group("task-1", 1, 4)],
+            "f",
+            "h",
+            "pdf",
+        );
+        let parts = draft.structure["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 1);
+        let node_ids = parts[0]["sourceAnchors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|anchor| anchor["nodeIds"].as_array().into_iter().flatten())
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        assert!(node_ids.contains(&"line-0"), "段落标题的锚点仍要在：{node_ids:?}");
+        assert!(node_ids.contains(&"line-1"), "段落指令行必须收进来：{node_ids:?}");
+        assert!(
+            !node_ids.contains(&"line-3"),
+            "`Choose the correct answer.` 属于题组指令区，不该在这里被吸收：{node_ids:?}"
+        );
+    }
+
     /// Draft-level acceptance on the real paper (skips when the private PDF or
     /// pdfium is unavailable). Detection alone is already covered; this ties the
     /// real SECTION 1-4 boundaries to the shared task groups and checks the
@@ -413,5 +497,36 @@ mod tests {
             vec![3, 2, 2, 1],
             "groups stay in the part whose question range contains them"
         );
+
+        // 每个 Part 的 `sourceAnchors` 除了段落标题，还要收下**这一段自己的指令行**
+        // （`Read the text and answer questions a-b`）。这一行印在标题与第一个
+        // `Questions a-b` 之间，没有任何任务组落在它上面，若不显式归属，来源覆盖门禁
+        // 会把它记成 unassigned（真实链上 `p002-r0003` 就是这么被顶出来的）。
+        let instruction_lines = semantic
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| is_section_instruction(&line.text))
+            .map(|(index, _)| format!("line-{index}"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            instruction_lines.len(),
+            4,
+            "真实卷四个段落各有一行 `Read the text and answer questions a-b`"
+        );
+        for part in parts {
+            let anchor_nodes = part["sourceAnchors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|anchor| anchor["nodeIds"].as_array().into_iter().flatten())
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>();
+            assert!(
+                anchor_nodes
+                    .iter()
+                    .any(|node| instruction_lines.iter().any(|line| line == node)),
+                "每个 Part 都要把本段的指令行收进 sourceAnchors，实际：{anchor_nodes:?}"
+            );
+        }
     }
 }

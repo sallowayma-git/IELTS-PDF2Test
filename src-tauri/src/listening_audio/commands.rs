@@ -47,6 +47,28 @@ pub(crate) struct BindListeningAudioInput {
     pub path: String,
 }
 
+/// `bind_listening_audio` 命令的完整写路径：台账行 → 权威稿镜像 → 读回确认。
+///
+/// 抽成自由函数是为了让并发回归测试逐字跑**同一条命令路径**——测试若自己重新拼装
+/// 「bind_audio + 同步」，就会跟真实命令的次序与内容脱钩（评审指定反例必须在
+/// 命令处理器层复现，见 `canonical_media.rs` 的三十次扫掠测试）。
+pub(crate) fn bind_audio_command_path(
+    root: &Path,
+    item_id: &str,
+    part_ordinal: i64,
+    path: &Path,
+) -> CommandResult<(store::ListeningAudioAssetV1, super::canonical_media::AudioMediaSyncV1)> {
+    let bound = store::bind_audio(root, item_id, part_ordinal, path)?;
+    // Mirror onto the canonical draft's part `media` through a real edit
+    // transaction, so preview/export/student runtime read one document.
+    let sync = super::canonical_media::sync_item_audio_media(root, item_id)?;
+    // 台账写成功 ≠ 绑定成功：预览/导出/学生端只读权威稿里的 part media。
+    // 稿已存在而这一 part 的 media 没跟上（镜像被人工保护挡住、或写入没落盘）时
+    // 必须如实报错——返回 Ok 会让界面说「已添加」，而音频根本读不到。
+    super::canonical_media::ensure_part_media_matches(root, item_id, part_ordinal, &bound)?;
+    Ok((bound, sync))
+}
+
 #[tauri::command]
 pub(crate) async fn bind_listening_audio(input: BindListeningAudioInput, app: AppHandle) -> CommandResult<Value> {
     let root = crate::app_root(&app)?;
@@ -54,14 +76,8 @@ pub(crate) async fn bind_listening_audio(input: BindListeningAudioInput, app: Ap
     let item_id = input.item_id.clone();
     let part_ordinal = input.part_ordinal;
     let path = input.path.clone();
-    let bound = blocking(move || {
-        let bound = store::bind_audio(&root, &item_id, part_ordinal, Path::new(&path))?;
-        // Mirror onto the canonical draft's part `media` through a real edit
-        // transaction, so preview/export/student runtime read one document.
-        let sync = super::canonical_media::sync_item_audio_media(&root, &item_id)?;
-        Ok((bound, sync))
-    })
-    .await?;
+    let bound = blocking(move || bind_audio_command_path(&root, &item_id, part_ordinal, Path::new(&path)))
+        .await?;
     to_value(bound.0)
 }
 

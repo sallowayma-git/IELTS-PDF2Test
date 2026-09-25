@@ -274,7 +274,18 @@ pub(crate) fn bind_audio(
     let managed_path = final_path.to_string_lossy().to_string();
 
     let mut conn = open_library_connection(root)?;
-    let transaction = conn.transaction().map_err(|error| format!("listening_audio_tx:{error}"))?;
+    // 必须 IMMEDIATE：这是「先读后写」的事务（先 `get_binding` 取旧绑定，再 UPSERT）。
+    //
+    // deferred 事务在 WAL 下于第一条 SELECT 取快照；随后写时若已有别的连接提交过，
+    // SQLite 直接返回 `SQLITE_BUSY_SNAPSHOT`，而且**这个错误不受 `busy_timeout` 保护**
+    // （忙等只覆盖「拿不到锁」，不覆盖「快照已过期」）。导入期「边导边绑」时并发的稿写入
+    // 正好制造这个条件：实测 `listening_audio_bind:database is locked`，四段绑定只落三行，
+    // 而失败又被导入抽屉吞掉——界面上只剩「已建立 1 个题目」。
+    //
+    // IMMEDIATE 在 BEGIN 就取写锁，争用退回成普通的等待，由 `busy_timeout=5000` 吸收。
+    let transaction = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|error| format!("listening_audio_tx:{error}"))?;
     let previous = get_binding(&transaction, item_id, part_ordinal)?;
     transaction
         .execute(

@@ -413,6 +413,45 @@ describe("唯一一份编辑辅助清单：本地 + 发布前检查 + 云端剩�
   });
 });
 
+// 原卷没印题号的空位：识别按阅读顺序把它们派给剩余题号（`completion.rs`），
+// 并把这件事写进草稿的 `recognitionWarnings`。这是**推断来源**，不是缺内容——
+// 界面要说出来，但**不能**因此把发布拦下（任务书第 4 条）。
+describe("空位按阅读顺序推断：草稿记了来源，清单只给一条非阻断提示", () => {
+  const inferredDs = makeDs({
+    taskGroups: [
+      {
+        ...task("task-3", [group("rg-3", ["q8", "q9", "q10"])]),
+        // 真实听力卷 group-3 上记的正是这一条：前两个字段没印题号，第三个印了。
+        recognitionWarnings: ["slot_order_inferred:8,9"]
+      }
+    ],
+    answerSlots: { q8: slot("q8", 8), q9: slot("q9", 9), q10: slot("q10", 10) }
+  });
+
+  it("给一条 warning：题号区间与「按阅读顺序推断」都说出来", () => {
+    const summary = buildEditingAids(inferredDs, []);
+    const row = summary.tasks.find((task) => task.kind === "inferred-slot");
+    expect(row).toBeDefined();
+    expect(row!.severity).toBe("warning");
+    expect(row!.title).toContain("第 8–9 题");
+    expect(`${row!.title} ${row!.detail ?? ""}`).toContain("没有印题号");
+    expect(row!.actions.map((action) => action.id)).toEqual(["view-source"]);
+    // 内部词不进界面：前缀码与题组 id 不得原样透传。
+    expect(`${row!.title} ${row!.detail ?? ""}`).not.toMatch(/slot_order_inferred|task-3|recognitionWarnings/);
+  });
+
+  it("不阻断发布：它不进 blockerCount", () => {
+    const summary = buildEditingAids(inferredDs, []);
+    expect(summary.tasks.some((task) => task.kind === "inferred-slot")).toBe(true);
+    expect(summary.blockerCount).toBe(0);
+  });
+
+  it("草稿没有这条记录时不出现（不是所有稿都有推断）", () => {
+    const summary = buildEditingAids(DS, []);
+    expect(summary.tasks.some((task) => task.kind === "inferred-slot")).toBe(false);
+  });
+});
+
 // 听力分段差异：云端可以改分界（把两段并成一段、或拆开），但用户必须看懂**哪一段**
 // 差在哪、能去核对原文。后端给的 `part-5` / `part_boundary` 是内部身份，不进界面。
 const LISTENING_DS = {

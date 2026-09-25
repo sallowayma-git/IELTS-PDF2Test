@@ -78,7 +78,12 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
       store.prependOptimistic(result.rows);
       setDrawerOpen(false);
       setTab("all");
-      setNotice(`已建立 ${result.rows.length} 个题目，识别在后台继续。`);
+      // 失败必须跟「已建立 N 个题目」一起说出口。抽屉在这里被卸载，而 `rejected` 原本只在
+      // 抽屉里渲染：导入期的音频绑定失败于是**静默消失**，用户只看到一句成功——
+      // 而那段音频根本没绑上。所以提示词要说清失败数，清单要留在页面上（见下方 role="alert"）。
+      setNotice(result.rejected.length
+        ? `已建立 ${result.rows.length} 个题目，但另有 ${result.rejected.length} 项没有成功（见下方清单）。`
+        : `已建立 ${result.rows.length} 个题目，识别在后台继续。`);
     }
   }, [importer, store]);
 
@@ -167,6 +172,18 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
           {notice}
           <button className="ghost small" onClick={() => setNotice(undefined)} aria-label="关闭提示">×</button>
         </p>
+      ) : null}
+      {/* 导入抽屉一旦关闭，它自己的 reject-list 就随之卸载。导入期的音频绑定失败不能跟着
+          消失——「已建立 N 个题目」会和它同时出现，用户得能看见到底哪一段没绑上。 */}
+      {!drawerOpen && rejected.length ? (
+        <ul className="reject-list" data-testid="library-import-rejected" role="alert">
+          {rejected.map((item) => (
+            <li key={`${item.name}:${item.reason}`}>
+              <strong className="file-name">{item.name}</strong>
+              <span>{item.reason}</span>
+            </li>
+          ))}
+        </ul>
       ) : null}
 
       <LibraryItemList

@@ -2496,18 +2496,121 @@ exe `f4032d9399739d0a…`，commit `be1147f`，`runProfile=cdp-diagnostic`，7 �
 `npx vitest run` 全套 **405 passed / 28 files**（基线 400 / 27 files，+5 = 新增的 harness 自测）。
 本轮**没有改任何 Rust 代码**，`cargo test --lib` 不受影响（未在 CI 里复跑）。
 
-### Q2 未达成：`published` 在这份夹具上不可达（三条真实阻塞）
+### Q2 未达成（**本节数据已被 2026-09-24 的第三轮取代，见下**）
 
-第 9 步填了 **31/40**，q17–q25 在**界面上没有可作答控件**；第 10 步得以
-`published_forced_not_loadable`、门禁 `PublishVerdictV1.status=blocked`（34 条 reasons）；
-第 11 步因此没有真实发布包可读（`manifest.js` 零条目）。逐条根因见
-`findings.md` 的 `F-Q2-1`（completion 的 canonical stimulus 里没有 inline 填空位，
-stimulus 里连 `"q1"` 都不出现）、`F-Q2-2`（用户上传音频永远过不了 physical shadow 比对，
-建议改判据，**本轮不改**）、`F-Q2-3`（matching/select 被识别成 `options=0` 的
-`unordered_set`，前端不渲染 checkbox）。第 11 步的失败已与「环境缺件」分开报
-（`cause="no-listening-package"` ≠ cannot-run）。
+第 9 步当时只填了 **31/40**，第 10 步 `published_forced_not_loadable`、门禁 34 条 reasons，
+第 11 步无包可读。逐条根因见 `findings.md` 的 `F-Q2-1` / `F-Q2-2` / `F-Q2-3`。
+
+**更正（2026-09-24）**：`7aaca61`（答案面补齐）与 `8f378d7`（行尾题号）之后，
+同一份夹具、同一条链的实测已经全部改写：
+
+- `F-Q2-1` **已修**：`group-8` 的 stimulus 里现在有 10 个 `answer_slot` 节点；
+- `F-Q2-2` **已不再触发**：门禁里没有 `authoring asset 在 physical shadow 中不存在`；
+- `F-Q2-3` **更正**：`group-5` 是 `matching_features` + `bank=6`、`group-6` 是 `matching_features`
+  + `bank=7`，「`options=0`」与「界面上没有可作答控件」两句都不成立 —— 共享选择面**有** checkbox，
+  只是它们不带 `name` 属性，按 `input[name="qN"]` 找槽位的探测写法看不见（脚本侧已补
+  `fillSharedSelections`）。
+
+### 本轮（2026-09-24 第三轮）实测：`run-listening-chain-2026-09-24T11-25-20-011Z`
+
+`runProfile=cdp-diagnostic`、`cdpReattaches.count=0`、exe `3515378…`。**8 passed / 4 failed**，
+失败的四条都有确定归因，且**没有一条是「脚本没走到」**：
+
+| 步骤 | 结果 | 归因 |
+| --- | --- | --- |
+| 1–6 `library-page-loads` … `confirm-imports-the-listening-item` | passed | 真实 picker 绑 4 个 Part、探针全过 |
+| 6b `all-four-part-audio-bindings-are-persisted` | failed | 该步读到的绑定是空，但**库里有 4 行**（`listening_audio_assets_v1`，`created_at` 11:25:26.5–27.3）。已加「第一次往返的原始信封」留证，待复跑定性 |
+| 7 `listening-draft-is-ready-and-structured` | **passed** | 4 个 part 各有 `media`、题号 1–40 各一次 |
+| 8 `listening-header-plays-each-part-from-its-own-file` | **passed** | 4 个页签、4 个播放器 `readyState=4`、时长 6/7/8/9 s |
+| 9 `user-fills-forty-answers` | failed（37/40） | q38/q39/q40 输入框里**已有值**，但保存撞上识别收尾期的版本冲突 → **F-Q2-6** |
+| 10 `publish-reports-published` | failed | `published_forced`，门禁只剩 3 条：`QUALITY_NOT_READY` + `group-5 PROMPT_BOUNDARY_AMBIGUOUS` + `document SIGNIFICANT_REGION_UNASSIGNED` → **F-Q2-5**（已修，待复跑） |
+| 11 `student-app-loads-each-part-audio` | failed | **真的走到了学生端 provider**：`total=1 listening=1`、`listening-provider-constructs` OK、`reading-library-excludes-the-listening-exam` OK。唯一失败 `audit.sourceRevision` → **F-Q2-7**（已修） |
+
+`R1`（真实 App 证据）**以第 11 步的结果为准**：它在 `7aaca61` 之前是「无包可读」，
+现在是一次真实的 provider 加载尝试（只差 F-Q2-7）。
+`R6 7/7` 的末步**不能**当作发布结论的证据 —— 那是旧脚本「任何结论都算通过」的写法。
 
 ### 本轮未做（避免误读）
 
 - **没改门禁**、**没换夹具绕过**（仓库只有一份听力 PDF，合成 ListeningExamSourceV1 喂不进「真实一键发布」）。
-- 学生端那一跳的代码已就绪，缺的是**一个能干净发布的听力卷**；等 F-Q2-1/2/3 有产品结论后可直接复跑。
+- **拖动（drag & drop）上传音频仍未覆盖**：CDP 无法合成操作系统级文件拖放，走的是真实按钮 → 真实 picker 路径。
+- 学生端那一跳的代码已就绪并**已被真实调用**；缺的是把 F-Q2-5 / F-Q2-6 / F-Q2-7 修完后的复跑。
+
+---
+
+## 2026-09-24 第四轮（Q1–Q4 收口）实测
+
+### 本轮提交
+
+PDF2Test（本小节所在提交，含下面三处产品改动 + 文档更正）：
+
+| 内容 | 位置 |
+| --- | --- |
+| F-Q2-5 修法（两条启发式都排除「组自己的选项库」） | `src-tauri/src/authoring_pipeline.rs`（`declared_dynamic_option_bank_range` / `lettered_run_matches_declared_bank` / `declared_option_bank_run`）+ 2 条回归测试 |
+| F-Q2-7 修法（发布时给听力稿盖权威版本号） | `src-tauri/src/authoring_v2_commands.rs`（`stamp_published_audit_revision`，只盖听力）+ 3 条单测 |
+| 听力链补齐（共享选择、保存重试、音频绑定步、应用输出落盘） | `scripts/e2e/tauri-cdp-listening-chain.mjs` |
+
+### 构建可归因性（先做，否则整链 CANNOT-RUN）
+
+| 项 | 值 |
+| --- | --- |
+| exe sha256 | `acae312bde18fb5a91fa58f49275507f219c14976d91c0ec9810a6d446efed95` |
+| frontendInputs / dist / backendInputs | `4bbd69cca77b` / `727b1ed16769` / `03f5861ce79c` |
+| `inputsDriftedDuringBuild` | `false` |
+| 清单文件 | `artifacts/build-manifests/acae312b…json` |
+
+**踩过的坑（会重复踩，记下来）**：`artifacts/build-logs/manual/capture-inputs.mjs`（构建**起点**快照）
+必须在 `npm run build` + `npx tauri build` **之前**跑。本轮先跑构建、后补快照，`write-manifest.mjs`
+就以退出码 4 报 `构建期间输入漂移：backendInputs` 拒写清单 —— 于是 exe 不可归因、听力链第 0 步
+直接 CANNOT-RUN。另外 `npx tauri build` 在本机偶发瞬时失败（同一条命令重跑即成功），
+所以串成一条命令时给它留一次重试。
+
+### 听力链实测：`run-listening-chain-2026-09-24T12-01-10-613Z` —— **11 passed / 1 failed**
+
+`runProfile=cdp-diagnostic`、`cdpReattaches.count=0`（策略 `warn-on-reattach`，未触发降级）。
+
+| 步骤 | 结果 | 实测 |
+| --- | --- | --- |
+| 1–6 `library-page-loads` … `confirm-imports-the-listening-item` | passed | 真实 picker 绑 4 个 Part（顺序 = Part 顺序）、4 段探针全过 |
+| 6b `all-four-part-audio-bindings-are-persisted` | **passed** | `audioReady=true`，4 条绑定 `partOrdinal=[1,2,3,4]`、`playable` 全真、sha256 与本地 WAV 一致 |
+| 7 `listening-draft-is-ready-and-structured` | passed | `modality=listening`、4 parts、题号 1–40 各一次、每个 part 有 `media` |
+| 8 `listening-header-plays-each-part-from-its-own-file` | passed | 4 个 part 页签、4 个播放器 `readyState=4`、时长 6/7/8/9 s |
+| 9 `user-fills-forty-answers` | **passed** | `slots=40 answered=40 unanswered=0`，`saveRetries=[]`（本轮没撞上保存冲突） |
+| 10 `publish-reports-published` | failed | `published_forced`，门禁 **2** 条：`QUALITY_NOT_READY` + `document SIGNIFICANT_REGION_UNASSIGNED` → **F-Q2-9** |
+| 11 `student-app-loads-each-part-audio` | **passed** | `total=1 listening=1`、`examId=p1-d7b51365`、4 个 part 各自解析到自己的音频且 `bytesSha256` 与发布包一致、阅读目录不含这道听力卷 |
+
+**相比上一轮（`11-25-20`）的四处推进**：
+- 6b 从上轮的「读到空」变成**一次往返就读到 4 条**（`firstReply` 原始信封是 `{ok:true,value:{audioReady:true,bindings:[…]}}`）
+  ⇒ 上一轮的空读是**偶发**，不是「库里有、读不到」的结构性缺陷；
+- 第 9 步从 37/40 变成 **40/40**（上轮的 3 条是保存冲突 F-Q2-6，本轮未复现；脚本仍留着 `retrySaveIfOffered()`）；
+- 第 10 步门禁 **3 → 2** 条，`group-5 PROMPT_BOUNDARY_AMBIGUOUS` **消失**（F-Q2-5 修好，canonical DS 里
+  `group-5` 的 `hardFailures` 已空，q17–q20 的题干分别是 `18th-century paintings` / `Farnley collection` /
+  `Kitchen appliances` / `Fashion gallery`）；
+- 第 11 步从 failed 变 **passed**（F-Q2-7 修好：发布包 `audit.revision=9`）。
+
+### 测试数字
+
+| 项目 | 上一轮 | 本轮 |
+| --- | --- | --- |
+| `cargo test --lib` | 1059 / 0 / 11 | **1062 / 0 / 11**（+3 = `stamp_published_audit_revision` 三条；选项库守卫两条已含在 1059 里） |
+| `cargo check --lib` | 干净 | 干净（仅既有 warning） |
+| `npx vitest run` | 405 passed / 28 files | **405 passed / 28 files**（本轮未动前端与 harness） |
+| 阅读链 `tauri-cdp-cloud-repair-chain.mjs` | 13/13 | 本轮未复跑（改动只落在 V1 分组启发式 + 发布盖章，见下「风险」） |
+
+### Q1–Q4 达成情况
+
+| 项 | 状态 |
+| --- | --- |
+| **Q1**（等识别结束再断言结构、删掉恒过写法） | **达成**：1–9 步全部断言确定期望值，第 7 步的 `[prompt pending review]` 类空题干已能定位到具体题号 |
+| **Q2**（走到学生端） | **部分达成**：第 11 步整步 PASSED（4 个 part 逐 part 取到音频、sha256 一致、阅读目录不含该卷）；第 10 步的 `published` 仍被 **F-Q2-9** 挡住（封面页无人认领），已按任务书「报原因、不改门禁」处理 |
+| **Q3**（重连可见） | **达成**：本轮 `cdpReattaches.count=0`，报告字段在；策略未触发降级 |
+| **Q4**（记录更正） | **达成**：`findings.md` 的 `F-R8-2` / `F-Q2-1..4` 已更正，新增 `F-Q2-5..F-Q2-9`；`progress.md` 本节取代上一节的「Q2 未达成」 |
+
+### 风险 / 需要质量方留意
+
+- **F-Q2-5 的守卫落在 V1 分组启发式上**（`authoring_pipeline.rs`），而**阅读**也走这条链。
+  所以阅读链的 13/13 必须复跑确认（本轮未跑）；仓库里两条边界各有回归测试
+  （`a_declared_option_bank_is_not_a_lettered_passage_tail` 断言**调用方真正消费的**
+  `dynamic_question_block_count_for_group(...) == blocks.len()`，
+  `a_lettered_passage_without_a_declared_bank_is_still_a_tail` 断言真阅读段仍被裁）。
+- **F-Q2-9 是 `published` 的唯一剩余障碍**，也是唯一「本轮没有推进」的判据。

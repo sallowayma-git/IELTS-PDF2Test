@@ -14,6 +14,7 @@ use crate::artifact_store::{
 use crate::ielts_grammar::quality::derive_instruction_signature_for_group;
 use crate::listening_source_v1::compile_exam_source_v2;
 use crate::schema::common::{AssetDescriptorV2, AssetKindV2};
+use crate::schema::ielts_authoring_v2::ExamModalityV2;
 use crate::schema::IeltsAuthoringIRV2;
 use crate::source_review::{
     source_review_issues, source_review_status, source_review_status_for_job,
@@ -724,6 +725,42 @@ pub(crate) fn export_authoring_snapshot(root: &Path, input: ExportAuthoringV2Inp
     export_authoring_snapshot_with_mode(root, input, &PublishMode::Strict)
 }
 
+/// 发布时给稿件盖一次**权威版本号**。
+///
+/// 机器抽取出来的稿 `audit.revision` 是 0（从没有人编辑过），而**发布**这件事本身就把
+/// 这份稿绑定到了条目当前的编辑版本上 —— manifest 里的 `editVersion` 就是同一个数。
+/// 不盖的后果不是「少一个字段」：学生端的听力加载器要求 `audit.sourceRevision` 是**正
+/// 整数**（`listening-v1-loader.ts` 的 `listening_v1_audit_invalid`），所以零版本的稿编译
+/// 出来的运行时**必然加载不了**，而发布回执却写着 `studentLoadable: true` —— 这正是
+/// 「界面说发布成功、学生端打不开」的成因。
+///
+/// 为什么只盖听力：阅读的加载器接受 0，而学生端**已存档**的阅读作答是按当时的
+/// `sourceRevision` 绑定的（`RUNTIME_ATTEMPT_REVISION_MISMATCH`）—— 把阅读的 0 改成 1
+/// 会让那些作答无法续答。听力从来没能以 0 加载过（0 一律被拒），所以不存在这种存量。
+///
+/// 返回是否盖了章（只为了让调用点与测试都能一眼看出「这条稿是不是走这条路」）。
+fn stamp_published_audit_revision(
+    document: &mut Value,
+    edit_version: Option<u64>,
+    revision: u64,
+) -> bool {
+    let is_listening = serde_json::from_value::<ExamModalityV2>(
+        document.get("modality").cloned().unwrap_or(Value::Null),
+    )
+    .is_ok_and(|modality| modality == ExamModalityV2::Listening);
+    if !is_listening {
+        return false;
+    }
+    // 0 不是版本号，是「还没有版本」；发布给出的是至少第一版。
+    let published_revision = edit_version.unwrap_or(revision).max(1);
+    let Some(audit) = document.get_mut("audit").and_then(Value::as_object_mut) else {
+        return false;
+    };
+    audit.insert("revision".to_string(), json!(published_revision));
+    audit.insert("updatedAt".to_string(), json!(Utc::now().to_rfc3339()));
+    true
+}
+
 fn has_unresolved_answers(authoring: &Value) -> bool {
     authoring
         .get("answerKey")
@@ -782,6 +819,7 @@ pub(crate) fn export_authoring_snapshot_with_mode(
             }
         }
     }
+    stamp_published_audit_revision(&mut authoring_value, input.edit_version, revision);
     refresh_quality_report(root, &input.job_id, &mut authoring_value)?;
     let authoring: IeltsAuthoringIRV2 = serde_json::from_value(authoring_value.clone())
         .map_err(|error| format!("AUTHORING_SCHEMA_INVALID:{error}"))?;
@@ -3003,8 +3041,8 @@ mod tests {
         apply_patch, explicitly_handled_issue_targets, expand_question_expression,
         export_authoring_v2_core, materialize_authoring_assets, physical_shadow_matches_authoring,
         preserve_issue_resolutions, resolve_authoring_asset_preview_core,
-        unresolved_blocking_issues, validate_authoring_v2_publish_readiness,
-        AUTHORING_V2_SHADOW_FILE,
+        stamp_published_audit_revision, unresolved_blocking_issues,
+        validate_authoring_v2_publish_readiness, AUTHORING_V2_SHADOW_FILE,
     };
     use crate::schema::common::{AssetDescriptorV2, AssetExtractionModeV2, AssetKindV2};
     use serde_json::{json, Value};
@@ -3995,5 +4033,38 @@ mod tests {
             error.contains("AUTHORING_PATCH_BUNDLE_FORBIDDEN_KEY:provenanceStatus"),
             "{error}"
         );
+    }
+
+    /// 学生端听力加载器要求 `audit.sourceRevision` 是正整数（`listening-v1-loader.ts`），
+    /// 而机器抽取的稿 `audit.revision` 是 0 —— 发布必须把它盖成权威版本号，否则发布包
+    /// 永远加载不了。
+    #[test]
+    fn publishing_stamps_a_positive_audit_revision_on_a_listening_paper() {
+        let mut document = json!({
+            "modality": "listening",
+            "audit": {"revision": 0, "source": "auto_extract", "humanVerified": false}
+        });
+        assert!(stamp_published_audit_revision(&mut document, Some(9), 0));
+        assert_eq!(document.pointer("/audit/revision"), Some(&json!(9)));
+        // `source` 保持如实：这份稿确实还是机器抽取的，不是用户改的。
+        assert_eq!(document.pointer("/audit/source"), Some(&json!("auto_extract")));
+    }
+
+    /// 没有编辑版本时（legacy 文件链，revision 可能是 0）也要给出至少第一版：
+    /// 学生端拒的是 0，不是「小」。
+    #[test]
+    fn publishing_never_stamps_a_listening_paper_with_revision_zero() {
+        let mut document = json!({"modality": "listening", "audit": {"revision": 0}});
+        assert!(stamp_published_audit_revision(&mut document, None, 0));
+        assert_eq!(document.pointer("/audit/revision"), Some(&json!(1)));
+    }
+
+    /// 阅读必须原样保留：学生端已存档的阅读作答是按当时的 `sourceRevision` 绑定的，
+    /// 把它从 0 改成 1 会让那些作答无法续答（`RUNTIME_ATTEMPT_REVISION_MISMATCH`）。
+    #[test]
+    fn publishing_leaves_a_reading_paper_audit_untouched() {
+        let mut document = json!({"modality": "reading", "audit": {"revision": 0}});
+        assert!(!stamp_published_audit_revision(&mut document, Some(4), 0));
+        assert_eq!(document.pointer("/audit/revision"), Some(&json!(0)));
     }
 }

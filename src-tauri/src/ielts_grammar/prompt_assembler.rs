@@ -91,6 +91,18 @@ fn strip_question_prefix(text: &str, question_number: u32) -> String {
     let prefix = question_number.to_string();
     let trimmed = text.trim_start();
     if !trimmed.starts_with(&prefix) {
+        // A table row prints its number **after** the item text
+        // (`Farnley collection 18`), so the row's own text is everything before
+        // it. A bare-number line must stay untouched: the empty prompt it
+        // produces is the completion channel's signal to read the row below.
+        if let Some(rest) = trimmed.strip_suffix(prefix.as_str()) {
+            let rest = rest
+                .trim_end_matches(|ch: char| matches!(ch, '.' | ')' | ':' | '-' | ' '))
+                .trim();
+            if !rest.is_empty() {
+                return rest.to_string();
+            }
+        }
         return trimmed.to_string();
     }
     trimmed[prefix.len()..]
@@ -159,5 +171,32 @@ mod tests {
         );
         assert_eq!(result.text, "First statement");
         assert_eq!(result.source_line_ids, vec!["q1"]);
+    }
+
+    /// A table row prints its number after the item name, so the row's prompt is
+    /// the text **before** it. Reading the whole line as the prompt (or, worse,
+    /// leaving it empty) is what blocks the private listening paper.
+    #[test]
+    fn prompt_drops_a_trailing_question_number() {
+        let lines = vec![
+            line("r17", "18th-century paintings17"),
+            line("r18", "Farnley collection 18"),
+        ];
+        let seventeen = assemble_prompt(None, 17, Some(&anchor("r17", 0, 17)), Some(&anchor("r18", 1, 18)), &lines, None);
+        assert_eq!(seventeen.text, "18th-century paintings");
+        let eighteen = assemble_prompt(None, 18, Some(&anchor("r18", 1, 18)), None, &lines, None);
+        assert_eq!(eighteen.text, "Farnley collection");
+    }
+
+    /// A bare-number anchor must still produce an empty prompt: the completion
+    /// channel reads that as "the row below carries my text".
+    #[test]
+    fn a_bare_number_anchor_keeps_an_empty_prompt() {
+        let lines = vec![
+            line("n8", "8"),
+            line("row", "Some kitchen appliance"),
+        ];
+        let result = assemble_prompt(None, 8, Some(&anchor("n8", 0, 8)), None, &lines, None);
+        assert_eq!(result.text, "Some kitchen appliance");
     }
 }

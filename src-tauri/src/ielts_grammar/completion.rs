@@ -31,16 +31,48 @@ pub(crate) struct CompletionStructureCandidate {
     /// line that hosts them.  These are only produced for numbers the printed
     /// marker scan could not close, so they never override text evidence.
     pub blank_slots: BlankSlotSpans,
+    /// Question numbers whose blank had to be placed by **reading order**
+    /// rather than by source evidence.
+    ///
+    /// The corpus draws some fields without ever printing the number on the row
+    /// (`Day of job: ____`): the blank is real geometry, but nothing on the page
+    /// says which question it is.  The blanks are then handed to the remaining
+    /// numbers in the order they are read — the same order the paper numbers
+    /// them — which is an *inference*, not extraction.  It is recorded here so
+    /// the draft can say so instead of presenting a guess as source evidence.
+    pub inferred_slot_numbers: Vec<u32>,
 }
 
 /// `line id -> (char start, char end, question number)` insertion spans.
 pub(crate) type BlankSlotSpans = std::collections::BTreeMap<String, Vec<(usize, usize, u32)>>;
+
+/// Warning code a task group carries in `recognitionWarnings` when some of its
+/// slots were placed by reading order rather than by a printed number.  The
+/// question numbers follow the colon as a comma-separated list
+/// (`slot_order_inferred:8,9,10`).  It is deliberately **not** a hard failure:
+/// the slots are usable, the user is only told where they came from.
+pub(crate) const SLOT_ORDER_INFERRED_WARNING: &str = "slot_order_inferred:";
 
 impl CompletionStructureCandidate {
     pub(crate) fn closes_slots(&self, expected_numbers: &[u32]) -> bool {
         expected_numbers
             .iter()
             .all(|number| self.slot_line_ids.contains_key(number))
+    }
+
+    /// The `recognitionWarnings` entry recording this group's inferred slots, or
+    /// `None` when every slot came from a printed number.
+    pub(crate) fn slot_order_inferred_warning(&self) -> Option<String> {
+        if self.inferred_slot_numbers.is_empty() {
+            return None;
+        }
+        let numbers = self
+            .inferred_slot_numbers
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        Some(format!("{SLOT_ORDER_INFERRED_WARNING}{numbers}"))
     }
 }
 
@@ -214,6 +246,7 @@ pub(crate) fn recover_completion_structure_with_blanks(
         .collect::<std::collections::BTreeSet<_>>();
     let mut slot_line_ids = std::collections::BTreeMap::new();
     let mut blank_slots = BlankSlotSpans::new();
+    let mut inferred_slot_numbers = Vec::new();
     for line in lines {
         // A physical question row can remain inside the instruction zone when
         // its number is embedded after a bullet (for example, `• ... 7 ___`).
@@ -242,6 +275,7 @@ pub(crate) fn recover_completion_structure_with_blanks(
         blanks,
         &mut slot_line_ids,
         &mut blank_slots,
+        &mut inferred_slot_numbers,
     );
     let slot_source_ids = slot_line_ids
         .values()
@@ -285,6 +319,7 @@ pub(crate) fn recover_completion_structure_with_blanks(
         slot_line_ids,
         slot_lines,
         blank_slots,
+        inferred_slot_numbers,
     }
 }
 
@@ -296,7 +331,9 @@ pub(crate) fn recover_completion_structure_with_blanks(
 ///   which case that number owns it and the slot consumes the number token;
 /// * the paper prints no number on the field at all (`Day of job: ____`), in
 ///   which case the blanks are handed to the remaining expected numbers in
-///   reading order — the same order the paper numbers them.
+///   reading order — the same order the paper numbers them.  That second shape
+///   is an inference, and every number it places is pushed to `inferred` so the
+///   draft can record where the slot came from instead of calling it extracted.
 ///
 /// Blanks arrive bound to the *shadow* row they were drawn under; a blank only
 /// counts here when that row is one of the rows this group actually owns, which
@@ -307,6 +344,7 @@ fn assign_drawn_blank_slots(
     blanks: &[CompletionBlank],
     slot_line_ids: &mut std::collections::BTreeMap<u32, String>,
     blank_slots: &mut BlankSlotSpans,
+    inferred: &mut Vec<u32>,
 ) {
     if blanks.is_empty() || expected_numbers.is_empty() {
         return;
@@ -378,7 +416,13 @@ fn assign_drawn_blank_slots(
             .entry(line_id)
             .or_default()
             .push((offset, offset, number));
+        // This number got its slot from the blank's position in reading order,
+        // not from a printed marker.  Record it so the inference is visible
+        // downstream instead of being indistinguishable from extraction.
+        inferred.push(number);
     }
+    inferred.sort_unstable();
+    inferred.dedup();
     for spans in blank_slots.values_mut() {
         spans.sort_by_key(|(start, _, _)| *start);
     }
@@ -2314,6 +2358,81 @@ mod tests {
         );
     }
 
+    /// The Q8-10 shape in miniature: a form whose rows print their labels but
+    /// never their numbers.  The blanks are real, so the slots do get placed —
+    /// but only by reading order, and the structure has to record that instead
+    /// of reporting those slots as if the source had numbered them.
+    #[test]
+    fn slots_placed_by_reading_order_are_recorded_as_inferred() {
+        let lines = vec![
+            line("b1", "Day of job:"),
+            line("b2", "Maximum length of job:"),
+            line("b3", "Cost per pound:"),
+        ];
+        let blanks = lines
+            .iter()
+            .enumerate()
+            .map(|(index, line)| CompletionBlank {
+                line_key: strip_whitespace(&line.text),
+                page_index: 0,
+                y: index as f64,
+                non_space_offset: None,
+            })
+            .collect::<Vec<_>>();
+
+        let structure = recover_completion_structure_with_blanks(
+            &TaskTypeV2::FormCompletion,
+            &lines,
+            &[],
+            &[8, 9, 10],
+            &blanks,
+        );
+
+        assert!(
+            structure.closes_slots(&[8, 9, 10]),
+            "every drawn blank hosts a slot: {:?}",
+            structure.slot_line_ids
+        );
+        assert_eq!(
+            structure.inferred_slot_numbers,
+            vec![8, 9, 10],
+            "no row printed its number, so every slot is an inference"
+        );
+        assert_eq!(
+            structure.slot_order_inferred_warning().as_deref(),
+            Some("slot_order_inferred:8,9,10")
+        );
+    }
+
+    /// The other half of the contract: a slot the source actually numbered is
+    /// not an inference, so it must not be recorded as one.
+    #[test]
+    fn slots_closed_by_a_printed_number_are_not_inferred() {
+        let lines = vec![line("b1", "The result was 31 ___")];
+        let blanks = vec![CompletionBlank {
+            line_key: strip_whitespace(&lines[0].text),
+            page_index: 0,
+            y: 0.0,
+            non_space_offset: None,
+        }];
+        let structure = recover_completion_structure_with_blanks(
+            &TaskTypeV2::SummaryCompletion,
+            &lines,
+            &[],
+            &[31],
+            &blanks,
+        );
+        assert!(structure.closes_slots(&[31]), "the printed marker closes it");
+        assert!(
+            structure.inferred_slot_numbers.is_empty(),
+            "a printed number is source evidence, not an inference"
+        );
+        assert!(
+            structure.slot_order_inferred_warning().is_none(),
+            "a group with no inferred slot carries no inference record"
+        );
+    }
+
     /// The real private listening paper after parse + split, plus the handles the
     /// later stages need. `None` when the fixture or pdfium is unavailable, which
     /// is the skip contract the other real-paper probes in this crate use.
@@ -2569,6 +2688,69 @@ mod tests {
                 .iter()
                 .any(|code| code.as_str() == Some("SLOT_HOST_MISSING")),
             "drawn blanks must clear SLOT_HOST_MISSING; remaining failures: {hard_failures:?}"
+        );
+    }
+
+    /// The paper draws some form fields without printing their numbers on the
+    /// row, so those slots can only come from the blanks' reading order. Two
+    /// groups on this paper have that shape — the Q1-4 form's last field and the
+    /// first two fields of the Q8-10 form — and both must be *recorded* on the
+    /// draft.  Otherwise a guess is indistinguishable from a slot the source
+    /// actually placed, and the review surface has nothing to warn about.
+    ///
+    /// Q10 is deliberately **not** in the record: that field prints its number,
+    /// so its slot is source evidence and calling it an inference would be the
+    /// opposite error.
+    ///
+    /// Skips when the private fixture or pdfium is unavailable, like the other
+    /// real-paper probes in this crate.
+    #[test]
+    fn real_listening_inferred_slots_are_recorded_on_the_draft() {
+        let Some(authoring) = build_real_listening_shadow() else {
+            return;
+        };
+        let groups = authoring
+            .get("taskGroups")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut observed = std::collections::BTreeMap::new();
+        for group in &groups {
+            let warnings = group
+                .get("recognitionWarnings")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .filter(|warning| warning.starts_with(SLOT_ORDER_INFERRED_WARNING))
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            if warnings.is_empty() {
+                continue;
+            }
+            let task_id = group
+                .get("taskId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            observed.insert(task_id, json!(warnings));
+        }
+
+        let dump = serde_json::to_string_pretty(&observed).unwrap_or_default();
+        assert_eq!(
+            observed.len(),
+            2,
+            "only the two forms with un-numbered fields carry the record: {dump}"
+        );
+        assert_eq!(
+            observed.get("group-1"),
+            Some(&json!(["slot_order_inferred:4"])),
+            "the Q1-4 form's last field is drawn but not numbered: {dump}"
+        );
+        assert_eq!(
+            observed.get("group-3"),
+            Some(&json!(["slot_order_inferred:8,9"])),
+            "the Q8-10 form's first two fields are drawn but not numbered, and Q10 is printed: {dump}"
         );
     }
 

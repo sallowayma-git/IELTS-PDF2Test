@@ -4,6 +4,7 @@ import {
   addAudioLaterDecision,
   assignmentNotices,
   assignParts,
+  bindListeningAssignments,
   listeningCandidates,
   listeningDecision,
   moveEntry,
@@ -134,5 +135,55 @@ describe("import plan", () => {
     expect(split.listening).toEqual([
       { file: files[1], audio: [{ partOrdinal: 1, path: "/a/1.mp3", name: "1.mp3" }] }
     ]);
+  });
+});
+
+// 绑定失败的如实上报：任何一段失败都不得吞掉、不得显示成成功（评审指定）。
+describe("listening audio bind failures are reported", () => {
+  const assignments = [
+    { partOrdinal: 1, path: "/a/1.mp3", name: "1.mp3" },
+    { partOrdinal: 2, path: "/a/2.mp3", name: "2.mp3" },
+    { partOrdinal: 3, path: "/a/3.mp3", name: "3.mp3" },
+    { partOrdinal: 4, path: "/a/4.mp3", name: "4.mp3" }
+  ];
+
+  it("returns no rejections and binds every part when all binds succeed", async () => {
+    const bound: Array<[string, number, string]> = [];
+    const rejected = await bindListeningAssignments("item-1", "雅思听力卷", assignments, async (itemId, partOrdinal, path) => {
+      bound.push([itemId, partOrdinal, path]);
+    });
+    expect(rejected).toEqual([]);
+    expect(bound).toEqual([
+      ["item-1", 1, "/a/1.mp3"],
+      ["item-1", 2, "/a/2.mp3"],
+      ["item-1", 3, "/a/3.mp3"],
+      ["item-1", 4, "/a/4.mp3"]
+    ]);
+  });
+
+  it("reports a failed part as a rejection with the item title and keeps binding the rest", async () => {
+    const bound: number[] = [];
+    const rejected = await bindListeningAssignments("item-1", "雅思听力卷", assignments, async (_itemId, partOrdinal) => {
+      bound.push(partOrdinal);
+      if (partOrdinal === 2) throw new Error("LISTENING_AUDIO_MEDIA_NOT_MIRRORED:part-2 镜像没落盘，界面不能显示成功");
+    });
+    // 一段失败不得中断后续段。
+    expect(bound).toEqual([1, 2, 3, 4]);
+    expect(rejected).toEqual([
+      {
+        name: "2.mp3",
+        reason: "音频未能添加到「雅思听力卷」，可在工作区「添加音频」补充。LISTENING_AUDIO_MEDIA_NOT_MIRRORED:part-2 镜像没落盘，界面不能显示成功"
+      }
+    ]);
+  });
+
+  it("turns every failed part into its own rejection instead of one silent success", async () => {
+    const rejected = await bindListeningAssignments("item-1", "雅思听力卷", assignments, async () => {
+      throw new Error("listening_audio_bind:database is locked");
+    });
+    expect(rejected.map((entry) => entry.name)).toEqual(["1.mp3", "2.mp3", "3.mp3", "4.mp3"]);
+    for (const entry of rejected) {
+      expect(entry.reason).toContain("音频未能添加到「雅思听力卷」");
+    }
   });
 });

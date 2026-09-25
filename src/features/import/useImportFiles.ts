@@ -5,12 +5,13 @@ import { bindListeningAudio } from "../../api/listeningAudioClient";
 import type { PickedPath } from "../../api/desktopDialogs";
 import { toUserFacingError } from "../../utils/userFacingError";
 import { buildRow, type LibraryRowV1 } from "../library/libraryTypes";
-import { splitImportPlan, type ListeningImportDecision } from "./listeningAudioPlan";
+import { bindListeningAssignments, splitImportPlan, type ImportRejection, type ListeningImportDecision } from "./listeningAudioPlan";
+
+export type { ImportRejection } from "./listeningAudioPlan";
 
 export function formatImportError(error: unknown): string {
   return toUserFacingError(error, "文件未能导入，请稍后重试。").userMessage;
 }
-export interface ImportRejection { name: string; reason: string }
 export interface ImportBatchResult { rows: LibraryRowV1[]; rejected: ImportRejection[] }
 
 export interface ImportOptions {
@@ -54,17 +55,10 @@ export function useImportFiles(onRowsChanged: () => void) {
         for (const { file, audio } of plan.listening) {
           const [item] = await enqueue([file], "listening");
           if (!item) continue;
-          for (const assignment of audio) {
-            setStageMessage(`正在保存「${item.title}」的 Part ${assignment.partOrdinal} 音频`);
-            try {
-              await bindListeningAudio(item.id, assignment.partOrdinal, assignment.path);
-            } catch (cause) {
-              rejected.push({
-                name: assignment.name,
-                reason: `音频未能添加到「${item.title}」，可在工作区「添加音频」补充。${toUserFacingError(cause, "").userMessage}`
-              });
-            }
-          }
+          rejected.push(...await bindListeningAssignments(item.id, item.title, audio, async (itemId, partOrdinal, path) => {
+            setStageMessage(`正在保存「${item.title}」的 Part ${partOrdinal} 音频`);
+            await bindListeningAudio(itemId, partOrdinal, path);
+          }));
         }
       }
       if (rejected.length) setError(`${rejected.length} 个文件未能导入或绑定。`);

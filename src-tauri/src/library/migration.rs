@@ -226,12 +226,14 @@ pub(crate) fn ensure_initial_canonical(root: &Path, job_id: &str) -> CommandResu
         // 没有候选：不建壳、不写稿，如实返回 false。
         return Ok(false);
     };
+    let mut listening_item = false;
     if let Some(item) = get_item(&conn, job_id)? {
+        listening_item = item.modality == "listening";
         align_draft_modality(&mut authoring, &item.modality);
         // Audio bound before the draft existed (the import dialog lets the user bind
         // while processing runs) must be mirrored onto the seeded draft, otherwise
         // the first time the user opens the item the parts look unbound.
-        if item.modality == "listening" {
+        if listening_item {
             if let Ok(bindings) = crate::listening_audio::store::list_bindings(root, job_id) {
                 crate::listening_audio::canonical_media::apply_bindings_to_authoring(
                     &mut authoring,
@@ -257,6 +259,21 @@ pub(crate) fn ensure_initial_canonical(root: &Path, job_id: &str) -> CommandResu
         )?;
     }
     seed_canonical_ds(&conn, job_id, &authoring.to_string(), "action_required")?;
+    // 播种是「**只读一次**台账 → 整体写稿」。任何一段绑定的镜像若恰好落在
+    // 「读台账 → 本次提交」之间，它当时看到「稿还不存在」而静默 no-op（那是刻意的：
+    // 它把补齐的责任交给播种），之后却没有人再替它跑一次 ⇒ 该 part 的 media 永久丢失：
+    // 台账有行、稿里没有，预览 / 导出 / 学生端都读不到它的音频。
+    //
+    // 播种提交后立刻做一次**幂等对账**就关掉了这个窗口：此刻稿已存在，台账里已绑、
+    // 稿里却没有的 part 全部补齐；而在这之后落地的绑定，其自己的镜像一定能成功
+    // （稿必然已存在），所以不存在第二段窗口。
+    //
+    // **失败必须上抛，不许吞**：对账失败就意味着「台账有行、稿里没有 media」——正是最该
+    // 被看见的那类不一致。此前这里是 `let _ =`，于是界面只能说「成功」。
+    if listening_item {
+        crate::listening_audio::canonical_media::sync_item_audio_media(root, job_id)
+            .map_err(|error| format!("CANONICAL_SEED_AUDIO_MIRROR_FAILED:{error}"))?;
+    }
     // 写入条件带 `IS NULL`：并发的另一次播种可能先到，因此以**重新读取**为准，
     // 而不是把 `seed_canonical_ds` 的返回值当成「现在有没有稿」。
     Ok(get_item(&conn, job_id)?.map(|item| item.has_canonical_ds).unwrap_or(false))
