@@ -69,10 +69,11 @@ export function QuestionNavBar({
     ) : (
       // 非当前 Part：基准用 div + JS 点击，这里用真按钮保证键盘可达；
       // 题号块不渲染（基准 CSS 本来就把它 display:none，还能避免 button 嵌 button）。
+      // 按钮内只允许短语内容：name/status 用 span（part-nav-info 是 flex 容器，布局不变）。
       <div key={section.key} className="part-nav-section is-switchable">
         <button type="button" className="part-nav-info" onClick={() => onSelectPart(section.ordinal)}>
-          <div className="part-nav-name">{section.name}</div>
-          <div className="part-nav-status">{section.status}</div>
+          <span className="part-nav-name">{section.name}</span>
+          <span className="part-nav-status">{section.status}</span>
         </button>
       </div>
     ))}
