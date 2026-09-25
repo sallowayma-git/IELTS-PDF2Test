@@ -416,3 +416,61 @@ TASK §4.3 已经把前提写好了：每包请求 = **固定前缀**（规则 +
 1. **复核发现的「实现宽于声明」当场收紧**（`b1cd8f3`）：任务书规定退让条件是「引文在全文其他地方也找不到」，初版实现把「找得到但页号差 >1」也退让了；按「不放宽校验」纪律改为 `found.is_empty()` 才退让，并补钉住用例（先红后绿）。
 2. **缺陷 2 选方案 b**（非主试卷一律 unverifiable + prompt 说明），理由与链路调查证据记入 STATE「P12-Q 日志」；方案 a（接入答案文件文本）会让核验面超出修复链实际交给模型的证据面。
 3. 阈值常量 `MIN_TEXT_LAYER_CHARS = 8` 的语义边界：混合页（既有正文文本又有图片答案区）的文本层会超过阈值，其上的引文仍按「有文本层」核验——阈值只覆盖「整页没有有效文本层」的情形，与任务书口径一致。
+
+---
+
+## 11. 验收自证修复轮（P13-Q，HEAD `6f66e09`）
+
+> 第三方复核发现：P12-Q 把「非主试卷的 sourceFileId」一律标 unverifiable 放行，而修复输入的工具示例把 evidence 写成写死的 `answer-source`——既不是主试卷、也不是作业里任何真实文件。真实模型照抄示例时，**所有引文都跳过比对、以 unverifiable 落库，编造的引文也能通过，P9 的核验等于失效**。受控假模型用请求里的真实 ID，所以既有测试看不到这个问题。
+
+### 11.1 用户能感知到的变化
+
+1. **来源造不了假**：evidence 的 sourceFileId 现在三分类——等于主试卷 id 照常对照完整原文核验；是作业 `sourceFiles` 里真实存在的其它文件（如单独上传的答案文件）标 `unverifiable`（P12-Q 行为保留）；**其它任何值整批拒绝**（`CLOUD_EDIT_EVIDENCE_SOURCE_UNKNOWN:<index>`），错误信息直接告诉模型合法的 sourceFileId 是什么。照抄错误示例的编辑会被当场拒绝并带着正确指引重试，而不是静默落库。
+2. **示例不再教模型编造来源**：修复输入的工具示例（apply_edits / record_ruling / finish / finish_packet 的 evidence 示例）全部注入当前作业**真实的主试卷 id**，prompt 里不再出现任何写死的占位 id。
+
+### 11.2 提交列表
+
+| # | 提交 | 内容 |
+|---|---|---|
+| 38 | `6f66e09` | **P13-Q**：sourceFileId 三分类（`EvidenceSourceContext` 携带主试卷 id 与作业清单）；工具示例注入真实主试卷 id；受控服务 `copyExampleSourceId` 剧本键；用例 (a)(b)(c)(d) |
+
+### 11.3 证据等级
+
+| 结论 | 等级 | 具体是什么 | **不是**什么 |
+|---|---|---|---|
+| 编造来源整批拒绝并给出合法 id | 仅单元测试（写入层） | `a_fabricated_source_file_id_rejects_the_batch_and_names_the_legal_id` | — |
+| 作业内真实其它文件 → unverifiable 放行 | 仅单元测试（写入层） | `evidence_from_a_real_answer_file_in_the_job_is_marked_unverifiable_not_rejected`（P12-Q 行为钉住） | 无真实多源作业的端到端样本（仓库无此 fixture，如实不冒高） |
+| prompt 里每个 sourceFileId 都是主试卷真实 id | 命令处理器层（含真实 HTTP） | `repair_prompt_only_ever_names_the_real_main_source_file_id`（两种模式、真实网关、逐处扫描） | — |
+| 照抄示例的行为被端到端钉住 | 命令处理器层（含真实 HTTP） | `a_service_that_copies_the_example_source_file_id_verifies_and_lands`：真起受控服务，剧本故意从 prompt 工具示例原样抄 id | 真实模型是否照抄示例属行为推断；受控剧本模拟的是「最可能的照抄路径」 |
+
+### 11.4 先红后绿
+
+| 用例 | 红的形态 |
+|---|---|
+| (a) `a_fabricated_source_file_id_...` | 临时退回 P12-Q 旧行为（未知 id 放行）：`left: Applied / right: Rejected` |
+| (b) `evidence_from_a_real_answer_file_in_the_job_...` | P12-Q 已红过（本轮为钉住，常绿）；分类落地时曾因 known 清单语义短暂红过一次，属实现回调 |
+| (c) `repair_prompt_only_ever_names_...` | 注入参数临时改回 `"answer-source"`：prompt 含占位 id 断言红 |
+| (d) `a_service_that_copies_the_example_...` | 示例未修时：复制 id 被拒、答案留 B（`left: ["B"] / right: ["A"]`）；修复后编辑落地且 `evidenceUnverifiable == []` |
+
+复核子代理变异（2 处，独立执行、精确还原）：M1 三分类 `contains` 恒真 → (a) 红（编造 id 落库）；M2 注入参数改回写死占位 → (c) 红（prompt 含 `answer-source`）。
+
+### 11.5 全量数字与上一轮对比
+
+| 门禁 | P12-Q 轮 | 本轮（HEAD `6f66e09`） | 变化 |
+|---|---|---|---|
+| `cd src-tauri && cargo test --lib` | 1131 / 0 / 11 | **1134 / 0 / 11** | +3 |
+| `cargo test --lib cloud_repair` | 136 | **139** | +3 |
+| `npx vitest run` | 392 passed（1 suite 缺 `selenium-webdriver` 加载失败） | **392 passed**（同因同 suite 失败） | 无变化（环境基线） |
+| `npx tsc --noEmit` | `exit 0` | **`exit 0`** | 无变化 |
+
+### 11.6 未执行项及原因
+
+- CDP 实机（真实模型照抄示例的行为验证）：macOS 无 WebView2 通道，未执行；(d) 的受控剧本是该路径的命令处理器层等价物。
+- 真实模型验收：无额度，未执行。
+- 真实多源（试卷 + 答案文件）作业端到端：仓库无此 fixture，(b) 如实标「仅单元测试」。
+
+### 11.7 偏离本任务之处及理由
+
+1. **「作业清单读不到就不分类」的三态退让**：任务书只给了三分类；实现里 `load_job` 失败（生产不可达——每回合开头必 `load_job`）时对 id 是否真实**不下编造结论**，全部标 unverifiable。理由：对「不知道存不存在」的 id 下编造结论，与对无文本层的页下编造结论是同一类错误（三态不坍缩）。复核确认该退让不可被系统性滥用。
+2. **复核的两条非阻断观察记录在案、未改**：① SOURCE_UNKNOWN 错误串在 record_ruling 路径经冒号重拼后外观变为 `...:<evidenceIndex>:<rulingIndex>: 原文`（裁定照拒、合法 id 仍在信息里）；② 主 id 空时兜底 `job_id` 的路径在生产不可达（每回合开头必 `load_job` + `main_source_for_cloud`，失败则没有模型回合）。
+3. **遗留风险记入 STATE、本轮不修**：`MIN_TEXT_LAYER_CHARS=8` 下「一行文字标题 + 扫描表格」的答案页上，从扫描图片读来的真实引文仍会被误拒；阈值调低会削弱反证能力，等真实样本再校准。
