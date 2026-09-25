@@ -437,8 +437,10 @@ export function ExamCanvas(props: ExamCanvasProps) {
   const [audioStatus, setAudioStatus] = useState<ListeningAudioStatus>();
   const jobId = props.authoring.jobId;
   const reloadAudio = useCallback((verify: boolean) => {
+    // 阅读稿没有音频绑定，不发这次 IPC（此前只有听力头部会拉，现在拉取上提了）。
+    if (!isListening(props.authoring)) return;
     getListeningAudio(jobId, verify).then(setAudioStatus).catch(() => setAudioStatus(undefined));
-  }, [jobId]);
+  }, [jobId, props.authoring]);
   useEffect(() => reloadAudio(true), [reloadAudio]);
   const listeningPartViews = useMemo(
     () => (listening ? listeningParts(props.authoring, audioStatus?.bindings ?? []) : undefined),
