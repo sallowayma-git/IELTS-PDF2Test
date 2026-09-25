@@ -31,6 +31,7 @@ import { getPublishPreflight, listLibraryItems, type PublishCheckResultV1 } from
 import type { ProcessingState } from "../../api/processingClient";
 import { processingNoteOf } from "./workspaceStatus";
 import { answerPageStatusOf, describeAnswerPageRetry } from "./answerPageStatus";
+import { findTargetElement } from "./locate";
 
 // 题目工作区（计划 §16.6 / §9.10）。
 // 打开就是最终 IELTS 题面；左侧 passage、右侧 questions 由 ExamCanvas 渲染。
@@ -204,29 +205,10 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   /** 点击问题定位到题面上对应的位置。返回是否真的找到了可定位的元素。 */
   function locateTarget(targetId: string): boolean {
     setSelectedId(targetId);
-    // 答案位的 id（如 `q27`）**不一定**出现在 DOM 上：completion 的答案位是**行内**渲染在
-    // stimulus 里的，宿主元素带的是**内容节点 id**（`data-editor-id`），不是 slotId；
-    // 只有非行内列表版式才给元素加 `data-question-id={slotId}`。
-    // 因此除了 slotId，还要按 `answerSlots[slotId].hostNodeId` 再找一次 ——
-    // 否则「第 27 题还没有答案」这条阻断项点了没有任何反应（实测确实如此）。
-    const hostNodeId = editor.draft?.answerSlots?.[targetId]?.hostNodeId;
-    // **第三跳：内容节点 id**。实测 `demanding-reading-passage-3.pdf` 上，
-    // `answerSlots["q27"].hostNodeId` 是 **stimulus 节点**（`group-1-stimulus-b032`），
-    // 而真正渲染答案输入框的那个节点是 `taskGroups[0].stimulus[1].children[3]`
-    // （id = `slot-node-q27`，`type = answer_slot`，带 `slotId`）。前两跳都落空，
-    // 于是「去填写」只给出「找不到」——按钮没坏，但它没能把用户送到该填的地方。
-    // 这里直接在草稿的题组里按 `slotId` 找回承载该答案位的内容节点 id。
-    const contentNodeIds = contentNodeIdsForSlot(editor.draft, targetId);
-    const candidates = [targetId, hostNodeId, ...contentNodeIds]
-      .filter((value): value is string => typeof value === "string" && value.length > 0)
-      .filter((value, index, all) => all.indexOf(value) === index);
-    const target = Array.from(document.querySelectorAll<HTMLElement>(
-      "[data-editor-id], [data-question-id], [data-response-group-id]"
-    )).find((element) => [
-      element.dataset.editorId,
-      element.dataset.questionId,
-      element.dataset.responseGroupId
-    ].some((value) => value !== undefined && candidates.includes(value)));
+    // 三跳查找（slotId → hostNodeId → 内容节点 id）抽到 locate.ts：
+    // 底部题号导航（QuestionNavBar）点击后要走同一套规则，两边不允许漂移。
+    // 历史背景见 locate.ts 顶注——前两跳在内联填空上都会落空，实测确有第三跳。
+    const target = findTargetElement(targetId, editor.draft);
     target?.scrollIntoView({ block: "center", behavior: "smooth" });
     // 文档级问题（`SIGNIFICANT_REGION_UNASSIGNED` / `RUNTIME_COMPILER_FAILED` 的 targetId 是
     // "document"）在题面上没有对应元素。以前这里静默什么都不做，用户会以为按钮坏了；
@@ -821,36 +803,6 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
       ) : null}
     </section>
   );
-}
-
-/**
- * 草稿里承载某个答案位的**内容节点 id**。
- *
- * 内联填空（completion）的答案输入框渲染在 stimulus 内部，宿主元素带的是**内容节点 id**
- * （`data-editor-id = "slot-node-q27"`），既不是 slotId（`q27`），也不是
- * `answerSlots["q27"].hostNodeId`（那是 **stimulus 节点** id）。只按前两者找会全部落空，
- * 「去填写」就只剩一句「找不到」。
- *
- * 只遍历 `taskGroups`：内联答案位一定在题组的 prompt / stimulus 里（passage 里不会有
- * 可作答的答案位），这样既够用又不用深走整份草稿（草稿里的 sourceAnchors 很大）。
- */
-function contentNodeIdsForSlot(draft: IeltsAuthoringIRV2 | undefined, slotId: string): string[] {
-  if (!draft || !slotId) return [];
-  const found: string[] = [];
-  const seen = new Set<unknown>();
-  const walk = (node: unknown): void => {
-    if (!node || typeof node !== "object" || seen.has(node)) return;
-    seen.add(node);
-    if (Array.isArray(node)) {
-      for (const item of node) walk(item);
-      return;
-    }
-    const record = node as Record<string, unknown>;
-    if (record.slotId === slotId && typeof record.id === "string" && record.id) found.push(record.id);
-    for (const value of Object.values(record)) walk(value);
-  };
-  walk(draft.taskGroups);
-  return found;
 }
 
 /** 工作区标题原位编辑（计划 §9.10「标题（可编辑）」，M1 落地）。

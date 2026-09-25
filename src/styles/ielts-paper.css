@@ -1,0 +1,64 @@
+/* ================================================================
+   基准设计令牌（ielts-paper）。
+   来源：学生端真实阅读页 reading-practice-unified.html 的 :root 令牌，
+   一比一搬到 --paper-* 前缀下。作用域限定在 .workspace-page（工作区外壳）
+   与 .exam-canvas-v2（题面画布，legacy 逃生通道里也在用），
+   不污染题库页 / 设置页 / 写作页 —— 它们继续用 tokens.css 的旧令牌。
+   语义：纸面风格 —— 无卡片、方角、灰黑色调，#418fc6 / #1f6387 作强调色。
+   ================================================================ */
+
+.workspace-page,
+.exam-canvas-v2 {
+  /* 布局尺度（基准的 header / intro / footer / 分隔条） */
+  --paper-header-height: 56px;
+  --paper-intro-height: 34px;
+  --paper-footer-height: 53.5px;
+  --paper-splitter-width: 2px;
+
+  /* 墨色与线 */
+  --paper-ink: #111;
+  --paper-muted-ink: #565656;
+  --paper-line: #c9c9c9;
+  --paper-soft-line: #d8d8d5;
+
+  /* 面 */
+  --paper-intro-bg: #f2f3ef;
+  --paper-panel: #ffffff;
+
+  /* 强调与焦点（基准没有绿色系；success/correct 保留基准自带的深绿） */
+  --paper-accent: #418fc6;
+  --paper-focus: #1f6387;
+  --paper-focus-soft: rgba(31, 99, 135, 0.18);
+
+  /* 控件 */
+  --paper-control-bg: #fff;
+  --paper-control-hover: #f2f2f2;
+  --paper-choice-hover-bg: rgb(228, 228, 228);
+  --paper-choice-selected-bg: rgb(187, 216, 240);
+
+  /* 判分色（本轮只用于状态提示，不做判分） */
+  --paper-success: #237a3b;
+  --paper-correct: #237a3b;
+  --paper-correct-bg: #eaf5ec;
+  --paper-danger: #b3261e;
+  --paper-incorrect: #b3261e;
+  --paper-incorrect-bg: #fbeaea;
+  --paper-partial: #8a5a00;
+  --paper-partial-bg: #fff4d6;
+  --paper-unanswered: #666;
+  --paper-unanswered-bg: #f2f2f2;
+
+  --paper-shadow: 0 3px 12px rgba(0, 0, 0, 0.24);
+}
+
+/* 键盘焦点与基准一致：2px focus 色描边。只作用于工作区内部，
+   题库 / 设置页维持各自的全局焦点样式。 */
+.workspace-page button:focus-visible,
+.workspace-page a:focus-visible,
+.workspace-page input:focus-visible,
+.workspace-page textarea:focus-visible,
+.workspace-page select:focus-visible,
+.workspace-page [tabindex]:focus-visible {
+  outline: 2px solid var(--paper-focus);
+  outline-offset: 1px;
+}

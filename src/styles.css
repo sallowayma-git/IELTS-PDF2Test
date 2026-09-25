@@ -4,6 +4,8 @@
 @import "./styles/tokens.css";
 @import "./styles/reset.css";
 @import "./styles/legacy.css";
+/* 基准令牌（--paper-*）必须先于 workspace.css：工作区的 --workspace-* 别名引用它。 */
+@import "./styles/ielts-paper.css";
 @import "./styles/app-shell.css";
 @import "./styles/library.css";
 @import "./styles/workspace.css";

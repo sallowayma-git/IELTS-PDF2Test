@@ -4,22 +4,25 @@
    Editing controls are preserved but styled to match the paper UI.
    ================================================================ */
 
-:root {
-  --workspace-header-height: 56px;
-  --workspace-intro-height: 34px;
-  --workspace-splitter-width: 2px;
-  --workspace-ink: #111;
-  --workspace-muted-ink: #565656;
-  --workspace-line: #c9c9c9;
-  --workspace-soft-line: #d8d8d5;
-  --workspace-intro-bg: #f2f3ef;
-  --workspace-panel: #ffffff;
-  --workspace-accent: #418fc6;
-  --workspace-focus: #1f6387;
-  --workspace-focus-soft: rgba(31, 99, 135, 0.18);
-  --workspace-success: #237a3b;
-  --workspace-danger: #b3261e;
-  --workspace-shadow: 0 3px 12px rgba(0, 0, 0, 0.24);
+/* 工作区令牌别名：取值统一来自 ielts-paper.css 的 --paper-*（基准页令牌）。
+ * 既有规则继续用 --workspace-* 名字，两个名字永远指向同一个值；
+ * 作用域在 .workspace-page 上（不能挂在 :root —— --paper-* 本身就定义在这个作用域）。 */
+.workspace-page {
+  --workspace-header-height: var(--paper-header-height);
+  --workspace-intro-height: var(--paper-intro-height);
+  --workspace-splitter-width: var(--paper-splitter-width);
+  --workspace-ink: var(--paper-ink);
+  --workspace-muted-ink: var(--paper-muted-ink);
+  --workspace-line: var(--paper-line);
+  --workspace-soft-line: var(--paper-soft-line);
+  --workspace-intro-bg: var(--paper-intro-bg);
+  --workspace-panel: var(--paper-panel);
+  --workspace-accent: var(--paper-accent);
+  --workspace-focus: var(--paper-focus);
+  --workspace-focus-soft: var(--paper-focus-soft);
+  --workspace-success: var(--paper-success);
+  --workspace-danger: var(--paper-danger);
+  --workspace-shadow: var(--paper-shadow);
   --workspace-hover-overlay: rgba(0, 0, 0, 0.03);
   --workspace-active-overlay: rgba(0, 0, 0, 0.05);
   --workspace-focus-overlay: rgba(0, 0, 0, 0.06);
@@ -511,26 +514,15 @@
   box-shadow: none;
 }
 
-.workspace-body > .exam-canvas-v2 > .v2-passage-pane,
-.workspace-body > .exam-canvas-v2 > .v2-question-pane {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  background: var(--workspace-panel);
-  padding: 27px var(--workspace-spacing-base) 110px;
-}
-
+/* 栏位归属：左栏第 1 列、题目栏第 3 列（中列留给分隔条）。
+ * 两栏自身的滚动/留白/滚动条规则统一在 exam-canvas.css（.exam-canvas-v2 .reading-pane），
+ * 这里不再重复一份，避免两处数值漂移。 */
 .workspace-body > .exam-canvas-v2 > .v2-passage-pane {
   grid-column: 1;
 }
 
 .workspace-body > .exam-canvas-v2 > .v2-question-pane {
   grid-column: 3;
-  padding-left: 17px;
-  padding-right: 31px;
 }
 
 /* Divider */
@@ -841,17 +833,8 @@ body.workspace-resizing * {
   border: 0;
   box-shadow: none;
 }
-
-.workspace-student-preview > .exam-canvas-v2 > .v2-passage-pane,
-.workspace-student-preview > .exam-canvas-v2 > .v2-question-pane {
-  min-width: 0;
-  min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 27px var(--workspace-spacing-base) 110px;
-  background: var(--workspace-panel);
-}
+/* 两栏的滚动/留白规则在 exam-canvas.css；P3 会把这里改成
+   与 .workspace-body 相同的「左栏 / 分隔条 / 右栏」三列网格。 */
 
 /* ================ 识别建议面板 ================ */
 /* 折叠区域：横向占满工作区、纵向按内容取高。**高度上限不在这里写**——两个辅助面板互斥展开、

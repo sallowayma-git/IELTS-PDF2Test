@@ -1,8 +1,329 @@
-/* ExamCanvas 新增层：原位文本编辑器与 Matching 矩阵。
- * `.exam-canvas-v2` 的题面排版规则仍在 legacy.css，author/student 共用，
- * 因此这里只加编辑态与矩阵，不改结构排版（保持 §19.6 parity）。 */
+/* ================================================================
+   ExamCanvas 题面（author / student 共用，§19.6 parity）。
+   版式、间距、配色对齐学生端基准页 reading-practice-unified.html：
+   纸面风格 —— 无卡片、方角、灰黑色调，#418fc6 / #1f6387 作强调色。
+   令牌来自 ielts-paper.css 的 --paper-*（作用域 .workspace-page /
+   .exam-canvas-v2，legacy 逃生通道里的画布也拿得到）。
+   本文件由「画布侧」改动独占；工作区外壳的规则在 workspace.css。
+   ================================================================ */
 
-/* 原位编辑：视觉上仍是题面文字，只多一个淡色 focus ring（计划 §9.3）。 */
+/* ---------------- 画布骨架：两栏滚动纸面 ---------------- */
+/* 独立使用（legacy 逃生通道）时是普通两栏网格；在工作区里
+   .workspace-body > .exam-canvas-v2 为 display:contents，
+   栏位划分由 workspace.css 的三列网格接管。 */
+.exam-canvas-v2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--paper-panel, #fff);
+}
+
+/* 两栏：滚动行为保留，滚动条本体隐藏（基准 .pane）。 */
+.exam-canvas-v2 .reading-pane {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  background: var(--paper-panel, #fff);
+  /* 基准：左栏 27px 16px 110px */
+  padding: 27px 16px 110px;
+}
+
+.exam-canvas-v2 .reading-pane::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+/* 基准 #right：padding-left 17px / padding-right 31px */
+.exam-canvas-v2 .v2-question-pane {
+  padding-left: 17px;
+  padding-right: 31px;
+}
+
+/* ---------------- 原文与题面排版 ---------------- */
+.exam-canvas-v2 .v2-paragraph { margin: 0 0 13px; line-height: 1.55; }
+/* 基准 #left h2-h4：17px，20/8 外边距 */
+.exam-canvas-v2 .v2-heading { margin: 20px 0 8px; font-size: 17px; line-height: 1.4; }
+.exam-canvas-v2 .v2-list { margin: 0 0 13px 22px; line-height: 1.55; }
+.exam-canvas-v2 .v2-list li { margin: 0 0 4px; }
+.exam-canvas-v2 .v2-text.is-bold { font-weight: 700; }
+.exam-canvas-v2 .v2-text.is-italic { font-style: italic; }
+.exam-canvas-v2 .v2-text.is-underlined { text-decoration: underline; }
+
+/* 题组：无卡片纸面（基准 .unified-group） */
+.exam-canvas-v2 .unified-group { min-width: 0; margin: 0 0 31px; }
+.exam-canvas-v2 .v2-task-header { min-width: 0; }
+.exam-canvas-v2 .v2-task-header h2 {
+  margin: 0 0 5px;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+/* 基准 .question-instructions：margin 0 0 15px、行高 1.48 */
+.exam-canvas-v2 .v2-instruction { margin: 0 0 15px; line-height: 1.48; }
+.exam-canvas-v2 .v2-stimulus { min-width: 0; margin: 0; line-height: 1.55; }
+.exam-canvas-v2 .v2-response-prompt { min-width: 0; margin: 0 0 8px; line-height: 1.5; }
+
+/* 题目分组之间不再画分隔线，只留垂直间距（基准靠 27px 的题目间距分段） */
+.exam-canvas-v2 .v2-response-group { min-width: 0; margin: 0; }
+.exam-canvas-v2 .v2-response-group + .v2-response-group { margin-top: 27px; }
+
+/* ---------------- 选项行（基准 label.mc-option） ---------------- */
+.exam-canvas-v2 .v2-choice-options { min-width: 0; display: flex; flex-direction: column; }
+.exam-canvas-v2 .v2-choice-item {
+  position: relative;
+  display: flex;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 29px;
+  align-items: flex-start;
+  gap: 0;
+  margin: 0 0 14px;
+  padding: 2px 4px 2px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  line-height: 24px;
+  cursor: pointer;
+}
+.exam-canvas-v2 .v2-choice-item:last-child { margin-bottom: 0; }
+.exam-canvas-v2 .v2-choice-item:hover { background: rgba(0, 0, 0, 0.035); }
+/* 已选中的行（TSX 会在 checked 时加 .is-checked；:has 只是兜底） */
+.exam-canvas-v2 .v2-choice-item.is-checked,
+.exam-canvas-v2 .v2-choice-item:has(input:checked) {
+  background: var(--paper-choice-selected-bg, rgb(187, 216, 240));
+}
+.exam-canvas-v2 .v2-choice-item > span { flex: 1 1 auto; min-width: 0; }
+.exam-canvas-v2 .v2-choice-item input[type="radio"],
+.exam-canvas-v2 .v2-choice-item input[type="checkbox"] {
+  appearance: auto;
+  flex: 0 0 13px;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.exam-canvas-v2 .v2-choice-item input[type="radio"] { margin: 5px 6px 0 5px; }
+.exam-canvas-v2 .v2-choice-item input[type="checkbox"] { margin: 3px 8px 3px 4px; }
+
+/* TRUE/FALSE/NOT GIVEN 短标签选项（基准 .tfng-options）：横向排布 */
+.exam-canvas-v2 .v2-tfng-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0 0 0 12px;
+  min-width: 0;
+}
+.exam-canvas-v2 .v2-tfng-options .v2-choice-item {
+  display: inline-flex;
+  width: auto;
+  align-items: center;
+  min-height: 29px;
+  margin: 0;
+  padding: 2px 4px 2px 0;
+  line-height: 24px;
+}
+.exam-canvas-v2 .v2-tfng-options .v2-choice-item input[type="radio"] { margin: 0 6px 0 5px; }
+
+/* ---------------- 共享多选（基准为无边框 fieldset） ---------------- */
+.exam-canvas-v2 .v2-shared-selection { min-width: 0; margin: 0; padding: 0; border: 0; }
+.exam-canvas-v2 .v2-shared-selection legend { margin: 0 0 10px; padding: 0; font-weight: 700; }
+
+/* ---------------- 逐题列表（基准 .question-item：无卡片，27px 间距） ---------------- */
+.exam-canvas-v2 .v2-slot-list { display: grid; gap: 27px; min-width: 0; }
+.exam-canvas-v2 .v2-slot-question { position: relative; min-width: 0; margin: 0; }
+.exam-canvas-v2 .v2-slot-question-label {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+/* 题号必须整块显示，不允许被压成逐字符竖排（reset 的 overflow-wrap 继承 +
+   flex 最小内容宽度会把它折行，见 findings F13）。 */
+.exam-canvas-v2 .v2-slot-number,
+.exam-canvas-v2 .v2-slot-label {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+/* 基准里题号是墨色粗体，不是蓝色 */
+.exam-canvas-v2 .v2-slot-number { font-weight: 700; color: var(--paper-ink, #111); }
+.exam-canvas-v2 .v2-slot-label { font-weight: 700; color: var(--paper-ink, #111); }
+
+/* ---------------- 文本输入（基准 input.blank：1px #858585 直角框） ---------------- */
+.exam-canvas-v2 .v2-text-answer {
+  width: min(100%, 320px);
+  min-width: 120px;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 3px 7px;
+  border: 1px solid #858585;
+  border-radius: 0;
+  background: #fff;
+  color: var(--paper-ink, #111);
+  font: inherit;
+  vertical-align: middle;
+}
+.exam-canvas-v2 .v2-answer-slot-text > input {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 4ch;
+  max-width: 100%;
+  padding: 3px 7px;
+  border: 1px solid #858585;
+  border-radius: 0;
+  background: #fff;
+  color: var(--paper-ink, #111);
+  vertical-align: middle;
+}
+.exam-canvas-v2 .v2-text-answer:focus,
+.exam-canvas-v2 .v2-answer-slot-text > input:focus {
+  border-color: var(--paper-focus, #1f6387);
+  box-shadow: 0 0 0 2px var(--paper-focus-soft, rgba(31, 99, 135, 0.18));
+  outline: none;
+}
+
+.exam-canvas-v2 .v2-slot-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; min-width: 0; }
+.exam-canvas-v2 .v2-slot-chip {
+  border: 1px solid var(--paper-line, #c9c9c9);
+  border-radius: 0;
+  padding: 2px 8px;
+  font-size: 0.9rem;
+}
+
+/* 行内答案位 */
+.exam-canvas-v2 .v2-answer-slot { display: inline-flex; gap: 8px; align-items: center; }
+
+/* ---------------- 选项库 ---------------- */
+.exam-canvas-v2 .v2-option-bank { min-width: 0; margin: 14px 0; }
+.exam-canvas-v2 .v2-option-bank h4 { margin: 0 0 6px; font-size: 15px; font-weight: 700; }
+.exam-canvas-v2 .v2-option-bank ul { margin: 0; padding-left: 20px; }
+.exam-canvas-v2 .v2-option-bank li { margin: 6px 0; }
+
+/* ---------------- 表格（基准 .table-section：#6d6d6d 外框、#f2f2f2 表头） ---------------- */
+.exam-canvas-v2 .v2-table {
+  width: 100%;
+  margin: 12px 0;
+  border: 1px solid #6d6d6d;
+  border-radius: 0;
+  border-collapse: collapse;
+  background: #fff;
+}
+.exam-canvas-v2 .v2-table th,
+.exam-canvas-v2 .v2-table td {
+  border: 1px solid var(--paper-line, #c9c9c9);
+  padding: 10px;
+  vertical-align: top;
+  line-height: 1.45;
+}
+.exam-canvas-v2 .v2-table th { background: #f2f2f2; font-weight: 700; text-align: center; }
+
+/* ---------------- 流程图（无卡片化：细线方角） ---------------- */
+.exam-canvas-v2 .v2-flowchart { display: grid; gap: 10px; margin: 14px 0; min-width: 0; }
+.exam-canvas-v2 .v2-flow-step {
+  border: 1px solid var(--paper-line, #c9c9c9);
+  border-radius: 0;
+  padding: 8px 10px;
+  background: #fff;
+}
+
+/* ---------------- 视觉资源 ---------------- */
+.exam-canvas-v2 .v2-author-asset { margin: 16px 0; border: 1px solid transparent; border-radius: 0; }
+.exam-canvas-v2 .v2-asset-frame { position: relative; min-height: 120px; overflow: hidden; border-radius: 0; background: #fafafa; }
+.exam-canvas-v2 .v2-asset-frame > img { position: absolute; display: block; height: auto; user-select: none; }
+.exam-canvas-v2 .v2-asset-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 5px;
+  padding: 18px;
+  text-align: center;
+  border: 1px dashed #8f8f8f;
+}
+.exam-canvas-v2 .v2-asset-placeholder small { display: block; color: var(--paper-muted-ink, #565656); }
+.exam-canvas-v2 .v2-author-asset figcaption { margin-top: 7px; color: var(--paper-muted-ink, #565656); font-size: 0.9rem; text-align: center; }
+.exam-canvas-v2 .v2-canvas-hotspot {
+  position: absolute;
+  z-index: 2;
+  min-width: 28px;
+  min-height: 24px;
+  padding: 2px 5px;
+  overflow: hidden;
+  border: 2px solid var(--paper-focus, #1f6387);
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--paper-focus, #1f6387);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.exam-canvas-v2.is-student .v2-canvas-hotspot { border-color: #535353; color: #333; }
+.exam-canvas-v2 .v2-canvas-hotspot.is-pressed {
+  border-color: var(--paper-accent, #418fc6);
+  background: var(--paper-accent, #418fc6);
+  color: #fff;
+}
+
+/* ---------------- Matching 矩阵（基准 .matching-table：无框线、4px 行距） ---------------- */
+.v2-matching-matrix { min-width: 0; margin: 12px 0; overflow-x: auto; }
+
+.v2-matching-matrix > table {
+  min-width: max-content;
+  border-collapse: separate;
+  border-spacing: 0 4px;
+}
+
+.v2-matching-matrix thead th {
+  padding: 0 3px 4px;
+  text-align: center;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.v2-matching-matrix tbody td {
+  padding: 2px 3px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+/* 首列（题干）左对齐，正文行高 1.35（基准 tbody td:first-child） */
+.v2-matching-matrix tbody th {
+  padding: 3px 10px 3px 0;
+  text-align: left;
+  font-weight: 400;
+  line-height: 1.35;
+  vertical-align: middle;
+}
+
+.v2-matching-item-head { min-width: 220px; text-align: left; }
+.v2-matching-option-head { width: 44px; }
+.v2-matching-item { font-weight: 400; }
+.v2-matching-item .v2-slot-number { margin-right: 8px; font-weight: 700; color: var(--paper-ink, #111); }
+.v2-matching-prompt { overflow-wrap: anywhere; }
+
+.v2-matching-cell { text-align: center; }
+.v2-matching-cell label { display: grid; place-items: center; margin: 0; }
+.v2-matching-cell input { width: 13px; height: 13px; margin: 0; }
+
+.v2-matching-matrix tr.is-selected { background: rgba(65, 143, 198, 0.06); }
+
+.v2-matching-legend { display: grid; gap: 4px; margin: 10px 0 0; padding: 0; list-style: none; min-width: 0; }
+.v2-matching-legend li { display: flex; gap: 8px; min-width: 0; }
+.v2-matching-legend strong { min-width: 22px; }
+.v2-matching-legend span { min-width: 0; overflow-wrap: anywhere; }
+
+/* ---------------- 原位编辑（作者态；描边一律 focus 色，不再用绿） ---------------- */
 .inline-text-editor {
   display: inline-block;
   width: 100%;
@@ -10,9 +331,9 @@
   margin: 0;
   padding: 0;
   border: 0;
-  border-radius: 3px;
-  background: rgba(31, 138, 112, 0.06);
-  box-shadow: inset 0 0 0 1px rgba(31, 138, 112, 0.45);
+  border-radius: 0;
+  background: rgba(65, 143, 198, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(31, 99, 135, 0.45);
   color: inherit;
   font: inherit;
   line-height: inherit;
@@ -21,84 +342,112 @@
   overflow: hidden;
 }
 
-.inline-text-editor:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.inline-text-editor:focus { outline: 2px solid var(--paper-focus, #1f6387); outline-offset: 1px; }
 
-.exam-canvas-v2 .v2-text.v2-author-editable { border-radius: 3px; cursor: text; }
-.exam-canvas-v2 .v2-text.v2-author-editable:hover { background: rgba(31, 138, 112, 0.08); }
-.exam-canvas-v2 .v2-text.v2-author-editable:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.exam-canvas-v2 .v2-author-editable { border-radius: 0; cursor: text; }
+/* 可编辑文字 hover：淡蓝底（基准强调色的 8%） */
+.exam-canvas-v2 .v2-author-editable:hover { background: rgba(65, 143, 198, 0.08); }
+.exam-canvas-v2 .v2-author-editable:focus { outline: 2px solid var(--paper-focus, #1f6387); outline-offset: 1px; }
 .exam-canvas-v2 .v2-text.is-editing { background: transparent; }
 
-/* Matching 矩阵：左侧题干、上方选项列、下方选项正文列出一次（计划 §9.8）。 */
-.v2-matching-matrix { min-width: 0; margin: 10px 0; overflow-x: auto; }
+/* 作者态 hover/选中：蓝系虚线与描边，替换旧橙色/绿色 */
+.exam-canvas-v2.is-author .v2-author-node,
+.exam-canvas-v2.is-author .v2-task-group,
+.exam-canvas-v2.is-author .v2-response-group,
+.exam-canvas-v2.is-author .v2-slot-question { border-radius: 0; transition: outline-color 120ms ease, background 120ms ease; }
+.exam-canvas-v2.is-author .v2-author-node:hover,
+.exam-canvas-v2.is-author .v2-task-group:hover,
+.exam-canvas-v2.is-author .v2-response-group:hover { outline: 1px dashed rgba(65, 143, 198, 0.5); outline-offset: 3px; }
+.exam-canvas-v2.is-author .is-selected { outline: 2px solid #418fc6; outline-offset: 3px; background: rgba(65, 143, 198, 0.06); }
 
-.v2-matching-matrix > table {
-  min-width: max-content;
-  border-collapse: collapse;
+/* 结构工具条（基准 #selbar 质感：白底、1px #737373、方形） */
+.exam-canvas-v2.is-author .v2-table-frame,
+.exam-canvas-v2.is-author .v2-response-group,
+.exam-canvas-v2.is-author .v2-answer-slot-frame { position: relative; }
+.exam-canvas-v2.is-author .v2-answer-slot-frame { display: inline-flex; align-items: center; }
+.exam-canvas-v2.is-author .v2-author-tools {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: calc(100% - 12px);
+  padding: 4px;
+  border: 1px solid #737373;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-55%);
+  transition: opacity 120ms ease;
 }
-
-.v2-matching-matrix th,
-.v2-matching-matrix td {
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--line);
-  text-align: left;
-  vertical-align: top;
+.exam-canvas-v2.is-author .v2-table-frame:hover > .v2-author-tools,
+.exam-canvas-v2.is-author .v2-table-frame:focus-within > .v2-author-tools,
+.exam-canvas-v2.is-author .v2-response-group:hover > .v2-author-tools,
+.exam-canvas-v2.is-author .v2-response-group:focus-within > .v2-author-tools,
+.exam-canvas-v2.is-author .v2-answer-slot-frame:hover > .v2-author-tools,
+.exam-canvas-v2.is-author .v2-answer-slot-frame:focus-within > .v2-author-tools {
+  opacity: 1;
+  pointer-events: auto;
 }
-
-.v2-matching-item-head { min-width: 220px; }
-.v2-matching-option-head { width: 44px; text-align: center; font-weight: 900; }
-
-.v2-matching-item { display: table-cell; font-weight: 400; }
-.v2-matching-item .v2-slot-number { margin-right: 8px; font-weight: 900; }
-.v2-matching-prompt { overflow-wrap: anywhere; }
-
-.v2-matching-cell { text-align: center; }
-.v2-matching-cell label { display: grid; place-items: center; margin: 0; }
-.v2-matching-cell input { width: auto; margin: 0; }
-
-.v2-matching-matrix tr.is-selected { background: rgba(31, 138, 112, 0.08); }
-
-.v2-matching-legend { display: grid; gap: 4px; margin: 10px 0 0; padding: 0; list-style: none; min-width: 0; }
-.v2-matching-legend li { display: flex; gap: 8px; min-width: 0; }
-.v2-matching-legend strong { min-width: 22px; }
-.v2-matching-legend span { min-width: 0; overflow-wrap: anywhere; }
-
-/* 选项行：控件固定宽度，文字占满剩余空间并可收缩（findings F13）。 */
-.exam-canvas-v2 .v2-choice-item { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
-.exam-canvas-v2 .v2-choice-item > span { flex: 1 1 auto; min-width: 0; }
-.exam-canvas-v2 .v2-shared-selection { min-width: 0; }
-/* 答案控件随题目栏宽度伸缩：窄栏里占满可用宽度，宽栏里不超过 320px。
- * `min(100%, 320px)` 就是这个语义；这里补 `max-width` 与 `box-sizing`，
- * 让它在题目栏被压窄时一定不会溢出，也不会因为 `overflow-wrap: anywhere`
- * 把内部内容挤到几像素宽。 */
-.exam-canvas-v2 .v2-text-answer {
-  width: min(100%, 320px);
-  min-width: 0;
-  max-width: 100%;
-  box-sizing: border-box;
+.exam-canvas-v2.is-author .v2-author-tools.is-compact {
+  top: 50%;
+  right: auto;
+  left: calc(100% + 4px);
+  flex-wrap: nowrap;
+  transform: translateY(-50%);
 }
+.exam-canvas-v2.is-author .v2-author-tools button {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 3px 7px;
+  border: 1px solid #737373;
+  border-radius: 0;
+  background: #fff;
+  color: #333;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.exam-canvas-v2.is-author .v2-author-tools button:hover:not(:disabled) { background: var(--paper-control-hover, #f2f2f2); color: #111; }
+.exam-canvas-v2.is-author .v2-author-tools button:focus-visible { outline: 2px solid var(--paper-focus, #1f6387); outline-offset: 1px; }
+.exam-canvas-v2.is-author .v2-author-tools button:disabled { opacity: 0.35; cursor: not-allowed; }
+.exam-canvas-v2.is-author .v2-author-option-tools { display: inline-flex; align-items: center; gap: 2px; padding-left: 4px; border-left: 1px solid var(--paper-line, #c9c9c9); }
+.exam-canvas-v2.is-author .v2-author-option-tools b { min-width: 1.25rem; padding: 0 3px; text-align: center; color: var(--paper-ink, #111); font-size: 0.78rem; }
 
-/* 听力：没有 passage 栏；头部（Part 导航 + 音频）在上，题目在下，单列。 */
+/* ---------------- 听力头部（纸面化；Part 导航后续交给底部题号栏） ---------------- */
 .exam-canvas-v2.is-listening { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
 .listening-header {
   display: grid;
   gap: 10px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--exam-border);
-  background: var(--exam-surface-alt);
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--paper-soft-line, #d8d8d5);
+  background: var(--paper-intro-bg, #f2f3ef);
 }
 .listening-part-nav { display: flex; flex-wrap: wrap; gap: 6px; }
 .listening-part-tab {
   padding: 5px 12px;
-  border: 1px solid var(--exam-border);
-  border-radius: 999px;
-  background: var(--exam-surface);
+  border: 1px solid #8f8f8f;
+  border-radius: 3px;
+  background: #fff;
   cursor: pointer;
 }
-.listening-part-tab.active { border-color: var(--exam-accent); color: var(--exam-accent); font-weight: 600; }
-.listening-part-tab.is-blocked { border-color: var(--danger); }
+.listening-part-tab.active { border-color: var(--paper-accent, #418fc6); color: var(--paper-accent, #418fc6); font-weight: 600; }
+.listening-part-tab.is-blocked { border-color: var(--paper-danger, #b3261e); }
 .listening-audio-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-width: 0; }
 .listening-audio-player { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .listening-audio-player audio { max-width: 100%; }
-.listening-audio-state.is-missing { color: var(--muted); }
-.listening-audio-state.is-blocked { color: var(--danger); }
+.listening-audio-state.is-missing { color: var(--paper-muted-ink, #565656); }
+.listening-audio-state.is-blocked { color: var(--paper-danger, #b3261e); }
 .listening-structure-missing { padding: 24px 16px; }
+
+/* 独立使用时的窄屏回退（工作区内部由 workspace.css 的 980px 断点接管） */
+@media (max-width: 760px) {
+  .exam-canvas-v2 { grid-template-columns: minmax(0, 1fr); }
+}
