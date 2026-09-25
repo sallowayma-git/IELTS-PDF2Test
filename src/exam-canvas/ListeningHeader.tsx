@@ -33,19 +33,18 @@ function AudioPlayer({ part }: { part: ListeningPartView }) {
   </span>;
 }
 
-// 听力工作区头部：Part 导航 + 当前 Part 的音频播放器 + 唯一的「添加音频」入口。
+// 听力工作区头部：当前 Part 的音频播放器 + 唯一的「添加音频」入口。
+// Part 切换已交给底部题号导航（QuestionNavBar），这里只按 selectedPart 展示对应音频。
 export function ListeningHeader({
   itemId,
   authoring,
   mode,
-  selectedPart,
-  onSelectPart
+  selectedPart
 }: {
   itemId: string;
   authoring: IeltsAuthoringIRV2;
   mode: "author" | "student";
   selectedPart?: number;
-  onSelectPart: (ordinal: number) => void;
 }) {
   const [status, setStatus] = useState<ListeningAudioStatus>();
   const [busy, setBusy] = useState(false);
@@ -84,15 +83,6 @@ export function ListeningHeader({
   const actionLabel = noAudio ? "添加音频" : current.audio ? `替换 ${current.label} 音频` : `为 ${current.label} 添加音频`;
 
   return <header className="listening-header" data-testid="listening-header">
-    <nav className="listening-part-nav" aria-label="听力 Part">
-      {parts.map((part) => <button
-        key={part.ordinal}
-        type="button"
-        className={`listening-part-tab${part.ordinal === current.ordinal ? " active" : ""}${part.audio && !part.audio.playable ? " is-blocked" : ""}`}
-        aria-pressed={part.ordinal === current.ordinal}
-        onClick={() => onSelectPart(part.ordinal)}
-      >{part.label}{part.audio ? "" : " ·"}</button>)}
-    </nav>
     <div className="listening-audio-row">
       <AudioPlayer part={current} />
       {mode === "author" ? (

@@ -6,6 +6,10 @@ import { buildReadingInteractionModelV2, buildRuntimeViewModelV2 } from "../serv
 import { taskTypeLabel } from "../utils/displayLabels";
 import { ListeningHeader } from "./ListeningHeader";
 import { isListening, listeningParts, listeningStructureMissing, visibleTaskIds } from "./listeningWorkspace";
+import { QuestionNavBar } from "./QuestionNavBar";
+import { buildQuestionNavModel } from "./questionNavModel";
+import { isTfngOptionSet } from "./tfngOptions";
+import { usePaneDivider } from "../features/editor/usePaneDivider";
 import type { AnswerValueV2, ContentNodeV2, IeltsAuthoringIRV2, OptionV2, ResponseGroupV2, TaskGroupV2 } from "../types";
 
 export type ExamCanvasStructureAction =
@@ -423,12 +427,27 @@ export function ExamCanvas(props: ExamCanvasProps) {
     if (props.mode === "author") props.onAnswerChange?.(slotId, { kind: "option", labels: next, assignment });
     else setStudentAnswers((answers) => ({ ...answers, [slotId]: next }));
   };
-  // 听力：没有 passage 栏；头部是 Part 导航 + 音频。Part 映射到题组时只显示该 Part 的题组。
+  // 听力：没有 passage 栏；头部只有音频行（Part 切换交给底部题号导航）。
+  // Part 映射到题组时只显示该 Part 的题组；底部导航与这里共用同一个 selectedPart state。
   const listening = isListening(props.authoring);
   const [selectedPart, setSelectedPart] = useState<number>(1);
+  const listeningPartViews = useMemo(() => (listening ? listeningParts(props.authoring, []) : undefined), [listening, props.authoring]);
   const shownTaskIds = listening
-    ? new Set(visibleTaskIds(runtime.taskGroups.map((task) => task.taskId), listeningParts(props.authoring, []), selectedPart))
+    ? new Set(visibleTaskIds(runtime.taskGroups.map((task) => task.taskId), listeningPartViews ?? [], selectedPart))
     : undefined;
+  // 底部题号导航的数据（author 看 answerKey，student 看预览本地作答；都不写回题稿）。
+  const navModel = useMemo(() => buildQuestionNavModel({
+    mode: props.mode,
+    taskGroups: runtime.taskGroups,
+    questionDisplayMap: runtime.questionDisplayMap,
+    answerSlots: runtime.answerSlots,
+    answerKey: props.authoring.answerKey,
+    studentAnswers,
+    listeningParts: listeningPartViews,
+    selectedPart: listening ? selectedPart : undefined
+  }), [props.mode, runtime, props.authoring.answerKey, studentAnswers, listeningPartViews, listening, selectedPart]);
+  // 原文 | 题目 的可拖动分隔条（workspace.css 负责视觉，本组件只渲染元素）。
+  const { dividerProps } = usePaneDivider(props.authoring.jobId);
   const optionsFor = (task: TaskGroupV2, response: ResponseGroupV2) => interactionModel.responseGroups[response.responseGroupId]?.options ?? task.optionBank?.options ?? [];
 
   return <CanvasAnswersContext.Provider value={{ answers: canvasAnswers, setText, setOption }}>
@@ -439,14 +458,16 @@ export function ExamCanvas(props: ExamCanvasProps) {
         authoring={props.authoring}
         mode={props.mode}
         selectedPart={selectedPart}
-        onSelectPart={setSelectedPart}
       />
     ) : (
-    <main id="left" className="reading-pane passage-pane pane v2-passage-pane">
-      <article className="reading-html passage-html v2-passage-content" aria-label={runtime.title}>
-        <ContentNodes nodes={runtime.passage} canvas={props} />
-      </article>
-    </main>
+      <>
+        <main id="left" className="reading-pane passage-pane pane v2-passage-pane">
+          <article className="reading-html passage-html v2-passage-content" aria-label={runtime.title}>
+            <ContentNodes nodes={runtime.passage} canvas={props} />
+          </article>
+        </main>
+        <div id="divider" {...dividerProps} />
+      </>
     )}
     <section id="right" className="reading-pane question-pane pane v2-question-pane" aria-label={listening ? "Listening questions" : "Reading questions"}>
       <div id="question-groups" className="question-groups v2-question-groups">
@@ -501,18 +522,26 @@ export function ExamCanvas(props: ExamCanvasProps) {
             return <section key={response.responseGroupId} className={`v2-response-group${props.selectedId === response.responseGroupId ? " is-selected" : ""}`} data-response-group-id={response.responseGroupId} data-assignment={response.assignment} onClick={(event) => { if (props.mode === "author") { event.stopPropagation(); props.onSelect?.(response.responseGroupId); } }}>
               {response.prompt?.length ? <div className="v2-response-prompt"><ContentNodes nodes={response.prompt} canvas={props} /></div> : null}
               {options.length || (props.mode === "author" && (response.kind === "choice" || response.kind === "matching")) ? <OptionBankTools canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} /> : null}
-              {inlineStimulusComplete ? null : unordered ? <fieldset className="v2-shared-selection"><legend>Select {response.cardinality.exact || response.slotIds.length} options for {response.slotIds.map((slotId) => runtime.questionDisplayMap[slotId]).join(", ")}</legend>{options.map((option) => { const checked = response.slotIds.some((slotId) => (canvasAnswers[slotId] ?? []).includes(option.label)); return <label key={option.optionId} className="v2-choice-item"><input type="checkbox" value={option.label} checked={checked} disabled={!checked && unorderedSelected >= unorderedLimit} onChange={(event) => { const selected = Array.from(new Set(response.slotIds.flatMap((slotId) => canvasAnswers[slotId] ?? []).filter((value) => value !== option.label))).slice(0, response.slotIds.length); if (event.target.checked) selected.push(option.label); response.slotIds.forEach((slotId, index) => setOption(slotId, selected[index] ?? "", Boolean(selected[index]), false, "unordered_set")); }} /><span><strong>{option.label}</strong> <ContentNodes nodes={option.content} canvas={props} /></span></label>; })}<div className="v2-slot-summary">{response.slotIds.map((slotId) => <span key={slotId} className="v2-slot-chip" data-question-id={slotId}>{runtime.questionDisplayMap[slotId]}: {(canvasAnswers[slotId] ?? []).join(", ") || "—"}</span>)}</div></fieldset> : <div className="v2-slot-list">{response.slotIds.map((slotId, index) => {
+              {inlineStimulusComplete ? null : unordered ? <fieldset className="v2-shared-selection"><legend>Select {response.cardinality.exact || response.slotIds.length} options for {response.slotIds.map((slotId) => runtime.questionDisplayMap[slotId]).join(", ")}</legend>{options.map((option) => { const checked = response.slotIds.some((slotId) => (canvasAnswers[slotId] ?? []).includes(option.label)); return <label key={option.optionId} className={`v2-choice-item${checked ? " is-checked" : ""}`}><input type="checkbox" value={option.label} checked={checked} disabled={!checked && unorderedSelected >= unorderedLimit} onChange={(event) => { const selected = Array.from(new Set(response.slotIds.flatMap((slotId) => canvasAnswers[slotId] ?? []).filter((value) => value !== option.label))).slice(0, response.slotIds.length); if (event.target.checked) selected.push(option.label); response.slotIds.forEach((slotId, index) => setOption(slotId, selected[index] ?? "", Boolean(selected[index]), false, "unordered_set")); }} /><span><strong>{option.label}</strong> <ContentNodes nodes={option.content} canvas={props} /></span></label>; })}<div className="v2-slot-summary">{response.slotIds.map((slotId) => <span key={slotId} className="v2-slot-chip" data-question-id={slotId}>{runtime.questionDisplayMap[slotId]}: {(canvasAnswers[slotId] ?? []).join(", ") || "—"}</span>)}</div></fieldset> : <div className="v2-slot-list">{response.slotIds.map((slotId, index) => {
                 const slot = runtime.answerSlots[slotId];
                 if (!slot) return null;
                 const values = canvasAnswers[slotId] ?? [];
                 const textEntry = slot.interaction === "text" || response.kind === "text_entry";
-                return <div key={slotId} className={`v2-slot-question${props.selectedId === slotId ? " is-selected" : ""}`} data-question-id={slotId} onClick={(event) => { if (props.mode === "author") { event.stopPropagation(); props.onSelect?.(slotId); } }}><div className="v2-slot-question-label"><span className="v2-slot-number">{runtime.questionDisplayMap[slotId]}</span>{response.kind === "text_entry" || response.kind === "matching" ? <span>Response {index + 1}</span> : null}</div>{textEntry ? <input className="v2-text-answer" type="text" name={slotId} value={values[0] ?? ""} maxLength={slot.constraints?.maxCharacters} aria-label={`Answer ${runtime.questionDisplayMap[slotId]}`} onChange={(event) => setText(slotId, event.target.value)} /> : options.length ? <div className="v2-choice-options">{options.map((option) => <label key={`${slotId}-${option.optionId}`} className="v2-choice-item"><input type={slot.interaction === "checkbox" ? "checkbox" : "radio"} name={slotId} value={option.label} checked={values.includes(option.label)} onChange={(event) => setOption(slotId, option.label, event.target.checked, slot.interaction === "checkbox")} /><span><strong>{option.label}</strong> <ContentNodes nodes={option.content} canvas={props} /></span></label>)}</div> : <input className="v2-text-answer" type="text" name={slotId} value={values[0] ?? ""} aria-label={`Answer ${runtime.questionDisplayMap[slotId]}`} onChange={(event) => setText(slotId, event.target.value)} />}</div>;
+                return <div key={slotId} className={`v2-slot-question${props.selectedId === slotId ? " is-selected" : ""}`} data-question-id={slotId} onClick={(event) => { if (props.mode === "author") { event.stopPropagation(); props.onSelect?.(slotId); } }}><div className="v2-slot-question-label"><span className="v2-slot-number">{runtime.questionDisplayMap[slotId]}</span>{response.kind === "text_entry" || response.kind === "matching" ? <span>Response {index + 1}</span> : null}</div>{textEntry ? <input className="v2-text-answer" type="text" name={slotId} value={values[0] ?? ""} maxLength={slot.constraints?.maxCharacters} aria-label={`Answer ${runtime.questionDisplayMap[slotId]}`} onChange={(event) => setText(slotId, event.target.value)} /> : options.length ? <div className={`v2-choice-options${isTfngOptionSet(options) ? " v2-tfng-options" : ""}`}>{options.map((option) => <label key={`${slotId}-${option.optionId}`} className={`v2-choice-item${values.includes(option.label) ? " is-checked" : ""}`}><input type={slot.interaction === "checkbox" ? "checkbox" : "radio"} name={slotId} value={option.label} checked={values.includes(option.label)} onChange={(event) => setOption(slotId, option.label, event.target.checked, slot.interaction === "checkbox")} /><span><strong>{option.label}</strong> <ContentNodes nodes={option.content} canvas={props} /></span></label>)}</div> : <input className="v2-text-answer" type="text" name={slotId} value={values[0] ?? ""} aria-label={`Answer ${runtime.questionDisplayMap[slotId]}`} onChange={(event) => setText(slotId, event.target.value)} />}</div>;
               })}</div>}
             </section>;
           })}
         </article>)}
       </div>
     </section>
+    <QuestionNavBar
+      model={navModel}
+      mode={props.mode}
+      authoring={props.authoring}
+      activeSlotId={props.mode === "author" ? props.selectedId : undefined}
+      onSelectSlot={props.onSelect}
+      onSelectPart={setSelectedPart}
+    />
     </div>
   </CanvasAnswersContext.Provider>;
 }
