@@ -357,3 +357,62 @@ TASK §4.3 已经把前提写好了：每包请求 = **固定前缀**（规则 +
 3. **CDP 答案场景判定段的落位**：写进独立 `report.answerScenario`（三态）而非 `report.scenarios`——当前 fixture 上该场景必然 not-executable，若计入 verdict 会把题面类验收一起拖成 not-executable（等于用一个缺失的 fixture 否掉整条链）。切换条件写在脚本里。
 4. **P11 二选一选了方案 b**（时限放宽）而非方案 a（不相交包并行 ≤2）：并行会让重切、done_packets、升级预算、L3 计数这些单线程循环状态进入并发路径，CAS 之外的不变量风险大；方案 b 改动集中一处、直接命中真实瓶颈，且保持「包内串行 + CAS 串行写入」的全部既有语义。选择理由已按任务书要求记入 STATE。
 5. **A-2 状态更新**：REPORT §6 的 A-2 从「未修（越界）」改为 **fixed（`b6c0370`）**，越界需求 1 解除；TASK.md §2 的描述同步修正为已实现语义并注明历史差距。
+
+---
+
+## 10. 缺陷修复轮（P12-Q，HEAD `b1cd8f3`）
+
+> 第三方复核发现 P9-Q 的引文核验有两处缺陷；本轮修复并经全新对抗式复核放行。
+
+### 10.1 用户能感知到的变化
+
+1. **扫描答案页 / 图片答案表不再制造假拒绝**。这些页（正是 L2 整页图与 `read_page_region` 交给模型的页）在文本层里缺席或只剩页码噪声；模型从**页图**里读到的真实引文，以前会被当成编造整批拒掉。现在：引文全文都找不到、而声明页（±1 相邻页中任一页）没有有效文本层（规范化文本薄于 8 字符，理由见常量注释）⇒ 标 `unverifiable` 放行，如实计入 `evidenceUnverifiable` / 运行摘要 `unverifiedEvidence`，不算已核验。声明页与相邻页都有真实文本层时照拒；声明页超出文档末尾（编造页号）照拒；引文在别页找得到、只是页号归属不对时**照拒**（复核指出的「实现宽于声明」已收紧，退让只属于「全文都找不到」）。
+2. **单独上传的答案文件的证据不再被误拒**。链路调查确认：修复链的证据面只来自主试卷（`MainQuestion`），答案文件（`AnswerKey` role）只进本地识别管线，修复循环任何一环都看不到它。因此非主试卷 sourceFileId 的证据核验不了也不该拒——一律标 `unverifiable`（方案 b，理由记入 STATE）；真实存在于答案文件里的引文不会被误拒。prompt 两种模式都写明这两类「不拒绝、标 unverifiable」的情形。
+
+### 10.2 提交列表
+
+| # | 提交 | 内容 |
+|---|---|---|
+| 36 | `2faa456` | **P12-Q**：无文本层页退让（阈值 + existing_pages）；非主试卷 sourceFileId 标 unverifiable；受控服务 `answerFetch: read_page_region` 分支；端到端用例；prompt 契约扩展；TASK §2 两行描述对齐 |
+| 37 | `b1cd8f3` | **复核收紧**：无文本层退让仅限「引文全文都找不到」；钉住用例先红后绿；u32 截断加固 |
+
+### 10.3 证据等级
+
+| 结论 | 等级 | 具体是什么 | **不是**什么 |
+|---|---|---|---|
+| 无文本层页上的引文标 unverifiable 放行；有文本层照拒；超界页号照拒；别页找得到照拒 | 命令处理器层（含真实 HTTP） | tools 写入层 5 条用例（两变体无文本层 / 阈值护栏 / 超界页 / 别页找得到 / 非主试卷）+ 端到端用例 | 不是产品 UI 端到端 |
+| 非主试卷 sourceFileId 标 unverifiable | 仅单元测试（写入层） | `evidence_from_a_non_main_source_file_is_marked_unverifiable_not_rejected`；链路「证据面只来自主试卷」为源码级判定（`main_source_for_cloud` / `load_source_index` / legacy 附件路径核对） | 没有真实多源作业的端到端样本 |
+| 页图抓取路径端到端 | 命令处理器层（含真实 HTTP） | 真起 node 走 `read_page_region` → 引用 → 落库 + 三处 unverifiable 呈现 | 受控服务读不了像素：答案值取自请求内候选切片（请求文本），真实模型「从图读值」的环节无法模拟，如实记录 |
+| 全量门禁 | 见 10.5 | — | — |
+
+### 10.4 先红后绿
+
+| 用例 | 红的形态 |
+|---|---|
+| `a_quote_read_from_a_textless_page_is_marked_unverifiable_not_rejected` | 旧实现把两变体（无文本层 / 只剩页码噪声）都判 `Rejected` |
+| `evidence_from_a_non_main_source_file_is_marked_unverifiable_not_rejected` | 旧实现拿主试卷文本核验非主试卷证据 → 误拒 |
+| `an_edit_quoting_an_image_only_answer_page_lands_and_is_marked_unverifiable` | 临时禁用退让分支：`left: ["B"] / right: ["A"]`（页图引文被拒、编辑没落库） |
+| `a_quote_found_on_another_page_is_rejected_even_when_the_declared_page_is_textless` | 收紧前：`Applied` vs 期望 `Rejected`（复核发现的「宽于声明」） |
+
+复核子代理变异（2 处，独立执行、精确还原）：M1 阈值比较方向翻转 → `a_missing_quote_on_a_page_with_a_real_text_layer_is_still_rejected` 红（`Applied vs Rejected`）；M2 `same_source_file_id` 恒真 → `evidence_from_a_non_main_source_file_...` 红（`[] vs [0]`，被误判「已核验」）。
+
+### 10.5 全量数字与上一轮对比
+
+| 门禁 | P9-Q/P10/P11 收尾轮 | 本轮（HEAD `b1cd8f3`） | 变化 |
+|---|---|---|---|
+| `cd src-tauri && cargo test --lib` | 1125 / 0 / 11 | **1131 / 0 / 11** | +6 |
+| `cargo test --lib cloud_repair` | 130 | **136** | +6 |
+| `npx vitest run` | 392 passed（1 suite 缺 `selenium-webdriver` 加载失败） | **392 passed**（同一 suite 同因失败） | 无变化（环境基线） |
+| `npx tsc --noEmit` | `exit 0` | **`exit 0`** | 无变化 |
+
+### 10.6 未执行项及原因
+
+- CDP 实机（含页图路径的产品端验证）：macOS 无 WebView2 通道，未执行。
+- 真实模型验收：无额度，未执行。
+- 真实多源（试卷 + 答案文件）作业的端到端样本：仓库无此 fixture，缺陷 2 只有写入层证据 + 链路源码级判定，如实标「仅单元测试」。
+
+### 10.7 偏离本任务之处及理由
+
+1. **复核发现的「实现宽于声明」当场收紧**（`b1cd8f3`）：任务书规定退让条件是「引文在全文其他地方也找不到」，初版实现把「找得到但页号差 >1」也退让了；按「不放宽校验」纪律改为 `found.is_empty()` 才退让，并补钉住用例（先红后绿）。
+2. **缺陷 2 选方案 b**（非主试卷一律 unverifiable + prompt 说明），理由与链路调查证据记入 STATE「P12-Q 日志」；方案 a（接入答案文件文本）会让核验面超出修复链实际交给模型的证据面。
+3. 阈值常量 `MIN_TEXT_LAYER_CHARS = 8` 的语义边界：混合页（既有正文文本又有图片答案区）的文本层会超过阈值，其上的引文仍按「有文本层」核验——阈值只覆盖「整页没有有效文本层」的情形，与任务书口径一致。
