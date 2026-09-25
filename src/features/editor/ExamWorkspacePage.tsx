@@ -184,6 +184,13 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
     }),
     [editor.pendingCount, preview]
   );
+  // 学生预览概要文案（P5：与修订提示一起从题面上方挪进子栏说明区，元素与 data-testid 不变，
+  // 只是渲染位置变了；编译失败时没有概要可显示）。
+  const previewSummary = preview?.ok
+    ? preview.summary.modality === "listening"
+      ? `听力 · ${preview.summary.listeningParts} 个 Section · ${preview.summary.slots} 个答案位 · ${preview.summary.assets} 段音频`
+      : `${preview.summary.taskGroups} 个题组 · ${preview.summary.slots} 个答案位 · ${preview.summary.assets} 个资源`
+    : undefined;
   // 发布前检查的读取状态只作为验收脚本可等待的锚点（`data-preflight-state`），不进用户文案。
   const preflightState: "loading" | "loaded" | "error" = preflightError ? "error" : preflight ? "loaded" : "loading";
   const answerPageStatus = useMemo(
@@ -362,7 +369,6 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
           >
             <ArrowLeft size={16} />
           </button>
-          <span className="workspace-brand">IELTS</span>
           <div className="workspace-title">
             <EditableTitle
               title={editor.title ?? title}
@@ -417,7 +423,9 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             <button data-testid="workspace-save" disabled={Boolean(busyAction)} onClick={save}>
               {busyAction === "save" ? "正在保存…" : "保存"}
             </button>
-            <button data-testid="workspace-publish" disabled={Boolean(busyAction)} onClick={publish}>
+            {/* 顶栏唯一的主操作：底色/悬停对齐基准的提交类按钮（见 workspace.css 的
+                .workspace-publish-btn）。data-testid 与点击行为不变。 */}
+            <button className="workspace-publish-btn" data-testid="workspace-publish" disabled={Boolean(busyAction)} onClick={publish}>
               {busyAction === "publish" ? "正在发布…" : "发布"}
             </button>
             <button aria-label="更多操作" title="更多操作" onClick={() => setMenuOpen((open) => !open)}><MoreHorizontal size={16} /></button>
@@ -449,8 +457,14 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
         </div>
       </header>
 
+      {/* 子栏对应基准 .sub-header-bar：左侧粗体 Part 名，中间说明，右侧模式切换。
+          Part 名：阅读稿显示 READING · Part 1（题稿 IR 里没有 passage 编号字段，
+          单题工作区一份稿就是一个 Part，固定 Part 1）；听力稿显示 LISTENING，
+          Part 切换信息在底部题号导航，子栏不再追加。 */}
       <div className="workspace-sub-header">
-        <span className="workspace-sub-header-label">READING</span>
+        <span className="workspace-sub-header-label">
+          {editor.draft?.modality === "listening" ? "LISTENING" : "READING · Part 1"}
+        </span>
         <div className="workspace-mode-toggle" role="tablist" aria-label="编辑与学生预览">
           <button
             role="tab"
@@ -467,9 +481,41 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             onClick={() => setMode("student")}
           >学生预览</button>
         </div>
-        <span className="workspace-sub-header-meta">
-          {mode === "edit" ? "编辑模式 · 保存后点击「发布」输出到 NAS" : "学生预览 · 与学生端同一套交互语义，这里的作答不会写回题目"}
+        {/* 学生预览时说明区放修订提示与概要（原来在题面上方的通知带，data-testid 不变）；
+            与已保存内容有差异时（level === "warning"）在行尾追加红色小标记，原因见 title。 */}
+        <span className={`workspace-sub-header-meta${mode === "student" ? " is-preview" : ""}`}>
+          {mode === "student" ? (
+            <>
+              <span
+                className="workspace-preview-revision"
+                role="status"
+                data-testid="workspace-preview-revision"
+                title={previewLimitation.message}
+              >
+                {previewLimitation.message}
+              </span>
+              {previewSummary ? (
+                <span
+                  className="workspace-preview-summary"
+                  data-testid="workspace-preview-summary"
+                  title={previewSummary}
+                >
+                  {previewSummary}
+                </span>
+              ) : null}
+            </>
+          ) : (
+            "编辑模式 · 保存后点击「发布」输出到 NAS"
+          )}
         </span>
+        {mode === "student" && previewLimitation.level === "warning" ? (
+          <span
+            className="workspace-preview-warning-flag"
+            role="img"
+            aria-label="预览与已保存的内容存在差异"
+            title={previewLimitation.message}
+          />
+        ) : null}
       </div>
 
       {notice ? (
@@ -705,13 +751,8 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
 
         {editor.draft && mode === "student" ? (
           <div className="workspace-student-preview" data-testid="workspace-student-preview">
-            <p
-              className={`workspace-notice ${previewLimitation.level === "warning" ? "warning" : ""}`}
-              role="status"
-              data-testid="workspace-preview-revision"
-            >
-              {previewLimitation.message}
-            </p>
+            {/* 修订提示（workspace-preview-revision）与概要（workspace-preview-summary）已挪进
+                子栏说明区；这里只剩编译失败面板与预览画布本身。 */}
             {preview && !preview.ok ? (
               // 编译失败：不显示任何题面，只给出可定位的问题。
               <div className="workspace-preview-error" role="alert" data-testid="workspace-preview-error">
@@ -747,16 +788,8 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               </div>
             ) : null}
             {preview?.ok ? (
-              <>
-                <p className="workspace-preview-summary" data-testid="workspace-preview-summary">
-                  {preview.summary.modality === "listening"
-                    ? `听力 · ${preview.summary.listeningParts} 个 Section · ${preview.summary.slots} 个答案位 · ${preview.summary.assets} 段音频`
-                    : `${preview.summary.taskGroups} 个题组 · ${preview.summary.slots} 个答案位 · ${preview.summary.assets} 个资源`}
-                </p>
-                {/* 答案形式不匹配的题已经并进「待补充」清单，这里不再另列一份。 */}
-                {/* key 绑草稿版本令牌：草稿一变，预览的作答状态整体重置。 */}
-                <ExamCanvas key={`student-preview-${previewToken}`} authoring={editor.draft} mode="student" />
-              </>
+              // key 绑草稿版本令牌：草稿一变，预览的作答状态整体重置。
+              <ExamCanvas key={`student-preview-${previewToken}`} authoring={editor.draft} mode="student" />
             ) : null}
           </div>
         ) : null}
