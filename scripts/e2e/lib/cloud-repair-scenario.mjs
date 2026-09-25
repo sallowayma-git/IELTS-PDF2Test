@@ -110,6 +110,16 @@ export function loadRepairGolden(repoRoot) {
  * 返回 `{ ok: false, reason, ... }` 表示**场景前提不成立**（本地识别没有产出被标注的那个
  * 错误，或者真实稿里找不到承载它的作答组）。调用方应如实记 `not-executable`，
  * **不要**退化成一份通用样本硬跑，也不要往稿子里注入一个错误。
+ *
+ * ## 答案主张（`claim` / `plan.answerClaim`）
+ *
+ * 题面类差异的原文行就在题组自己的锚点页上，包模式第一轮天然自带——CDP 步骤 11b
+ * 「至少一个包走了 L1」在这类场景下**结构性**无法满足。本函数因此再构造一条候选侧的
+ * 「答案主张」差异：候选（云端独立识别的建模）给一个 golden 标注了 `answerKeyAbsence`
+ * 的无答案槽位声明一个答案（主张值取自主张组自己的文字，不引入常量）。这份原文件
+ * 没有答案页 ⇒ 包里也没有 ⇒ 受控服务必须抓取（`read_source`，L1）去核实，核实不了
+ * 就如实交还用户、**绝不应用**。主张值不出现在剧本里（反自证守卫），权威稿里该槽位
+ * 仍是 unresolved（由链路步骤 15 证明）。
  */
 export function deriveRepairScenario(draft, golden) {
   const annotated = golden?.recognitionErrors?.[0];
@@ -182,6 +192,45 @@ export function deriveRepairScenario(draft, golden) {
     return { ok: false, reason: '候选侧的说明截断后与原文相同，构不成一条差异' };
   }
 
+  // ── 3′. 答案主张靶子：候选（云端独立识别的建模）给一个无答案的槽位声明一个答案 ──
+  //
+  // 为什么需要它：步骤 11b 验收「至少一个包走了 L1」在**题面类**场景下结构性无法满足——
+  // 题面的原文行就在题组自己的锚点页上，包第一轮天然自带，升级永远不会发生（实测
+  // 3 个包的升级级别全是 0，其中 2 个第一次请求就带着承载正确答案的第 4 页）。
+  // 这份卷子的 golden 明确标注了 `answerKeyAbsence`：原文件**没有答案页**。于是
+  // 「候选声明一个答案」正好构成一条**修正页落在包范围之外**的答案类差异：
+  // 包切分时会去找答案页（`locate_answer_pages`），找不到 ⇒ 包里没有答案页且
+  // `answerPagesUnknown: true` ⇒ 模型必须抓取（`read_source`，L1 的一条腿）去核实，
+  // 抓完发现原文件确实没有答案行 ⇒ 无法核实，**不应用**，把主张如实交还用户。
+  //
+  // 纪律与裁定靶子同构：主张是**候选侧**的建模（受控服务扮演云端），不是往本地稿里
+  // 注入错误；主张值从本地稿自身内容里派生（题组自己的文字里取词），不引入常量；
+  // 剧本里**绝不**出现主张值（反自证守卫在下面），受控服务也**绝不**应用它——
+  // 链路步骤 15 会证明权威稿里这个槽位仍是 unresolved（云端不得编造答案）。
+  //
+  // 刻意**跳过**修复组与裁定组：那两个包的剧本行为（read_source 改题面 / record_ruling）
+  // 必须保持现状，L1 由主张包自己走出。
+  const claimWordCandidates = [];
+  for (const group of groups) {
+    if (group.taskId === fix.taskId) continue;
+    if (group.taskId === ruleTarget.taskId) continue;
+    const slotIds = (group.responseGroups ?? []).flatMap((response) => (Array.isArray(response.slotIds) ? response.slotIds : []));
+    const slotId = slotIds.find((slot) => {
+      const answer = draft?.answerKey?.[slot];
+      return !answer || answer?.kind === 'unresolved';
+    });
+    if (!slotId) continue;
+    const words = (textOfNodes(group.stimulus ?? group.instructions ?? []) ?? '')
+      .split(/\s+/u)
+      .map((word) => word.toLowerCase())
+      .filter((word) => /^[a-z]{5,}$/u.test(word));
+    claimWordCandidates.push({ taskId: group.taskId, slotId, questionNumber: Number((slotId.match(/\d+/u) ?? [])[0] ?? 0), words });
+    break;
+  }
+  // 主张组（至多一个）在这里定位；主张**值**要等剧本成型之后才选（见第 6 节）——
+  // 剧本里出现主张值，受控服务就不用抓取核实了，场景退回自证。
+  const claimTarget = claimWordCandidates[0] ?? null;
+
   // ── 4. 候选样本：整卷照抄真实稿，只改被标注的那一处 + 裁定靶子 ──
   // 「云端对原文件的独立识别」在这里被建模为：题面 = golden 标注的原文真值。
   const candidate = {
@@ -248,11 +297,58 @@ export function deriveRepairScenario(draft, golden) {
     finishNote: '受控服务：已按原文件修正题面残留，并裁定一条候选读错的差异；无法定论的疑问已如实交出。',
   };
 
+  // ── 6. 答案主张：值在剧本成型**之后**才选，且不得出现在剧本里 ──
+  // 剧本（含裁定理由、疑问文案）里出现主张值，受控服务就不用抓取核实了，场景退回自证。
+  // 主张词选自主张组自己的文字（真实稿内容，不是常量）。
+  let claim = null;
+  if (claimTarget) {
+    const serializedPlan = JSON.stringify(plan);
+    const claimWord = (claimTarget.words ?? []).find((word) => !serializedPlan.includes(word)) ?? null;
+    if (!claimWord) {
+      return {
+        ok: false,
+        reason: '主张组的文字里选不出一个不出现在剧本里的词，答案主张构造不了',
+        target: { taskId: claimTarget.taskId, slotId: claimTarget.slotId },
+      };
+    }
+    candidate.answerKey[claimTarget.slotId] = {
+      kind: 'text',
+      values: [claimWord],
+      normalization: 'ielts_default',
+    };
+    plan.answerClaim = {
+      slotId: claimTarget.slotId,
+      questionNumber: claimTarget.questionNumber,
+      grabTool: 'read_source',
+      // 原文没有答案页（golden 的 answerKeyAbsence）；抓**最后一页**核实——那是最可能
+      // 印答案页的地方。抓完没有答案行 ⇒ 无法核实 ⇒ 交还用户，绝不应用。
+      searchPages: [Number(golden?.source?.pageCount) || 5].filter((page) => page >= 1),
+      unresolvedMessage:
+        `第 ${claimTarget.questionNumber} 题的答案无法核实：原文件里没有答案页（抓取核对过），`
+        + '云端不能编造答案。请对照原文件或自行填写。',
+      finishNote: '受控服务：答案主张无法在原文件里核实，已如实交还用户',
+    };
+    if (JSON.stringify(plan).includes(claimWord)) {
+      return {
+        ok: false,
+        reason: '剧本里出现了答案主张的值：受控服务就不用抓取核实了，场景退回自证',
+        target: { taskId: claimTarget.taskId, slotId: claimTarget.slotId },
+      };
+    }
+    claim = {
+      taskId: claimTarget.taskId,
+      slotId: claimTarget.slotId,
+      questionNumber: claimTarget.questionNumber,
+      searchPages: plan.answerClaim.searchPages,
+    };
+  }
+
   return {
     ok: true,
     candidate,
     plan,
     fix,
+    claim,
     rule: {
       taskId: ruleTarget.taskId,
       before: ruleBefore,

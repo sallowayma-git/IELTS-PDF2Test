@@ -548,6 +548,79 @@ function repairPacketStepReply(context, plan, round, observations, exampleSource
     return giveUp(plan.finishNote ?? '受控服务：本包没有待核对的差异');
   }
 
+  // ⓪″ 答案主张核实路径（`plan.answerClaim`）：候选（云端独立识别的建模）给某题
+  //     声明了一个答案，但这份原文件**没有答案页**（golden 标注的 answerKeyAbsence）。
+  //     包模式切包时答案类差异会去找答案页、找不到 ⇒ 本包里没有答案页。模型于是先
+  //     `read_source` 抓取 `searchPages` 里的页去找答案行——抓完了也找不到 ⇒ 无法核实，
+  //     只能把这条主张如实交还给用户（`finish_packet` + `unresolved`），**绝不应用**：
+  //     把无法核实的主张写进权威稿就是编造。抓取本身就是 L1 的一条腿（mod.rs：
+  //     任何一个抓取工具都会把升级级别抬到 1）。
+  //     没设这个键的剧本行为一字不变。答案值与引文只能来自**请求/观察里真实出现的
+  //     内容**——而这里核实不出任何答案行，所以本轮连「值」都不存在，交不出编辑。
+  if (plan.answerClaim && typeof plan.answerClaim === 'object') {
+    const claimDifference = differences.find(
+      (difference) => difference?.targetType === 'slot'
+        && difference?.field === 'answer'
+        && difference?.targetId === plan.answerClaim.slotId,
+    );
+    if (claimDifference) {
+      const searchPages = (Array.isArray(plan.answerClaim.searchPages) ? plan.answerClaim.searchPages : [])
+        .map(Number)
+        .filter((page) => Number.isInteger(page) && page >= 1);
+      if (searchPages.length === 0) {
+        return giveUp('剧本没有指定答案主张的抓取页，受控服务不知道去哪核实');
+      }
+      // 观察里已经抓过的页（`read_source` 的真实返回都落在 observations 里）。
+      const fetchedPages = new Set();
+      for (const observation of observations ?? []) {
+        const result = observation?.result;
+        if (result && typeof result === 'object' && Array.isArray(result.pages)) {
+          for (const page of result.pages) {
+            const pageIndex = Number(page?.pageIndex ?? 0);
+            if (Number.isInteger(pageIndex) && pageIndex >= 1) fetchedPages.add(pageIndex);
+          }
+        }
+      }
+      const nextPage = searchPages.find((page) => !fetchedPages.has(page));
+      if (nextPage != null) {
+        return { callId: `p${round}`, tool: 'read_source', arguments: { pageIndex: nextPage } };
+      }
+      // 抓完了也没有答案行：无法核实。把主张连同「核对过哪里」的证据交还用户。
+      const lastPage = searchPages[searchPages.length - 1];
+      const source = lastSourceObservation(observations);
+      const pageText = pageTextOf(source, lastPage);
+      const quote = (pageText ?? '')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .pop() ?? 'BLANK PAGE';
+      return {
+        callId: `p${round}`,
+        tool: 'finish_packet',
+        arguments: {
+          packetId,
+          note: plan.answerClaim.finishNote ?? '受控服务：答案主张无法在原文件里核实，已如实交还用户',
+          unresolved: [
+            {
+              targetId: claimDifference.targetId,
+              message: plan.answerClaim.unresolvedMessage
+                ?? `候选为第 ${plan.answerClaim.questionNumber} 题给出的答案无法在原文件里核实（原文件没有答案页）。请对照原文件或自行填写。`,
+              evidence: [
+                {
+                  sourceFileId: context?.sourceEvidence?.sourceFileId ?? null,
+                  pageIndex: lastPage,
+                  // 引文取自抓取返回里的真实行（如最后一页的 "BLANK PAGE"），
+                  // 逐字取自 `read_source` 的返回，不是常量。
+                  quote,
+                },
+              ],
+            },
+          ],
+        },
+      };
+    }
+  }
+
   const inScope = (Array.isArray(context?.scope?.pages) ? context.scope.pages : []).map(Number);
   const answerPage = Number(plan.sourcePageOneBased);
   if (!Number.isInteger(answerPage) || answerPage <= 0) {
