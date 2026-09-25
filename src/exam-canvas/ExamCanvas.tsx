@@ -436,12 +436,26 @@ export function ExamCanvas(props: ExamCanvasProps) {
   // 与 ListeningHeader（音频行）**同一份**数据源，两边不允许各拉各的。
   const [audioStatus, setAudioStatus] = useState<ListeningAudioStatus>();
   const jobId = props.authoring.jobId;
+  // 依赖**只用** jobId + listening（听力/阅读身份布尔，每次渲染算一次），
+  // 不用 props.authoring：每次编辑（set_text、set_answer…）都会生成新的 authoring
+  // 对象引用，它一旦进依赖，重渲染就会换掉 reloadAudio 的身份、重触发拉取。
+  // 换句话说：对听力稿执行 set_text 之后 getListeningAudio **不会**被再次调用。
   const reloadAudio = useCallback((verify: boolean) => {
     // 阅读稿没有音频绑定，不发这次 IPC（此前只有听力头部会拉，现在拉取上提了）。
-    if (!isListening(props.authoring)) return;
+    if (!listening) return;
     getListeningAudio(jobId, verify).then(setAudioStatus).catch(() => setAudioStatus(undefined));
-  }, [jobId, props.authoring]);
-  useEffect(() => reloadAudio(true), [reloadAudio]);
+  }, [jobId, listening]);
+  // 校验拉取（verify=true）只在挂载 / jobId / 听力身份变化时发生一次。
+  // cancelled 标记丢弃过期响应：依赖在响应回来前又变了，就不再写 state，
+  // 避免旧题目的音频状态覆盖新题目。手动刷新（onAudioChanged）走 reloadAudio(false)。
+  useEffect(() => {
+    if (!listening) return;
+    let cancelled = false;
+    getListeningAudio(jobId, true)
+      .then((status) => { if (!cancelled) setAudioStatus(status); })
+      .catch(() => { if (!cancelled) setAudioStatus(undefined); });
+    return () => { cancelled = true; };
+  }, [jobId, listening]);
   const listeningPartViews = useMemo(
     () => (listening ? listeningParts(props.authoring, audioStatus?.bindings ?? []) : undefined),
     [listening, props.authoring, audioStatus]
