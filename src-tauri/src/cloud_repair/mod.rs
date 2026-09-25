@@ -3017,7 +3017,23 @@ where
 /// 全局约束仍是总超时 + 取消 + 运行归属；每包另有自己的回合与抓取预算。
 fn run_packet_repair_loop<F>(
     request: &RepairRunRequest<'_>,
+    step: F,
+) -> CommandResult<RepairRunReport>
+where
+    F: FnMut(&Value, &[Value]) -> CommandResult<Value>,
+{
+    run_packet_repair_loop_with_clock(request, step, &Instant::now)
+}
+
+/// 同 [`run_packet_repair_loop`]，但时钟可注入：`now` 返回「当前时刻」。
+///
+/// 测试用它驱动**虚拟时钟**：每「轮」把钟拨快固定的模型延迟，deadline 判定变成
+/// 虚拟时间上的纯算术——「总时限按包数放宽装不装得下」不再依赖墙钟与机器负载
+/// （真实 sleep 的版本在全量并行时会被挤爆，余量只有约 2 秒）。
+fn run_packet_repair_loop_with_clock<F>(
+    request: &RepairRunRequest<'_>,
     mut step: F,
+    now: &dyn Fn() -> Instant,
 ) -> CommandResult<RepairRunReport>
 where
     F: FnMut(&Value, &[Value]) -> CommandResult<Value>,
@@ -3040,7 +3056,7 @@ where
         };
     // P11：总时限按包数线性放宽（封顶 3× 基础）。循环内所有截止判断都用这个值；
     // `request.deadline` 保持调用方给的原始值，仅供这里换算。
-    let loop_started = Instant::now();
+    let loop_started = now();
     let deadline = scaled_packet_deadline(request.deadline, loop_started, queue.len());
 
     let mut rulings: Vec<Value> = match store::read_repair_rulings(
@@ -3107,7 +3123,7 @@ where
             status = REPAIR_STATUS_CANCELLED;
             break;
         }
-        if Instant::now() >= deadline {
+        if now() >= deadline {
             status = REPAIR_STATUS_BUDGET_EXHAUSTED;
             break;
         }
@@ -3157,7 +3173,7 @@ where
                 stop_all = true;
                 break;
             }
-            if Instant::now() >= deadline {
+            if now() >= deadline {
                 status = REPAIR_STATUS_BUDGET_EXHAUSTED;
                 packet_status = "deadline";
                 stop_all = true;
@@ -3180,7 +3196,7 @@ where
                 // **一次**带原因的受约束重试；传输类错误不重试。
                 Err(error)
                     if is_constrained_retry_rejection(&error)
-                        && Instant::now() < deadline
+                        && now() < deadline
                         && !(request.cancelled)() =>
                 {
                     packet_observations.push(json!({
