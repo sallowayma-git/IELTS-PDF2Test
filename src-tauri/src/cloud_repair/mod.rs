@@ -1396,30 +1396,30 @@ fn evidence_source_text(
     request: &RepairRunRequest<'_>,
     context: &Value,
     packet_tools: Option<&PacketTools<'_>>,
-) -> tools::EvidenceSourceText {
+) -> tools::EvidenceSourceContext {
     // 包模式的 PDF：抓取工具的 `source` 就是整份原文索引（不是包切片），零额外 I/O。
     if let Some(tools) = packet_tools {
         if tools.source.kind == "pdf" {
-            return paged_source_text(tools.source);
+            return source_context(request, tools.source.source_file_id.clone(), paged_source_text(tools.source));
         }
     }
     let source_meta = crate::auto_pipeline::cloud_source_evidence(request.root, request.job_id)
         .unwrap_or(Value::Null);
-    match source_meta.get("kind").and_then(Value::as_str) {
+    let source_file_id = source_meta
+        .get("sourceFileId")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let text = match source_meta.get("kind").and_then(Value::as_str) {
         Some("text") => {
             let text = source_meta
                 .get("text")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            let source_file_id = source_meta
-                .get("sourceFileId")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
             if text.trim().is_empty() {
                 tools::EvidenceSourceText::Unavailable
             } else {
-                tools::EvidenceSourceText::Whole { source_file_id, text: text.to_string() }
+                tools::EvidenceSourceText::Whole(text.to_string())
             }
         }
         Some("pdf") => {
@@ -1427,6 +1427,39 @@ fn evidence_source_text(
             paged_source_text(&index)
         }
         _ => tools::EvidenceSourceText::Unavailable,
+    };
+    source_context(request, source_file_id, text)
+}
+
+/// 主试卷 id + 作业内其它真实源文件 id → 引文核验上下文。
+///
+/// 其它源文件 id 来自作业的 `sourceFiles`（如单独上传的答案文件，role `AnswerKey`）：
+/// 它们真实存在，但修复链的证据面从不包含其内容——引用它们的证据核验不了，
+/// 标 unverifiable；不在这两个集合里的 id 是编造的来源，整批拒绝。
+fn source_context(
+    request: &RepairRunRequest<'_>,
+    main_source_file_id: String,
+    text: tools::EvidenceSourceText,
+) -> tools::EvidenceSourceContext {
+    let mut main = main_source_file_id;
+    if main.is_empty() {
+        // 原文索引缺 sourceFileId 时的既有兜底（与 load_packet_source_index 一致）。
+        main = request.job_id.to_string();
+    }
+    // 作业源文件清单：读得到才做三分类（编造的来源要拒绝）；读不到（无 job /
+    // 元数据缺失）就不对「id 存不存在」下编造的结论，全部如实标 unverifiable。
+    let known_source_file_ids = crate::job_store::load_job(request.root, request.job_id)
+        .ok()
+        .map(|job| {
+            job.source_files
+                .iter()
+                .map(|source| source.file_id.clone())
+                .collect::<BTreeSet<String>>()
+        });
+    tools::EvidenceSourceContext {
+        main_source_file_id: main,
+        text,
+        known_source_file_ids,
     }
 }
 
@@ -1439,7 +1472,6 @@ fn paged_source_text(source: &packets::SourcePageIndex) -> tools::EvidenceSource
     let mut existing_pages: BTreeSet<u32> = source.lines.keys().copied().collect();
     existing_pages.extend(source.page_images.keys().copied());
     tools::EvidenceSourceText::Paged {
-        source_file_id: source.source_file_id.clone(),
         pages: source
             .lines
             .iter()

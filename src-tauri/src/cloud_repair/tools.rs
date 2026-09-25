@@ -312,13 +312,10 @@ pub(crate) fn validate_evidence(evidence: &[Value]) -> Vec<String> {
 /// 跟着缩小——拿包内切片对照等于让提交证据的一方自己出题自己判。抓取工具与包证据
 /// 用的是同一份全量索引（`grab::load_source_index` 读整个 `document-ir.json`），
 /// 因此模型看到的行与这里核验用的行同源。
+#[derive(Debug, Clone)]
 pub(crate) enum EvidenceSourceText {
     /// PDF：逐页文本。
     Paged {
-        /// 这份文本层归属的**主试卷** sourceFileId。修复链的证据面（随包原文、
-        /// read_source、legacy 整份附件）只来自它；引用其它 sourceFileId 的证据
-        /// 核验不了，也不该拒绝。
-        source_file_id: String,
         /// 键是 **1-based** 页号；值是该页各行按原顺序以换行连接。只有**有文本层**
         /// 的页才有条目——扫描页 / 图片答案页在这里缺席。
         pages: BTreeMap<u32, String>,
@@ -328,10 +325,31 @@ pub(crate) enum EvidenceSourceText {
         existing_pages: BTreeSet<u32>,
     },
     /// DOCX / TXT / MD：从原始文件独立抽取的全文。没有页的概念，页一致性不适用。
-    Whole { source_file_id: String, text: String },
+    Whole(String),
     /// 没有文本层（扫描件、原文件解析产物缺失）：引文**无法核验**。不据此拒绝，
     /// 但必须如实标记为 unverifiable——不能算作已核验，也不能假装通过。
     Unavailable,
+}
+
+/// 引文核验的上下文：**这份证据面属于谁** + 原文文本层 + 作业里真实存在的源文件。
+///
+/// sourceFileId 的三分类（P13-Q）需要三份信息：主试卷 id（核验）、作业内真实存在的
+/// 其它文件 id（核验不了，标 unverifiable）、以及二者的补集（编造的来源，整批拒绝）。
+/// 「文件是否真实存在」是作业元数据，与有没有文本层无关——所以主试卷 id 独立于
+/// 文本层变体携带。
+#[derive(Debug, Clone)]
+pub(crate) struct EvidenceSourceContext {
+    /// 主试卷 sourceFileId。修复链的证据面（随包原文、read_source、legacy 整份附件）
+    /// 只来自它；它是唯一「可以逐字核验」的来源。
+    pub main_source_file_id: String,
+    /// 主试卷的**完整原文**文本层。
+    pub text: EvidenceSourceText,
+    /// 本作业 `job.sourceFiles` 的完整 id 清单（主试卷与其它文件都在内）。
+    ///
+    /// `None` = 作业清单**读不到**（无 job / 元数据缺失）。此时对「这个 id 存不存在」
+    /// 下编造的结论，与对无文本层的页下编造的结论是同一类错误——不做三分类，
+    /// 全部如实标 unverifiable。
+    pub known_source_file_ids: Option<BTreeSet<String>>,
 }
 
 /// 引文比对前的规范化。**白名单**，不做模糊匹配：连续空白合并为一个空格、
@@ -425,7 +443,7 @@ fn quote_pages(pages: &BTreeMap<u32, String>, needle: &str) -> Vec<u32> {
 /// - 结构不完整的条目跳过（结构错误由 [`validate_evidence`] 负责）。
 pub(crate) fn verify_evidence_quotes(
     evidence: &[Value],
-    source: &EvidenceSourceText,
+    context: &EvidenceSourceContext,
 ) -> (Vec<String>, Vec<usize>) {
     let mut problems = Vec::new();
     let mut unverifiable = Vec::new();
@@ -433,42 +451,64 @@ pub(crate) fn verify_evidence_quotes(
         let Some(needle) = verifiable_quote(entry) else {
             continue;
         };
-        match source {
+        // sourceFileId 三分类（P13-Q）。这是**作业元数据**判定，与有没有文本层无关：
+        // 引用一个作业里根本不存在的文件，无论文本层长什么样都是编造的来源。
+        // 空白 sourceFileId 由结构校验（SOURCE_MISSING）负责，这里不重复分类。
+        let declared = entry
+            .get("sourceFileId")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or_default();
+        if declared.is_empty() {
+            continue;
+        }
+        let Some(known_source_file_ids) = &context.known_source_file_ids else {
+            // 作业清单读不到：无从判定这个 id 是否真实存在，不下编造的结论。
+            unverifiable.push(index);
+            continue;
+        };
+        if declared != context.main_source_file_id {
+            if known_source_file_ids.contains(declared) {
+                // 本作业真实存在的其它源文件（如单独上传的答案文件）：修复链的证据面
+                // 从不包含它，后端没有它的文本层可比。既不能拿主试卷的文本硬核（会
+                // 误拒真实存在的引文），也不能当编造拒——如实标 unverifiable。
+                unverifiable.push(index);
+            } else {
+                // 既不是主试卷、也不是作业里任何真实文件：编造的来源。
+                // 典型来源是模型照抄了示例里的占位 id——错误信息里给出合法值。
+                problems.push(format!(
+                    "CLOUD_EDIT_EVIDENCE_SOURCE_UNKNOWN:{index}: sourceFileId \"{declared}\" is not a \
+                     source file of this job; the evidence sourceFileId must be \"{}\"",
+                    context.main_source_file_id
+                ));
+            }
+            continue;
+        }
+        match &context.text {
             EvidenceSourceText::Unavailable => unverifiable.push(index),
-            EvidenceSourceText::Whole { source_file_id, text } => {
-                // 非主试卷的 sourceFileId（如单独上传的答案文件）：修复链的证据面从不
-                // 包含它，后端没有它的文本层可比。既不能拿主试卷的文本硬核（会误拒
-                // 真实存在的引文），也不能当编造拒——如实标 unverifiable。
-                if !same_source_file_id(entry, source_file_id) {
-                    unverifiable.push(index);
-                    continue;
-                }
+            EvidenceSourceText::Whole(text) => {
                 let haystack = normalize_quote_text(text);
                 if !haystack.contains(&needle) {
                     problems.push(format!("CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:{index}"));
                 }
             }
-            EvidenceSourceText::Paged { source_file_id, pages, existing_pages } => {
-                if !same_source_file_id(entry, source_file_id) {
-                    unverifiable.push(index);
-                    continue;
-                }
+            EvidenceSourceText::Paged { pages, existing_pages } => {
                 let found = quote_pages(pages, &needle);
-                let declared = entry
+                let declared_page = entry
                     .get("pageIndex")
                     .and_then(Value::as_i64)
                     .unwrap_or_default();
                 // 页一致性允许 ±1：引文可能横跨页边界，声明页与实际页差一页是正常的。
                 let page_agrees = found
                     .iter()
-                    .any(|page| ((*page as i64) - declared).abs() <= 1);
+                    .any(|page| ((*page as i64) - declared_page).abs() <= 1);
                 if page_agrees {
                     continue;
                 }
                 // 退让只属于「全文都找不到」的情形：引文在别页找得到、只是页号归属
                 // 不对时，文本层有核验能力也有反证能力，照拒（页号归属不许漂移）。
                 if found.is_empty()
-                    && quote_is_verifiable_on_textless_page(declared, pages, existing_pages)
+                    && quote_is_verifiable_on_textless_page(declared_page, pages, existing_pages)
                 {
                     // 声明页（或相邻页）存在但没有有效文本层：模型引用的很可能是页图
                     // 里的内容——文本层无从核验，标 unverifiable，不算编造。
@@ -480,16 +520,6 @@ pub(crate) fn verify_evidence_quotes(
         }
     }
     (problems, unverifiable)
-}
-
-/// 条目声明的 sourceFileId 是否就是这份文本层归属的主试卷。
-fn same_source_file_id(entry: &Value, main_source_file_id: &str) -> bool {
-    let declared = entry
-        .get("sourceFileId")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .unwrap_or_default();
-    declared == main_source_file_id
 }
 
 /// 引文在**全文都找不到**时，判断它是否**无法核验**（而不是编造）：
@@ -537,12 +567,12 @@ fn quote_is_verifiable_on_textless_page(
 pub(crate) fn apply_cloud_edits(
     root: &Path,
     request: &CloudEditRequest,
-    source_text: &EvidenceSourceText,
+    context: &EvidenceSourceContext,
 ) -> CommandResult<CloudEditOutcome> {
     let (commands, stripped_keys) = sanitize_commands(&request.commands)?;
     let mut evidence_problems = validate_evidence(&request.evidence);
     let (quote_problems, evidence_unverifiable) =
-        verify_evidence_quotes(&request.evidence, source_text);
+        verify_evidence_quotes(&request.evidence, context);
     evidence_problems.extend(quote_problems);
 
     let mut conn = open_library_connection(root)?;
@@ -982,8 +1012,33 @@ mod cloud_repair_write_entry_tests {
     /// 既有用例都在「没有原文文本层」的库根上跑：传 `Unavailable` 与真实路径下
     /// 「读不到原文索引」的语义一致（引文标 unverifiable，不据此拒绝）。
     /// 引文核验本身的行为由下面 P9 的专项用例对着真实文本层验证。
+    /// 「没有文本层」的核验上下文：主试卷 id 仍已知（ID 的元数据判定不依赖文本层）。
+    fn unavailable_context() -> EvidenceSourceContext {
+        EvidenceSourceContext {
+            main_source_file_id: "early-approaches-pdf".to_string(),
+            text: EvidenceSourceText::Unavailable,
+            known_source_file_ids: Some(BTreeSet::from(["early-approaches-pdf".to_string()])),
+        }
+    }
+
     fn apply(root: &Path, request: &CloudEditRequest) -> CommandResult<CloudEditOutcome> {
-        apply_cloud_edits(root, request, &EvidenceSourceText::Unavailable)
+        apply_cloud_edits(root, request, &unavailable_context())
+    }
+
+    /// 核验上下文：`other_source_file_ids` 是作业里真实存在的**其它**文件 id
+    /// （主试卷 id 自动并入已知清单）。
+    fn context_with(
+        text: EvidenceSourceText,
+        main_source_file_id: &str,
+        other_source_file_ids: &[&str],
+    ) -> EvidenceSourceContext {
+        let mut known = BTreeSet::from([main_source_file_id.to_string()]);
+        known.extend(other_source_file_ids.iter().map(|id| id.to_string()));
+        EvidenceSourceContext {
+            main_source_file_id: main_source_file_id.to_string(),
+            text,
+            known_source_file_ids: Some(known),
+        }
     }
 
     /// 生成一个 `insertAnswerSlot` 命令：在 golden fixture 的共享题组里插入一个**答案未解**
@@ -1425,7 +1480,6 @@ mod cloud_repair_write_entry_tests {
     /// 弯引号、U+2010 连字符、混合大小写——核验必须吃下这些差异才算对。
     fn paged_source() -> EvidenceSourceText {
         EvidenceSourceText::Paged {
-            source_file_id: "early-approaches-pdf".to_string(),
             pages: BTreeMap::from([
                 (1u32, "Early approaches to organisational design.".to_string()),
                 (
@@ -1442,7 +1496,7 @@ mod cloud_repair_write_entry_tests {
         request: &CloudEditRequest,
         source: &EvidenceSourceText,
     ) -> CommandResult<CloudEditOutcome> {
-        apply_cloud_edits(root, request, source)
+        apply_cloud_edits(root, request, &context_with(source.clone(), "early-approaches-pdf", &[]))
     }
 
     #[test]
@@ -1551,7 +1605,6 @@ mod cloud_repair_write_entry_tests {
     #[test]
     fn a_quote_spanning_a_page_break_is_found_by_joining_adjacent_pages() {
         let pages = EvidenceSourceText::Paged {
-            source_file_id: "early-approaches-pdf".to_string(),
             pages: BTreeMap::from([
                 (1u32, "The preferred answer is".to_string()),
                 (2, "'14 A' for the first slot.".to_string()),
@@ -1563,7 +1616,8 @@ mod cloud_repair_write_entry_tests {
             "pageIndex": 2,
             "quote": "The preferred answer is '14 A' for the first slot"
         })];
-        let (problems, unverifiable) = verify_evidence_quotes(&evidence, &pages);
+        let (problems, unverifiable) =
+            verify_evidence_quotes(&evidence, &context_with(pages, "early-approaches-pdf", &[]));
         assert!(
             problems.is_empty(),
             "跨页引文必须靠相邻页拼接找到：{problems:?}"
@@ -1630,7 +1684,6 @@ mod cloud_repair_write_entry_tests {
     /// 两页有文本、第 3 页存在但无文本层的原文。
     fn paged_source_with_textless_answer_page(thin: bool) -> EvidenceSourceText {
         EvidenceSourceText::Paged {
-            source_file_id: "early-approaches-pdf".to_string(),
             pages: BTreeMap::from([
                 (1u32, "Early approaches to organisational design.".to_string()),
                 (2, "Notes on the reading passage".to_string()),
@@ -1700,7 +1753,6 @@ mod cloud_repair_write_entry_tests {
         // 第 3 页有**真实**文本层（超过阈值、不含这条引文），相邻页也都有文本：
         // 引文不在 ⇒ 编造，照拒。这一点不变。
         let source = EvidenceSourceText::Paged {
-            source_file_id: "early-approaches-pdf".to_string(),
             pages: BTreeMap::from([
                 (1u32, "Early approaches to organisational design.".to_string()),
                 (2, "Notes on the reading passage".to_string()),
@@ -1781,26 +1833,69 @@ mod cloud_repair_write_entry_tests {
     // ── P12-Q：非主试卷的 sourceFileId —— 核验不了，标 unverifiable 而不是误拒 ────
 
     #[test]
-    fn evidence_from_a_non_main_source_file_is_marked_unverifiable_not_rejected() {
+    fn evidence_from_a_real_answer_file_in_the_job_is_marked_unverifiable_not_rejected() {
+        // P12-Q 行为保留（P13-Q 的 (b)）：sourceFileId 是本作业 `sourceFiles` 里
+        // **真实存在**的答案文件——修复链的证据面从不包含它，后端拿它没有文本层可比，
+        // 标 unverifiable，不拒绝。
         let root = temp_root();
         let item_id = seed_item(&root, &load_fixture());
         let mut request =
             base_request(&item_id, "run-other-source", 1, set_answer_command("q14", &["A"]));
-        // 单独上传的答案文件的 sourceFileId：修复链的证据面从不包含它，后端拿它
-        // 没有文本层可比。真实存在于答案文件里的引文不得被误拒——标 unverifiable。
         request.evidence = vec![json!({
             "sourceFileId": "answer-sheet-pdf",
             "pageIndex": 1,
             "quote": "14 A"
         })];
-        let outcome = apply_with_source(&root, &request, &paged_source()).expect("apply_cloud_edits");
+        let source = paged_source();
+        let context = context_with(source, "early-approaches-pdf", &["answer-sheet-pdf"]);
+        let outcome = apply_cloud_edits(&root, &request, &context).expect("apply_cloud_edits");
         assert_eq!(
             outcome.status,
             CloudEditStatus::Applied,
-            "非主试卷的证据不得按「编造」拒绝，errors={:?}",
+            "作业内真实其它文件的证据不得按「编造」拒绝，errors={:?}",
             outcome.errors
         );
         assert_eq!(outcome.evidence_unverifiable, vec![0]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_fabricated_source_file_id_rejects_the_batch_and_names_the_legal_id() {
+        // P13-Q 的 (a)：sourceFileId 既不是主试卷、也不是作业里任何真实文件
+        // （典型来源：模型照抄工具示例里的占位 id）⇒ 编造的来源，整批拒绝，
+        // 错误信息告诉模型合法的 sourceFileId 是什么。
+        let root = temp_root();
+        let item_id = seed_item(&root, &load_fixture());
+        let mut request =
+            base_request(&item_id, "run-source-unknown", 1, set_answer_command("q14", &["A"]));
+        request.evidence = vec![json!({
+            "sourceFileId": "answer-source",
+            "pageIndex": 1,
+            "quote": "a quote that appears nowhere in the file"
+        })];
+        let outcome = apply_with_source(&root, &request, &paged_source()).expect("apply_cloud_edits");
+        assert_eq!(
+            outcome.status,
+            CloudEditStatus::Rejected,
+            "编造的 sourceFileId 必须整批拒绝，errors={:?}",
+            outcome.errors
+        );
+        let unknown = outcome
+            .errors
+            .iter()
+            .find(|error| error.starts_with("CLOUD_EDIT_EVIDENCE_SOURCE_UNKNOWN:0"))
+            .expect("错误码必须是 SOURCE_UNKNOWN:<index>");
+        assert!(
+            unknown.contains("early-approaches-pdf"),
+            "错误信息必须告诉模型合法的 sourceFileId：{unknown}"
+        );
+        // 整批拒绝：canonical 不变。
+        assert_eq!(outcome.edit_version, 1);
+        assert_eq!(
+            read_answer(&root, &item_id, "q14").pointer("/labels"),
+            Some(&json!(["B"])),
+            "编造来源的编辑不得落库"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

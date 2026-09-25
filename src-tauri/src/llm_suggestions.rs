@@ -598,7 +598,7 @@ pub(crate) fn make_repair_authoring_step_input(
         "context": context,
         "observations": recent,
         "omittedObservationCount": omitted,
-        "tools": repair_tools_table(),
+        "tools": repair_tools_table(&source.file_id),
         // 唯一真源：分发器真正放行的 op 清单。手抄一份迟早漂移。
         "allowedOps": crate::cloud_repair::tools::MODEL_ALLOWED_OPS,
         "rules": repair_tool_rules(context)
@@ -625,7 +625,13 @@ pub(crate) fn make_repair_authoring_step_input(
 /// 抓取类工具（`search_source` / `read_page_region` / `read_passage` / `read_candidate`）
 /// 与 `report_insufficient_context` 是「上下文不够时」的正式出口：包里的范围是**故意**
 /// 收窄的，模型必须能要回它真正需要的那一块，而不是凭印象下结论。
-pub(crate) fn repair_tools_table() -> Value {
+///
+/// `main_source_file_id`：示例里的 evidence sourceFileId **必须**注入当前作业真实的
+/// 主试卷 id（P13-Q）。模型最先看到、也最常照抄的就是示例；示例里写死一个占位 id
+/// （如 `answer-source`——既不是主试卷、也不是作业里任何真实文件），照抄的引文就会
+/// 被当「编造来源」整批拒绝，或在「未知 id 放行」的旧语义下整批绕过核验。两种结果
+/// 都不可接受：示例是 prompt 的一部分，属于「修 prompt 不放宽校验器」的范畴。
+pub(crate) fn repair_tools_table(main_source_file_id: &str) -> Value {
     json!({
         "read_draft": {
             "purpose": "Read the CURRENT draft (authoritative canonical) for specific task groups. In packet mode, taskGroupIds or questionNumbers from this packet are REQUIRED; an empty or out-of-packet selector is rejected.",
@@ -657,7 +663,7 @@ In packet mode a page range or a quote is REQUIRED and one call returns at most 
             "arguments": {
                 "baseVersion": 7,
                 "commands": [{"op": "setAnswer", "slotId": "slot-27", "value": {"kind": "text", "values": ["example"]}}],
-                "evidence": [{"sourceFileId": "answer-source", "pageIndex": 1, "quote": "27 example"}]
+                "evidence": [{"sourceFileId": main_source_file_id, "pageIndex": 1, "quote": "27 example"}]
             }
         },
         "record_ruling": {
@@ -670,7 +676,7 @@ Use it when you have checked the original file and the difference does not need 
                     "field": "the field exactly as listed in differences",
                     "ruling": "current_is_correct | cannot_resolve",
                     "reason": "why, in one sentence",
-                    "evidence": [{"sourceFileId": "answer-source", "pageIndex": 1, "quote": "the exact text you relied on"}]
+                    "evidence": [{"sourceFileId": main_source_file_id, "pageIndex": 1, "quote": "the exact text you relied on"}]
                 }]
             }
         },
@@ -697,7 +703,7 @@ Use this instead of guessing: a guess that cannot be checked against the file is
                 "unresolved": [{
                     "targetId": "optional stable id when the doubt is about one target",
                     "message": "what you could not settle, in the user's language",
-                    "evidence": [{"sourceFileId": "answer-source", "pageIndex": 1, "quote": "what you saw"}]
+                    "evidence": [{"sourceFileId": main_source_file_id, "pageIndex": 1, "quote": "what you saw"}]
                 }]
             }
         },
@@ -708,7 +714,7 @@ Use this instead of guessing: a guess that cannot be checked against the file is
                 "unresolved": [{
                     "targetId": "optional stable id when the doubt is about one target",
                     "message": "what you could not settle, in the user's language",
-                    "evidence": [{"sourceFileId": "answer-source", "pageIndex": 1, "quote": "what you saw"}]
+                    "evidence": [{"sourceFileId": main_source_file_id, "pageIndex": 1, "quote": "what you saw"}]
                 }]
             }
         }
@@ -1392,7 +1398,7 @@ mod tests {
 
     #[test]
     fn repair_tools_table_names_and_argument_keys_match_the_dispatch_contract() {
-        let table = repair_tools_table();
+        let table = repair_tools_table("example-main-source");
         let mut table_names: Vec<&str> = table
             .as_object()
             .expect("tools table object")

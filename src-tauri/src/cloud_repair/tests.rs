@@ -6563,3 +6563,246 @@ fn an_edit_quoting_an_image_only_answer_page_lands_and_is_marked_unverifiable() 
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ── P13-Q：工具示例与 prompt 里的 sourceFileId 必须是作业真实的主试卷 ID ─────────
+//
+// 第三方复核发现的验收自证漏洞：修复输入的工具示例把 evidence 写成
+// `"sourceFileId": "answer-source"`——它既不是主试卷 id、也不是作业里任何真实文件。
+// 真实模型照抄示例时，它的所有引文都会被当「编造来源」整批拒绝（SOURCE_UNKNOWN），
+// 修复链直接瘫痪；而在 P12-Q 语义下则是全部跳过比对、以 unverifiable 落库——
+// P9 的核验等于失效。受控假模型用的是请求里的真实 ID，所以既有测试看不到这个问题。
+
+/// 从一条捕获的 HTTP 请求体里取出**修复 prompt 的原文**（user 消息的全部 text；
+/// messages[0] 是 system 一句话，prompt 在 messages[1].content 的 text part 里）。
+fn repair_prompt_text(body: &str) -> Option<String> {
+    let envelope: Value = serde_json::from_str(body.get(body.find('{')?..)?).ok()?;
+    let user_message = envelope
+        .get("messages")?
+        .as_array()?
+        .iter()
+        .find(|message| message.get("role").and_then(Value::as_str) == Some("user"))?;
+    Some(
+        user_message
+            .get("content")?
+            .as_array()?
+            .iter()
+            .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
+            .filter_map(|part| part.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
+/// 收集 prompt 原文里出现的全部 `"sourceFileId":"<id>"`（修复输入的 JSON 是
+/// 紧凑序列化，键与值之间没有空白）。
+fn source_file_ids_in_prompt(prompt: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+    let mut rest = prompt;
+    while let Some(at) = rest.find("\"sourceFileId\":\"") {
+        let after = &rest[at + "\"sourceFileId\":\"".len()..];
+        match after.find('"') {
+            Some(end) => {
+                ids.push(after[..end].to_string());
+                rest = &after[end..];
+            }
+            None => break,
+        }
+    }
+    ids
+}
+
+/// 契约测试（P13-Q 的 (c)）：两种模式下，修复请求 prompt 里出现的**每一个**
+/// sourceFileId 都等于该作业真实的主试卷 ID——不得再出现任何写死的占位 ID
+/// （`answer-source`）。示例是模型最先看到、也最常照抄的东西，它带错 ID 就等于
+/// 教模型编造来源。
+#[test]
+fn repair_prompt_only_ever_names_the_real_main_source_file_id() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+    seed_packet_job(&root);
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let (base_url, requests) = spawn_scripted_repair_service_with(|_body: &str, round: usize| {
+        if round == 1 {
+            json!({"callId": "c1", "tool": "finish_packet", "arguments": {}}).to_string()
+        } else {
+            json!({"callId": "c2", "tool": "finish", "arguments": {}}).to_string()
+        }
+    });
+    crate::llm_profiles::save_profiles(
+        &root,
+        &[json!({
+            "profileId": "controlled-repair",
+            "name": "Controlled Repair Service",
+            "provider": "OpenAiCompatible",
+            "baseUrl": base_url,
+            "model": "controlled-repair-v1",
+            "temperature": 0,
+            "timeoutMs": 60000,
+            "forceJson": true,
+            "enabled": true
+        })],
+    )
+    .expect("profile 必须能落盘");
+
+    let step = |context: &Value, observations: &[Value]| {
+        repair_authoring_step_through_gateway(
+            &root,
+            ITEM_ID,
+            Some("controlled-repair"),
+            context,
+            observations,
+        )
+    };
+    run_packets(&request, step).expect("包模式循环必须跑完");
+    run_legacy(&request, step).expect("legacy 循环必须跑完");
+
+    let bodies = requests.lock().expect("requests").clone();
+    assert!(bodies.len() >= 2, "两种模式都必须真的发出修复请求");
+    let mut checked = 0usize;
+    for body in &bodies {
+        let prompt =
+            repair_prompt_text(body).expect("请求体里必须有修复 prompt");
+        assert!(
+            !prompt.contains("answer-source"),
+            "prompt 里不得再出现写死的占位 sourceFileId：{}",
+            &prompt[..prompt.len().min(2000)]
+        );
+        let ids = source_file_ids_in_prompt(&prompt);
+        assert!(
+            !ids.is_empty(),
+            "prompt 里必须出现 sourceFileId（工具示例就是模型照抄的来源）：{}",
+            &prompt[..prompt.len().min(2000)]
+        );
+        for id in &ids {
+            assert_eq!(
+                id, "early-approaches-pdf",
+                "prompt 里的每个 sourceFileId 都必须是主试卷的真实 ID：{ids:?}"
+            );
+        }
+        checked += ids.len();
+    }
+    assert!(checked >= 4, "两种模式的工具示例加起来至少有 4 处 sourceFileId：checked={checked}");
+}
+
+/// 照抄示例的剧本（P13-Q 的 (d)）：受控服务**故意**不从请求证据里取 sourceFileId，
+/// 而是从 prompt 的工具示例里原样抄（`tools.apply_edits.arguments.evidence[0].sourceFileId`
+/// ——示例就在 prompt 的输入 JSON 里）。真实模型最可能就是这么干的。
+///
+/// 修复前：示例是 `answer-source` ⇒ 复制的 id 是编造的来源 ⇒ 编辑被 SOURCE_UNKNOWN
+/// 拒绝（修复后：复制的 id 是真实主试卷 id ⇒ 引文照常核验、编辑落地且**没有**
+/// unverifiable 标记——这是「示例不再教模型编造来源」的端到端证明）。
+#[test]
+fn a_service_that_copies_the_example_source_file_id_verifies_and_lands() {
+    let Some(node) = node_binary() else {
+        panic!("本机 PATH 里没有 node：这条真实受控服务用例无法执行——这不是通过（见 node_binary 的说明）");
+    };
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("src-tauri 必须有父目录")
+        .join("scripts/controlled-llm-service.mjs");
+    assert!(script.is_file(), "受控服务脚本必须在仓库里：{script:?}");
+
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+    seed_packet_job(&root);
+
+    let plan_path = root.join("repair-plan-copy-example.json");
+    crate::util::write_json(
+        &plan_path,
+        &json!({
+            // 剧本里没有答案值；copyExampleSourceId 让受控服务从 prompt 的工具示例
+            // 里原样抄 sourceFileId（而不是从请求证据里取真实 id）。
+            "fixSlotIds": ["q14"],
+            "questionNumber": 14,
+            "sourcePageOneBased": 3,
+            "answerFetch": "read_source",
+            "copyExampleSourceId": true,
+            "rulings": [],
+            "unresolved": [],
+            "finishNote": "受控服务：q14 已按原文件改为 A（sourceFileId 照抄自示例）"
+        }),
+    )
+    .expect("写剧本");
+
+    let request_log_path = root.join("controlled-llm-requests.jsonl");
+    let port = free_local_port();
+    let child = std::process::Command::new(&node)
+        .arg(&script)
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--plan")
+        .arg(&plan_path)
+        .arg("--request-log")
+        .arg(&request_log_path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap_or_else(|error| panic!("起受控服务失败 node={node:?}: {error}"));
+    let _guard = ChildGuard(child);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let mut ready = false;
+    while std::time::Instant::now() < deadline {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            ready = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(ready, "受控服务 15 秒内没有起来（端口 {port}）");
+
+    crate::llm_profiles::save_profiles(
+        &root,
+        &[json!({
+            "profileId": "controlled-repair",
+            "name": "Controlled Repair Service",
+            "provider": "OpenAiCompatible",
+            "baseUrl": format!("http://127.0.0.1:{port}/v1"),
+            "model": "controlled-repair-v1",
+            "temperature": 0,
+            "timeoutMs": 60000,
+            "forceJson": true,
+            "enabled": true
+        })],
+    )
+    .expect("profile 必须能落盘");
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let report = run_packets(&request, |context: &Value, observations: &[Value]| {
+        repair_authoring_step_through_gateway(
+            &root,
+            ITEM_ID,
+            Some("controlled-repair"),
+            context,
+            observations,
+        )
+    })
+    .expect("包模式循环必须跑完（受控服务真的被驱动过）");
+
+    // 照抄示例的编辑必须：落地 + 通过完整核验（evidenceUnverifiable 为空）。
+    // 若示例仍教模型写 `answer-source`：编辑被 SOURCE_UNKNOWN 拒（答案留在 B）；
+    // 若示例改成了作业外其它真实文件：unverifiable 非空。两者都算失败。
+    assert_eq!(
+        read_answer(&root, "q14")["labels"],
+        json!(["A"]),
+        "照抄示例 sourceFileId 的编辑必须落库：{:#?}",
+        report.observations
+    );
+    let applied = report
+        .observations
+        .iter()
+        .find(|observation| observation["result"]["status"] == json!("applied"))
+        .expect("必须有一次落库的 apply_edits");
+    assert_eq!(
+        applied["result"]["evidenceUnverifiable"],
+        json!([]),
+        "复制的 id 是真实主试卷 id：引文必须通过完整核验，而不是被标 unverifiable：{applied:#?}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

@@ -384,7 +384,7 @@ function repairStepReply(text) {
   // `read_draft` 不给选择器会被拒、`read_source` 不给页范围也会被拒，
   // 收尾工具是 `finish_packet` 而不是 `finish`。
   if (context.contextMode === 'packets') {
-    return repairPacketStepReply(context, plan, round, observations);
+    return repairPacketStepReply(context, plan, round, observations, exampleSourceFileId(input));
   }
   const giveUp = (note) => ({ callId: `c${round}`, tool: 'finish', arguments: { note } });
 
@@ -533,7 +533,7 @@ function repairStepReply(text) {
  *   · 引文与答案值 → `context.sourceEvidence.pages[].lines[].text`
  *   · 这条差异裁定过没有 → `observations[].result.recorded[]`
  */
-function repairPacketStepReply(context, plan, round, observations) {
+function repairPacketStepReply(context, plan, round, observations, exampleSourceId) {
   const packetId = context?.packetId ?? null;
   // `finish_packet` 也能带 `unresolved`：无法定论的疑问必须变成用户可见的剩余任务，
   // 否则「把不确定性交出去」这条规则在包模式下就没有出口。
@@ -580,7 +580,11 @@ function repairPacketStepReply(context, plan, round, observations) {
           })),
           evidence: [
             {
-              sourceFileId: context?.sourceEvidence?.sourceFileId ?? null,
+              // P13-Q 的 (d)：`copyExampleSourceId` 时照抄 prompt 工具示例里的
+              // sourceFileId（见下方 wantsAnswer 分支的同名说明）。
+              sourceFileId: plan.copyExampleSourceId
+                ? (exampleSourceId ?? context?.sourceEvidence?.sourceFileId ?? null)
+                : (context?.sourceEvidence?.sourceFileId ?? null),
               pageIndex: fetched.pageIndex,
               quote: fetched.line,
             },
@@ -882,6 +886,16 @@ function answerLineFromPacket(context, questionNumber) {
     if (label) return { label, line: entry.text, lineId: entry.lineId, pageIndex: entry.pageIndex };
   }
   return null;
+}
+
+/**
+ * prompt 工具示例里的 sourceFileId（`tools.apply_edits.arguments.evidence[0]`）。
+ * `copyExampleSourceId` 剧本用：真实模型最可能照抄的就是这个值。
+ */
+function exampleSourceFileId(input) {
+  const evidence = input?.tools?.apply_edits?.arguments?.evidence;
+  const id = Array.isArray(evidence) ? evidence[0]?.sourceFileId : null;
+  return typeof id === 'string' && id.length > 0 ? id : null;
 }
 
 /**
