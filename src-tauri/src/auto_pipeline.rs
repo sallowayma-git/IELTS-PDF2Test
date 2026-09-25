@@ -2826,17 +2826,61 @@ pub(crate) fn finalize_cloud_authoring_candidate(
     Ok(candidate)
 }
 
+/// 修复链只需要来源**身份**（`kind` / `sourceFileId` / `originalName`）时的只读入口。
+///
+/// 与 [`cloud_source_evidence`] 的关键差别：**不渲染 PDF、不写任何盘**——它只解析作业的
+/// 主源文件。修复循环开头曾经用 `cloud_source_evidence` 拿这份身份，结果每次都把整份
+/// PDF 重新渲染一遍（真实卷子上实打实吃掉修复时限），渲染一旦失败还会把已经生成好的
+/// 页图缓存覆盖成空结果，之后包模式永远拿不到区域图（质量方 2026-09-25 复核的根因）。
+/// 只要身份，就用这里；要页图/全文才走 [`cloud_source_evidence`]。
+pub(crate) fn cloud_source_identity(root: &Path, job_id: &str) -> CommandResult<Value> {
+    let job = load_job(root, job_id)?;
+    let (source, _) = main_source_for_cloud(root, &job)?;
+    Ok(json!({
+        "kind": if source.file_type == "pdf" { "pdf" } else { "text" },
+        "sourceFileId": source.file_id,
+        "originalName": source.original_name,
+    }))
+}
+
+/// 非 PDF 来源（TXT / MD / DOCX）的全文证据面：直接从**原文件**独立抽取，只读不写盘。
+///
+/// 与 [`cloud_source_evidence`] 的差别是不带 PDF 分支——调用方已经知道来源不是 PDF 时
+/// 用它，不给任何触发渲染的机会。
+pub(crate) fn cloud_source_text_evidence(root: &Path, job_id: &str) -> CommandResult<Value> {
+    let job = load_job(root, job_id)?;
+    let (source, _) = main_source_for_cloud(root, &job)?;
+    let text = prepare_cloud_source_evidence(root, &job).unwrap_or_default();
+    Ok(json!({
+        "kind": "text",
+        "sourceFileId": source.file_id,
+        "originalName": source.original_name,
+        "text": text
+    }))
+}
+
 /// 修复回合的原文证据：PDF 走已抽取的页文本，非 PDF 走独立抽取的全文。
 ///
 /// **不读本地识别产物**（`document-ir.json`）：它与本地识别并行，可能还没落盘；
 /// 云端修复看到的必须是**原文件本身**的抽取结果。
+///
+/// PDF 的页图**优先复用已抽取的缓存**（作业内上传文件不可变，缓存始终对应这份 PDF），
+/// 缓存缺失才渲染——这里曾经每次都重渲染整份 PDF，`read_source` 每次调用都要等一遍
+/// Python sidecar + pdfium，白白吃掉修复时限。
 pub(crate) fn cloud_source_evidence(root: &Path, job_id: &str) -> CommandResult<Value> {
     let job = load_job(root, job_id)?;
     let (source, _) = main_source_for_cloud(root, &job)?;
     if source.file_type == "pdf" {
-        let extraction = main_pdf_vision_extraction(root, &job)
-            .map(|(extraction, _asset_dir)| extraction)
-            .unwrap_or(Value::Null);
+        let cache_path = job_dir(root, &job.job_id)
+            .join("cache")
+            .join("vision")
+            .join("pdf-images.json");
+        let extraction = match read_json_opt(&cache_path) {
+            Ok(Some(cached)) if image_count_from_extraction(&cached) > 0 => cached,
+            _ => main_pdf_vision_extraction(root, &job)
+                .map(|(extraction, _asset_dir)| extraction)
+                .unwrap_or(Value::Null),
+        };
         let pages = extraction
             .get("pages")
             .and_then(Value::as_array)
@@ -2849,13 +2893,7 @@ pub(crate) fn cloud_source_evidence(root: &Path, job_id: &str) -> CommandResult<
             "pages": pages
         }))
     } else {
-        let text = prepare_cloud_source_evidence(root, &job).unwrap_or_default();
-        Ok(json!({
-            "kind": "text",
-            "sourceFileId": source.file_id,
-            "originalName": source.original_name,
-            "text": text
-        }))
+        cloud_source_text_evidence(root, job_id)
     }
 }
 

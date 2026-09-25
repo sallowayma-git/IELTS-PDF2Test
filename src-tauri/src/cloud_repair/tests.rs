@@ -5135,6 +5135,14 @@ fn packets_mode_attaches_the_region_image_and_keeps_local_paths_out_of_the_promp
 
     let not_cancelled = || false;
     let request = request(&root, &not_cancelled, 6);
+    // C3：修复循环**根本不改写**页图缓存——这条用例的结果不许取决于本机有没有
+    // Python/pdfium（循环开头曾为拿来源 id 顺手重渲染整份 PDF，渲染一旦失败就会把
+    // 下面这份缓存覆盖成 `pages: []`，区域图从此附不上）。
+    let page_images_path = crate::util::job_dir(&root, ITEM_ID)
+        .join("cache")
+        .join("vision")
+        .join("pdf-images.json");
+    let page_images_before = std::fs::read(&page_images_path).expect("读页图缓存");
     run_packets(&request, |context: &Value, observations: &[Value]| {
         repair_authoring_step_through_gateway(
             &root,
@@ -5146,6 +5154,11 @@ fn packets_mode_attaches_the_region_image_and_keeps_local_paths_out_of_the_promp
     })
     .expect("包模式循环必须跑完");
 
+    assert_eq!(
+        std::fs::read(&page_images_path).expect("页图缓存必须还在"),
+        page_images_before,
+        "修复循环不得改写页图缓存（渲染失败曾把它覆盖成空结果）"
+    );
     let seen = requests.lock().expect("requests");
     let input = request_input_json(&seen[0]);
     let regions = input
@@ -6486,6 +6499,12 @@ fn an_edit_quoting_an_image_only_answer_page_lands_and_is_marked_unverifiable() 
 
     let not_cancelled = || false;
     let request = request(&root, &not_cancelled, 6);
+    // C3：同上——页图缓存必须全程原样，结果不许取决于本机有没有 Python/pdfium。
+    let page_images_path = crate::util::job_dir(&root, ITEM_ID)
+        .join("cache")
+        .join("vision")
+        .join("pdf-images.json");
+    let page_images_before = std::fs::read(&page_images_path).expect("读页图缓存");
     let report = run_packets(&request, |context: &Value, observations: &[Value]| {
         repair_authoring_step_through_gateway(
             &root,
@@ -6496,6 +6515,12 @@ fn an_edit_quoting_an_image_only_answer_page_lands_and_is_marked_unverifiable() 
         )
     })
     .expect("包模式循环必须跑完（受控服务真的被驱动过）");
+
+    assert_eq!(
+        std::fs::read(&page_images_path).expect("页图缓存必须还在"),
+        page_images_before,
+        "修复循环不得改写页图缓存（渲染失败曾把它覆盖成空结果）"
+    );
 
     // ① 修改落库：从页图读来的答案值写进了权威稿。
     assert_eq!(

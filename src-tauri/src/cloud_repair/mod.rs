@@ -1403,7 +1403,9 @@ fn evidence_source_text(
             return source_context(request, tools.source.source_file_id.clone(), paged_source_text(tools.source));
         }
     }
-    let source_meta = crate::auto_pipeline::cloud_source_evidence(request.root, request.job_id)
+    // 只需要**身份**（id / 类型）：曾经在这里调 `cloud_source_evidence`，PDF 会因此被
+    // 整份重渲染一遍（每轮一次，白吃修复时限）。身份走只读入口；全文按类型分头取。
+    let source_meta = crate::auto_pipeline::cloud_source_identity(request.root, request.job_id)
         .unwrap_or(Value::Null);
     let source_file_id = source_meta
         .get("sourceFileId")
@@ -1412,14 +1414,18 @@ fn evidence_source_text(
         .to_string();
     let text = match source_meta.get("kind").and_then(Value::as_str) {
         Some("text") => {
-            let text = source_meta
-                .get("text")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
+            // 非 PDF 的全文：只读抽取（原文件直读，不渲染、不写盘）。
+            let text = crate::auto_pipeline::cloud_source_text_evidence(
+                request.root,
+                request.job_id,
+            )
+            .ok()
+            .and_then(|meta| meta.get("text").and_then(Value::as_str).map(str::to_string))
+            .unwrap_or_default();
             if text.trim().is_empty() {
                 tools::EvidenceSourceText::Unavailable
             } else {
-                tools::EvidenceSourceText::Whole(text.to_string())
+                tools::EvidenceSourceText::Whole(text)
             }
         }
         Some("pdf") => {
@@ -3483,7 +3489,11 @@ fn load_packet_source_index(
     request: &RepairRunRequest<'_>,
     context: &Value,
 ) -> packets::SourcePageIndex {
-    let source_meta = crate::auto_pipeline::cloud_source_evidence(request.root, request.job_id)
+    // 这里只需要来源**身份**（id / 类型）。曾经调 `cloud_source_evidence`，它会把整份
+    // PDF 重新渲染一遍并覆盖页图缓存：测试种好的页图被一次失败的渲染清空，区域图
+    // 附不上、编辑落不了库；真实卷子上还每次白吃一段修复时限（2026-09-25 质量方复核
+    // 的根因）。只要身份就走只读入口，绝不渲染。
+    let source_meta = crate::auto_pipeline::cloud_source_identity(request.root, request.job_id)
         .unwrap_or(Value::Null);
     let source_file_id = source_meta
         .get("sourceFileId")
