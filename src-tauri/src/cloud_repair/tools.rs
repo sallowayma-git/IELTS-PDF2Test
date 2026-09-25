@@ -465,7 +465,11 @@ pub(crate) fn verify_evidence_quotes(
                 if page_agrees {
                     continue;
                 }
-                if quote_is_verifiable_on_textless_page(declared, pages, existing_pages) {
+                // 退让只属于「全文都找不到」的情形：引文在别页找得到、只是页号归属
+                // 不对时，文本层有核验能力也有反证能力，照拒（页号归属不许漂移）。
+                if found.is_empty()
+                    && quote_is_verifiable_on_textless_page(declared, pages, existing_pages)
+                {
                     // 声明页（或相邻页）存在但没有有效文本层：模型引用的很可能是页图
                     // 里的内容——文本层无从核验，标 unverifiable，不算编造。
                     unverifiable.push(index);
@@ -488,10 +492,12 @@ fn same_source_file_id(entry: &Value, main_source_file_id: &str) -> bool {
     declared == main_source_file_id
 }
 
-/// 引文在全文里都找不到时，判断它是否**无法核验**（而不是编造）：
+/// 引文在**全文都找不到**时，判断它是否**无法核验**（而不是编造）：
 /// 声明页（或 ±1 相邻页）真实存在、但没有有效文本层（缺席或薄于
 /// [`MIN_TEXT_LAYER_CHARS`]）。这些页正是 L2 整页图 / `read_page_region`
 /// 交给模型的页——模型引用的是图里的内容，文本层没有反证能力。
+/// 引文在别页找得到时不走这里：文本层既有核验能力也有反证能力，页号归属
+/// 不对称就照拒。
 ///
 /// 声明页本身必须**存在**：超出文档末尾的页号是编造位置，照拒（页号不许编造
 /// 是既有纪律，不能借「没有文本层」逃成 unverifiable）。
@@ -501,7 +507,7 @@ fn quote_is_verifiable_on_textless_page(
     existing_pages: &BTreeSet<u32>,
 ) -> bool {
 
-    if declared < 1 || !existing_pages.contains(&(declared as u32)) {
+    if declared < 1 || declared > i64::from(u32::MAX) || !existing_pages.contains(&(declared as u32)) {
         return false;
     }
     for offset in [-1i64, 0, 1] {
@@ -1703,6 +1709,35 @@ mod cloud_repair_write_entry_tests {
             existing_pages: BTreeSet::from([1, 2, 3]),
         };
         let outcome = apply_with_source(&root, &request, &source).expect("apply_cloud_edits");
+        assert_eq!(outcome.status, CloudEditStatus::Rejected, "errors={:?}", outcome.errors);
+        assert!(
+            outcome
+                .errors
+                .iter()
+                .any(|error| error == "CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:0"),
+            "errors={:?}",
+            outcome.errors
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_quote_found_on_another_page_is_rejected_even_when_the_declared_page_is_textless() {
+        // 引文在文本层里**找得到**（第 1 页），只是声明页（无文本层的第 3 页）差了
+        // 2 页：后端明明能核验这条引文、也能看出页号归属不对——退让只属于
+        // 「全文都找不到」的情形，这里照拒（P9-Q 的页号归属拒绝不被图片页削弱）。
+        let root = temp_root();
+        let item_id = seed_item(&root, &load_fixture());
+        let mut request =
+            base_request(&item_id, "run-misattributed-page", 1, set_answer_command("q14", &["A"]));
+        request.evidence = vec![json!({
+            "sourceFileId": "early-approaches-pdf",
+            "pageIndex": 3,
+            "quote": "Early approaches to organisational design."
+        })];
+        let outcome =
+            apply_with_source(&root, &request, &paged_source_with_textless_answer_page(false))
+                .expect("apply_cloud_edits");
         assert_eq!(outcome.status, CloudEditStatus::Rejected, "errors={:?}", outcome.errors);
         assert!(
             outcome
