@@ -29,6 +29,27 @@ export const STAGE_LABEL: Record<LibraryStageV1, string> = {
 /** 用户可选的筛选面，比内部阶段更粗。 */
 export type LibraryFilterTab = "all" | "processing" | "action_required" | "ready" | "failed" | "trash";
 
+/** C3：题型子标签，包住状态标签。写作子标签走独立的创作面板。 */
+export type LibraryModalityTab = "all" | "reading" | "listening" | "writing";
+
+export const MODALITY_TAB_LABEL: Record<LibraryModalityTab, string> = {
+  all: "全部",
+  reading: "阅读",
+  listening: "听力",
+  writing: "写作"
+};
+
+export const MODALITY_TABS: readonly LibraryModalityTab[] = ["all", "reading", "listening", "writing"];
+
+export function isModalityTab(value: string | undefined): value is LibraryModalityTab {
+  return value === "all" || value === "reading" || value === "listening" || value === "writing";
+}
+
+/** C3：题型子标签过滤。`all` 放行全部。 */
+export function matchesModality(row: LibraryRowV1, tab: LibraryModalityTab): boolean {
+  return tab === "all" || row.modality === tab;
+}
+
 export const FILTER_TAB_LABEL: Record<LibraryFilterTab, string> = {
   all: "全部",
   processing: "处理中",

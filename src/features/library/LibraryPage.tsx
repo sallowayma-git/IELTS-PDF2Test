@@ -2,16 +2,26 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { chooseExportDirectory } from "../../api/desktopDialogs";
 import { describeBatchPublishOutcome, publishItems } from "../../api/publishClient";
 import { describeRetryOutcome, retryProcessing } from "../../api/processingClient";
-import { go, legacyPath, workspacePath, type LibraryIntent } from "../../app/router";
+import { go, workspacePath, type LibraryIntent } from "../../app/router";
 import { ImportDrawer } from "../import/ImportDrawer";
 import { useImportFiles, type ImportRejection } from "../import/useImportFiles";
 import { LibraryBatchBar } from "./LibraryBatchBar";
 import { LibraryHeader } from "./LibraryHeader";
 import { LibraryItemList } from "./LibraryItemList";
+import { WritingPanel } from "./WritingPanel";
 import { readAppSettings, writeAppSettings } from "../settings/appSettings";
 import { toUserFacingError } from "../../utils/userFacingError";
 import { useLibraryStore } from "./libraryStore";
-import { matchesPart, matchesSearch, matchesTab, type LibraryFilterTab } from "./libraryTypes";
+import {
+  isModalityTab,
+  matchesModality,
+  matchesPart,
+  matchesSearch,
+  matchesTab,
+  MODALITY_TABS,
+  type LibraryFilterTab,
+  type LibraryModalityTab
+} from "./libraryTypes";
 
 // 题库是产品中心（计划 §0.3 / §16.4）：导入、批量任务进度、搜索、打开、选择发布都在这一页完成。
 // 已退休的独立页面：Dashboard、JobList、ImportWizard、ExportPage、LibraryExamDetail。
@@ -24,9 +34,12 @@ function describeLibraryActionError(error: unknown, fallback: string): string {
   return facing.userMessage;
 }
 
-export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
+export function LibraryPage({ intent, initialModality }: { intent?: LibraryIntent; initialModality?: string }) {
   const store = useLibraryStore();
   const [tab, setTab] = useState<LibraryFilterTab>("all");
+  const [modalityTab, setModalityTab] = useState<LibraryModalityTab>(
+    isModalityTab(initialModality) ? initialModality : "all"
+  );
   const [search, setSearch] = useState("");
   const [partFilter, setPartFilter] = useState<string | undefined>(undefined);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -40,15 +53,32 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
 
   const importer = useImportFiles(store.refresh);
 
-  const counts = useMemo(() => {
-    const result = Object.fromEntries(ALL_TABS.map((value) => [value, 0])) as Record<LibraryFilterTab, number>;
-    for (const value of ALL_TABS) result[value] = store.rows.filter((row) => matchesTab(row, value)).length;
+  // 路由携带 ?modality= 时（含 #/legacy/writing 重定向）切到对应题型子标签。
+  useEffect(() => {
+    if (isModalityTab(initialModality)) setModalityTab(initialModality);
+  }, [initialModality]);
+
+  // 题型子标签计数（活动条目，不含回收站）。
+  const modalityCounts = useMemo(() => {
+    const result = Object.fromEntries(MODALITY_TABS.map((value) => [value, 0])) as Record<LibraryModalityTab, number>;
+    for (const value of MODALITY_TABS) {
+      result[value] = store.rows.filter((row) => !row.inTrash && matchesModality(row, value)).length;
+    }
     return result;
   }, [store.rows]);
 
+  // 状态标签计数：限定在当前题型子标签内。
+  const counts = useMemo(() => {
+    const result = Object.fromEntries(ALL_TABS.map((value) => [value, 0])) as Record<LibraryFilterTab, number>;
+    for (const value of ALL_TABS) {
+      result[value] = store.rows.filter((row) => matchesModality(row, modalityTab) && matchesTab(row, value)).length;
+    }
+    return result;
+  }, [store.rows, modalityTab]);
+
   const tabRows = useMemo(
-    () => store.rows.filter((row) => matchesTab(row, tab) && matchesSearch(row, search)),
-    [store.rows, tab, search]
+    () => store.rows.filter((row) => matchesModality(row, modalityTab) && matchesTab(row, tab) && matchesSearch(row, search)),
+    [store.rows, modalityTab, tab, search]
   );
 
   // C4：当前题面里实际出现的 Part（P1/P2/P3 / Part 1–4 / Task 1/2），用于渲染筛选按钮。
@@ -215,9 +245,12 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
       <LibraryHeader
         tab={tab}
         counts={counts}
+        modalityTab={modalityTab}
+        modalityCounts={modalityCounts}
         search={search}
         backgroundCount={counts.processing}
         onTabChange={setTab}
+        onModalityChange={setModalityTab}
         onSearchChange={setSearch}
         onImport={() => {
           setRejected([]);
@@ -233,64 +266,74 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
           <button className="ghost small" onClick={() => setNotice(undefined)} aria-label="关闭提示">×</button>
         </p>
       ) : null}
-      {/* 导入抽屉一旦关闭，它自己的 reject-list 就随之卸载。导入期的音频绑定失败不能跟着
-          消失——「已建立 N 个题目」会和它同时出现，用户得能看见到底哪一段没绑上。 */}
-      {!drawerOpen && rejected.length ? (
-        <ul className="reject-list" data-testid="library-import-rejected" role="alert">
-          {rejected.map((item) => (
-            <li key={`${item.name}:${item.reason}`}>
-              <strong className="file-name">{item.name}</strong>
-              <span>{item.reason}</span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      {modalityTab === "writing" ? (
+        <WritingPanel refresh={store.refresh} />
+      ) : (
+        <>
+          {/* 导入抽屉一旦关闭，它自己的 reject-list 就随之卸载。导入期的音频绑定失败不能跟着
+              消失——「已建立 N 个题目」会和它同时出现，用户得能看见到底哪一段没绑上。 */}
+          {!drawerOpen && rejected.length ? (
+            <ul className="reject-list" data-testid="library-import-rejected" role="alert">
+              {rejected.map((item) => (
+                <li key={`${item.name}:${item.reason}`}>
+                  <strong className="file-name">{item.name}</strong>
+                  <span>{item.reason}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
 
-      {tab !== "trash" && availableParts.length ? (
-        <div className="library-part-filter" data-testid="library-part-filter" role="group" aria-label="按 Part 筛选">
-          <button className={`chip small${!partFilter ? " is-active" : ""}`} onClick={() => setPartFilter(undefined)}>全部</button>
-          {availableParts.map((part) => (
-            <button
-              key={part}
-              className={`chip small${partFilter === part ? " is-active" : ""}`}
-              data-testid={`library-part-chip-${part}`}
-              onClick={() => setPartFilter(part)}
-            >
-              {part}
-            </button>
-          ))}
-        </div>
-      ) : null}
+          {tab !== "trash" && availableParts.length ? (
+            <div className="library-part-filter" data-testid="library-part-filter" role="group" aria-label="按 Part 筛选">
+              <button className={`chip small${!partFilter ? " is-active" : ""}`} onClick={() => setPartFilter(undefined)}>全部</button>
+              {availableParts.map((part) => (
+                <button
+                  key={part}
+                  className={`chip small${partFilter === part ? " is-active" : ""}`}
+                  data-testid={`library-part-chip-${part}`}
+                  onClick={() => setPartFilter(part)}
+                >
+                  {part}
+                </button>
+              ))}
+            </div>
+          ) : null}
 
-      {tab === "trash" && trashedCount > 0 ? (
-        <div className="library-trash-toolbar" data-testid="library-trash-toolbar">
-          <button className="danger small" data-testid="library-empty-trash" onClick={emptyTrash}>
-            清空回收站（{trashedCount}）
-          </button>
-        </div>
-      ) : null}
+          {tab === "trash" && trashedCount > 0 ? (
+            <div className="library-trash-toolbar" data-testid="library-trash-toolbar">
+              <button className="danger small" data-testid="library-empty-trash" onClick={emptyTrash}>
+                清空回收站（{trashedCount}）
+              </button>
+            </div>
+          ) : null}
 
-      <LibraryItemList
-        rows={visibleRows}
-        loading={store.loading}
-        tab={tab}
-        selectedIds={selectedIds}
-        onToggleSelect={toggleSelect}
-        onOpen={(id) => go(store.rows.find((row) => row.id === id)?.modality === "writing" ? legacyPath("writing", id) : workspacePath(id))}
-        onTrash={trash}
-        onRestore={restore}
-        onPermanentDelete={permanentlyDelete}
-        onSetPart={setPart}
-        onRetry={retry}
-      />
+          <LibraryItemList
+            rows={visibleRows}
+            loading={store.loading}
+            tab={tab}
+            selectedIds={selectedIds}
+            onToggleSelect={toggleSelect}
+            onOpen={(id) =>
+              store.rows.find((row) => row.id === id)?.modality === "writing"
+                ? setModalityTab("writing")
+                : go(workspacePath(id))
+            }
+            onTrash={trash}
+            onRestore={restore}
+            onPermanentDelete={permanentlyDelete}
+            onSetPart={setPart}
+            onRetry={retry}
+          />
 
-      <LibraryBatchBar
-        selectedCount={selectedIds.size}
-        publishing={publishing}
-        publishMessage={publishMessage}
-        onClear={() => setSelectedIds(new Set())}
-        onPublish={publishSelected}
-      />
+          <LibraryBatchBar
+            selectedCount={selectedIds.size}
+            publishing={publishing}
+            publishMessage={publishMessage}
+            onClear={() => setSelectedIds(new Set())}
+            onPublish={publishSelected}
+          />
+        </>
+      )}
 
       <ImportDrawer
         open={drawerOpen}

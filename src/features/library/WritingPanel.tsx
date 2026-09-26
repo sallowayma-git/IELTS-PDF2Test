@@ -1,38 +1,43 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  chooseExportDirectory
+} from "../../api/desktopDialogs";
+import {
   createWritingJob,
   deleteWritingJob,
+  exportWritingLibrary,
   listWritingJobs,
   updateWritingJob
-} from "../api/tauriCommands";
-import { StatusPill } from "../components/StatusPill";
-import { go } from "../app/router";
-import { setPublishIntent } from "../utils/publishIntent";
-import { toUserFacingError } from "../utils/userFacingError";
-import type { WritingJob, WritingJobStatus, WritingTaskType } from "../types";
+} from "../../api/tauriCommands";
+import { StatusPill } from "../../components/StatusPill";
+import { toUserFacingError } from "../../utils/userFacingError";
+import type { WritingJob, WritingJobStatus, WritingTaskType } from "../../types";
+
+// C3：写作题库并入题库的「写作」子标签。功能（新建/编辑/删除/导出 NAS 写作题库）从
+// 原 src/pages/WritingStudio.tsx 迁移到这里，不再维护两份；#/legacy/writing 重定向到
+// /library?modality=writing（见 router）。导出改为就地完成（选 Task 1 + Task 2 → 选目录
+// → export_writing_library），不再跳转已被退休的导出页。
 
 const TASK_DEFAULTS: Record<WritingTaskType, { suggested: number; label: string }> = {
   task1: { suggested: 150, label: "图表描述题 (Task 1)" },
   task2: { suggested: 250, label: "议论文 (Task 2)" }
 };
 
-export function WritingStudio({ refresh }: { refresh: () => void }) {
+export function WritingPanel({ refresh }: { refresh: () => void }) {
   const [jobs, setJobs] = useState<WritingJob[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | undefined>();
   const [editing, setEditing] = useState<WritingJob | undefined>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const [notice, setNotice] = useState<string | undefined>();
   const [creatingTaskType, setCreatingTaskType] = useState<WritingTaskType>("task1");
   const [newTitle, setNewTitle] = useState("");
 
-  const draft = useMemo(() => jobs.find((j) => j.status === "Draft"), [jobs]);
   const ready = useMemo(() => jobs.filter((j) => j.status === "ExportReady" || j.status === "Exported"), [jobs]);
 
-  // Route backend failures through the human-readable message layer; keep the raw
-  // code/detail in the console for diagnostics rather than showing it to the user.
   function showError(error: unknown, fallback?: string) {
     const facing = toUserFacingError(error, fallback);
-    console.error("[writing-studio]", facing.internalDetail);
+    console.error("[writing-panel]", facing.internalDetail);
     setError(facing.userMessage);
   }
 
@@ -47,9 +52,11 @@ export function WritingStudio({ refresh }: { refresh: () => void }) {
       showError(e, "写作任务列表加载失败，请稍后重试。");
     }
   }
+  // PLACEHOLDER_HANDLERS
 
   useEffect(() => {
     void reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -137,21 +144,47 @@ export function WritingStudio({ refresh }: { refresh: () => void }) {
     }
   }
 
+  // 就地导出：需各一道「可导出」的 Task 1 与 Task 2；选目录后调 export_writing_library。
+  async function handleExport() {
+    const task1 = ready.find((j) => j.taskType === "task1");
+    const task2 = ready.find((j) => j.taskType === "task2");
+    if (!task1 || !task2) {
+      setError("导出写作题库需要各一道「可导出」的 Task 1 与 Task 2（先在编辑区「标记可导出」）。");
+      return;
+    }
+    const dir = await chooseExportDirectory();
+    if (!dir) return;
+    setBusy(true);
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      await exportWritingLibrary({ jobIds: [task1.jobId, task2.jobId], exportDir: dir });
+      await reload();
+      refresh();
+      setNotice(`已导出写作题库到 ${dir}`);
+    } catch (e) {
+      showError(e, "导出写作题库失败，请稍后重试。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <section className="dashboard page-enter">
+    <section className="writing-panel page-enter" data-testid="library-writing-panel">
       <div className="hero-panel">
         <div>
           <p className="eyebrow">写作题库创作</p>
           <h2>手输 Task 1 / Task 2 题目，导出为 NAS 端可识别的写作题库</h2>
-          <p>创作完成后到 NAS 导出页选择 Task 1 与 Task 2，并发布到学生端题库目录。</p>
+          <p>各建一道「可导出」的 Task 1 与 Task 2，然后就地导出到 NAS 目录。</p>
         </div>
         <div className="hero-actions">
-          <button className="primary" onClick={() => {
-            setPublishIntent({ mode: "writing-library" });
-            go("/export");
-          }}>前往导出</button>
+          <button className="primary" disabled={busy} onClick={handleExport} data-testid="writing-export">
+            {busy ? "处理中…" : "导出写作题库"}
+          </button>
         </div>
       </div>
+
+      {notice ? <p className="library-notice" role="status" data-testid="writing-notice">{notice}<button className="ghost small" onClick={() => setNotice(undefined)} aria-label="关闭提示">×</button></p> : null}
 
       <div className="two-column">
         <section>
@@ -178,7 +211,7 @@ export function WritingStudio({ refresh }: { refresh: () => void }) {
             <p className="eyebrow">写作任务列表</p>
             <h3>已有任务</h3>
           </div>
-          <div className="job-table">
+          <div className="job-table" data-testid="writing-job-table">
             {jobs.map((job) => (
               <button
                 key={job.jobId}

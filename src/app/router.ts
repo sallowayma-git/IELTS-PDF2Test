@@ -35,6 +35,8 @@ export interface RouteState {
   /** 题库条目 id。当前数据模型下 library item id 与 job id 相同（见 findings F12）。 */
   itemId?: string;
   intent?: LibraryIntent;
+  /** 题库题型子标签（reading | listening | writing | all）。承接被退休的 #/legacy/writing。 */
+  modality?: string;
   legacyPage?: LegacyPageName;
 }
 
@@ -44,7 +46,9 @@ export function legacyRedirect(hash: string): string | undefined {
   const parts = value.split(/[/?]/).filter(Boolean);
   if (!parts.length) return "/library";
   const [head, second, third] = parts;
-  if (head === "legacy" && second !== "writing") {
+  if (head === "legacy") {
+    // 写作创作页并入题库的写作子标签（C3）：不再是独立的逃生页面。
+    if (second === "writing") return "/library?modality=writing";
     return third ? `/items/${third}` : second === "import" ? "/library?import=1" : "/library";
   }
   if (head === "dashboard" || head === "phase5") return "/library";
@@ -68,9 +72,17 @@ function parseIntent(value: string): LibraryIntent | undefined {
   return undefined;
 }
 
+/** 题库题型子标签，由 `?modality=` 携带（承接 #/legacy/writing 的重定向）。 */
+function parseModality(value: string): string | undefined {
+  const query = value.includes("?") ? value.slice(value.indexOf("?") + 1) : "";
+  if (!query) return undefined;
+  return new URLSearchParams(query).get("modality") ?? undefined;
+}
+
 export function parseRoute(hash = window.location.hash): RouteState {
   const value = hash.replace(/^#\/?/, "");
   const intent = parseIntent(value);
+  const modality = parseModality(value);
   const parts = value.split(/[/?]/).filter(Boolean);
   if (!parts.length) return { name: "library" };
   if (parts[0] === "items" && parts[1]) return { name: "workspace", itemId: parts[1], intent };
@@ -78,10 +90,10 @@ export function parseRoute(hash = window.location.hash): RouteState {
   if (parts[0] === "legacy") {
     const legacyPage = asLegacyPage(parts[1]);
     if (legacyPage) return { name: "legacy", legacyPage, itemId: parts[2], intent };
-    return { name: "library", intent };
+    return { name: "library", intent, modality };
   }
-  if (parts[0] === "library") return { name: "library", intent };
-  return { name: "library", intent };
+  if (parts[0] === "library") return { name: "library", intent, modality };
+  return { name: "library", intent, modality };
 }
 
 export function go(path: string): void {
@@ -110,8 +122,8 @@ export function jobResumePath(job: { jobId: string }): string {
 export function applyLegacyRedirect(hash = window.location.hash): boolean {
   const raw = hash.replace(/^#\/?/, "");
   const parts = raw.split(/[/?]/).filter(Boolean);
-  // 新路由与显式 legacy 逃生通道都不重定向。
-  if (parts[0] === "items" || parts[0] === "settings" || (parts[0] === "legacy" && parts[1] === "writing")) return false;
+  // 新路由不重定向。#/legacy/writing 不再豁免——它要被重定向到题库写作子标签（C3）。
+  if (parts[0] === "items" || parts[0] === "settings") return false;
   if (parts[0] === "library" && !parts[1]) return false;
   const target = legacyRedirect(hash);
   if (!target) return false;
