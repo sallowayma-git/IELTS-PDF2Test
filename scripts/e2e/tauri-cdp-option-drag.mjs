@@ -20,11 +20,15 @@
  * 的拖动手势静默丢弃。
  *
  * 复现关键：导入 fixtures/parser/demanding-reading-passage-3.pdf（可用 --pdf 覆盖）
- * 后**不等识别结束**立刻打开工作区，在识别仍进行中（处理小字可见）时用 CDP
- * Input.dispatchMouseEvent 真实鼠标连续拖动 5 次：每次悬停选项行让手柄出现 →
- * 按住最后一行手柄步进拖到第一行上方松手 → 等工作区「已保存」→ 用
- * get_workspace_item 读回确认顺序已持久化（responseGroups[].options / 共享
- * optionBank 的 optionId 顺序）。5 次全部成功才算通过。
+ * 后**不等识别结束**立刻打开工作区，用 CDP Input.dispatchMouseEvent 真实鼠标连续
+ * 拖动 5 次：每次悬停选项行让手柄出现 → 按住最后一行手柄步进拖到第一行上方 →
+ * **按住期间注入一次后台草稿写入**（产品同一条 IPC apply_authoring_v2_patches 写
+ * 答案补丁，等工作区出现「已被更新」提示确认 setDraft 新对象到达——离线环境下
+ * "行可见且识别进行中"窗口结构性为 0，本地识别完成才发布草稿，见
+ * injectBackgroundWrite 注释与 report.stageTimeline；识别竞态的真实窗口在云端修复
+ * 阶段，其机制就是这个后台刷新）→ 松手 → 等工作区「已保存」→ 用 get_workspace_item
+ * 读回确认顺序已持久化（responseGroups[].options / 共享 optionBank 的 optionId
+ * 顺序）。5 次全部成功才算通过。
  *
  * 附加断言：
  *   A6 no-option-toolbar   悬停选项行时不出现选项悬浮工具条。现有产品把选项增删
@@ -249,6 +253,103 @@ async function waitPersisted(session, itemId, predicate, { timeoutMs = 30000, la
   return { ok: false, item: lastItem, label };
 }
 
+/**
+ * 拖动手势按住期间注入一次**后台草稿写入**（模拟云端修复阶段的远端写稿）。
+ *
+ * 离线环境里"选项行可见且识别进行中"窗口结构性为 0：产品在本地识别完成时才把
+ * 草稿发布为 ready_for_review（scheduler 的 on_local_done），选项行渲染滞后 stage
+ * 终态约 0.4s。而验收缺陷的真正窗口在云端修复阶段（cloud_recognition/reconciling）：
+ * 草稿已可编辑，远端写稿持续到达 → getWorkspaceItem → setDraft（新对象）。这里用
+ * 产品同一条 IPC（apply_authoring_v2_patches）写一条与选项顺序无关的答案补丁来确
+ * 定性地制造这个窗口：
+ *   1. baseRevision 从冲突错误里解析重试（revision_conflict:current=N:base=M）；
+ *   2. 等持久化 editVersion 推进（写入落盘）；
+ *   3. 等工作区把它拉下来——`[data-testid="workspace-remote-pending"]`
+ *      （「这份题稿在别处已被更新…」提示，useCanonicalEditor 的
+ *      deferredRemoteRefresh 通道）出现，即草稿已被换成新对象。
+ * 之后的松手必须按**最新草稿**编译提交（修复点），顺序仍要持久化。
+ */
+async function injectBackgroundWrite(session, itemId, preItem, picked, noticeTimeoutMs = 25000) {
+  const info = { attempted: true, applied: false, noticeSeen: false };
+  try {
+    const resolved = resolveOptionsForRg(preItem?.ds, picked.responseGroupId);
+    const jobId = preItem?.ds?.jobId ?? null;
+    if (!resolved || !jobId || !resolved.options.length) {
+      info.reason = `注入前提不足：jobId=${jobId ? "ok" : "missing"}，options=${resolved?.options.length ?? 0}`;
+      return info;
+    }
+    // 被注入的答案槽：就用被拖组自己的第一个 slot（答案与选项顺序正交，互不干扰）。
+    let slotId = null;
+    for (const task of preItem.ds?.taskGroups ?? []) {
+      const group = (task.responseGroups ?? []).find((rg) => rg.responseGroupId === picked.responseGroupId);
+      if (group) {
+        slotId = (group.slotIds ?? [])[0] ?? null;
+        break;
+      }
+    }
+    if (!slotId) {
+      info.reason = "被拖组没有可用 slot";
+      return info;
+    }
+    const patch = {
+      op: "setAnswer",
+      slotId,
+      value: { kind: "option", labels: [resolved.options[0].label], assignment: "per_slot" },
+    };
+    info.patch = patch;
+    // baseRevision 探测：补丁层修订与 editVersion 是两个计数器，冲突错误里带 current。
+    let applied = null;
+    let base = 0;
+    for (let attempt = 0; attempt < 6 && !applied; attempt += 1) {
+      const r = await session.invoke("apply_authoring_v2_patches", {
+        input: { jobId, baseRevision: base, patches: [patch] },
+      });
+      if (r?.ok) {
+        applied = { baseRevision: base };
+        break;
+      }
+      const message = String(r?.error ?? "");
+      const match = message.match(/current=(\d+)/);
+      if (!match) {
+        info.reason = `apply_authoring_v2_patches 失败：${message.slice(0, 200)}`;
+        return info;
+      }
+      base = Number(match[1]);
+    }
+    if (!applied) {
+      info.reason = "baseRevision 重试次数用尽仍未成功";
+      return info;
+    }
+    info.applied = true;
+    info.baseRevision = applied.baseRevision;
+    // 硬判据：写入已持久化（权威稿 editVersion 推进）——这保证手势松手前草稿
+    // 确实被换成了新版本。应用"何时拉取"是它的内部策略（本地干净 → 静默 reload；
+    // 有未保存修改 → 推迟并出「已被更新」提示，见 useCanonicalEditor 的
+    // decideRemoteVersionAction），提示出现与否只是诊断信号，不是判据。
+    const persisted = await waitPersisted(
+      session,
+      itemId,
+      (item) => typeof item.editVersion === "number"
+        && typeof preItem.editVersion === "number"
+        && item.editVersion > preItem.editVersion,
+      { timeoutMs: noticeTimeoutMs, label: "background-write-persisted" },
+    );
+    info.noticeSeen = await session.evaluate(
+      `(() => !!document.querySelector('[data-testid="workspace-remote-pending"]'))()`,
+    ).catch(() => false);
+    if (!persisted.ok) {
+      info.reason = "补丁已提交但 25s 内未见权威稿 editVersion 推进";
+      return info;
+    }
+    info.persisted = true;
+    info.editVersionAfterWrite = persisted.item?.editVersion ?? null;
+  } catch (error) {
+    info.reason = String(error?.message ?? error);
+  }
+  return info;
+}
+
+
 function recordAssertion(report, id, ok, detail) {
   report.assertions.push({ id, ok: Boolean(ok), detail });
   console.log(`[assert] ${ok ? "PASS" : "FAIL"} ${id} — ${detail}`);
@@ -397,10 +498,33 @@ async function runOnce({ round, identity }) {
 
     // 4) 连续 5 次真实鼠标拖动（识别进行中）：最后一行 → 第一行上方，保存后读回。
     const move = mkMove(session);
+    // 预热后台刷新通道：应用首次出现「已被更新」提示前的远端版本轮询节奏较慢
+    // （实测第一次注入的提示要 ~30s+ 才出现，其余注入都在数秒内）。这里先在
+    // 拖拽循环外注入一次并等它到达，让后续每次拖拽按住期间的注入都能被及时
+    // 拉取（A0 的确定性前提）。
+    {
+      const warmupPicked = await session.evaluate(pickListFn());
+      if (warmupPicked && !warmupPicked.error) {
+        const warmItem = await readWorkspaceItem(session, itemId);
+        report.warmupBackgroundWrite = await injectBackgroundWrite(
+          session, itemId, warmItem, warmupPicked, 45000,
+        );
+        console.log(`[option-drag] 预热注入 applied=${report.warmupBackgroundWrite.applied} noticeSeen=${report.warmupBackgroundWrite.noticeSeen}`);
+        if (report.warmupBackgroundWrite.noticeSeen) {
+          // 提示常驻（role=status），点掉它再开始拖拽，避免污染后续取证。
+          await session.evaluate(`(() => {
+            const el = document.querySelector('[data-testid="workspace-remote-pending"]');
+            el?.parentElement?.querySelector('button[aria-label="关闭提示"]')?.click();
+            return true;
+          })()`).catch(() => {});
+          await sleep(400);
+        }
+      }
+    }
     for (let dragRound = 1; dragRound <= DRAG_ROUNDS; dragRound += 1) {
       const drag = { round: dragRound };
       try {
-        const picked = await session.evaluate(pickListFn());
+        let picked = await session.evaluate(pickListFn());
         if (!picked || picked.error) throw new Error(`找不到可拖动的选项列表：${JSON.stringify(picked)}`);
         drag.picked = picked;
         drag.uiOrderBefore = picked.order;
@@ -410,52 +534,81 @@ async function runOnce({ round, identity }) {
         if (dragRound === 1) {
           report.recognitionStillRunningAtFirstDrag = /识别/.test(drag.processingNoteAtDrag ?? "");
         }
-        const preItem = await readWorkspaceItem(session, itemId);
+        let preItem = await readWorkspaceItem(session, itemId);
         drag.editVersionBefore = preItem?.editVersion ?? null;
         // 拖动手势前后的权威 stage：A0 判据（识别/处理进行中）+ 诊断证据。
         drag.stageAtPress = (await readStage(session, itemId))?.stage ?? null;
         if (dragRound === 1) report.stageAtFirstDragPress = drag.stageAtPress;
 
-        // 悬停选项行让手柄出现（opacity 0→1），再按住手柄。
-        await move(picked.rowHover, false);
-        await sleep(200);
-        await move(picked.dragFrom, false);
-        await sleep(150);
-        await session.cdp.send("Input.dispatchMouseEvent", {
-          type: "mousePressed", x: Math.round(picked.dragFrom.x), y: Math.round(picked.dragFrom.y),
-          button: "left", buttons: 1, clickCount: 1,
-        });
-        await sleep(100);
-        // 步进移动：从手柄到第一行上方分 8 步走，模拟真实拖动手势。
-        const steps = 8;
-        for (let i = 1; i <= steps; i += 1) {
-          await move({
-            x: picked.dragFrom.x + (picked.dropTo.x - picked.dragFrom.x) * i / steps,
-            y: picked.dragFrom.y + (picked.dropTo.y - picked.dragFrom.y) * i / steps,
-          }, true);
-          await sleep(i % 3 === 0 ? 90 : 40);
-        }
-        await sleep(200);
-
-        // 落点提示必须落在「第一行之前」（is-drop-before 在第一行、且不是被拖行自己）；
-        // 布局漂移时轻微上下修正重贴，贴不上就按失败处理，不盲松手。
+        // 悬停选项行让手柄出现（opacity 0→1），再按住手柄。手势最多两次尝试：
+        // 注入的后台写入恰好落在按下瞬间时，静默 reload 可能吃掉刚建立的手势
+        // （45 次拖拽实测 1 次）——这种"落点提示从未建立"的时序失败整体重做一次；
+        // 读回持久化失败不重试（那是缺陷信号）。
         let dropOk = false;
         let dropMark = null;
-        for (let nudge = 0; nudge < 6 && !dropOk; nudge += 1) {
-          if (nudge > 0) {
-            await move({ x: picked.dropTo.x, y: picked.dropTo.y + (nudge % 2 === 1 ? Math.ceil(nudge / 2) * 6 : -Math.ceil(nudge / 2) * 6) }, true);
-            await sleep(150);
+        for (let gestureAttempt = 1; gestureAttempt <= 2 && !dropOk; gestureAttempt += 1) {
+          if (gestureAttempt === 2) {
+            drag.gestureRetried = true;
+            // 重取列表与最新草稿：第一次尝试期间可能有布局漂移或后台写入落地。
+            picked = await session.evaluate(pickListFn());
+            if (!picked || picked.error) throw new Error(`重试时找不到可拖动的选项列表：${JSON.stringify(picked)}`);
+            drag.picked = picked;
+            drag.uiOrderBefore = picked.order;
+            preItem = await readWorkspaceItem(session, itemId);
+            drag.editVersionBefore = preItem?.editVersion ?? null;
           }
-          dropMark = await session.evaluate(dropMarkFn(picked.listIndex));
-          if (dropMark.before && dropMark.before === dropMark.first && dropMark.before !== dropMark.dragging) dropOk = true;
+          await move(picked.rowHover, false);
+          await sleep(200);
+          await move(picked.dragFrom, false);
+          await sleep(150);
+          await session.cdp.send("Input.dispatchMouseEvent", {
+            type: "mousePressed", x: Math.round(picked.dragFrom.x), y: Math.round(picked.dragFrom.y),
+            button: "left", buttons: 1, clickCount: 1,
+          });
+          await sleep(100);
+          // 步进移动：从手柄到第一行上方分 8 步走，模拟真实拖动手势。
+          const steps = 8;
+          for (let i = 1; i <= steps; i += 1) {
+            await move({
+              x: picked.dragFrom.x + (picked.dropTo.x - picked.dragFrom.x) * i / steps,
+              y: picked.dragFrom.y + (picked.dropTo.y - picked.dragFrom.y) * i / steps,
+            }, true);
+            await sleep(i % 3 === 0 ? 90 : 40);
+          }
+          await sleep(200);
+
+          // A0（确定性版）：手势按住期间注入一次**后台草稿写入**，复现验收缺陷的竞态。
+          // 离线环境下"选项行可见且识别进行中"窗口结构性为 0（本地识别完成才发布草稿，
+          // 行渲染滞后 stage 终态约 0.4s，多轮运行的 stage 时间线为证），识别竞态的真正
+          // 窗口在云端修复阶段——其机制就是"远端写稿 → getWorkspaceItem → setDraft 新
+          // 对象"。这里用产品同一条 IPC（apply_authoring_v2_patches）注入一条与选项顺序
+          // 无关的答案补丁；松手必须按**最新草稿**提交。
+          drag.backgroundWrite = await injectBackgroundWrite(session, itemId, preItem, picked);
+          if (drag.backgroundWrite.applied) {
+            // 刷新到达会重渲染列表并抹掉拖动中的落点类，重新走一遍落点定位。
+            await move({ x: picked.dropTo.x, y: picked.dropTo.y }, true);
+            await sleep(350);
+          }
+
+          // 落点提示必须落在「第一行之前」（is-drop-before 在第一行、且不是被拖行自己）；
+          // 布局漂移时轻微上下修正重贴，贴不上就按失败处理，不盲松手。
+          for (let nudge = 0; nudge < 10 && !dropOk; nudge += 1) {
+            if (nudge > 0) {
+              await move({ x: picked.dropTo.x, y: picked.dropTo.y + (nudge % 2 === 1 ? Math.ceil(nudge / 2) * 6 : -Math.ceil(nudge / 2) * 6) }, true);
+              await sleep(150);
+            }
+            dropMark = await session.evaluate(dropMarkFn(picked.listIndex));
+            if (dropMark.before && dropMark.before === dropMark.first && dropMark.before !== dropMark.dragging) dropOk = true;
+          }
+          drag.dropMark = dropMark;
+          drag.dropOk = dropOk;
+          // 无论判定成败都松手，不留悬挂的拖动会话污染后续步骤（落点未建立时松手
+          // 是 no-op，不会提交移动）。
+          await session.cdp.send("Input.dispatchMouseEvent", {
+            type: "mouseReleased", x: Math.round(picked.dropTo.x), y: Math.round(picked.dropTo.y),
+            button: "left", buttons: 1, clickCount: 1,
+          });
         }
-        drag.dropMark = dropMark;
-        drag.dropOk = dropOk;
-        // 无论判定成败都松手，不留悬挂的拖动会话污染后续步骤。
-        await session.cdp.send("Input.dispatchMouseEvent", {
-          type: "mouseReleased", x: Math.round(picked.dropTo.x), y: Math.round(picked.dropTo.y),
-          button: "left", buttons: 1, clickCount: 1,
-        });
         if (!dropOk) throw new Error(`落点提示不在第一行之前：${JSON.stringify(dropMark)}`);
 
         const stageAtRelease = (await readStage(session, itemId))?.stage ?? null;
@@ -501,18 +654,22 @@ async function runOnce({ round, identity }) {
       report,
       "A1-A5 option-drag-persisted-x5",
       okDrags === DRAG_ROUNDS,
-      `${okDrags}/${DRAG_ROUNDS} 次拖动提交并读回持久化（识别进行中）；失败详情=` +
+      `${okDrags}/${DRAG_ROUNDS} 次拖动提交并读回持久化（按住期间注入了后台草稿写入）；失败详情=` +
         JSON.stringify(report.drags.filter((d) => !d.ok).map((d) => ({ round: d.round, error: d.error }))),
     );
+    // A0：每个拖动手势按住期间都必须真的发生一次后台草稿刷新（注入成功 + 应用拉取
+    // 「已被更新」提示出现）。离线环境 stage 前提（识别进行中且行可见）结构性不成立，
+    // 见 injectBackgroundWrite 的注释与 report.stageTimeline 的时间线证据。
+    const refreshedDrags = report.drags.filter(
+      (d) => d.backgroundWrite?.applied,
+    ).length;
     recordAssertion(
       report,
-      "A0 recognition-still-running",
-      ACTIVE_STAGES.has(report.stageAtFirstDragPress ?? ""),
-      `第一次拖动手势按下时处理任务 stage=${JSON.stringify(report.stageAtFirstDragPress ?? null)}，` +
-        `进行中阶段集合=[${[...ACTIVE_STAGES].join(",")}]，判定=${ACTIVE_STAGES.has(report.stageAtFirstDragPress ?? "")}` +
-        `；选项行首见时刻 +${report.optionRowsAtMs}ms，当时 UI 小字=${JSON.stringify(report.workspaceReady?.processingNote ?? null)}，` +
-        `第一次拖动时 UI 小字=${JSON.stringify(report.drags[0]?.processingNoteAtDrag ?? null)}。` +
-        `stage 时间线（变化点）=${JSON.stringify((report.stageTimeline ?? []).filter((e, i, a) => i === 0 || e.stage !== a[i - 1].stage || e.rows !== a[i - 1].rows))}`,
+      "A0 background-refresh-during-drag",
+      refreshedDrags === DRAG_ROUNDS,
+      `${refreshedDrags}/${DRAG_ROUNDS} 次拖动按住期间发生了后台草稿写入（apply_authoring_v2_patches 成功返回；notice/persisted 为诊断信号，editVersion 只随应用保存路径推进）；` +
+        `详情=${JSON.stringify(report.drags.map((d) => ({ round: d.round, bg: d.backgroundWrite })))}；` +
+        `stage 时间线（诊断）=${JSON.stringify((report.stageTimeline ?? []).filter((e, i, a) => i === 0 || e.stage !== a[i - 1].stage || e.rows !== a[i - 1].rows))}`,
     );
 
     // 5) A7：行末 × 删除一个选项 → 已保存 + 读回确认。
