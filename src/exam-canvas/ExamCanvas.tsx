@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { InlineTextEditor } from "./editors/InlineTextEditor";
 import { MatchingMatrix, matchingRowsFor } from "./renderers/MatchingMatrix";
 import { resolveAuthoringAssetPreview, type AuthoringAssetPreview } from "../api/tauriCommands";
@@ -15,7 +15,9 @@ import type { AnswerValueV2, ContentNodeV2, IeltsAuthoringIRV2, OptionV2, Respon
 
 export type ExamCanvasStructureAction =
   | { type: "option.add"; taskId: string; responseGroupId: string; afterOptionId?: string }
-  | { type: "option.move"; taskId: string; responseGroupId: string; optionId: string; direction: "up" | "down" }
+  /** 把选项移到 `beforeOptionId` 之前；缺省表示移到末尾。用选项 id 而不是下标定位，
+   *  因为画布上显示的选项列表和存储里的选项库不一定一一对应下标。 */
+  | { type: "option.move"; taskId: string; responseGroupId: string; optionId: string; beforeOptionId?: string }
   | { type: "option.delete"; taskId: string; responseGroupId: string; optionId: string }
   | { type: "table.row.add"; tableId: string; afterRowId?: string }
   | { type: "table.row.delete"; tableId: string; rowId: string }
@@ -87,26 +89,161 @@ function ToolButton({ label, disabled, onClick, children }: {
   return <button type="button" title={label} aria-label={label} disabled={disabled} onClick={onClick}>{children}</button>;
 }
 
-function OptionBankTools({ canvas, taskId, responseGroupId, options }: {
+/** 作者模式的选项增删：不再用悬浮工具条，而是贴在选项本身上、悬停才出现——
+ *  删除是选项行末尾的 ×，添加是选项列表下方的一行轻量入口。排序见 {@link OptionDragHandle}。 */
+function OptionDeleteButton({ canvas, taskId, responseGroupId, option, count }: {
+  canvas: ExamCanvasProps;
+  taskId: string;
+  responseGroupId: string;
+  option: OptionV2;
+  count: number;
+}) {
+  if (canvas.mode !== "author" || !canvas.onStructureAction || count <= 1) return null;
+  return <button
+    type="button"
+    className="v2-option-delete"
+    title="删除这个选项"
+    aria-label={`删除选项 ${option.label}`}
+    // 按钮在 <label> 里：阻止点击冒泡成“选中这个选项”。
+    onClick={(event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      canvas.onStructureAction?.({ type: "option.delete", taskId, responseGroupId, optionId: option.optionId });
+    }}
+  >×</button>;
+}
+
+function OptionAddButton({ canvas, taskId, responseGroupId, options }: {
   canvas: ExamCanvasProps;
   taskId: string;
   responseGroupId: string;
   options: OptionV2[];
 }) {
-  return <AuthorTools canvas={canvas} label="编辑选项库">
-    <ToolButton label="在末尾添加选项" onClick={() => canvas.onStructureAction?.({
-      type: "option.add",
-      taskId,
-      responseGroupId,
-      afterOptionId: options.at(-1)?.optionId
-    })}>＋选项</ToolButton>
-    {options.map((option, index) => <span key={option.optionId} className="v2-author-option-tools">
-      <b>{option.label}</b>
-      <ToolButton label={`上移选项 ${option.label}`} disabled={index === 0} onClick={() => canvas.onStructureAction?.({ type: "option.move", taskId, responseGroupId, optionId: option.optionId, direction: "up" })}>↑</ToolButton>
-      <ToolButton label={`下移选项 ${option.label}`} disabled={index === options.length - 1} onClick={() => canvas.onStructureAction?.({ type: "option.move", taskId, responseGroupId, optionId: option.optionId, direction: "down" })}>↓</ToolButton>
-      <ToolButton label={`删除选项 ${option.label}`} disabled={options.length <= 1} onClick={() => canvas.onStructureAction?.({ type: "option.delete", taskId, responseGroupId, optionId: option.optionId })}>×</ToolButton>
-    </span>)}
-  </AuthorTools>;
+  if (canvas.mode !== "author" || !canvas.onStructureAction) return null;
+  return <button
+    type="button"
+    className={`v2-option-add${options.length ? "" : " is-empty"}`}
+    aria-label="添加选项"
+    onClick={(event) => {
+      event.stopPropagation();
+      canvas.onStructureAction?.({ type: "option.add", taskId, responseGroupId, afterOptionId: options.at(-1)?.optionId });
+    }}
+  >＋ 添加选项</button>;
+}
+
+const dropClasses = ["is-drop-before", "is-drop-after"];
+
+interface OptionDrag {
+  list: HTMLElement;
+  row: HTMLElement;
+  /** null = 指针还没移动过；undefined = 放到末尾。 */
+  beforeOptionId?: string | null;
+  detach: () => void;
+}
+
+/** 作者模式下选项行左侧的拖动手柄。选项顺序只通过拖动（或聚焦手柄后按 ↑/↓）调整，
+ *  不再在工具条里给每个选项放上移/下移按钮。
+ *
+ *  用 pointer 事件而不是 HTML5 拖放：Tauri 在 Windows 上默认接管 WebView 的拖放
+ *  （用于把文件拖进窗口），HTML5 `draggable` 在桌面端会失效。
+ *  移动/松开挂在 window 上而不依赖 pointer capture：捕获会因视口变化、失焦等原因
+ *  中途丢失，那时拖动会被静默取消（真实 WebView2 里复现过）。
+ *  行需要带 `data-option-row` / `data-option-id`，并且是 `data-option-list` 容器的直接子元素。 */
+function OptionDragHandle({ canvas, taskId, responseGroupId, options, index }: {
+  canvas: ExamCanvasProps;
+  taskId: string;
+  responseGroupId: string;
+  options: OptionV2[];
+  index: number;
+}) {
+  const drag = useRef<OptionDrag | null>(null);
+  // 拖动途中手柄被卸载（画布整体重载）：取消，不把旧闭包里的动作提交出去。
+  useEffect(() => () => drag.current?.detach(), []);
+  if (canvas.mode !== "author" || !canvas.onStructureAction) return null;
+  const option = options[index];
+  const move = (beforeOptionId: string | undefined) => canvas.onStructureAction?.({ type: "option.move", taskId, responseGroupId, optionId: option.optionId, beforeOptionId });
+  const rowsOf = (list: HTMLElement) => Array.from(list.querySelectorAll<HTMLElement>(":scope > [data-option-row]"));
+  const clearMarks = (list: HTMLElement) => rowsOf(list).forEach((row) => row.classList.remove(...dropClasses));
+  const finish = (commit: boolean) => {
+    const current = drag.current;
+    if (!current) return;
+    current.detach();
+    if (!commit || current.beforeOptionId === null || !current.list.isConnected) return;
+    // 落在自己前后等于没动。
+    if (current.beforeOptionId === option.optionId || current.beforeOptionId === options[index + 1]?.optionId) return;
+    move(current.beforeOptionId);
+  };
+  const track = (clientX: number, clientY: number) => {
+    const current = drag.current;
+    if (!current) return;
+    const rows = rowsOf(current.list);
+    const boxes = rows.map((row) => row.getBoundingClientRect());
+    // TFNG 短标签选项横排（可换行）：同一行内按水平中线判断，跨行按上下判断；
+    // 竖排选项只看垂直中线。
+    const horizontal = boxes.length > 1 && boxes[1].top < boxes[0].bottom && boxes[1].left > boxes[0].left;
+    const target = boxes.findIndex((box) => horizontal
+      ? clientY < box.top || (clientY < box.bottom && clientX < box.left + box.width / 2)
+      : clientY < box.top + box.height / 2);
+    clearMarks(current.list);
+    if (target >= 0) {
+      rows[target].classList.add("is-drop-before");
+      current.beforeOptionId = rows[target].dataset.optionId;
+    } else {
+      rows.at(-1)?.classList.add("is-drop-after");
+      current.beforeOptionId = undefined;
+    }
+  };
+  return <span
+    className="v2-option-drag-handle"
+    role="button"
+    tabIndex={0}
+    title="拖动调整选项顺序"
+    aria-label={`拖动调整选项 ${option.label} 的顺序（聚焦后也可按上下方向键）`}
+    // 手柄在 <label> 里：阻止点击冒泡成“选中这个选项”。
+    onClick={(event) => { event.preventDefault(); event.stopPropagation(); }}
+    onPointerDown={(event) => {
+      if (event.button > 0 || drag.current) return;
+      const row = event.currentTarget.closest<HTMLElement>("[data-option-row]");
+      const list = row?.parentElement?.closest<HTMLElement>("[data-option-list]");
+      if (!row || !list) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const onMove = (moveEvent: PointerEvent) => track(moveEvent.clientX, moveEvent.clientY);
+      const onUp = () => finish(true);
+      const onCancel = () => finish(false);
+      const onKey = (keyEvent: KeyboardEvent) => { if (keyEvent.key === "Escape") finish(false); };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onCancel);
+      window.addEventListener("blur", onCancel);
+      window.addEventListener("keydown", onKey);
+      drag.current = {
+        list,
+        row,
+        beforeOptionId: null,
+        detach: () => {
+          window.removeEventListener("pointermove", onMove);
+          window.removeEventListener("pointerup", onUp);
+          window.removeEventListener("pointercancel", onCancel);
+          window.removeEventListener("blur", onCancel);
+          window.removeEventListener("keydown", onKey);
+          clearMarks(list);
+          row.classList.remove("is-dragging");
+          list.classList.remove("is-reordering");
+          drag.current = null;
+        }
+      };
+      row.classList.add("is-dragging");
+      list.classList.add("is-reordering");
+    }}
+    onKeyDown={(event) => {
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.key === "ArrowUp" && index > 0) move(options[index - 1].optionId);
+      if (event.key === "ArrowDown" && index < options.length - 1) move(options[index + 2]?.optionId);
+    }}
+  >⋮⋮</span>;
 }
 
 function contentText(nodes: ContentNodeV2[] | undefined): string {
@@ -476,6 +613,10 @@ export function ExamCanvas(props: ExamCanvasProps) {
   }), [props.mode, runtime, props.authoring.answerKey, studentAnswers, listeningPartViews, listening, selectedPart]);
   // 原文 | 题目 的可拖动分隔条（workspace.css 负责视觉，本组件只渲染元素）。
   const { dividerProps } = usePaneDivider(props.authoring.jobId);
+  // 只在作者模式挂拖动排序需要的定位属性，学生预览的 DOM 保持不变。
+  const optionRowProps = (option: OptionV2) => props.mode === "author" && props.onStructureAction
+    ? { "data-option-row": "", "data-option-id": option.optionId }
+    : {};
   const optionsFor = (task: TaskGroupV2, response: ResponseGroupV2) => interactionModel.responseGroups[response.responseGroupId]?.options ?? task.optionBank?.options ?? [];
 
   return <CanvasAnswersContext.Provider value={{ answers: canvasAnswers, setText, setOption }}>
@@ -550,14 +691,14 @@ export function ExamCanvas(props: ExamCanvasProps) {
               && response.slotIds.every((slotId) => containsAnswerSlot(task.stimulus, new Set([slotId])));
             return <section key={response.responseGroupId} className={`v2-response-group${props.selectedId === response.responseGroupId ? " is-selected" : ""}`} data-response-group-id={response.responseGroupId} data-assignment={response.assignment} onClick={(event) => { if (props.mode === "author") { event.stopPropagation(); props.onSelect?.(response.responseGroupId); } }}>
               {response.prompt?.length ? <div className="v2-response-prompt"><ContentNodes nodes={response.prompt} canvas={props} /></div> : null}
-              {options.length || (props.mode === "author" && (response.kind === "choice" || response.kind === "matching")) ? <OptionBankTools canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} /> : null}
-              {inlineStimulusComplete ? null : unordered ? <fieldset className="v2-shared-selection"><legend>Select {response.cardinality.exact || response.slotIds.length} options for {response.slotIds.map((slotId) => runtime.questionDisplayMap[slotId]).join(", ")}</legend>{options.map((option) => { const checked = response.slotIds.some((slotId) => (canvasAnswers[slotId] ?? []).includes(option.label)); return <label key={option.optionId} className={`v2-choice-item${checked ? " is-checked" : ""}`}><input type="checkbox" value={option.label} checked={checked} disabled={!checked && unorderedSelected >= unorderedLimit} onChange={(event) => { const selected = Array.from(new Set(response.slotIds.flatMap((slotId) => canvasAnswers[slotId] ?? []).filter((value) => value !== option.label))).slice(0, response.slotIds.length); if (event.target.checked) selected.push(option.label); response.slotIds.forEach((slotId, index) => setOption(slotId, selected[index] ?? "", Boolean(selected[index]), false, "unordered_set")); }} /><span><strong>{option.label}</strong> <ContentNodes nodes={option.content} canvas={props} /></span></label>; })}<div className="v2-slot-summary">{response.slotIds.map((slotId) => <span key={slotId} className="v2-slot-chip" data-question-id={slotId}>{runtime.questionDisplayMap[slotId]}: {(canvasAnswers[slotId] ?? []).join(", ") || "—"}</span>)}</div></fieldset> : <div className="v2-slot-list">{response.slotIds.map((slotId, index) => {
+              {inlineStimulusComplete ? null : unordered ? <fieldset className="v2-shared-selection" data-option-list={props.mode === "author" ? "" : undefined}><legend>Select {response.cardinality.exact || response.slotIds.length} options for {response.slotIds.map((slotId) => runtime.questionDisplayMap[slotId]).join(", ")}</legend>{options.map((option, optionIndex) => { const checked = response.slotIds.some((slotId) => (canvasAnswers[slotId] ?? []).includes(option.label)); return <label key={option.optionId} className={`v2-choice-item${checked ? " is-checked" : ""}`} {...optionRowProps(option)}><OptionDragHandle canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} index={optionIndex} /><input type="checkbox" value={option.label} checked={checked} disabled={!checked && unorderedSelected >= unorderedLimit} onChange={(event) => { const selected = Array.from(new Set(response.slotIds.flatMap((slotId) => canvasAnswers[slotId] ?? []).filter((value) => value !== option.label))).slice(0, response.slotIds.length); if (event.target.checked) selected.push(option.label); response.slotIds.forEach((slotId, index) => setOption(slotId, selected[index] ?? "", Boolean(selected[index]), false, "unordered_set")); }} /><span><strong>{option.label}</strong> <ContentNodes nodes={option.content} canvas={props} /></span><OptionDeleteButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} option={option} count={options.length} /></label>; })}<div className="v2-slot-summary">{response.slotIds.map((slotId) => <span key={slotId} className="v2-slot-chip" data-question-id={slotId}>{runtime.questionDisplayMap[slotId]}: {(canvasAnswers[slotId] ?? []).join(", ") || "—"}</span>)}</div></fieldset> : <div className="v2-slot-list">{response.slotIds.map((slotId, index) => {
                 const slot = runtime.answerSlots[slotId];
                 if (!slot) return null;
                 const values = canvasAnswers[slotId] ?? [];
                 const textEntry = slot.interaction === "text" || response.kind === "text_entry";
-                return <div key={slotId} className={`v2-slot-question${props.selectedId === slotId ? " is-selected" : ""}`} data-question-id={slotId} onClick={(event) => { if (props.mode === "author") { event.stopPropagation(); props.onSelect?.(slotId); } }}><div className="v2-slot-question-label"><span className="v2-slot-number">{runtime.questionDisplayMap[slotId]}</span>{response.kind === "text_entry" || response.kind === "matching" ? <span>Response {index + 1}</span> : null}</div>{textEntry ? <input className="v2-text-answer" type="text" name={slotId} value={values[0] ?? ""} maxLength={slot.constraints?.maxCharacters} aria-label={`Answer ${runtime.questionDisplayMap[slotId]}`} onChange={(event) => setText(slotId, event.target.value)} /> : options.length ? <div className={`v2-choice-options${isTfngOptionSet(options) ? " v2-tfng-options" : ""}`}>{options.map((option) => <label key={`${slotId}-${option.optionId}`} className={`v2-choice-item${values.includes(option.label) ? " is-checked" : ""}`}><input type={slot.interaction === "checkbox" ? "checkbox" : "radio"} name={slotId} value={option.label} checked={values.includes(option.label)} onChange={(event) => setOption(slotId, option.label, event.target.checked, slot.interaction === "checkbox")} /><span><strong>{option.label}</strong> <ContentNodes nodes={option.content} canvas={props} /></span></label>)}</div> : <input className="v2-text-answer" type="text" name={slotId} value={values[0] ?? ""} aria-label={`Answer ${runtime.questionDisplayMap[slotId]}`} onChange={(event) => setText(slotId, event.target.value)} />}</div>;
+                return <div key={slotId} className={`v2-slot-question${props.selectedId === slotId ? " is-selected" : ""}`} data-question-id={slotId} onClick={(event) => { if (props.mode === "author") { event.stopPropagation(); props.onSelect?.(slotId); } }}><div className="v2-slot-question-label"><span className="v2-slot-number">{runtime.questionDisplayMap[slotId]}</span>{response.kind === "text_entry" || response.kind === "matching" ? <span>Response {index + 1}</span> : null}</div>{textEntry ? <input className="v2-text-answer" type="text" name={slotId} value={values[0] ?? ""} maxLength={slot.constraints?.maxCharacters} aria-label={`Answer ${runtime.questionDisplayMap[slotId]}`} onChange={(event) => setText(slotId, event.target.value)} /> : options.length ? <div className={`v2-choice-options${isTfngOptionSet(options) ? " v2-tfng-options" : ""}`} data-option-list={props.mode === "author" ? "" : undefined}>{options.map((option, optionIndex) => <label key={`${slotId}-${option.optionId}`} className={`v2-choice-item${values.includes(option.label) ? " is-checked" : ""}`} {...optionRowProps(option)}><OptionDragHandle canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} index={optionIndex} /><input type={slot.interaction === "checkbox" ? "checkbox" : "radio"} name={slotId} value={option.label} checked={values.includes(option.label)} onChange={(event) => setOption(slotId, option.label, event.target.checked, slot.interaction === "checkbox")} /><span><strong>{option.label}</strong> <ContentNodes nodes={option.content} canvas={props} /></span><OptionDeleteButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} option={option} count={options.length} /></label>)}</div> : <input className="v2-text-answer" type="text" name={slotId} value={values[0] ?? ""} aria-label={`Answer ${runtime.questionDisplayMap[slotId]}`} onChange={(event) => setText(slotId, event.target.value)} />}</div>;
               })}</div>}
+              {options.length || (props.mode === "author" && (response.kind === "choice" || response.kind === "matching")) ? <OptionAddButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} /> : null}
             </section>;
           })}
         </article>)}

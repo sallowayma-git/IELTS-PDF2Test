@@ -44,9 +44,11 @@ export function compileStructureAction(current: IeltsAuthoringIRV2, action: Exam
         if (options.length <= 1) throw new Error("至少保留一个选项。");
         options.splice(index, 1);
       } else {
-        const target = action.direction === "up" ? index - 1 : index + 1;
-        if (target < 0 || target >= options.length) return;
-        [options[index], options[target]] = [options[target], options[index]];
+        // 选项带着自己的字母一起移动，答案里引用的字母因此仍然指向同一条选项。
+        const [moved] = options.splice(index, 1);
+        const before = action.beforeOptionId === undefined ? options.length : options.findIndex((option) => option.optionId === action.beforeOptionId);
+        if (before < 0 || before === index) return;
+        options.splice(before, 0, moved);
       }
     }
     return shared

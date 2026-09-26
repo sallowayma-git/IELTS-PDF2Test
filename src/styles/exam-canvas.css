@@ -434,8 +434,80 @@
 .exam-canvas-v2.is-author .v2-author-tools button:hover:not(:disabled) { background: var(--paper-control-hover, #f2f2f2); color: #111; }
 .exam-canvas-v2.is-author .v2-author-tools button:focus-visible { outline: 2px solid var(--paper-focus, #1f6387); outline-offset: 1px; }
 .exam-canvas-v2.is-author .v2-author-tools button:disabled { opacity: 0.35; cursor: not-allowed; }
-.exam-canvas-v2.is-author .v2-author-option-tools { display: inline-flex; align-items: center; gap: 2px; padding-left: 4px; border-left: 1px solid var(--paper-line, #c9c9c9); }
-.exam-canvas-v2.is-author .v2-author-option-tools b { min-width: 1.25rem; padding: 0 3px; text-align: center; color: var(--paper-ink, #111); font-size: 0.78rem; }
+/* 选项增删：悬停到选项行才出现行末 ×；「添加选项」在选项列表下方，悬停到本组才出现
+   （没有选项时常显，否则无处可点）。 */
+.exam-canvas-v2.is-author .v2-option-delete {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #8a8a8a;
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 18px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.exam-canvas-v2.is-author .v2-choice-item[data-option-row]:hover > .v2-option-delete,
+.exam-canvas-v2.is-author .v2-option-delete:focus-visible { opacity: 1; }
+.exam-canvas-v2.is-author .v2-option-delete:hover { color: #b42318; }
+.exam-canvas-v2.is-author .is-reordering .v2-option-delete { opacity: 0; }
+.exam-canvas-v2.is-author .v2-option-add {
+  display: block;
+  margin: 8px 0 0;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: #8a8a8a;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.exam-canvas-v2.is-author .v2-response-group:hover > .v2-option-add,
+.exam-canvas-v2.is-author .v2-option-add:focus-visible,
+.exam-canvas-v2.is-author .v2-option-add.is-empty { opacity: 1; }
+.exam-canvas-v2.is-author .v2-option-add:hover { color: var(--paper-ink, #111); text-decoration: underline; }
+/* 选项拖动排序：手柄绝对定位在选项行左侧、不占版面，悬停/聚焦到该行时才出现；
+   拖动中用边线提示落点（竖排选项用上下边线，TFNG 横排用左右边线）。 */
+.exam-canvas-v2.is-author .v2-option-drag-handle {
+  position: absolute;
+  top: 50%;
+  left: -14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 20px;
+  color: #8a8a8a;
+  font-size: 0.8rem;
+  letter-spacing: -3px;
+  line-height: 1;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: opacity 120ms ease;
+}
+.exam-canvas-v2.is-author .v2-choice-item[data-option-row]:hover > .v2-option-drag-handle,
+.exam-canvas-v2.is-author .v2-option-drag-handle:focus-visible,
+.exam-canvas-v2.is-author .is-dragging > .v2-option-drag-handle { opacity: 1; }
+.exam-canvas-v2.is-author .v2-option-drag-handle:hover { color: var(--paper-ink, #111); }
+.exam-canvas-v2.is-author .v2-option-drag-handle:focus-visible { outline: 2px solid var(--paper-focus, #1f6387); outline-offset: 1px; }
+.exam-canvas-v2.is-author .is-reordering,
+.exam-canvas-v2.is-author .is-reordering .v2-option-drag-handle { cursor: grabbing; user-select: none; }
+.exam-canvas-v2.is-author .v2-choice-item.is-dragging { opacity: 0.45; }
+.exam-canvas-v2.is-author .v2-choice-item.is-drop-before { box-shadow: 0 -2px 0 var(--paper-focus, #1f6387); }
+.exam-canvas-v2.is-author .v2-choice-item.is-drop-after { box-shadow: 0 2px 0 var(--paper-focus, #1f6387); }
+.exam-canvas-v2.is-author .v2-tfng-options .v2-choice-item.is-drop-before { box-shadow: -3px 0 0 var(--paper-focus, #1f6387); }
+.exam-canvas-v2.is-author .v2-tfng-options .v2-choice-item.is-drop-after { box-shadow: 3px 0 0 var(--paper-focus, #1f6387); }
 
 /* ---------------- 听力头部（纸面化；Part 切换在底部题号导航） ---------------- */
 /* 听力画布：单列三行 —— 头部（音频）/ 题目 / 题号导航，没有分隔条。

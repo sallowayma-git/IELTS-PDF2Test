@@ -8,7 +8,7 @@ import { defineConfig } from "vitest/config";
 //  - 它们**不是**产品验收证据：不驱动真实 Tauri/WebView2/SQLite/文件系统，
 //    产品级证据只在 `scripts/e2e/tauri-*.mjs`（真实应用进程）里产生。
 //  - 默认 node 环境；只有真正需要 DOM 的用例才自带 `// @vitest-environment jsdom`
-//    （当前只有 ExamWorkspacePage.repairAids.test.tsx 一条：它必须渲染真实组件、
+//    （如 ExamWorkspacePage.repairAids.test.tsx、exam-canvas/optionReorder.test.tsx：它必须渲染真实组件、
 //    断言清单 DOM，才能在被测实现回退时变红——纯逻辑替身测不出「没人重读」这种缺陷）。
 //    jsdom / @testing-library 仅为该用例引入，其余用例集仍是纯逻辑。
 export default defineConfig({
