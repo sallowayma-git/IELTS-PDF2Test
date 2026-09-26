@@ -1,4 +1,4 @@
-import type { OptionV2 } from "../types";
+import type { ContentNodeV2, OptionV2 } from "../types";
 
 /**
  * 判定一组选项是否属于 TRUE/FALSE/NOT GIVEN（或 YES/NO/NOT GIVEN）这类短标签题。
@@ -17,4 +17,26 @@ export function isTfngLabel(label: string): boolean {
 /** 选项组非空且每一项都是判断题短标签时才命中；普通 A/B/C 选项库不受影响。 */
 export function isTfngOptionSet(options: readonly OptionV2[]): boolean {
   return options.length > 0 && options.every((option) => isTfngLabel(option.label));
+}
+
+function optionContentText(nodes: readonly ContentNodeV2[] | undefined): string {
+  if (!nodes?.length) return "";
+  return nodes.map((node) => {
+    if (node.type === "text") return node.text;
+    if ("children" in node) return optionContentText(node.children);
+    if ("items" in node) return node.items.map((item) => optionContentText(item.children)).join("");
+    if ("rows" in node) return node.rows.flatMap((row) => row.cells).map((cell) => optionContentText(cell.children)).join("");
+    if ("steps" in node) return node.steps.map((step) => optionContentText(step.children)).join("");
+    return "";
+  }).join("");
+}
+
+/**
+ * 旧识别草稿里选项的 content 可能与 label 相同（label TRUE、content 也写 TRUE，
+ * 渲染成 "TRUE TRUE"）。content 纯文本 trim 后与 label 相同（大小写不敏感）时返回 true，
+ * 渲染器跳过 content。画布与学生端渲染器使用同一条兜底规则。
+ */
+export function optionContentDuplicatesLabel(option: Pick<OptionV2, "label" | "content"> | undefined | null): boolean {
+  if (!option) return false;
+  return optionContentText(option.content).trim().toUpperCase() === option.label.trim().toUpperCase();
 }
