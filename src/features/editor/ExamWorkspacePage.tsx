@@ -7,7 +7,7 @@ import { describePublishOutcome, publishItem, publishOutcomeKind, type PublishOu
 import { getWorkspaceItem } from "../../api/workspaceClient";
 import { SOURCE_PURGED_EXPLANATION, saveToLibrary, sourceActionsAvailable } from "./finalVersion";
 import { go, libraryPath, type LibraryIntent } from "../../app/router";
-import { ExamCanvas } from "../../exam-canvas/ExamCanvas";
+import { ExamCanvas, type ExamCanvasStructureAction } from "../../exam-canvas/ExamCanvas";
 import { compileStructureAction } from "../../exam-canvas/structureActions";
 import { SelectionInspector } from "./SelectionInspector";
 import type { IeltsAuthoringIRV2, JobDetail } from "../../types";
@@ -59,8 +59,46 @@ function describeLoadError(raw?: string): string {
   return "这道题暂时打不开，请稍后重试。";
 }
 
+/**
+ * 选项增删/拖动引用的实体在**最新草稿**里是否仍然存在；不存在时返回给用户看的一句话。
+ *
+ * 结构动作是松手/点击那一刻才提交的，而识别进行中的后台刷新会随时把 `editor.draft`
+ * 换成新对象（选项被改写、删掉、题组重建）。`compileStructureAction` 对找不到的实体
+ * 一律静默返回 `undefined`——在旧草稿上编译还会「成功」，产出的补丁会把后台刚写入的
+ * 内容覆盖回去。所以必须先按最新草稿分辨「还能做 / 做不了」，做不了就走 showError
+ * 响亮失败，绝不静默。
+ */
+function missingStructureActionMessage(draft: IeltsAuthoringIRV2, action: ExamCanvasStructureAction): string | undefined {
+  if (action.type !== "option.add" && action.type !== "option.move" && action.type !== "option.delete") return undefined;
+  const task = draft.taskGroups.find((candidate) => candidate.taskId === action.taskId);
+  const group = task?.responseGroups.find((candidate) => candidate.responseGroupId === action.responseGroupId);
+  if (!task || !group) return "这个题组刚被后台刷新改过，这次修改没有生效，请重试。";
+  const shared = task.optionBank && (!group.options?.length || group.optionBankRef === task.optionBank.optionBankId);
+  const options = shared ? task.optionBank!.options : group.options ?? [];
+  if (action.type === "option.delete" && !options.some((option) => option.optionId === action.optionId)) {
+    return "要删除的选项已不在当前题稿里，这次删除没有生效。";
+  }
+  if (action.type === "option.move") {
+    if (!options.some((option) => option.optionId === action.optionId)) {
+      return "被拖动的选项已不在当前题稿里，这次移动没有生效，请重新拖动。";
+    }
+    if (action.beforeOptionId !== undefined && !options.some((option) => option.optionId === action.beforeOptionId)) {
+      return "落点选项已不在当前题稿里，这次移动没有生效，请重新拖动。";
+    }
+  }
+  if (action.type === "option.add" && action.afterOptionId !== undefined && !options.some((option) => option.optionId === action.afterOptionId)) {
+    return "插入位置已不在当前题稿里，这次添加没有生效，请重试。";
+  }
+  return undefined;
+}
+
 export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?: LibraryIntent }) {
   const editor = useCanonicalEditor(itemId);
+  // 拖动/增删等结构动作在松手那一刻才提交，而识别进行中的后台刷新会随时把
+  // `editor.draft` 换成新对象。用渲染闭包里的草稿编译，会用旧选项列表覆盖后台刚
+  // 写入的内容；这里永远给 onStructureAction 最新草稿（验收缺陷的另一半根因）。
+  const latestDraftRef = useRef<IeltsAuthoringIRV2 | undefined>(undefined);
+  latestDraftRef.current = editor.draft;
   const [detail, setDetail] = useState<JobDetail | undefined>();
   const [sourceOpen, setSourceOpen] = useState(false);
   const [issuesOpen, setIssuesOpen] = useState(false);
@@ -779,8 +817,17 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             }
             onAnswerChange={(slotId, value) => editor.applyCommand({ op: "set_answer", slotId, value })}
             onStructureAction={(action) => {
+              const draft = latestDraftRef.current;
+              if (!draft) return;
+              // 先按**最新**草稿分辨「做不了」：compileStructureAction 对找不到的实体
+              // 静默返回 undefined，这里必须响亮失败而不是静默吞掉这次操作。
+              const missing = missingStructureActionMessage(draft, action);
+              if (missing) {
+                showError(new Error(missing), "这个结构修改没有生效，请重试。");
+                return;
+              }
               try {
-                const patch = compileStructureAction(editor.draft!, action);
+                const patch = compileStructureAction(draft, action);
                 if (patch) editor.applyPatch(patch);
               } catch (error) { showError(error, "这个结构修改没有生效，请重试。"); }
             }}
