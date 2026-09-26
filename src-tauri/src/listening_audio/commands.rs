@@ -68,6 +68,15 @@ pub(crate) fn bind_audio_command_path(
     // 台账写成功 ≠ 绑定成功：预览/导出/学生端只读权威稿里的 part media。
     // 稿已存在而这一 part 的 media 没跟上（镜像被人工保护挡住、或写入没落盘）时
     // 必须如实报错——返回 Ok 会让界面说「已添加」，而音频根本读不到。
+    if super::canonical_media::ensure_part_media_matches(root, item_id, part_ordinal, &bound)
+        .is_ok()
+    {
+        return Ok((bound, sync));
+    }
+    // 识别首稿可能恰好落在上面两步之间：播种读台账时这一行还没写入，镜像时稿又还不存在
+    // （no-draft 分支空转），于是稿落盘后缺这一 part 的 media，之后也没有人再补。
+    // 此时稿已存在，再镜像一次即可补齐；人工保护挡住的 part 第二次仍然对不上，照实报错。
+    let sync = super::canonical_media::sync_item_audio_media(root, item_id)?;
     super::canonical_media::ensure_part_media_matches(root, item_id, part_ordinal, &bound)?;
     Ok((bound, sync))
 }
