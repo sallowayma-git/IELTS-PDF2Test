@@ -8,6 +8,24 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// 应用内启动外部程序（python / node / powershell / 渲染器）的唯一入口。
+///
+/// Windows 上 release 版是 GUI 子系统（没有自己的控制台），直接 `Command::new` 启动
+/// 控制台程序会为每个子进程弹出一个终端窗口——打开设置页时的环境预检就会连闪一串。
+/// 这里统一加 `CREATE_NO_WINDOW`；输出照常通过管道读取，不受影响。
+/// 新增子进程调用请走这个函数，不要直接 `Command::new`。
+pub(crate) fn background_command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut command = std::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+}
+
 pub(crate) const MAX_SOURCE_FILE_BYTES: u64 = 128 * 1024 * 1024;
 const FILE_IO_BUFFER_BYTES: usize = 64 * 1024;
 
@@ -385,5 +403,175 @@ mod tests {
         assert!(!partial.exists());
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    /// 守卫测试：src 下生产代码只允许通过 [`crate::util::background_command`] 启动外部进程。
+    ///
+    /// 扫描规则（对每个 .rs 文件）：
+    /// 1. 按文件名跳过 util.rs（helper 定义本身）、tests.rs、test_support.rs（测试支撑）；
+    /// 2. 先剥掉行注释与块注释（保留换行，避免文档注释里的字样误报/漏报）；
+    /// 3. 截掉第一个内联测试模块 `#[cfg(test)] mod <name> {` 起的内容
+    ///    （内联测试模块不算生产代码；`#[cfg(test)] mod x;`/`use`/`fn` 这类
+    ///    条目不算测试模块起点，其后可能仍是生产代码）；
+    /// 4. 把 `ResolvedCommand::new(`（不是进程启动）替换为占位符后再查找
+    ///    `Command::new(`，发现即视为违例。
+    #[test]
+    fn production_sources_spawn_processes_only_via_background_command() {
+        let src_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut violations = Vec::new();
+        collect_command_new_violations(&src_dir, &mut violations);
+
+        assert!(
+            violations.is_empty(),
+            "检测到生产代码直接启动外部进程。请改用 crate::util::background_command(program)\
+             （Windows 下附加 CREATE_NO_WINDOW，防止 release 版 GUI 程序闪终端窗口），\
+             不要直接使用 std::process::Command::new。违例位置（文件:行号）：\n  {}",
+            violations.join("\n  ")
+        );
+    }
+
+    fn collect_command_new_violations(dir: &std::path::Path, violations: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir)
+            .unwrap_or_else(|error| panic!("守卫测试无法读取目录 {}: {error}", dir.display()))
+        {
+            let entry =
+                entry.unwrap_or_else(|error| panic!("守卫测试无法遍历 {}: {error}", dir.display()));
+            let path = entry.path();
+            if path.is_dir() {
+                collect_command_new_violations(&path, violations);
+                continue;
+            }
+            if path.extension().and_then(|value| value.to_str()) != Some("rs") {
+                continue;
+            }
+            let file_name = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default();
+            if matches!(file_name, "util.rs" | "tests.rs" | "test_support.rs") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("守卫测试无法读取 {}: {error}", path.display()));
+
+            let without_comments = strip_rust_comments_preserving_line_breaks(&source);
+            let production = truncate_at_first_inline_test_module(&without_comments);
+            let production = production.replace("ResolvedCommand::new(", "RESOLVED_COMMAND_NEW(");
+            for (index, line) in production.lines().enumerate() {
+                if line.contains("Command::new(") {
+                    violations.push(format!("{}:{}", path.display(), index + 1));
+                }
+            }
+        }
+    }
+
+    /// 截掉第一个内联测试模块 `#[cfg(test)] mod <name> {` 起的内容。
+    /// `#[cfg(test)]` 后跟 `use`/`fn`/`mod x;` 时不截断（其后可能仍是生产代码）。
+    fn truncate_at_first_inline_test_module(source: &str) -> &str {
+        const NEEDLE: &str = "#[cfg(test)]";
+        let mut cursor = 0;
+        while let Some(offset) = source[cursor..].find(NEEDLE) {
+            let start = cursor + offset;
+            let tail = source[start + NEEDLE.len()..].trim_start();
+            if let Some(rest) = tail.strip_prefix("mod ") {
+                let rest = rest.trim_start();
+                let ident_end = rest
+                    .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                    .unwrap_or(rest.len());
+                if ident_end > 0 && rest[ident_end..].trim_start().starts_with('{') {
+                    return &source[..start];
+                }
+            }
+            cursor = start + NEEDLE.len();
+        }
+        source
+    }
+
+    /// 剥掉行注释与块注释（含 `///`、`//!` 文档注释），保留换行数量，
+    /// 使处理后文本的行号与原文件一一对应。感知字符串字面量与嵌套块注释。
+    fn strip_rust_comments_preserving_line_breaks(source: &str) -> String {
+        #[derive(Clone, Copy, PartialEq)]
+        enum State {
+            Code,
+            LineComment,
+            BlockComment,
+            StringLiteral,
+        }
+
+        let mut result = String::with_capacity(source.len());
+        let mut state = State::Code;
+        let mut block_depth = 0usize;
+        let mut chars = source.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            match state {
+                State::Code => match ch {
+                    '/' => match chars.peek() {
+                        Some('/') => {
+                            chars.next();
+                            state = State::LineComment;
+                            result.push_str("  ");
+                        }
+                        Some('*') => {
+                            chars.next();
+                            state = State::BlockComment;
+                            block_depth = 1;
+                            result.push_str("  ");
+                        }
+                        _ => result.push('/'),
+                    },
+                    '"' => {
+                        state = State::StringLiteral;
+                        result.push('"');
+                    }
+                    _ => result.push(ch),
+                },
+                State::LineComment => {
+                    if ch == '\n' {
+                        state = State::Code;
+                        result.push('\n');
+                    } else {
+                        result.push(' ');
+                    }
+                }
+                State::BlockComment => match ch {
+                    '*' if chars.peek() == Some(&'/') => {
+                        chars.next();
+                        block_depth -= 1;
+                        result.push_str("  ");
+                        if block_depth == 0 {
+                            state = State::Code;
+                        }
+                    }
+                    '/' if chars.peek() == Some(&'*') => {
+                        chars.next();
+                        block_depth += 1;
+                        result.push_str("  ");
+                    }
+                    '\n' => result.push('\n'),
+                    _ => result.push(' '),
+                },
+                State::StringLiteral => match ch {
+                    '\\' => {
+                        result.push('\\');
+                        if let Some(escaped) = chars.next() {
+                            if escaped == '\n' {
+                                result.push('\n');
+                            } else {
+                                result.push(' ');
+                            }
+                        }
+                    }
+                    '"' => {
+                        state = State::Code;
+                        result.push('"');
+                    }
+                    // Rust 字符串字面量正常不跨行，但保留换行以保证行号对齐。
+                    '\n' => result.push('\n'),
+                    _ => result.push(ch),
+                },
+            }
+        }
+        result
     }
 }

@@ -15,7 +15,6 @@ use std::{
     collections::{BTreeSet, HashMap},
     fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 #[derive(Debug, Clone)]
@@ -1775,7 +1774,7 @@ fn parse_with_python_sidecar(
         .ok_or_else(|| "python_parser_sidecar_missing".to_string())?;
     let python =
         resolve_python_command().ok_or_else(|| "python_runtime_unavailable".to_string())?;
-    let output = Command::new(&python.program)
+    let output = crate::util::background_command(&python.program)
         .args(&python.args)
         .arg(&script)
         .arg("parse")
@@ -1812,7 +1811,7 @@ pub(crate) fn extract_pdf_images_with_python_sidecar(
         .ok_or_else(|| "python_parser_sidecar_missing".to_string())?;
     let python =
         resolve_python_command().ok_or_else(|| "python_runtime_unavailable".to_string())?;
-    let output = Command::new(&python.program)
+    let output = crate::util::background_command(&python.program)
         .args(&python.args)
         .arg(&script)
         .arg("extract_pdf_images")
@@ -2355,7 +2354,7 @@ fn render_pdf_pages_with_macos_sips(
     fs::create_dir_all(asset_dir)
         .map_err(|error| format!("create_sips_asset_dir:{}:{}", asset_dir.display(), error))?;
     let rendered_path = asset_dir.join("page-001-rendered.png");
-    let output = Command::new("sips")
+    let output = crate::util::background_command("sips")
         .arg("-s")
         .arg("format")
         .arg("png")

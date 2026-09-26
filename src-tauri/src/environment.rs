@@ -4,7 +4,6 @@ use serde_json::{json, Value};
 use std::{
     env,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 #[derive(Debug, Clone)]
@@ -87,7 +86,7 @@ pub(crate) fn command_failure(command_name: &str, output: &std::process::Output)
 }
 
 pub(crate) fn command_probe(program: &str, args: &[&str]) -> Value {
-    match Command::new(program).args(args).output() {
+    match crate::util::background_command(program).args(args).output() {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -110,7 +109,7 @@ pub(crate) fn command_probe(program: &str, args: &[&str]) -> Value {
 }
 
 pub(crate) fn command_probe_resolved(command: &ResolvedCommand, extra_args: &[&str]) -> Value {
-    match Command::new(&command.program)
+    match crate::util::background_command(&command.program)
         .args(&command.args)
         .args(extra_args)
         .output()

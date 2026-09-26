@@ -268,7 +268,7 @@ fn render_candidates() -> Vec<String> {
 
 fn provider_command(provider: &str) -> Command {
     if provider.to_ascii_lowercase().ends_with(".ps1") {
-        let mut command = Command::new("powershell.exe");
+        let mut command = crate::util::background_command("powershell.exe");
         command
             .arg("-NoProfile")
             .arg("-ExecutionPolicy")
@@ -277,7 +277,7 @@ fn provider_command(provider: &str) -> Command {
             .arg(provider);
         command
     } else {
-        Command::new(provider)
+        crate::util::background_command(provider)
     }
 }
 

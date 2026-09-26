@@ -16,7 +16,6 @@ use serde_json::{json, Value};
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 use uuid::Uuid;
 
@@ -255,7 +254,7 @@ pub(crate) fn validate_with_node_sidecar(
         .join("cache")
         .join("reading-source-for-validation.json");
     write_json(&input_path, source)?;
-    let output = Command::new("node")
+    let output = crate::util::background_command("node")
         .arg(&script)
         .arg(&input_path)
         .output()
@@ -277,7 +276,7 @@ pub(crate) fn validate_preview_with_node_sidecar(
 ) -> CommandResult<Value> {
     let script = find_sidecar("sidecars/preview-e2e/preview-e2e.mjs")
         .ok_or_else(|| "preview_e2e_sidecar_missing".to_string())?;
-    let mut command = Command::new("node");
+    let mut command = crate::util::background_command("node");
     command
         .arg(&script)
         .arg("--preview-dir")
