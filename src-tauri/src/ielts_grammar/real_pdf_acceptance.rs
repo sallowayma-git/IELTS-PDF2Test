@@ -2278,6 +2278,265 @@ fn phase4_eight_real_pdfs_reach_physical_authoring_quality_truth() {
     );
 }
 
+/// 八卷识别结构回归——**不带 #[ignore]，默认套件必须真实运行**。
+///
+/// 背景：phase4 八卷用例因"答案页无 OCR"的存量缺口被 #[ignore] 后，默认套件里
+/// 没有任何八卷回归检查，f6bc641 收紧图例行判定导致 fishbourne 说明区截断的回归
+/// 就是这么漏掉的。本用例只依赖识别链路（不依赖答案解析），corpus 缺失时按仓库
+/// 惯例打印 SKIP 跳过，corpus 在位时必须跑过。质量门禁检查仍留在 phase4 用例里，
+/// 这里**有意忽略** QUALITY_BLOCKER_POLICY，只验收三层识别结构：
+///   a) 判断题（TFNG/YNNG）说明区完整保留图例：三个标签 + 各自的 if 从句；
+///   b) completion 题组的说明区不吞 stimulus 的标题与 bullet 正文；
+///   c) v1 摘要（题组数/slot 数/questionIds）与 golden baseline 一致
+///      （复用 v1_summary 的既有比较语义），且每个题组的 slot 数一致。
+#[test]
+fn phase4_eight_real_pdfs_preserve_instruction_zone_structure() {
+    if !crate::test_support::golden_private_corpus_ready(
+        "phase4_eight_real_pdfs_preserve_instruction_zone_structure",
+    ) {
+        return;
+    }
+    let root = repo_root();
+    let spec = read_json(&root.join(ACCEPTANCE_SPEC)).expect("acceptance spec must load");
+    let fixture_ids = spec
+        .get("fixtureIds")
+        .and_then(Value::as_array)
+        .expect("acceptance fixtureIds");
+    let manifest = read_json(&root.join(MANIFEST)).expect("golden manifest must load");
+    let fixtures = manifest
+        .get("fixtures")
+        .and_then(Value::as_array)
+        .expect("golden fixtures");
+
+    let mut failures: Vec<String> = Vec::new();
+    for fixture_id_value in fixture_ids.iter().filter_map(Value::as_str) {
+        let fixture_id = fixture_id_value.to_string();
+        let fixture = match fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.get("fixtureId").and_then(Value::as_str) == Some(fixture_id.as_str())
+            }) {
+            Some(fixture) => fixture,
+            None => {
+                failures.push(format!("{fixture_id}: fixture missing from golden manifest"));
+                continue;
+            }
+        };
+        // 链路硬错误（缺 PDF、解析崩溃）直接 panic；质量门禁的检查结果有意忽略。
+        if let Err(error) = process_fixture(&root, &fixture_id, fixture) {
+            failures.push(format!("{fixture_id}: chain failed: {error}"));
+            continue;
+        }
+        let output_dir = root.join("tmp/phase4-real-pdf-acceptance").join(&fixture_id);
+        let shadow = match read_json(&output_dir.join("authoring-ir-v2.shadow.json")) {
+            Ok(shadow) => shadow,
+            Err(error) => {
+                failures.push(format!("{fixture_id}: shadow unreadable: {error}"));
+                continue;
+            }
+        };
+        let document = read_json(&output_dir.join("document-ir-v1.actual.json"))
+            .expect("document v1 actual must be readable");
+        let authoring_v1 = read_json(&output_dir.join("authoring-ir-v1.actual.json"))
+            .expect("authoring v1 actual must be readable");
+        let baseline_path = root.join(
+            fixture
+                .get("baselinePath")
+                .and_then(Value::as_str)
+                .expect("baselinePath"),
+        );
+        let baseline = read_json(&baseline_path).expect("baseline must load");
+        let metadata = read_json(&root.join(
+            fixture
+                .get("metadataPath")
+                .and_then(Value::as_str)
+                .expect("metadataPath"),
+        ))
+        .expect("metadata must load");
+
+        // c) v1 摘要一致（复用 v1_summary + baseline.observed 的既有比较语义）。
+        let actual_summary = v1_summary(&document, &authoring_v1);
+        let baseline_summary = baseline.get("observed").cloned().unwrap_or(Value::Null);
+        let metadata_summary = metadata
+            .pointer("/baseline/observed")
+            .cloned()
+            .unwrap_or(Value::Null);
+        if actual_summary != baseline_summary || baseline_summary != metadata_summary {
+            failures.push(format!(
+                "{fixture_id}: v1 summary drift\n  actual:   {actual_summary}\n  baseline: {baseline_summary}"
+            ));
+        }
+
+        let task_groups = shadow
+            .get("taskGroups")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        // c) 题组数与每组 slot 数（baseline payload.authoringIr.groups ↔ shadow taskGroups，按题号区间配对）。
+        let baseline_groups = baseline
+            .pointer("/payload/authoringIr/groups")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if task_groups.len() != baseline_groups.len() {
+            failures.push(format!(
+                "{fixture_id}: task group count {} != baseline {}",
+                task_groups.len(),
+                baseline_groups.len()
+            ));
+        }
+        for (task, baseline_group) in task_groups.iter().zip(baseline_groups.iter()) {
+            let task_id = task
+                .get("taskId")
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>");
+            let shadow_slots = shadow_task_slot_ids(task).len();
+            let baseline_slots = baseline_group
+                .get("questions")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or(0);
+            if shadow_slots != baseline_slots {
+                failures.push(format!(
+                    "{fixture_id}/{task_id}: slot count {shadow_slots} != baseline {baseline_slots}"
+                ));
+            }
+
+            let instructions = task_group_instruction_text(&shadow, task_id).unwrap_or_default();
+            let task_type = task.get("taskType").and_then(Value::as_str).unwrap_or("");
+            // a) 判断题图例完整性（从句用真实卷的抽取文字；fishbourne 的
+            // "no inform ation" 抽取瑕疵用 "no inform" 前缀容忍）。
+            let needles: &[&str] = match task_type {
+                "true_false_not_given" => &[
+                    "TRUE",
+                    "FALSE",
+                    "NOT GIVEN",
+                    "agrees",
+                    "contradicts",
+                    "no inform",
+                ],
+                "yes_no_not_given" => &[
+                    "YES",
+                    "NO",
+                    "NOT GIVEN",
+                    "agrees",
+                    "contradicts",
+                    "impossible to say",
+                ],
+                _ => &[],
+            };
+            if !needles.is_empty() {
+                let missing: Vec<&str> = needles
+                    .iter()
+                    .copied()
+                    .filter(|needle| !instructions.contains(needle))
+                    .collect();
+                if !missing.is_empty() {
+                    failures.push(format!(
+                        "{fixture_id}/{task_id} ({task_type}): instructions missing {missing:?}; got: {instructions:?}"
+                    ));
+                }
+            }
+
+            // b) completion 说明区不吞 stimulus 标题与 bullet 正文。
+            if task_type.contains("completion") {
+                let mut swallow_texts = Vec::new();
+                if let Some(stimulus) = task.get("stimulus").and_then(Value::as_array) {
+                    collect_stimulus_swallow_texts(stimulus, &mut swallow_texts);
+                }
+                for text in swallow_texts {
+                    if instructions.contains(&text) {
+                        failures.push(format!(
+                            "{fixture_id}/{task_id}: instructions swallow stimulus text {text:?}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "八卷识别结构回归失败（{} 项）：\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+/// shadow 题组的全部 slot id（各 responseGroups 的 slotIds 并集，去重）。
+fn shadow_task_slot_ids(task: &Value) -> Vec<String> {
+    let mut ids = Vec::new();
+    for group in task
+        .get("responseGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        for slot_id in group
+            .get("slotIds")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            if !ids.iter().any(|existing| existing == slot_id) {
+                ids.push(slot_id.to_string());
+            }
+        }
+    }
+    ids
+}
+
+/// 收集 completion 题组 stimulus 里"不该出现在说明区"的文本：heading 节点与
+/// bullet_list 的每个 item 自身文本（嵌套子列表由递归单独收集）。
+fn collect_stimulus_swallow_texts(nodes: &[Value], out: &mut Vec<String>) {
+    for node in nodes {
+        match node.get("type").and_then(Value::as_str) {
+            Some("heading") => {
+                let text = node_child_text(node);
+                if text.chars().count() >= 4 {
+                    out.push(text);
+                }
+            }
+            Some("bullet_list") => {
+                for item in node
+                    .get("items")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    let text = node_child_text(item);
+                    if text.chars().count() >= 8 {
+                        out.push(text);
+                    }
+                }
+            }
+            _ => {}
+        }
+        for key in ["children", "items", "rows", "cells", "steps"] {
+            if let Some(children) = node.get(key).and_then(Value::as_array) {
+                collect_stimulus_swallow_texts(children, out);
+            }
+        }
+    }
+}
+
+fn node_child_text(node: &Value) -> String {
+    node.get("children")
+        .and_then(Value::as_array)
+        .map(|children| {
+            children
+                .iter()
+                .filter_map(|child| child.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[test]
 // 两个已知问题，都在下一轮处理：
 // 1) 测试自身缺陷：直接复用 phase4 产物目录里的 authoring（jobId=phase4-real-chili-peppers），

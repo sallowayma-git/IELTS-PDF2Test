@@ -41,6 +41,10 @@ pub(crate) fn collect_instruction_zone(
     // sentence, and those rows rarely open with a question number, so the
     // scan needs the closing sentence as a boundary signal too.
     let mut closing_instruction_seen = false;
+    // 收尾指令之后的折行续行规则需要知道上一条已收进的行是不是图例行
+    // （标签行或解释行）：图例自己的折行（"the writer"）以小写开头，要续收；
+    // 笔记标题以大写开头，不许混进来。
+    let mut last_accepted_was_legend = false;
     for (index, line) in lines.iter().enumerate().skip(heading_index) {
         let text = normalize_instruction_text(&line.text);
         if index > heading_index && is_task_boundary(&text, expected_numbers) {
@@ -72,7 +76,7 @@ pub(crate) fn collect_instruction_zone(
         // notes title such as `The role of capsaicin` ends the instructions.
         if index > heading_index
             && closing_instruction_seen
-            && !may_follow_closing_instruction(&text)
+            && !may_follow_closing_instruction(&text, last_accepted_was_legend)
         {
             end_index = index;
             break;
@@ -80,6 +84,10 @@ pub(crate) fn collect_instruction_zone(
         if is_closing_answer_instruction(&text) {
             closing_instruction_seen = true;
         }
+        // is_legend_line 系列函数期望**已小写**的输入（may_follow_closing_instruction
+        // 内部也是先 to_ascii_lowercase 再调用）；这里直接传原始大小写的 text 会让
+        // "YES if …" 这类大写标签行判不出图例，折行续行规则随之失效。
+        last_accepted_was_legend = is_legend_line(&text.to_ascii_lowercase());
         selected.push((index, line, text));
         end_index = index + 1;
     }
@@ -395,7 +403,7 @@ fn is_closing_answer_instruction(text: &str) -> bool {
 /// same sentence (`on your answer sheet.`), and the agree/disagree legend
 /// (`TRUE if the statement agrees … NOT GIVEN if there is no information on
 /// this`).
-fn may_follow_closing_instruction(text: &str) -> bool {
+fn may_follow_closing_instruction(text: &str, last_accepted_was_legend: bool) -> bool {
     let lower = text.to_ascii_lowercase();
     if lower.contains("answer sheet") {
         return true;
@@ -407,7 +415,37 @@ fn may_follow_closing_instruction(text: &str) -> bool {
     if trimmed.starts_with("note ") || trimmed.starts_with("note:") {
         return true;
     }
-    is_agreement_legend_line(&lower)
+    if is_legend_line(&lower) {
+        return true;
+    }
+    // 图例解释的折行续行（"the writer"、"information on this"）：仅当上一条已
+    // 收进的行是图例行、且本行以小写字母开头。以大写开头的行（笔记标题、
+    // "No one knows …"）不因此被收进说明区。
+    if last_accepted_was_legend
+        && text
+            .trim_start()
+            .starts_with(|ch: char| ch.is_lowercase())
+    {
+        return true;
+    }
+    false
+}
+
+/// 收尾指令之后允许续收的"图例行"：纯标签行或解释行（含标签 + if 的行）。
+/// 用于接受判定与 `last_accepted_was_legend` 状态跟踪两处，口径必须一致。
+fn is_legend_line(lower: &str) -> bool {
+    is_legend_label_line(lower) || is_agreement_legend_line(lower)
+}
+
+/// 只由图例标签组成的行（任意个、空格分隔）：`FALSE NOT GIVEN`、
+/// `TRUE FALSE NOT GIVEN`。两栏排版的判断题图例会把两个标签挤进同一物理行
+/// （fishbourne-roman-palace group-1 实测 b021）。
+fn is_legend_label_line(lower: &str) -> bool {
+    let trimmed = lower.trim();
+    !trimmed.is_empty()
+        && trimmed.split_whitespace().all(|token| {
+            matches!(token, "true" | "false" | "yes" | "no" | "not" | "given")
+        })
 }
 
 /// `TRUE` / `FALSE` / `NOT GIVEN` / `YES` / `NO` legend rows and their
@@ -765,5 +803,92 @@ mod tests {
         assert!(zone.text.contains("TRUE if the statement agrees"));
         assert!(zone.text.contains("GIVEN if there is no information on this"));
         assert!(!zone.text.contains("First statement"));
+    }
+
+    // 真实行序列（tmp/phase4-real-pdf-acceptance/fishbourne-roman-palace/
+    // split-candidates-v1.actual.json，group-1 sectionEvidence b017..b023）。
+    // 两栏排版的判断题图例把 FALSE 与 NOT GIVEN 挤进同一物理行——这行只由标签
+    // 组成，必须继续收进说明区，后面的解释折行（b022）不能丢。
+    #[test]
+    fn instruction_zone_keeps_fishbourne_two_column_tfng_legend() {
+        let lines = vec![
+            line("b017", "Questions 1–6"),
+            line(
+                "b018",
+                "Do the following statements agree with the information given in Reading Passage 1?",
+            ),
+            line("b019", "In boxes 1–6 on your answer sheet, write"),
+            line("b020", "TRUE if the statement agrees with the information"),
+            line("b021", "FALSE NOT GIVEN"),
+            line(
+                "b022",
+                "if the statement contradicts the information if there is no inform ation on this",
+            ),
+            line(
+                "b023",
+                "1 Fishbourne Palace was the first structure to be built on its site.",
+            ),
+        ];
+        let zone = collect_instruction_zone(&lines, 0, &[1, 2, 3, 4, 5, 6]);
+        assert!(zone.text.contains("TRUE if the statement agrees"), "{}", zone.text);
+        assert!(zone.text.contains("FALSE NOT GIVEN"), "{}", zone.text);
+        assert!(
+            zone.text.contains("if the statement contradicts the information"),
+            "{}",
+            zone.text
+        );
+        assert!(
+            zone.text.contains("if there is no inform ation on this"),
+            "{}",
+            zone.text
+        );
+        assert!(!zone.text.contains("Fishbourne Palace was"), "{}", zone.text);
+    }
+
+    // YNNG 图例解释的折行续行（"the writer"）：上一条已收进的行是图例行、本行以
+    // 小写字母开头 → 续收，图例的三段语义保持完整。
+    #[test]
+    fn instruction_zone_keeps_lowercase_legend_wrap_after_legend_row() {
+        let lines = vec![
+            line("h", "Questions 1-3"),
+            line("close", "In boxes 1-3 on your answer sheet, write"),
+            line("legend1", "YES if the statement agrees with the views of"),
+            line("wrap1", "the writer"),
+            line("legend2", "NO if the statement contradicts the views of"),
+            line("wrap2", "the writer"),
+            line("legend3", "NOT GIVEN if it is impossible to say what"),
+            line("wrap3", "the writer thinks about this"),
+            line("q1", "1 First statement"),
+        ];
+        let zone = collect_instruction_zone(&lines, 0, &[1, 2, 3]);
+        assert!(
+            zone.text.contains("agrees with the views of the writer"),
+            "{}",
+            zone.text
+        );
+        assert!(
+            zone.text
+                .contains("impossible to say what the writer thinks about this"),
+            "{}",
+            zone.text
+        );
+        assert!(!zone.text.contains("First statement"), "{}", zone.text);
+    }
+
+    // 反例钉住折行续行的边界：上一条虽是图例行，但本行以大写开头（笔记标题），
+    // 不得作为折行续行被收进说明区（f6bc641 要防的情形不回潮）。
+    #[test]
+    fn instruction_zone_stops_before_uppercase_line_after_legend_row() {
+        let lines = vec![
+            line("h", "Questions 1-3"),
+            line("close", "In boxes 1-3 on your answer sheet, write"),
+            line("legend", "TRUE if the statement agrees with the information"),
+            line("title", "Notes on the palace"),
+            line("b1", "• bullet body"),
+        ];
+        let zone = collect_instruction_zone(&lines, 0, &[1, 2, 3]);
+        assert_eq!(zone.line_ids, vec!["h", "close", "legend"]);
+        assert!(!zone.text.contains("Notes on the palace"), "{}", zone.text);
+        assert!(!zone.text.contains("bullet body"), "{}", zone.text);
     }
 }
