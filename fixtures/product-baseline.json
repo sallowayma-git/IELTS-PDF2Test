@@ -1,10 +1,10 @@
 {
-  "recordedAt": "2026-09-12T10:52:34.854Z",
+  "recordedAt": "2026-09-26T08:54:20.291Z",
   "surface": {
-    "commitSha": "6affc571f43b175ffdb5a13d1823ba6f2d4962a3",
+    "commitSha": "de298f701908632c33f9d3e970e747a305147737",
     "schemaHash": {
-      "files": 40,
-      "sha256": "640a09516984ef44583c79b0b60679516ed8b1b0a895d9fe991f68db77ab7ec0"
+      "files": 44,
+      "sha256": "18d262a61f346386db20a287cf2b8fcbe9e2f66266008f65b188db11923b2055"
     },
     "corpus": {
       "publicSyntheticPdf": [
@@ -79,14 +79,6 @@
       "workspace"
     ],
     "appPages": [
-      "Dashboard",
-      "DocumentReview",
-      "ExportPage",
-      "ImportWizard",
-      "JobList",
-      "LibraryExamDetail",
-      "StructuredAuthoringEditorV2",
-      "UnifiedPreview",
       "WritingStudio"
     ],
     "tauriCommands": [
@@ -94,8 +86,13 @@
       "apply_editor_commands",
       "apply_llm_suggestion",
       "apply_manual_transcription",
+      "apply_recognition_decisions",
       "apply_vision_answer_candidates",
       "apply_vision_transcription",
+      "automation_audio_selection_from_env",
+      "automation_source_files",
+      "bind_listening_audio",
+      "bind_listening_audio_folder",
       "build_authoring_ir",
       "cancel_processing",
       "choose_export_dir",
@@ -106,6 +103,7 @@
       "delete_library_exam",
       "delete_llm_profile",
       "delete_writing_job",
+      "detect_import_modality",
       "export_authoring_v2",
       "export_nas_library",
       "export_reading_assets",
@@ -118,6 +116,9 @@
       "get_job_artifact_status",
       "get_library_exam",
       "get_library_stats",
+      "get_listening_audio",
+      "get_publish_preflight",
+      "get_recognition_decision",
       "get_workspace_item",
       "get_writing_job",
       "import_files",
@@ -125,6 +126,7 @@
       "list_jobs",
       "list_library_exams",
       "list_library_items",
+      "list_listening_audio_folder",
       "list_llm_profiles",
       "list_trashed_exams",
       "list_writing_jobs",
@@ -133,6 +135,7 @@
       "open_source_file",
       "parse_document",
       "pick_pdf_folder_sources",
+      "probe_listening_audio_files",
       "publish_items",
       "publish_nas_package_v2",
       "render_group_html",
@@ -140,6 +143,7 @@
       "resolve_authoring_asset_preview",
       "resolve_source_review",
       "restore_library_exam",
+      "retry_answer_page_recognition",
       "retry_processing",
       "reveal_job_folder",
       "run_auto_pipeline",
@@ -152,6 +156,8 @@
       "save_split_adjustments",
       "search_library_exams",
       "test_llm_profile",
+      "unbind_listening_audio",
+      "undo_cloud_repair",
       "update_authoring_ir",
       "update_job_meta",
       "update_library_exam_meta",
@@ -237,23 +243,23 @@
       }
     },
     "productModules": {
-      "src/features": 15,
-      "src/exam-canvas": 5,
-      "src/styles": 10
+      "src/features": 46,
+      "src/exam-canvas": 13,
+      "src/styles": 11
     },
     "fileSizes": {
-      "src/styles.css": 582,
+      "src/styles.css": 726,
       "src/app/App.tsx": 1468,
-      "src/app/router.ts": 5481,
+      "src/app/router.ts": 5363,
       "src/components/AppShell.tsx": 2145,
-      "src/exam-canvas/ExamCanvas.tsx": 29680,
-      "src/pages/UnifiedPreview.tsx": 66337,
-      "src/pages/StructuredAuthoringEditorV2.tsx": 55479,
-      "src/services/devFallbackBackend.ts": 176325,
-      "src-tauri/src/lib.rs": 455095,
-      "src-tauri/src/authoring_pipeline.rs": 547026,
-      "src-tauri/src/auto_pipeline.rs": 116076,
-      "src-tauri/src/ielts_grammar/mod.rs": 112649
+      "src/exam-canvas/ExamCanvas.tsx": 35827,
+      "src/pages/UnifiedPreview.tsx": null,
+      "src/pages/StructuredAuthoringEditorV2.tsx": null,
+      "src/services/devFallbackBackend.ts": 175388,
+      "src-tauri/src/lib.rs": 476586,
+      "src-tauri/src/authoring_pipeline.rs": 567813,
+      "src-tauri/src/auto_pipeline.rs": 262092,
+      "src-tauri/src/ielts_grammar/mod.rs": 130007
     }
   },
   "changeLog": [
@@ -293,6 +299,29 @@
         "  productModules.src/exam-canvas: 4 -> 5 files",
         "  commitSha: 401ca76f44d6b2a1f0d76cfcc2ca2d94e629fd87 -> 6affc571f43b175ffdb5a13d1823ba6f2d4962a3",
         "  schemaHash: 13096e6130b9 (40 files) -> 640a09516984 (40 files)"
+      ]
+    },
+    {
+      "at": "2026-09-26T08:54:20.290Z",
+      "commit": "de298f701908632c33f9d3e970e747a305147737",
+      "reason": "重录 2026-09-26 产品面基线：0a9f0a9 退役 8 个旧页面（Dashboard/DocumentReview/ExportPage/ImportWizard/JobList/LibraryExamDetail/StructuredAuthoringEditorV2/UnifiedPreview），产品面收敛到工作区三表面；新增 14 条 Tauri 命令（听力音频绑定/探测 bind_listening_audio 系列、识别决策 get/apply_recognition_decision(s)、答案页重识别 retry_answer_page_recognition、导入模态检测 detect_import_modality、发布预检 get_publish_preflight、云修复撤销 undo_cloud_repair、自动化取数 automation_*）；auto_pipeline 等文件随云修复/听力链扩容；PR #2 UI 重构新增 features/exam-canvas 模块与样式；schemaHash 随 contracts 更新。",
+      "driftSummary": [
+        "  appPages: removed Dashboard, DocumentReview, ExportPage, ImportWizard, JobList, LibraryExamDetail, StructuredAuthoringEditorV2, UnifiedPreview",
+        "  tauriCommands: added apply_recognition_decisions, automation_audio_selection_from_env, automation_source_files, bind_listening_audio, bind_listening_audio_folder, detect_import_modality, get_listening_audio, get_publish_preflight, get_recognition_decision, list_listening_audio_folder, probe_listening_audio_files, retry_answer_page_recognition, unbind_listening_audio, undo_cloud_repair",
+        "  fileSizes.src-tauri/src/authoring_pipeline.rs: 547026 -> 567813 B (+20787, 3.8%)",
+        "  fileSizes.src-tauri/src/auto_pipeline.rs: 116076 -> 262092 B (+146016, 125.8%)",
+        "  fileSizes.src-tauri/src/ielts_grammar/mod.rs: 112649 -> 130007 B (+17358, 15.4%)",
+        "  fileSizes.src-tauri/src/lib.rs: 455095 -> 476586 B (+21491, 4.7%)",
+        "  fileSizes.src/app/router.ts: 5481 -> 5363 B (-118, -2.2%)",
+        "  fileSizes.src/exam-canvas/ExamCanvas.tsx: 29680 -> 35827 B (+6147, 20.7%)",
+        "  fileSizes.src/pages/StructuredAuthoringEditorV2.tsx: deleted (was 55479 B)",
+        "  fileSizes.src/pages/UnifiedPreview.tsx: deleted (was 66337 B)",
+        "  fileSizes.src/services/devFallbackBackend.ts: 176325 -> 175388 B (-937, -0.5%)",
+        "  fileSizes.src/styles.css: 582 -> 726 B (+144, 24.7%)",
+        "  productModules.src/features: 15 -> 46 files",
+        "  productModules.src/exam-canvas: 5 -> 13 files",
+        "  productModules.src/styles: 10 -> 11 files",
+        "  schemaHash: 640a09516984 (40 files) -> 18d262a61f34 (44 files)"
       ]
     }
   ]
