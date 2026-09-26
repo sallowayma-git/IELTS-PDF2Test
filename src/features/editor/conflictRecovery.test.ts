@@ -99,6 +99,26 @@ describe("conflictWasMachineOnly", () => {
     })).toBe(true);
   });
 
+  it("云端候选采纳与正在编辑的本地补丁冲突时，归类为机器写入并允许自动重放", async () => {
+    const remote = baseDocument();
+    nodeById(remote, "slot-1").displayLabel = "14 云端候选";
+    const outcome = await tryAutoRebase({
+      localBase: 3,
+      outstanding: [setDisplayLabel("slot-2", "15 用户正在编辑")],
+      fetchLatest: async () => ({
+        ds: remote,
+        editVersion: 4,
+        recentEdits: [{ baseVersion: 3, origin: "cloud_candidate_adoption" }]
+      })
+    });
+
+    expect(outcome.kind).toBe("rebased");
+    if (outcome.kind !== "rebased") return;
+    expect(outcome.rebase.dropped).toBe(0);
+    expect(nodeById(outcome.rebase.rebased, "slot-1").displayLabel).toBe("14 云端候选");
+    expect(nodeById(outcome.rebase.rebased, "slot-2").displayLabel).toBe("15 用户正在编辑");
+  });
+
   it("中间夹着一次人工写入（另一个窗口）→ 不自动处理", () => {
     expect(conflictWasMachineOnly({
       localBase: 3,

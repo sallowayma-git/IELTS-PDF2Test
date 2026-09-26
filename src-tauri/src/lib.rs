@@ -50,6 +50,7 @@ mod authoring_v2_commands;
 mod authoring_validation;
 mod auto_pipeline;
 mod cleanup;
+mod cloud_adoption;
 mod cloud_repair;
 #[cfg(test)]
 mod cross_repo_contract_fixture;

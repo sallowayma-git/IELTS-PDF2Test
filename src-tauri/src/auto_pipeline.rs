@@ -2896,6 +2896,13 @@ pub(crate) fn finalize_cloud_authoring_candidate(
     let mut normalized =
         crate::reconcile::candidate::normalize_cloud_authoring(&identity, canonical.as_ref(), raw)?;
     if normalized.document.is_object() {
+        // Asset descriptors and their paths are backend/user-owned identities; the model is not
+        // allowed to register them. Reuse the already-registered set when promoting the cloud
+        // content so valid image/audio references do not become dangling just because candidate
+        // normalization intentionally strips model-supplied asset descriptors.
+        if let Some(assets) = canonical.as_ref().and_then(|value| value.get("assets")) {
+            normalized.document["assets"] = assets.clone();
+        }
         // 用**同一套**质量管线评估候选，覆盖占位块。物理影子对不上时 `evaluate_quality`
         // 自己会如实标 `physicalShadow: missing`，这里不做任何粉饰。
         crate::authoring_v2_commands::refresh_quality_report(

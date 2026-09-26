@@ -135,6 +135,15 @@ export interface CloudRepairSummaryV1 {
   repairRunId?: string | null;
   /** 摘要损坏时的降级标记（后端 `reasonCode=repair_json_corrupt`）。 */
   reasonCode?: string | null;
+  /** 云端首遍候选的确定性采纳判定；不采纳时说明仍按本地稿进入修复。 */
+  candidateAdoption?: {
+    status?: "adopted" | "not_adopted" | string;
+    adopted?: boolean;
+    editVersion?: number;
+    preservedGroupIds?: string[];
+    reason?: string;
+    fallback?: string;
+  } | null;
 }
 
 export interface RecognitionDecisionViewV1 {

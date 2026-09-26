@@ -162,6 +162,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   );
   // 云端修复后剩下的（读取时按当前稿重算）。并进同一份清单，识别「详情」里不再另列。
   const [repairAids, setRepairAids] = useState<RepairAidInputV1[]>([]);
+  const [cloudAdoptionNotice, setCloudAdoptionNotice] = useState<string | undefined>();
   // **唯一**一份编辑辅助清单（产品决定 2）：安静、不带门槛话术，每个题位只出一条，
   // 修好了就消失。它不是「能不能发布」的判断——按「发布」本身就是确认。
   const taskSummary = useMemo(
@@ -262,7 +263,22 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
           if (!repair) {
             // 本题从没跑过云端修复：没有条目就是终态，不轮询。
             setRepairAids([]);
+            setCloudAdoptionNotice(undefined);
             return;
+          }
+          const adoption = repair.candidateAdoption;
+          if (adoption?.adopted === true) {
+            setCloudAdoptionNotice(
+              repair.undoAvailable
+                ? "已采用云端识别结果，可撤销。"
+                : "已采用云端识别结果，校核结束后可撤销。"
+            );
+          } else if (adoption?.adopted === false) {
+            setCloudAdoptionNotice(
+              `未采纳云端候选，继续按本地稿校核：${adoption.reason || "候选未通过采纳条件。"}`
+            );
+          } else {
+            setCloudAdoptionNotice(undefined);
           }
           if (repair.status === "running") {
             // 修复进行中不挂任何云端条目：上一轮留下的旧条目必须**立刻**清掉，
@@ -563,6 +579,11 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             <small className="workspace-notice-detail">技术详情：{noticeDetail}</small>
           ) : null}
           <button className="ghost small" onClick={clearNotice} aria-label="关闭提示">×</button>
+        </p>
+      ) : null}
+      {cloudAdoptionNotice ? (
+        <p className="workspace-notice" role="status" data-testid="workspace-cloud-adoption-notice">
+          {cloudAdoptionNotice}
         </p>
       ) : null}
       {editor.saveMessage ? <p className="workspace-notice warning" role="alert">{editor.saveMessage}</p> : null}

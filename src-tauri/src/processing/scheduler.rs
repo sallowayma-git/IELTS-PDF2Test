@@ -847,19 +847,19 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
             let job_id = job_id.clone();
             let batch_id = batch_id.clone();
             move || {
-                crate::auto_pipeline::finalize_cloud_authoring_candidate(
+                let candidate = crate::auto_pipeline::finalize_cloud_authoring_candidate(
                     &root,
                     &job_id,
                     &batch_id,
                     base_edit_version,
                     &raw,
                 )?;
-                Ok(())
+                Ok(candidate)
             }
         })
         .await;
         match finalized {
-            Ok(()) => {
+            Ok(candidate) => {
                 // 开工：阶段推到 `reconciling`、状态落 `running`。这一条**先发出去**，
                 // 用户在修复循环跑完之前就能看到「云端正在自动修复」，而不是等到最后
                 // 才知道云端到底参与没有。返回 `None`（lease 丢失 / 已被取消）时不继续：
@@ -876,11 +876,103 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                     None,
                 )
                 .await;
+                let local_snapshot = crate::reconcile::store::read_candidate(
+                    &root,
+                    &job_id,
+                    &batch_id,
+                    crate::reconcile::store::LOCAL_CANDIDATE_FILE,
+                );
+                let candidate_value = serde_json::to_value(&candidate).unwrap_or_else(
+                    |error| serde_json::json!({"serializationError":error.to_string()}),
+                );
+                let mut adoption_reasons = match local_snapshot.as_ref() {
+                    Some(local) => crate::cloud_adoption::adoption_rejection_reasons(
+                        &candidate_value,
+                        &serde_json::to_value(local).unwrap_or(serde_json::Value::Null),
+                    ),
+                    None => vec!["缺少冻结的本地候选，无法核对覆盖范围".to_string()],
+                };
+                let mut adoption_result = None;
+                if adoption_reasons.is_empty() && announced.is_some() {
+                    match crate::cloud_adoption::adopt_cloud_candidate(
+                        &root,
+                        &job_id,
+                        &batch_id,
+                        candidate.base_edit_version,
+                        &serde_json::to_value(&candidate.authoring)
+                            .unwrap_or(serde_json::Value::Null),
+                    ) {
+                        Ok(result) => adoption_result = Some(result),
+                        Err(error) => adoption_reasons.push(format!(
+                            "云端候选未能通过并发版本与正式稿校验，已回退到本地稿校核：{error}"
+                        )),
+                    }
+                } else if adoption_reasons.is_empty() {
+                    adoption_reasons.push("云端校核租约已失效，未写入云端候选".to_string());
+                }
+                let adopted = adoption_result.is_some();
+                let adoption_info = if let Some(result) = adoption_result.as_ref() {
+                    serde_json::json!({
+                        "status": "adopted",
+                        "adopted": true,
+                        "editVersion": result.edit_version,
+                        "preservedGroupIds": result.preserved_group_ids,
+                        "reason": "云端候选通过确定性结构与题号门槛；用户在基线之后保存的目标已保留。"
+                    })
+                } else {
+                    serde_json::json!({
+                        "status": "not_adopted",
+                        "adopted": false,
+                        "reason": adoption_reasons.join("；"),
+                        "fallback": "local_draft"
+                    })
+                };
+                let candidate_adoption = Some(adoption_info.clone());
+                // 先把采纳判定写进批次行，再发内容变更通知：工作区同一次刷新即可拿到
+                // 新稿与非打断式提示。撤销入口仍等本轮修复终态后开放。
+                if announced.is_some() {
+                    let edit_version = adoption_result
+                        .as_ref()
+                        .map(|result| result.edit_version)
+                        .or_else(|| {
+                            open_library_connection(&root).ok().and_then(|conn| {
+                                crate::library::repository::current_edit_version(&conn, &job_id)
+                                    .ok()
+                                    .flatten()
+                            })
+                        })
+                        .unwrap_or(base_edit_version);
+                    let running = serde_json::json!({
+                        "status": crate::cloud_repair::REPAIR_STATUS_RUNNING,
+                        "editVersion": edit_version,
+                        "appliedCount": 0,
+                        "rounds": 0,
+                        "remainingTasks": [],
+                        "adjudicatedCount": 0,
+                        "finishNote": null,
+                        "lastError": null,
+                        "undoAvailable": false,
+                        "repairRunId": null,
+                        "candidateAdoption": adoption_info
+                    });
+                    if let Ok(conn) = open_library_connection(&root) {
+                        if crate::reconcile::store::write_batch_repair(&conn, &batch_id, &running)
+                            .is_ok()
+                        {
+                            if adopted {
+                                let _ = notify_item_content_changed(&conn, &app, &job_id);
+                            }
+                        }
+                    }
+                }
                 // 云端 permit 覆盖整段修复循环的模型调用（每个回合一次请求）。
                 let cloud_permit = state.cloud_permits.clone().acquire_owned().await;
                 let repair = if announced.is_none() {
                     Err("cloud_repair_lease_lost_before_start".to_string())
                 } else {
+                    let adoption_for_repair_progress = candidate_adoption.clone();
+                    let adoption_for_repair_summary = candidate_adoption.clone();
+                    let adopted_for_repair = adopted;
                     run_blocking({
                         let root = root.clone();
                         let job_id = job_id.clone();
@@ -911,8 +1003,12 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                             let progress_root = root.clone();
                             let progress_batch_id = batch_id.clone();
                             let progress_app = app.clone();
+                            let progress_adoption = adoption_for_repair_progress;
                             let progress = move |update: crate::cloud_repair::RepairProgress| {
-                                let summary = update.to_json();
+                                let mut summary = update.to_json();
+                                if let Some(adoption) = progress_adoption.as_ref() {
+                                    summary["candidateAdoption"] = adoption.clone();
+                                }
                                 let Ok(conn) = open_library_connection(&progress_root) else {
                                     return;
                                 };
@@ -960,7 +1056,11 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                             // 修复摘要：**同一份 payload** 既落盘（诊断副本）也随后写进
                             // 批次行（前端读取权威）。只构造一次，避免两处形状漂移。
                             // **完成判据始终是当前 canonical**，这份摘要不参与判定。
-                            let summary = report.to_json(report.applied_count > 0);
+                            let mut summary =
+                                report.to_json(report.applied_count > 0 || adopted_for_repair);
+                            if let Some(adoption) = adoption_for_repair_summary.as_ref() {
+                                summary["candidateAdoption"] = adoption.clone();
+                            }
                             crate::reconcile::store::write_repair_summary(
                                 &root, &job_id, &batch_id, &summary,
                             )?;
@@ -990,9 +1090,13 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                         // 跳过 —— 批次行于是**永久停在 running**，而同一时刻 job 行已经是
                         // failed。前端读的是批次行（`repair_json` 是读取权威），用户永远
                         // 看到「云端正在自动修复」，与任务行互相矛盾。
-                        repair_summary = Some(crate::cloud_repair::unavailable_summary(
+                        let mut unavailable = crate::cloud_repair::unavailable_summary(
                             &root, &job_id, &batch_id, &error,
-                        ));
+                        );
+                        if let Some(adoption) = candidate_adoption.as_ref() {
+                            unavailable["candidateAdoption"] = adoption.clone();
+                        }
+                        repair_summary = Some(unavailable);
                     }
                 }
                 drop(cloud_permit);

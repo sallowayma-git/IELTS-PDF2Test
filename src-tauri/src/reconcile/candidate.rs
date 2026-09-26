@@ -2929,6 +2929,7 @@ pub(crate) fn normalize_cloud_authoring(
     // cloud_group_index -> (stable task id 或 None 表示保留临时 ID)
     let mut group_stable: Vec<Option<String>> = Vec::with_capacity(groups.len());
     let mut group_canonical: Vec<Option<usize>> = Vec::with_capacity(groups.len());
+    let mut matched_canonical_groups = BTreeSet::new();
     for (index, group) in groups.iter().enumerate() {
         let cloud_task_id = group
             .get("taskId")
@@ -2939,6 +2940,25 @@ pub(crate) fn normalize_cloud_authoring(
         let numbers = cloud_group_numbers(group, &draft);
         match match_task_group(cloud_type, &numbers, &canonical_groups) {
             GroupMatch::Unique(target) => {
+                if !matched_canonical_groups.insert(target) {
+                    // A canonical identity may be reused by only one cloud group. Mapping a
+                    // second group to the same taskId would create duplicate IDs in the full
+                    // candidate and make later edits/undo target the wrong group. Keep this
+                    // group in its temporary identity space and make the ambiguity explicit;
+                    // the partial candidate is ineligible for whole-candidate adoption.
+                    let temporary_id = if cloud_task_id.is_empty() {
+                        format!("cloud-tg-{}", index + 1)
+                    } else {
+                        cloud_task_id.clone()
+                    };
+                    unresolved.insert(format!(
+                        "task_group:{temporary_id}:canonical_group_already_matched:{}",
+                        canonical_groups[target].task_id
+                    ));
+                    group_stable.push(Some(temporary_id));
+                    group_canonical.push(None);
+                    continue;
+                }
                 let stable = canonical_groups[target].task_id.clone();
                 if !cloud_task_id.is_empty() && cloud_task_id != stable {
                     id_map.insert(cloud_task_id, stable.clone());
@@ -5211,6 +5231,41 @@ mod cloud_authoring_tests {
         assert_eq!(
             candidate.authoring.task_groups[0].response_groups[0].response_group_id,
             "cloud-tg-1-rg-1"
+        );
+    }
+
+    #[test]
+    fn two_cloud_groups_cannot_reuse_one_canonical_task_identity() {
+        let canonical = golden_authoring();
+        let mut draft = cloud_draft(&[14, 15], "cloud");
+        let mut overlapping = draft["taskGroups"][0].clone();
+        overlapping["taskId"] = json!("cloud-tg-overlap");
+        overlapping["displayRange"] = json!({"kind":"set", "values":[15]});
+        overlapping["responseGroups"][0]["responseGroupId"] = json!("cloud-rg-overlap");
+        overlapping["responseGroups"][0]["slotIds"] = json!(["cloud-q15"]);
+        draft["taskGroups"].as_array_mut().unwrap().push(overlapping);
+
+        let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), &draft)
+            .expect("重复对齐应降级为显式歧义，而不是归一化失败");
+        assert_eq!(normalized.status, ChainStatusV1::Partial);
+        assert!(normalized.unresolved_references.iter().any(|entry| {
+            entry.contains("cloud-tg-overlap")
+                && entry.contains("canonical_group_already_matched")
+        }));
+
+        let candidate = cloud_authoring_candidate_from_normalized(&identity(), normalized)
+            .expect("部分候选仍可用于修复诊断");
+        let task_ids = candidate
+            .authoring
+            .task_groups
+            .iter()
+            .map(|group| group.task_id.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(task_ids.len(), candidate.authoring.task_groups.len());
+        assert_ne!(
+            candidate.authoring.task_groups[0].task_id,
+            candidate.authoring.task_groups[1].task_id,
+            "第二个云端题组不得与首个题组复用本地 taskId"
         );
     }
 
