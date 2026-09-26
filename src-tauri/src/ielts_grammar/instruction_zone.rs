@@ -412,12 +412,29 @@ fn may_follow_closing_instruction(text: &str) -> bool {
 
 /// `TRUE` / `FALSE` / `NOT GIVEN` / `YES` / `NO` legend rows and their
 /// explanation tails (`if the statement contradicts the information`).
+///
+/// 判定收紧到"长得像图例"：解释尾行（`if the statement…` / `if there is…`，含
+/// `NOT GIVEN` 折行后的 `GIVEN if …`）、恰好等于一个短标签的换行行，或以短标签
+/// 开头且紧跟 `if`（`NO if the statement contradicts…`）。旧的"行内出现任一标签
+/// 词就算图例"会把以 `No …` 开头的笔记标题误判成图例，让它躲过收尾指令后的
+/// 停止条件被吞进说明区。
 fn is_agreement_legend_line(lower: &str) -> bool {
-    if lower.starts_with("if the statement") || lower.starts_with("if there is") {
+    const LEGEND_LABELS: [&str; 6] = ["true", "false", "yes", "no", "not given", "not"];
+    let trimmed = lower.trim();
+    if trimmed.starts_with("if the statement")
+        || trimmed.starts_with("if there is")
+        || trimmed.starts_with("given if ")
+    {
         return true;
     }
-    lower.split(|ch: char| !ch.is_ascii_alphanumeric())
-        .any(|token| matches!(token, "true" | "false" | "given" | "yes" | "no"))
+    if LEGEND_LABELS.contains(&trimmed) {
+        return true;
+    }
+    LEGEND_LABELS.iter().any(|label| {
+        trimmed
+            .strip_prefix(label)
+            .is_some_and(|rest| rest.trim_start().starts_with("if "))
+    })
 }
 
 fn trim_question_line_after_first_item(text: String, expected_numbers: &[u32]) -> String {
@@ -712,6 +729,41 @@ mod tests {
         assert!(zone.text.contains("TRUE if the statement agrees"));
         assert!(zone.text.contains("NOT GIVEN if there is no information on this"));
         assert!(zone.text.contains("NB You may use any letter more than once."));
+        assert!(!zone.text.contains("First statement"));
+    }
+
+    // A notes title that merely STARTS with "No" must not be mistaken for a
+    // legend row ("NO if the statement …") and swallowed into the
+    // instructions after the closing sentence.
+    #[test]
+    fn instruction_zone_stops_before_notes_title_starting_with_no() {
+        let lines = vec![
+            line("h", "Questions 7-13"),
+            line("i", "Complete the notes below."),
+            line("close", "Write your answers in boxes 7-13 on your answer sheet."),
+            line("title", "No one knows exactly when people first dried chilies"),
+            line("b1", "• certain birds eat chili fruit and spread the seeds"),
+        ];
+        let zone = collect_instruction_zone(&lines, 0, &[7, 8]);
+        assert_eq!(zone.line_ids, vec!["h", "i", "close"]);
+        assert!(!zone.text.contains("No one knows"));
+        assert!(!zone.text.contains("certain birds"));
+    }
+
+    // A wrapped legend row keeps counting as legend even when "NOT GIVEN"
+    // broke across physical lines (`NOT` / `GIVEN if there is …`).
+    #[test]
+    fn instruction_zone_keeps_wrapped_legend_rows_after_closing_instruction() {
+        let lines = vec![
+            line("h", "Questions 1-3"),
+            line("close", "In boxes 1-3 on your answer sheet, write"),
+            line("legend", "TRUE if the statement agrees with the information"),
+            line("wrap", "GIVEN if there is no information on this"),
+            line("q1", "1 First statement"),
+        ];
+        let zone = collect_instruction_zone(&lines, 0, &[1, 2, 3]);
+        assert!(zone.text.contains("TRUE if the statement agrees"));
+        assert!(zone.text.contains("GIVEN if there is no information on this"));
         assert!(!zone.text.contains("First statement"));
     }
 }
