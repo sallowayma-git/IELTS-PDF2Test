@@ -990,6 +990,122 @@ pub(crate) fn completion_context_nodes(
 /// available for callers that only have context prose; the V2 task builder
 /// uses this variant so a student sees one canonical stimulus row with an
 /// inline `answer_slot`, rather than a second list of question prompts.
+/// A bullet row waiting to be flushed into a `bullet_list`.
+///
+/// Plain bullets carry the marker-stripped `text`; slot-bearing bullets carry
+/// their already built inline paragraph (`slot_paragraph`).  `indent` is the
+/// row's left edge: a bullet printed deeper than the bullet before it becomes
+/// a nested sub-item of that bullet (`nested`), which keeps the corpus'
+/// second-level circle bullets two levels deep instead of flattening them
+/// into siblings or separate rows.
+struct PendingBullet<'a> {
+    line: &'a SemanticLine,
+    text: String,
+    slot_paragraph: Option<Value>,
+    indent: Option<f64>,
+    nested: Vec<PendingBullet<'a>>,
+}
+
+/// A bullet printed this much deeper than the bullet above it starts a nested
+/// sub-list.  Matches the wrap-indent tolerance used for continuations.
+const BULLET_NEST_INDENT_PT: f64 = 5.0;
+
+/// Would a bullet printed at `indent` land as a *nested* sub-item under the
+/// run's last pending bullet, rather than as a same-level sibling?
+fn pending_bullet_nests(bullets: &[PendingBullet], indent: f64) -> bool {
+    bullets
+        .last()
+        .and_then(|parent| parent.indent)
+        .is_some_and(|parent_indent| indent > parent_indent + BULLET_NEST_INDENT_PT)
+}
+
+/// Push a bullet row into the pending tree: under the bullet printed above it
+/// when that row is shallower (`nested`), otherwise as a same-level sibling.
+/// A row deeper than the parent's last nested sibling descends one level
+/// further, so three printed levels stay three levels deep.
+fn push_pending_bullet<'a>(bullets: &mut Vec<PendingBullet<'a>>, entry: PendingBullet<'a>) {
+    let nests = entry
+        .indent
+        .is_some_and(|indent| pending_bullet_nests(bullets, indent));
+    if !nests {
+        bullets.push(entry);
+        return;
+    }
+    let Some(parent) = bullets.last_mut() else {
+        return;
+    };
+    let descends_deeper = parent
+        .nested
+        .last()
+        .and_then(|sibling| sibling.indent)
+        .is_some_and(|sibling_indent| {
+            entry
+                .indent
+                .is_some_and(|indent| indent > sibling_indent + BULLET_NEST_INDENT_PT)
+        });
+    if descends_deeper {
+        push_pending_bullet(&mut parent.nested, entry);
+    } else {
+        parent.nested.push(entry);
+    }
+}
+
+fn pending_bullet_anchors(bullets: &[PendingBullet]) -> Vec<Value> {
+    let mut anchors = Vec::new();
+    for entry in bullets {
+        anchors.push(entry.line.source_anchor.clone());
+        anchors.extend(pending_bullet_anchors(&entry.nested));
+    }
+    anchors
+}
+
+fn pending_bullet_list_items(bullets: &[PendingBullet], list_id: &str) -> Vec<Value> {
+    bullets
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let item_id = format!("{list_id}-item-{index}");
+            let paragraph = match &entry.slot_paragraph {
+                Some(paragraph) => paragraph.clone(),
+                None => {
+                    let paragraph_id = format!("{item_id}-paragraph");
+                    json!({
+                        "type": "paragraph",
+                        "id": paragraph_id,
+                        "sourceAnchors": [entry.line.source_anchor.clone()],
+                        "provenanceStatus": "derived",
+                        "children": [{
+                            "type": "text",
+                            "id": format!("{paragraph_id}-text"),
+                            "sourceAnchors": [entry.line.source_anchor.clone()],
+                            "provenanceStatus": "source",
+                            "text": entry.text
+                        }]
+                    })
+                }
+            };
+            let mut children = vec![paragraph];
+            if !entry.nested.is_empty() {
+                let sub_list_id = format!("{item_id}-sub-list");
+                children.push(json!({
+                    "type": "bullet_list",
+                    "id": sub_list_id,
+                    "sourceAnchors": pending_bullet_anchors(&entry.nested),
+                    "provenanceStatus": "derived",
+                    "items": pending_bullet_list_items(&entry.nested, &sub_list_id)
+                }));
+            }
+            json!({
+                "type": "list_item",
+                "id": item_id,
+                "sourceAnchors": [entry.line.source_anchor.clone()],
+                "provenanceStatus": "derived",
+                "children": children
+            })
+        })
+        .collect()
+}
+
 pub(crate) fn completion_context_nodes_with_slots(
     task_id: &str,
     container_kind: CompletionContainerKind,
@@ -1010,46 +1126,17 @@ pub(crate) fn completion_context_nodes_with_slots(
     // and sorting those ties by id would move a heading behind its bullets.
     ordered_lines.sort_by_key(|(index, line)| (line.page_index, line.order, *index));
     let mut nodes = Vec::new();
-    let mut pending_bullets: Vec<(&SemanticLine, String)> = Vec::new();
+    let mut pending_bullets: Vec<PendingBullet> = Vec::new();
 
-    let flush_bullets = |nodes: &mut Vec<Value>, bullets: &mut Vec<(&SemanticLine, String)>| {
+    let flush_bullets = |nodes: &mut Vec<Value>, bullets: &mut Vec<PendingBullet>| {
         if bullets.is_empty() {
             return;
         }
         let list_index = nodes.len();
         let list_id = format!("{task_id}-stimulus-list-{list_index}");
-        let anchors = bullets
-            .iter()
-            .map(|(line, _)| line.source_anchor.clone())
-            .collect::<Vec<_>>();
-        let items = bullets
-            .iter()
-            .enumerate()
-            .map(|(index, (line, text))| {
-                let item_id = format!("{list_id}-item-{index}");
-                let paragraph_id = format!("{item_id}-paragraph");
-                let text_id = format!("{paragraph_id}-text");
-                json!({
-                    "type": "list_item",
-                    "id": item_id,
-                    "sourceAnchors": [line.source_anchor.clone()],
-                    "provenanceStatus": "derived",
-                    "children": [{
-                        "type": "paragraph",
-                        "id": paragraph_id,
-                        "sourceAnchors": [line.source_anchor.clone()],
-                        "provenanceStatus": "derived",
-                        "children": [{
-                            "type": "text",
-                            "id": text_id,
-                            "sourceAnchors": [line.source_anchor.clone()],
-                            "provenanceStatus": "source",
-                            "text": text
-                        }]
-                    }]
-                })
-            })
-            .collect::<Vec<_>>();
+        let anchors = pending_bullet_anchors(bullets);
+        let items = pending_bullet_list_items(bullets, &list_id);
+        bullets.clear();
         nodes.push(json!({
             "type": "bullet_list",
             "id": list_id,
@@ -1057,7 +1144,6 @@ pub(crate) fn completion_context_nodes_with_slots(
             "provenanceStatus": "derived",
             "items": items
         }));
-        bullets.clear();
     };
 
     let mut previous_line: Option<&SemanticLine> = None;
@@ -1066,7 +1152,7 @@ pub(crate) fn completion_context_nodes_with_slots(
         if text.trim().is_empty() {
             continue;
         }
-        if let Some(slot_node) = completion_slot_line_node(
+        if let Some(slot_paragraph) = completion_slot_paragraph_node(
             task_id,
             container_kind,
             line,
@@ -1074,6 +1160,33 @@ pub(crate) fn completion_context_nodes_with_slots(
             placeholder,
             blank_slots,
         ) {
+            let bullet_start = completion_bullet_body_start(&text).unwrap_or(0);
+            // A bullet-marked slot row printed deeper than the bullet above it
+            // (the corpus' second-level circle bullets) hangs under that
+            // bullet as a nested sub-item instead of becoming a separate row.
+            if bullet_start > 0 {
+                if let Some(indent) = line.bbox.map(|bbox| bbox[0]) {
+                    if pending_bullet_nests(&pending_bullets, indent) {
+                        push_pending_bullet(
+                            &mut pending_bullets,
+                            PendingBullet {
+                                line,
+                                text: String::new(),
+                                slot_paragraph: Some(slot_paragraph),
+                                indent: Some(indent),
+                                nested: Vec::new(),
+                            },
+                        );
+                        previous_line = Some(line);
+                        continue;
+                    }
+                }
+            }
+            let slot_node = if bullet_start == 0 {
+                slot_paragraph
+            } else {
+                completion_slot_list_node(task_id, line, slot_paragraph)
+            };
             let can_merge = completion_should_merge_continuation(previous_line, line, &text);
             flush_bullets(&mut nodes, &mut pending_bullets);
             if !can_merge || !append_completion_continuation(&mut nodes, &slot_node) {
@@ -1083,7 +1196,17 @@ pub(crate) fn completion_context_nodes_with_slots(
             continue;
         }
         if let Some(item_text) = completion_bullet_item_text(&text) {
-            pending_bullets.push((line, item_text));
+            let indent = line.bbox.map(|bbox| bbox[0]);
+            push_pending_bullet(
+                &mut pending_bullets,
+                PendingBullet {
+                    line,
+                    text: item_text,
+                    slot_paragraph: None,
+                    indent,
+                    nested: Vec::new(),
+                },
+            );
             previous_line = Some(line);
             continue;
         }
@@ -1212,7 +1335,8 @@ fn completion_should_merge_continuation(
 }
 
 fn append_completion_continuation(nodes: &mut [Value], incoming: &Value) -> bool {
-    let Some(incoming_children) = incoming.get("children").and_then(Value::as_array) else {
+    let Some(mut incoming_children) = incoming.get("children").and_then(Value::as_array).cloned()
+    else {
         return false;
     };
     if incoming_children.is_empty() {
@@ -1224,13 +1348,7 @@ fn append_completion_continuation(nodes: &mut [Value], incoming: &Value) -> bool
     let target = if last.get("type").and_then(Value::as_str) == Some("paragraph") {
         Some(last)
     } else if last.get("type").and_then(Value::as_str) == Some("bullet_list") {
-        last.get_mut("items")
-            .and_then(Value::as_array_mut)
-            .and_then(|items| items.last_mut())
-            .and_then(|item| item.get_mut("children"))
-            .and_then(Value::as_array_mut)
-            .and_then(|children| children.last_mut())
-            .filter(|node| node.get("type").and_then(Value::as_str) == Some("paragraph"))
+        last_bullet_item_paragraph(last)
     } else {
         None
     };
@@ -1264,7 +1382,7 @@ fn append_completion_continuation(nodes: &mut [Value], incoming: &Value) -> bool
             .map(|text| !text.ends_with(char::is_whitespace))
             .unwrap_or(true)
     });
-    if separator_needed {
+    if separator_needed && !fold_continuation_separator(&mut incoming_children, children) {
         let anchor = incoming
             .get("sourceAnchors")
             .and_then(Value::as_array)
@@ -1274,7 +1392,7 @@ fn append_completion_continuation(nodes: &mut [Value], incoming: &Value) -> bool
         let separator_id = format!("{}-continuation-space-{}", target_id, children.len());
         children.push(completion_text_node(&separator_id, " ", &anchor));
     }
-    children.extend(incoming_children.iter().cloned());
+    children.extend(incoming_children);
     if let (Some(target_anchors), Some(incoming_anchors)) = (
         target
             .get_mut("sourceAnchors")
@@ -1288,6 +1406,61 @@ fn append_completion_continuation(nodes: &mut [Value], incoming: &Value) -> bool
         }
     }
     true
+}
+
+/// The paragraph a merged continuation appends to: the last list item's last
+/// paragraph child, descending through a trailing nested sub-list so a wrap
+/// after a nested bullet still lands on the visually last row.
+fn last_bullet_item_paragraph(node: &mut Value) -> Option<&mut Value> {
+    let children = node
+        .get_mut("items")
+        .and_then(Value::as_array_mut)?
+        .last_mut()?
+        .get_mut("children")
+        .and_then(Value::as_array_mut)?;
+    match children.last_mut() {
+        Some(child) if child.get("type").and_then(Value::as_str) == Some("paragraph") => {
+            Some(child)
+        }
+        Some(child) if child.get("type").and_then(Value::as_str) == Some("bullet_list") => {
+            last_bullet_item_paragraph(child)
+        }
+        _ => None,
+    }
+}
+
+/// Fold a merged continuation's word-boundary space into an adjacent text
+/// node — the incoming row's first text child when it has one, otherwise the
+/// last text child already in the target paragraph — so the merged paragraph
+/// never carries a whitespace-only text node.  Returns `false` when neither
+/// side offers a text node to fold into.
+fn fold_continuation_separator(
+    incoming_children: &mut [Value],
+    target_children: &mut [Value],
+) -> bool {
+    let mutable_text: fn(&mut Value) -> Option<&mut String> = |node| match node.get_mut("text") {
+        Some(Value::String(text)) => Some(text),
+        _ => None,
+    };
+    if let Some(text) = incoming_children
+        .iter_mut()
+        .find(|node| node.get("type").and_then(Value::as_str) == Some("text"))
+        .and_then(mutable_text)
+    {
+        let prefixed = format!(" {text}");
+        *text = prefixed;
+        return true;
+    }
+    if let Some(text) = target_children
+        .iter_mut()
+        .rev()
+        .find(|node| node.get("type").and_then(Value::as_str) == Some("text"))
+        .and_then(mutable_text)
+    {
+        text.push(' ');
+        return true;
+    }
+    false
 }
 
 fn completion_text_node(id: &str, text: &str, source_anchor: &Value) -> Value {
@@ -1339,6 +1512,34 @@ fn completion_bullet_body_start(text: &str) -> Option<usize> {
 }
 
 fn completion_slot_line_node(
+    task_id: &str,
+    container_kind: CompletionContainerKind,
+    line: &SemanticLine,
+    expected_numbers: &[u32],
+    placeholder: &str,
+    blank_slots: &BlankSlotSpans,
+) -> Option<Value> {
+    let text = normalize_instruction_text(&line.text);
+    let bullet_start = completion_bullet_body_start(&text).unwrap_or(0);
+    let paragraph = completion_slot_paragraph_node(
+        task_id,
+        container_kind,
+        line,
+        expected_numbers,
+        placeholder,
+        blank_slots,
+    )?;
+    if bullet_start == 0 {
+        return Some(paragraph);
+    }
+    Some(completion_slot_list_node(task_id, line, paragraph))
+}
+
+/// The inline paragraph for a slot-bearing physical row: the row's words with
+/// each expected blank replaced by an `answer_slot` node.  Bullet-marked rows
+/// are wrapped into a single-item list by [`completion_slot_line_node`] (or
+/// nested into a parent bullet by the stimulus builder).
+fn completion_slot_paragraph_node(
     task_id: &str,
     _container_kind: CompletionContainerKind,
     line: &SemanticLine,
@@ -1395,19 +1596,21 @@ fn completion_slot_line_node(
             ));
         }
     }
-    let paragraph = json!({
+    Some(json!({
         "type": "paragraph",
         "id": paragraph_id,
         "sourceAnchors": [line.source_anchor.clone()],
         "provenanceStatus": "derived",
         "children": children
-    });
-    if bullet_start == 0 {
-        return Some(paragraph);
-    }
+    }))
+}
+
+/// The bullet-row shape for a slot-bearing row that stays a top-level node:
+/// a single-item `bullet_list` wrapping the row's inline paragraph.
+fn completion_slot_list_node(task_id: &str, line: &SemanticLine, paragraph: Value) -> Value {
     let list_id = format!("{task_id}-stimulus-list-{}", line.id);
     let item_id = format!("{list_id}-item");
-    Some(json!({
+    json!({
         "type": "bullet_list",
         "id": list_id,
         "sourceAnchors": [line.source_anchor.clone()],
@@ -1419,7 +1622,7 @@ fn completion_slot_line_node(
             "provenanceStatus": "derived",
             "children": [paragraph]
         }]
-    }))
+    })
 }
 
 fn completion_slot_numbers(text: &str, expected_numbers: &[u32]) -> Vec<u32> {
@@ -2150,6 +2353,236 @@ mod tests {
         assert_eq!(
             nodes[0]["items"][1]["sourceAnchors"][0]["nodeIds"],
             json!(["b"])
+        );
+    }
+
+    fn collect_text_nodes(value: &Value, texts: &mut Vec<String>) {
+        match value {
+            Value::Array(items) => items
+                .iter()
+                .for_each(|item| collect_text_nodes(item, texts)),
+            Value::Object(object) => {
+                if object.get("type").and_then(Value::as_str) == Some("text") {
+                    if let Some(text) = object.get("text").and_then(Value::as_str) {
+                        texts.push(text.to_string());
+                    }
+                }
+                object
+                    .values()
+                    .for_each(|child| collect_text_nodes(child, texts));
+            }
+            _ => {}
+        }
+    }
+
+    fn whitespace_only_text_nodes(nodes: &[Value]) -> Vec<String> {
+        let mut texts = Vec::new();
+        nodes
+            .iter()
+            .for_each(|node| collect_text_nodes(node, &mut texts));
+        texts
+            .into_iter()
+            .filter(|text| text.trim().is_empty())
+            .collect()
+    }
+
+    /// Chili-peppers prints a level-1 bullet with two level-2 circle bullets
+    /// hanging under it, and the second circle bullet carries the printed
+    /// blank for question 11.  The recovered stimulus must keep that two-level
+    /// shape: a `bullet_list` nested inside the parent item's children, not
+    /// two sibling rows.
+    #[test]
+    fn second_level_circle_bullets_nest_under_the_parent_bullet() {
+        let mut birds = line("birds", "• birds do not mind eating capsaicin");
+        birds.bbox = Some([79.7, 492.7, 319.0, 12.0]);
+        let mut slows = line("slows", "o capsaicin slows digestion in birds");
+        slows.bbox = Some([115.6, 515.8, 305.0, 12.0]);
+        let mut softer = line(
+            "softer",
+            "o this may make the 11 ________ of the seed softer",
+        );
+        softer.bbox = Some([115.6, 538.8, 337.0, 12.0]);
+        let mut another = line(
+            "another",
+            "• another role of capsaicin is in reducing infection caused by a 12 ________",
+        );
+        another.bbox = Some([79.7, 561.8, 389.0, 12.0]);
+
+        let candidate = recover_completion_structure(
+            &TaskTypeV2::NoteCompletion,
+            &[birds, slows, softer, another],
+            &[],
+            &[11, 12],
+        );
+        let nodes = completion_context_nodes_with_slots(
+            "task-nest",
+            candidate.container_kind,
+            &candidate.context_lines,
+            &candidate.slot_lines,
+            &[11, 12],
+            "answer",
+            &candidate.blank_slots,
+        );
+
+        assert_eq!(
+            nodes.len(),
+            2,
+            "the nested circle bullets must not become separate top-level nodes"
+        );
+        assert_eq!(nodes[0]["type"], json!("bullet_list"));
+        let roots = nodes[0]["items"].as_array().unwrap();
+        assert_eq!(
+            roots.len(),
+            1,
+            "the level-2 circle bullets must not sit beside the level-1 bullet"
+        );
+        let birds_children = roots[0]["children"].as_array().unwrap();
+        assert_eq!(
+            birds_children[0]["children"][0]["text"],
+            json!("birds do not mind eating capsaicin")
+        );
+        assert_eq!(
+            birds_children[1]["type"],
+            json!("bullet_list"),
+            "the level-2 circle bullets must form a nested sub-list inside the parent item"
+        );
+        let sub_items = birds_children[1]["items"].as_array().unwrap();
+        assert_eq!(sub_items.len(), 2);
+        assert_eq!(
+            sub_items[0]["children"][0]["children"][0]["text"],
+            json!("capsaicin slows digestion in birds")
+        );
+        let softer_children = sub_items[1]["children"][0]["children"].as_array().unwrap();
+        assert!(
+            softer_children
+                .iter()
+                .any(|child| child.get("slotId") == Some(&json!("q11"))),
+            "the nested circle bullet keeps its inline q11 slot"
+        );
+        // The following level-1 slot row keeps its own list (existing shape).
+        assert_eq!(nodes[1]["type"], json!("bullet_list"));
+        assert!(
+            nodes[1]
+                .pointer("/items/0/children/0/children")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .any(|child| child.get("slotId") == Some(&json!("q12"))),
+            "the level-1 slot row still carries its inline q12 slot"
+        );
+        assert!(
+            whitespace_only_text_nodes(&nodes).is_empty(),
+            "no whitespace-only text nodes may remain"
+        );
+    }
+
+    /// Chili-peppers wraps the last bullet across two physical rows
+    /// (`… an example in nature of` / `the beauty of 13 ____`).  The wrapped
+    /// row must land in the bullet's own list item — not in a separate node —
+    /// and the word-boundary space must not be emitted as a whitespace-only
+    /// text node.
+    #[test]
+    fn wrapped_bullet_continuation_joins_the_bullets_own_list_item() {
+        let mut tewksbury = line(
+            "tewksbury",
+            "• Tewksbury considers the role of capsaicin in chilies to be an example in nature of",
+        );
+        tewksbury.bbox = Some([79.7, 584.9, 470.0, 12.0]);
+        let mut beauty = line("beauty", "the beauty of 13 ________");
+        beauty.bbox = Some([97.4, 607.9, 257.0, 12.0]);
+
+        let candidate = recover_completion_structure(
+            &TaskTypeV2::NoteCompletion,
+            &[tewksbury, beauty],
+            &[],
+            &[13],
+        );
+        let nodes = completion_context_nodes_with_slots(
+            "task-wrap",
+            candidate.container_kind,
+            &candidate.context_lines,
+            &candidate.slot_lines,
+            &[13],
+            "answer",
+            &candidate.blank_slots,
+        );
+
+        assert!(
+            whitespace_only_text_nodes(&nodes).is_empty(),
+            "the continuation separator must not be a whitespace-only text node"
+        );
+        assert_eq!(
+            nodes.len(),
+            1,
+            "the wrapped row must not become its own node"
+        );
+        assert_eq!(nodes[0]["type"], json!("bullet_list"));
+        let items = nodes[0]["items"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        let paragraph_children = items[0]["children"][0]["children"].as_array().unwrap();
+        let joined_text = paragraph_children
+            .iter()
+            .filter_map(|child| child.get("text").and_then(Value::as_str))
+            .collect::<String>();
+        assert_eq!(
+            joined_text,
+            "Tewksbury considers the role of capsaicin in chilies to be an example in nature of the beauty of "
+        );
+        assert!(
+            paragraph_children
+                .iter()
+                .any(|child| child.get("slotId") == Some(&json!("q13"))),
+            "the wrapped row's slot stays inline in the bullet's paragraph"
+        );
+    }
+
+    /// The same wrap shape where the continuation row holds nothing but the
+    /// printed blank (`… only in their` / `8 ____`).  The blank stays inline
+    /// after the bullet text and no whitespace-only text node is emitted.
+    #[test]
+    fn blank_only_bullet_continuation_stays_inline_without_blank_text_node() {
+        let mut unlike = line(
+            "unlike",
+            "• unlike many other plants, chilies contain an unpleasant chemical only in their",
+        );
+        unlike.bbox = Some([79.2, 323.3, 451.0, 12.0]);
+        let mut blank = line("q8-row", "8 ________");
+        blank.bbox = Some([97.1, 346.1, 90.0, 12.0]);
+
+        let candidate =
+            recover_completion_structure(&TaskTypeV2::NoteCompletion, &[unlike, blank], &[], &[8]);
+        let nodes = completion_context_nodes_with_slots(
+            "task-blank-wrap",
+            candidate.container_kind,
+            &candidate.context_lines,
+            &candidate.slot_lines,
+            &[8],
+            "answer",
+            &candidate.blank_slots,
+        );
+
+        assert!(
+            whitespace_only_text_nodes(&nodes).is_empty(),
+            "the continuation separator must not be a whitespace-only text node"
+        );
+        assert_eq!(nodes.len(), 1, "the blank row must not become its own node");
+        assert_eq!(nodes[0]["type"], json!("bullet_list"));
+        let paragraph_children = nodes[0]["items"][0]["children"][0]["children"]
+            .as_array()
+            .unwrap();
+        let joined_text = paragraph_children
+            .iter()
+            .filter_map(|child| child.get("text").and_then(Value::as_str))
+            .collect::<String>();
+        assert_eq!(
+            joined_text,
+            "unlike many other plants, chilies contain an unpleasant chemical only in their "
+        );
+        assert!(
+            paragraph_children
+                .iter()
+                .any(|child| child.get("slotId") == Some(&json!("q8"))),
+            "the blank stays inline after the bullet text"
         );
     }
     // ---------------------------------------------------------------------

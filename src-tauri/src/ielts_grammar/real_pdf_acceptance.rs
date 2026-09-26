@@ -1912,6 +1912,74 @@ fn task_group_instruction_text(shadow: &Value, task_id: &str) -> Option<String> 
     Some(text)
 }
 
+fn task_group_stimulus(shadow: &Value, task_id: &str) -> Vec<Value> {
+    shadow
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .and_then(|groups| {
+            groups
+                .iter()
+                .find(|group| group.get("taskId").and_then(Value::as_str) == Some(task_id))
+        })
+        .and_then(|group| group.get("stimulus"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// `bullet_list` nodes that live *inside* a `list_item` — the shape the
+/// stimulus builder must emit when the paper prints second-level bullets.
+fn stimulus_nested_bullet_lists(nodes: &[Value], found: &mut Vec<Value>) {
+    for node in nodes {
+        match node.get("type").and_then(Value::as_str) {
+            Some("list_item") => {
+                if let Some(children) = node.get("children").and_then(Value::as_array) {
+                    for child in children {
+                        if child.get("type").and_then(Value::as_str) == Some("bullet_list") {
+                            found.push(child.clone());
+                        }
+                    }
+                    stimulus_nested_bullet_lists(children, found);
+                }
+            }
+            Some("bullet_list") => {
+                if let Some(items) = node.get("items").and_then(Value::as_array) {
+                    stimulus_nested_bullet_lists(items, found);
+                }
+            }
+            _ => {
+                if let Some(children) = node.get("children").and_then(Value::as_array) {
+                    stimulus_nested_bullet_lists(children, found);
+                }
+            }
+        }
+    }
+}
+
+fn stimulus_node_texts(nodes: &[Value], texts: &mut Vec<String>) {
+    for node in nodes {
+        if let Some(text) = node.get("text").and_then(Value::as_str) {
+            texts.push(text.to_string());
+        }
+        for key in ["children", "items"] {
+            if let Some(children) = node.get(key).and_then(Value::as_array) {
+                stimulus_node_texts(children, texts);
+            }
+        }
+    }
+}
+
+fn stimulus_contains_slot(nodes: &[Value], slot_id: &str) -> bool {
+    nodes.iter().any(|node| {
+        node.get("slotId").and_then(Value::as_str) == Some(slot_id)
+            || ["children", "items"].iter().any(|key| {
+                node.get(key)
+                    .and_then(Value::as_array)
+                    .is_some_and(|children| stimulus_contains_slot(children, slot_id))
+            })
+    })
+}
+
 #[test]
 #[ignore = "real private-PDF probe; run explicitly while repairing Chili acceptance"]
 fn chili_real_pdf_reaches_all_declared_acceptance_truth() {
@@ -1952,6 +2020,45 @@ fn chili_real_pdf_reaches_all_declared_acceptance_truth() {
     assert!(
         !group_2_instructions.contains("capsaicin"),
         "group-2 instructions must not swallow the notes body, got: {group_2_instructions:?}"
+    );
+
+    // The notes stimulus must keep the printed two-level bullet structure and
+    // must merge wrapped rows without leaving whitespace-only text nodes.
+    let group_2_stimulus = task_group_stimulus(&shadow, "group-2");
+    let mut nested_lists = Vec::new();
+    stimulus_nested_bullet_lists(&group_2_stimulus, &mut nested_lists);
+    let nested_lists_hold_circle_bullets = nested_lists.iter().any(|list| {
+        let mut texts = Vec::new();
+        let items = list
+            .get("items")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        stimulus_node_texts(&items, &mut texts);
+        texts.iter().any(|text| {
+            text.contains("capsaicin slows digestion in birds")
+                && text.contains("this may make the")
+        }) || (texts
+            .iter()
+            .any(|text| text.contains("capsaicin slows digestion in birds"))
+            && stimulus_contains_slot(&items, "q11"))
+    });
+    assert!(
+        nested_lists_hold_circle_bullets,
+        "group-2 stimulus must nest the level-2 circle bullets (q10/q11 region) under their parent bullet, got {} top-level nodes",
+        group_2_stimulus.len()
+    );
+    let mut stimulus_texts = Vec::new();
+    stimulus_node_texts(&group_2_stimulus, &mut stimulus_texts);
+    assert!(
+        stimulus_texts.iter().all(|text| !text.trim().is_empty()),
+        "group-2 stimulus must not carry whitespace-only text nodes"
+    );
+    assert!(
+        stimulus_texts
+            .iter()
+            .any(|text| text.contains("the beauty of")),
+        "the wrapped tail of the last bullet must stay in the stimulus"
     );
 
     let failed = result
