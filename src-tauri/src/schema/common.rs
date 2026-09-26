@@ -424,7 +424,8 @@ mod js_canonical_tests {
         // These are exactly the values that made a real published package fail
         // the student's runtime checksum: Rust wrote 1.0/60.0/80.0 and the
         // student recomputed over 1/60/80.
-        let value = json!({"confidence": 1.0, "display": {"widthPercent": 60.0, "maxWidthPx": 80.0}});
+        let value =
+            json!({"confidence": 1.0, "display": {"widthPercent": 60.0, "maxWidthPx": 80.0}});
         assert_eq!(
             String::from_utf8(canonical_json_bytes_js(&value)).unwrap(),
             r#"{"confidence":1,"display":{"maxWidthPx":80,"widthPercent":60}}"#

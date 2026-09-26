@@ -164,10 +164,7 @@ pub(crate) fn get_canonical_ds(
 ///
 /// 权威稿尚未落库（`canonical_ds_json IS NULL`）时同样返回 `Some(version)`——
 /// 版本号本身是有效的，只是还没有稿；调用方（事件载荷）只关心版本。
-pub(crate) fn current_edit_version(
-    conn: &Connection,
-    item_id: &str,
-) -> CommandResult<Option<i64>> {
+pub(crate) fn current_edit_version(conn: &Connection, item_id: &str) -> CommandResult<Option<i64>> {
     conn.query_row(
         "SELECT current_edit_version FROM library_items_v2 WHERE id = ?1",
         [item_id],
@@ -307,7 +304,9 @@ pub(crate) struct EditFootprint {
 const IDENTITY_KEYS: [&str; 5] = ["id", "taskId", "slotId", "responseGroupId", "assetId"];
 
 fn push_identity(value: &Value, out: &mut BTreeSet<String>) {
-    let Some(object) = value.as_object() else { return };
+    let Some(object) = value.as_object() else {
+        return;
+    };
     for key in IDENTITY_KEYS {
         if let Some(id) = object.get(key).and_then(Value::as_str) {
             if !id.is_empty() {
@@ -481,7 +480,10 @@ impl EditFootprint {
     /// `deleteNode` 覆盖的是那棵被替换掉的旧子树，编辑之后就找不到它了。
     pub(crate) fn for_command(document: &Value, command: &Value) -> Self {
         let mut targets = BTreeSet::new();
-        let op = command.get("op").and_then(Value::as_str).unwrap_or_default();
+        let op = command
+            .get("op")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         let group_roots = |task_id: &str, out: &mut BTreeSet<String>| {
             out.extend(task_group_owned_ids(document, task_id));
             extend_with_context(document, &[task_id.to_string()], out);
@@ -500,7 +502,10 @@ impl EditFootprint {
             "replaceContent" | "insertNode" | "moveNode" => {
                 let mut roots = Vec::new();
                 if let Some(target) = command.get("target").and_then(Value::as_object) {
-                    let kind = target.get("kind").and_then(Value::as_str).unwrap_or_default();
+                    let kind = target
+                        .get("kind")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
                     match kind {
                         "node" => roots.extend(strings_of(target.get("nodeId"))),
                         "taskInstructions" | "taskStimulus" => {
@@ -635,14 +640,19 @@ impl EditFootprint {
     pub(crate) fn merge(document: &Value, commands: &[Value]) -> Self {
         let mut merged = EditFootprint::default();
         for command in commands {
-            merged.targets.extend(EditFootprint::for_command(document, command).targets);
+            merged
+                .targets
+                .extend(EditFootprint::for_command(document, command).targets);
         }
         merged
     }
 
     /// 与人工保护目标相交时返回**第一个**冲突目标（返回具体目标，好让模型缩小范围）。
     pub(crate) fn first_conflict(&self, protected: &BTreeSet<String>) -> Option<String> {
-        self.targets.iter().find(|id| protected.contains(*id)).cloned()
+        self.targets
+            .iter()
+            .find(|id| protected.contains(*id))
+            .cloned()
     }
 
     /// 对外的稳定形态（排序的数组，便于前端与日志阅读）。
@@ -704,8 +714,8 @@ pub(crate) fn human_protected_targets(
         .map_err(|error| format!("library_v2_protected_read:{error}"))?;
     let raw = stored.flatten();
     if let Some(json) = raw {
-        let parsed: Value =
-            serde_json::from_str(&json).map_err(|error| format!("library_v2_protected_parse:{error}"))?;
+        let parsed: Value = serde_json::from_str(&json)
+            .map_err(|error| format!("library_v2_protected_parse:{error}"))?;
         let mut targets = BTreeSet::new();
         if let Some(items) = parsed.get("targets").and_then(Value::as_array) {
             for id in items.iter().filter_map(Value::as_str) {
@@ -799,8 +809,18 @@ const MAX_CHANGE_ENTRY_BYTES: usize = 64 * 1024;
 fn capture_change_targets(commands: &[Value]) -> Vec<String> {
     let mut roots = BTreeSet::new();
     for command in commands {
-        let op = command.get("op").and_then(Value::as_str).unwrap_or_default();
-        for key in ["nodeId", "slotId", "taskId", "responseGroupId", "optionId", "replacesTaskId"] {
+        let op = command
+            .get("op")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        for key in [
+            "nodeId",
+            "slotId",
+            "taskId",
+            "responseGroupId",
+            "optionId",
+            "replacesTaskId",
+        ] {
             if let Some(id) = command.get(key).and_then(Value::as_str) {
                 roots.insert(id.to_string());
             }
@@ -849,7 +869,9 @@ fn read_change_value(document: &Value, key: &str) -> Value {
             .cloned()
             .unwrap_or(Value::Null);
     }
-    find_object_by_id(document, key).cloned().unwrap_or(Value::Null)
+    find_object_by_id(document, key)
+        .cloned()
+        .unwrap_or(Value::Null)
 }
 
 fn write_change_value(document: &mut Value, key: &str, replacement: &Value) -> bool {
@@ -871,7 +893,9 @@ fn snapshot_change(document: &Value, targets: &[String]) -> Value {
     let mut before = serde_json::Map::new();
     for id in targets {
         let value = read_change_value(document, id);
-        if serde_json::to_vec(&value).map(|bytes| bytes.len()).unwrap_or(usize::MAX)
+        if serde_json::to_vec(&value)
+            .map(|bytes| bytes.len())
+            .unwrap_or(usize::MAX)
             > MAX_CHANGE_ENTRY_BYTES
         {
             before.insert(id.clone(), serde_json::json!({ "tooLarge": true }));
@@ -1003,7 +1027,9 @@ pub(crate) fn undo_cloud_repair_run(
         // 先收进局部变量再作为块的值返回：直接在尾部返回会让 `statement` 的借用活得
         // 比它自己更久（临时值在块尾才析构），编译不过。
         let rows = statement
-            .query_map(params![item_id, repair_run_id], |row| row.get::<_, String>(0))
+            .query_map(params![item_id, repair_run_id], |row| {
+                row.get::<_, String>(0)
+            })
             .map_err(|error| format!("library_v2_undo_query:{error}"))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| format!("library_v2_undo_rows:{error}"))?;
@@ -1020,7 +1046,9 @@ pub(crate) fn undo_cloud_repair_run(
         let parsed: Value = serde_json::from_str(raw).map_err(|error| error.to_string())?;
         if let Some(before) = parsed.get("before").and_then(Value::as_object) {
             for (id, value) in before {
-                first_before.entry(id.clone()).or_insert_with(|| value.clone());
+                first_before
+                    .entry(id.clone())
+                    .or_insert_with(|| value.clone());
             }
         }
         if let Some(after) = parsed.get("after").and_then(Value::as_object) {
@@ -1192,7 +1220,14 @@ fn cas_write_canonical(
             "UPDATE library_items_v2
              SET canonical_ds_json = ?2, current_edit_version = ?3, updated_at = ?4, status = ?6
              WHERE id = ?1 AND current_edit_version = ?5",
-            params![item_id, ds.to_string(), next_version, now, expected_version, status],
+            params![
+                item_id,
+                ds.to_string(),
+                next_version,
+                now,
+                expected_version,
+                status
+            ],
         )
         .map_err(|error| format!("library_v2_tx_update:{error}"))?;
 
@@ -1210,9 +1245,9 @@ fn cas_write_canonical(
             .optional()
             .map_err(|error| format!("library_v2_tx_read_version:{error}"))?;
         return Err(match current {
-            Some(current) => format!(
-                "EDIT_VERSION_CONFLICT:current={current}:base={expected_version}"
-            ),
+            Some(current) => {
+                format!("EDIT_VERSION_CONFLICT:current={current}:base={expected_version}")
+            }
             None => format!("ITEM_NOT_FOUND:{item_id}"),
         });
     }
@@ -1343,8 +1378,10 @@ pub(crate) fn apply_editor_commands_tx_with(
             .optional()
             .map_err(|error| format!("library_v2_journal_lookup:{error}"))?;
         if let Some((item_id, base_version, command_json)) = replay {
-            let previous: Value = serde_json::from_str(&command_json).map_err(|error| error.to_string())?;
-            if item_id != input.item_id || base_version != input.base_version || previous != payload {
+            let previous: Value =
+                serde_json::from_str(&command_json).map_err(|error| error.to_string())?;
+            if item_id != input.item_id || base_version != input.base_version || previous != payload
+            {
                 return Err("EDIT_REQUEST_ID_REUSED".to_string());
             }
             return Ok(ApplyEditorCommandsResult {
@@ -1633,7 +1670,10 @@ mod tests {
         transaction.rollback().unwrap();
 
         let (ds, version) = get_canonical_ds(&conn, "it-1").unwrap().unwrap();
-        assert_eq!(ds.pointer("/exam/title").and_then(Value::as_str), Some("before"));
+        assert_eq!(
+            ds.pointer("/exam/title").and_then(Value::as_str),
+            Some("before")
+        );
         assert_eq!(version, 1, "CAS 未匹配时不得写入新稿或推进版本");
     }
 
@@ -1841,7 +1881,10 @@ mod tests {
         )
         .unwrap();
         let protected = protected_of(&conn);
-        assert!(protected.contains("slot-14"), "人工改的槽位必须成为保护目标：{protected:?}");
+        assert!(
+            protected.contains("slot-14"),
+            "人工改的槽位必须成为保护目标：{protected:?}"
+        );
         assert!(!protected.contains("slot-15"), "未触碰的槽位不应被保护");
 
         // 云端要改同一个槽位 ⇒ 拒绝，且拒绝理由是那个**具体**目标。
@@ -1858,7 +1901,10 @@ mod tests {
 
         // 权威稿一字未改，版本未推进。
         let (ds, version) = get_canonical_ds(&conn, "it-1").unwrap().unwrap();
-        assert_eq!(ds.pointer("/answerKey/slot-14/values/0").unwrap(), "user_value");
+        assert_eq!(
+            ds.pointer("/answerKey/slot-14/values/0").unwrap(),
+            "user_value"
+        );
         assert_eq!(version, 2, "被拒的写入不得推进版本");
 
         // 另一个槽位仍可修：不同目标的人工改动不应让整卷停止修复。
@@ -1872,7 +1918,10 @@ mod tests {
         .unwrap();
         assert_eq!(outcome.edit_version, 3);
         let (ds, _) = get_canonical_ds(&conn, "it-1").unwrap().unwrap();
-        assert_eq!(ds.pointer("/answerKey/slot-15/values/0").unwrap(), "cloud_fixed");
+        assert_eq!(
+            ds.pointer("/answerKey/slot-15/values/0").unwrap(),
+            "cloud_fixed"
+        );
     }
 
     /// 云端修复不得给自己盖 `user_edited`，也不得写进人工保护目标。
@@ -2047,7 +2096,10 @@ mod tests {
         assert!(error.starts_with("EDIT_VERSION_CONFLICT"), "{error}");
         let (ds, version) = get_canonical_ds(&conn, "it-1").unwrap().unwrap();
         assert_eq!(version, 2);
-        assert_eq!(ds.pointer("/answerKey/slot-15/values/0").unwrap(), "user_value");
+        assert_eq!(
+            ds.pointer("/answerKey/slot-15/values/0").unwrap(),
+            "user_value"
+        );
     }
 
     fn find_in_ds<'a>(value: &'a Value, id: &str) -> Option<&'a Value> {

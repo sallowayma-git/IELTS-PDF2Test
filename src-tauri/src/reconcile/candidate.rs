@@ -14,19 +14,23 @@ use crate::schema::cloud_repair_v1::{
     CLOUD_AUTHORING_CANDIDATE_V1_SCHEMA_VERSION,
 };
 use crate::schema::ielts_authoring_v2::{
-    AnswerSlotHostTypeV2, AnswerSlotParticipationV2, AnswerValueV2, InteractionV2, ResponseGroupKindV2,
-    TaskTypeV2,
+    AnswerSlotHostTypeV2, AnswerSlotParticipationV2, AnswerValueV2, InteractionV2,
+    ResponseGroupKindV2, TaskTypeV2,
 };
-use crate::CommandResult;
 use crate::schema::recognition_v1::{
     reason, CandidateAssetV1, CandidateOptionBankV1, CandidateOptionV1, CandidateResponseGroupV1,
     CandidateSlotV1, CandidateTaskGroupV1, CandidateUnresolvedRegionV1, ChainKindV1, ChainStatusV1,
     RecognitionCandidateV1, SalvageReportV1, RECOGNITION_CANDIDATE_V1_SCHEMA_VERSION,
 };
+use crate::CommandResult;
 
 /// 归一化文本用于比对：折叠空白 + 小写。保留标点（题干标点有语义）。
 pub(crate) fn normalize_text(input: &str) -> String {
-    input.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    input
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 /// 递归拼接 `ContentNodeV2` 中的文本（`text` 节点），忽略结构节点。
@@ -149,9 +153,11 @@ fn interaction_host_for(task_type: &str) -> (&'static str, &'static str) {
 /// 由 `TaskTypeV2` snake_case 派生 `ResponseGroupKindV2`（见 `ielts_authoring_v2.rs:373`）。
 fn response_group_kind_for(task_type: &str) -> &'static str {
     match task_type {
-        "single_choice" | "multiple_choice" | "true_false_not_given" | "yes_no_not_given" | "classification" => {
-            "choice"
-        }
+        "single_choice"
+        | "multiple_choice"
+        | "true_false_not_given"
+        | "yes_no_not_given"
+        | "classification" => "choice",
         "matching_information" | "matching_headings" => "matching",
         "diagram_label_completion" | "plan_map_label_completion" => "diagram_hotspot",
         _ => "text_entry",
@@ -241,9 +247,15 @@ fn to_answer_value(value: &Value) -> Option<Value> {
         }
     }
     match value {
-        Value::String(s) => Some(json!({"kind":"text","values":[s],"normalization":"ielts_default"})),
+        Value::String(s) => {
+            Some(json!({"kind":"text","values":[s],"normalization":"ielts_default"}))
+        }
         Value::Array(arr) => {
-            let values: Vec<String> = arr.iter().filter_map(Value::as_str).map(str::to_string).collect();
+            let values: Vec<String> = arr
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect();
             if values.is_empty() {
                 None
             } else {
@@ -269,7 +281,9 @@ pub(crate) fn expand_natural_cloud_shape(raw: &Value) -> Value {
     };
     // 内部形态探测：任一 group 同时带 taskId 与 taskType → 直接透传。
     if groups.iter().any(|group| {
-        let Some(object) = group.as_object() else { return false };
+        let Some(object) = group.as_object() else {
+            return false;
+        };
         object.contains_key("taskId") && object.contains_key("taskType")
     }) {
         return raw.clone();
@@ -289,7 +303,10 @@ pub(crate) fn expand_natural_cloud_shape(raw: &Value) -> Value {
             continue;
         };
         let range_value = object.get("range").cloned().unwrap_or(Value::Null);
-        let question_ids = object.get("questionIds").cloned().unwrap_or_else(|| json!([]));
+        let question_ids = object
+            .get("questionIds")
+            .cloned()
+            .unwrap_or_else(|| json!([]));
         let numbers = derive_question_numbers(&range_value, &question_ids);
         if numbers.is_empty() {
             new_groups.push(group.clone());
@@ -300,23 +317,47 @@ pub(crate) fn expand_natural_cloud_shape(raw: &Value) -> Value {
         let (interaction, host_type) = interaction_host_for(task_type);
         let response_group_kind = response_group_kind_for(task_type);
         let group_answers = object.get("answers").cloned().unwrap_or_else(|| json!({}));
-        let model_slots = object.get("slots").and_then(Value::as_array).cloned().unwrap_or_default();
+        let model_slots = object
+            .get("slots")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
 
         let mut slot_ids: Vec<String> = Vec::with_capacity(numbers.len());
         let mut new_slots: Vec<Value> = Vec::with_capacity(numbers.len());
         for &number in &numbers {
             let slot_id = format!("cloud-q{}", number);
             slot_ids.push(slot_id.clone());
-            let model_slot = model_slots
-                .iter()
-                .find(|slot| slot.get("questionNumber").and_then(Value::as_u64) == Some(number as u64));
+            let model_slot = model_slots.iter().find(|slot| {
+                slot.get("questionNumber").and_then(Value::as_u64) == Some(number as u64)
+            });
             let raw_answer: Option<Value> = model_slot
                 .and_then(|slot| slot.get("answer").cloned())
                 .filter(|value| !value.is_null())
-                .or_else(|| group_answers.get(number.to_string()).cloned().filter(|value| !value.is_null()))
-                .or_else(|| group_answers.get(format!("q{}", number)).cloned().filter(|value| !value.is_null()))
-                .or_else(|| answer_key.get(number.to_string()).cloned().filter(|value| !value.is_null()))
-                .or_else(|| answer_key.get(format!("q{}", number)).cloned().filter(|value| !value.is_null()));
+                .or_else(|| {
+                    group_answers
+                        .get(number.to_string())
+                        .cloned()
+                        .filter(|value| !value.is_null())
+                })
+                .or_else(|| {
+                    group_answers
+                        .get(format!("q{}", number))
+                        .cloned()
+                        .filter(|value| !value.is_null())
+                })
+                .or_else(|| {
+                    answer_key
+                        .get(number.to_string())
+                        .cloned()
+                        .filter(|value| !value.is_null())
+                })
+                .or_else(|| {
+                    answer_key
+                        .get(format!("q{}", number))
+                        .cloned()
+                        .filter(|value| !value.is_null())
+                });
             let answer = raw_answer.as_ref().and_then(to_answer_value);
             let evidence = model_slot
                 .and_then(|slot| slot.get("evidence"))
@@ -355,7 +396,9 @@ pub(crate) fn expand_natural_cloud_shape(raw: &Value) -> Value {
                 "slotIds": slot_ids,
             }]),
         );
-        new_group.entry("instructionsText".to_string()).or_insert_with(|| json!(""));
+        new_group
+            .entry("instructionsText".to_string())
+            .or_insert_with(|| json!(""));
         if !new_group.contains_key("stimulusText") {
             if let Some(notes) = object.get("notesText") {
                 new_group.insert("stimulusText".to_string(), notes.clone());
@@ -389,7 +432,10 @@ pub(crate) fn expand_natural_cloud_shape(raw: &Value) -> Value {
 ///
 /// 仅有当：本地该题有答案、云端答案能抽出字符串、且二者 `kind` 不同时才尝试改写；
 /// 否则原样保留（不引入假一致）。
-pub(crate) fn align_cloud_answer_shapes(cloud: &mut RecognitionCandidateV1, local: &RecognitionCandidateV1) {
+pub(crate) fn align_cloud_answer_shapes(
+    cloud: &mut RecognitionCandidateV1,
+    local: &RecognitionCandidateV1,
+) {
     for cloud_slot in &mut cloud.slots {
         let Some(local_slot) = local.slot_by_question(cloud_slot.question_number) else {
             continue;
@@ -448,12 +494,24 @@ pub(crate) fn answer_strings(answer: &Value) -> Vec<String> {
         Some("text") => answer
             .get("values")
             .and_then(Value::as_array)
-            .map(|values| values.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
             .unwrap_or_default(),
         Some("option") => answer
             .get("labels")
             .and_then(Value::as_array)
-            .map(|labels| labels.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .map(|labels| {
+                labels
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
             .unwrap_or_default(),
         _ => match answer {
             Value::String(s) => vec![s.clone()],
@@ -490,12 +548,19 @@ fn align_text_to_option(
         .map(|bank| {
             bank.options
                 .iter()
-                .map(|option| (option.label.trim().to_uppercase(), normalize_text(&option.text)))
+                .map(|option| {
+                    (
+                        option.label.trim().to_uppercase(),
+                        normalize_text(&option.text),
+                    )
+                })
                 .collect()
         })
         .unwrap_or_default();
-    let text_to_label: BTreeMap<String, String> =
-        label_to_text.iter().map(|(label, text)| (text.clone(), label.clone())).collect();
+    let text_to_label: BTreeMap<String, String> = label_to_text
+        .iter()
+        .map(|(label, text)| (text.clone(), label.clone()))
+        .collect();
     let assignment = local_answer
         .get("assignment")
         .and_then(Value::as_str)
@@ -512,7 +577,10 @@ fn align_text_to_option(
             continue;
         }
         // 2) 经选项库把「选项文本」解析为 label（大小写/空白已规范化）。
-        if let Some(label) = text_to_label.get(&normalized).or_else(|| text_to_label.get(&upper)) {
+        if let Some(label) = text_to_label
+            .get(&normalized)
+            .or_else(|| text_to_label.get(&upper))
+        {
             mapped_labels.push(label.clone());
             continue;
         }
@@ -537,7 +605,12 @@ fn align_option_to_text(
     let label_to_text: BTreeMap<String, String> = bank.map(|bank| {
         bank.options
             .iter()
-            .map(|option| (option.label.trim().to_uppercase(), normalize_text(&option.text)))
+            .map(|option| {
+                (
+                    option.label.trim().to_uppercase(),
+                    normalize_text(&option.text),
+                )
+            })
             .collect()
     })?;
     let mut mapped_texts: Vec<String> = Vec::with_capacity(cloud_labels.len());
@@ -592,7 +665,10 @@ pub(crate) fn local_candidate_from_authoring(
     base_edit_version: i64,
 ) -> RecognitionCandidateV1 {
     let generated_at = chrono::Utc::now().to_rfc3339();
-    let answer_key = authoring.get("answerKey").cloned().unwrap_or_else(|| json!({}));
+    let answer_key = authoring
+        .get("answerKey")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
     let slot_values = authoring.get("answerSlots").and_then(Value::as_object);
 
     // 槽位 → (taskId, responseGroupId) 由题组的 responseGroups[].slotIds 反查。
@@ -608,7 +684,8 @@ pub(crate) fn local_candidate_from_authoring(
         };
         if let Some(response_groups) = group.get("responseGroups").and_then(Value::as_array) {
             for response in response_groups {
-                let Some(response_id) = response.get("responseGroupId").and_then(Value::as_str) else {
+                let Some(response_id) = response.get("responseGroupId").and_then(Value::as_str)
+                else {
                     continue;
                 };
                 if let Some(slot_ids) = response.get("slotIds").and_then(Value::as_array) {
@@ -638,19 +715,29 @@ pub(crate) fn local_candidate_from_authoring(
             .get("displayRange")
             .cloned()
             .unwrap_or_else(|| json!({"kind": "range", "start": 0, "end": 0}));
-        let instructions_text = group.get("instructions").map(nodes_text).unwrap_or_default();
-        let stimulus_text = group.get("stimulus").map(nodes_text).filter(|text| !text.is_empty());
-        let option_bank = group.get("optionBank").and_then(Value::as_object).map(|bank| {
-            CandidateOptionBankV1 {
+        let instructions_text = group
+            .get("instructions")
+            .map(nodes_text)
+            .unwrap_or_default();
+        let stimulus_text = group
+            .get("stimulus")
+            .map(nodes_text)
+            .filter(|text| !text.is_empty());
+        let option_bank = group
+            .get("optionBank")
+            .and_then(Value::as_object)
+            .map(|bank| CandidateOptionBankV1 {
                 option_bank_id: bank
                     .get("optionBankId")
                     .and_then(Value::as_str)
                     .unwrap_or("option-bank")
                     .to_string(),
                 options: options_from_value(bank.get("options")),
-                allow_reuse: bank.get("allowReuse").and_then(Value::as_bool).unwrap_or(false),
-            }
-        });
+                allow_reuse: bank
+                    .get("allowReuse")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            });
         let response_groups = group
             .get("responseGroups")
             .and_then(Value::as_array)
@@ -658,8 +745,10 @@ pub(crate) fn local_candidate_from_authoring(
                 items
                     .iter()
                     .filter_map(|response| {
-                        let response_id =
-                            response.get("responseGroupId").and_then(Value::as_str)?.to_string();
+                        let response_id = response
+                            .get("responseGroupId")
+                            .and_then(Value::as_str)?
+                            .to_string();
                         Some(CandidateResponseGroupV1 {
                             response_group_id: response_id,
                             kind: response
@@ -667,15 +756,28 @@ pub(crate) fn local_candidate_from_authoring(
                                 .and_then(Value::as_str)
                                 .unwrap_or("composite")
                                 .to_string(),
-                            prompt: response.get("prompt").map(nodes_text).filter(|t| !t.is_empty()),
+                            prompt: response
+                                .get("prompt")
+                                .map(nodes_text)
+                                .filter(|t| !t.is_empty()),
                             slot_ids: response
                                 .get("slotIds")
                                 .and_then(Value::as_array)
-                                .map(|ids| ids.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                                .map(|ids| {
+                                    ids.iter()
+                                        .filter_map(Value::as_str)
+                                        .map(str::to_string)
+                                        .collect()
+                                })
                                 .unwrap_or_default(),
-                            options: response.get("options").map(|value| options_from_value(Some(value))),
+                            options: response
+                                .get("options")
+                                .map(|value| options_from_value(Some(value))),
                             cardinality: response.get("cardinality").cloned(),
-                            assignment: response.get("assignment").and_then(Value::as_str).map(str::to_string),
+                            assignment: response
+                                .get("assignment")
+                                .and_then(Value::as_str)
+                                .map(str::to_string),
                             allow_option_reuse: response
                                 .get("allowOptionReuse")
                                 .and_then(Value::as_bool)
@@ -693,7 +795,13 @@ pub(crate) fn local_candidate_from_authoring(
         let warnings = group
             .get("recognitionWarnings")
             .and_then(Value::as_array)
-            .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
             .unwrap_or_default();
         task_groups.push(CandidateTaskGroupV1 {
             task_id: task_id.to_string(),
@@ -718,7 +826,10 @@ pub(crate) fn local_candidate_from_authoring(
         let Some(slot) = slot_values.and_then(|map| map.get(slot_id)) else {
             continue;
         };
-        let question_number = slot.get("questionNumber").and_then(Value::as_u64).unwrap_or(0) as u32;
+        let question_number = slot
+            .get("questionNumber")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32;
         let source_anchors = slot
             .get("sourceAnchors")
             .and_then(Value::as_array)
@@ -740,8 +851,15 @@ pub(crate) fn local_candidate_from_authoring(
                 .and_then(Value::as_str)
                 .unwrap_or("text")
                 .to_string(),
-            host_type: slot.get("hostType").and_then(Value::as_str).unwrap_or("prompt").to_string(),
-            host_node_id: slot.get("hostNodeId").and_then(Value::as_str).map(str::to_string),
+            host_type: slot
+                .get("hostType")
+                .and_then(Value::as_str)
+                .unwrap_or("prompt")
+                .to_string(),
+            host_node_id: slot
+                .get("hostNodeId")
+                .and_then(Value::as_str)
+                .map(str::to_string),
             participation: slot
                 .get("participation")
                 .and_then(Value::as_str)
@@ -764,8 +882,15 @@ pub(crate) fn local_candidate_from_authoring(
                     let asset_id = asset.get("assetId").and_then(Value::as_str)?.to_string();
                     Some(CandidateAssetV1 {
                         asset_id,
-                        sha256: asset.get("sha256").and_then(Value::as_str).unwrap_or_default().to_string(),
-                        mime: asset.get("mime").and_then(Value::as_str).map(str::to_string),
+                        sha256: asset
+                            .get("sha256")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        mime: asset
+                            .get("mime")
+                            .and_then(Value::as_str)
+                            .map(str::to_string),
                     })
                 })
                 .collect::<Vec<_>>()
@@ -848,7 +973,9 @@ pub(crate) fn cloud_candidate_from_value(
         };
         // 枚举合法性用权威 schema 类型校验，杜绝「未知题型降级为 short_answer」。
         if serde_json::from_value::<TaskTypeV2>(json!(task_type_raw)).is_err() {
-            dropped.push(format!("cloud_group_task_type_invalid:{task_id}:{task_type_raw}"));
+            dropped.push(format!(
+                "cloud_group_task_type_invalid:{task_id}:{task_type_raw}"
+            ));
             continue;
         }
         let range = object.get("range").cloned().unwrap_or(Value::Null);
@@ -874,21 +1001,36 @@ pub(crate) fn cloud_candidate_from_value(
             let kind_raw = response.get("kind").and_then(Value::as_str).unwrap_or("");
             if serde_json::from_value::<ResponseGroupKindV2>(json!(kind_raw)).is_err() {
                 group_valid = false;
-                dropped.push(format!("cloud_response_group_kind_invalid:{task_id}:{response_id}"));
+                dropped.push(format!(
+                    "cloud_response_group_kind_invalid:{task_id}:{response_id}"
+                ));
                 break;
             }
             response_groups.push(CandidateResponseGroupV1 {
                 response_group_id: response_id.to_string(),
                 kind: kind_raw.to_string(),
-                prompt: response.get("prompt").and_then(Value::as_str).map(str::to_string),
+                prompt: response
+                    .get("prompt")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
                 slot_ids: response
                     .get("slotIds")
                     .and_then(Value::as_array)
-                    .map(|ids| ids.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                    .map(|ids| {
+                        ids.iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect()
+                    })
                     .unwrap_or_default(),
-                options: response.get("options").map(|value| options_from_value(Some(value))),
+                options: response
+                    .get("options")
+                    .map(|value| options_from_value(Some(value))),
                 cardinality: response.get("cardinality").cloned(),
-                assignment: response.get("assignment").and_then(Value::as_str).map(str::to_string),
+                assignment: response
+                    .get("assignment")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
                 allow_option_reuse: response
                     .get("allowOptionReuse")
                     .and_then(Value::as_bool)
@@ -936,22 +1078,29 @@ pub(crate) fn cloud_candidate_from_value(
             continue;
         }
         group_slots.sort_by_key(|slot| slot.question_number);
-        let declared: Vec<u32> = group_slots.iter().map(|slot| slot.question_number).collect();
+        let declared: Vec<u32> = group_slots
+            .iter()
+            .map(|slot| slot.question_number)
+            .collect();
         if declared != numbers {
             dropped.push(format!("cloud_group_question_numbers_mismatch:{task_id}"));
             continue;
         }
-        let option_bank = object.get("optionBank").and_then(Value::as_object).map(|bank| {
-            CandidateOptionBankV1 {
+        let option_bank = object
+            .get("optionBank")
+            .and_then(Value::as_object)
+            .map(|bank| CandidateOptionBankV1 {
                 option_bank_id: bank
                     .get("optionBankId")
                     .and_then(Value::as_str)
                     .unwrap_or("option-bank")
                     .to_string(),
                 options: options_from_value(bank.get("options")),
-                allow_reuse: bank.get("allowReuse").and_then(Value::as_bool).unwrap_or(false),
-            }
-        });
+                allow_reuse: bank
+                    .get("allowReuse")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            });
         slots.extend(group_slots);
         task_groups.push(CandidateTaskGroupV1 {
             task_id: task_id.to_string(),
@@ -970,11 +1119,20 @@ pub(crate) fn cloud_candidate_from_value(
             option_bank,
             response_groups,
             source_anchors: Vec::new(),
-            confidence: object.get("confidence").and_then(Value::as_f64).unwrap_or(0.0),
+            confidence: object
+                .get("confidence")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0),
             warnings: object
                 .get("warnings")
                 .and_then(Value::as_array)
-                .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
                 .unwrap_or_default(),
         });
     }
@@ -988,7 +1146,10 @@ pub(crate) fn cloud_candidate_from_value(
                     .and_then(Value::as_str)
                     .unwrap_or("未识别的区域")
                     .to_string(),
-                reason_code: region.get("reasonCode").and_then(Value::as_str).map(str::to_string),
+                reason_code: region
+                    .get("reasonCode")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
             });
         }
     }
@@ -997,8 +1158,15 @@ pub(crate) fn cloud_candidate_from_value(
             if let Some(asset_id) = asset.get("assetId").and_then(Value::as_str) {
                 assets.push(CandidateAssetV1 {
                     asset_id: asset_id.to_string(),
-                    sha256: asset.get("sha256").and_then(Value::as_str).unwrap_or_default().to_string(),
-                    mime: asset.get("mime").and_then(Value::as_str).map(str::to_string),
+                    sha256: asset
+                        .get("sha256")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    mime: asset
+                        .get("mime")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
                 });
             }
         }
@@ -1113,7 +1281,10 @@ fn normalize_cloud_slot(
                     .and_then(Value::as_str)
                     .map(|quote| !quote.trim().is_empty())
                     .unwrap_or(false)
-                    || item.get("bbox").map(|bbox| !bbox.is_null()).unwrap_or(false)
+                    || item
+                        .get("bbox")
+                        .map(|bbox| !bbox.is_null())
+                        .unwrap_or(false)
             })
         })
         .unwrap_or(false);
@@ -1134,7 +1305,10 @@ fn normalize_cloud_slot(
         response_group_id,
         interaction: interaction.to_string(),
         host_type: host_type.to_string(),
-        host_node_id: object.get("hostNodeId").and_then(Value::as_str).map(str::to_string),
+        host_node_id: object
+            .get("hostNodeId")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         participation: participation.to_string(),
         answer,
         has_source_evidence,
@@ -1349,7 +1523,9 @@ fn rewrite_object(
     // 2) 遍历具名字段。
     let keys: Vec<String> = map.keys().cloned().collect();
     for key in keys {
-        let Some(value) = map.get_mut(&key) else { continue };
+        let Some(value) = map.get_mut(&key) else {
+            continue;
+        };
         match key.as_str() {
             // 源文档引用：**按字段名**跳过，不靠值猜。`nodeIds` 指向源文档的节点、
             // `sourceTableId` 指向源文档里的表——重写它们会破坏溯源。
@@ -1357,8 +1533,8 @@ fn rewrite_object(
             // 资源引用：仅当 map 中有映射才换；绝不臆造，且**不**计入未映射列表
             // （资源 id 由后端登记、本就稳定；未知资源属资源校验失败，不是映射缺口）。
             "assetId" | "visualFallbackAssetId" => rewrite_asset_id(value, id_map, outcome),
-            "taskId" | "optionBankId" | "responseGroupId" | "optionBankRef"
-            | "slotId" | "hostNodeId" | "optionId" | "id" => {
+            "taskId" | "optionBankId" | "responseGroupId" | "optionBankRef" | "slotId"
+            | "hostNodeId" | "optionId" | "id" => {
                 rewrite_scalar_ref(value, id_map, temp_ids, outcome);
             }
             // 引用 id 的数组：`slotIds`（答案槽）与 listening 的 `taskIds`（题组）。
@@ -1393,7 +1569,9 @@ fn rename_slot_keyed_map(
     temp_ids: &BTreeSet<String>,
     outcome: &mut RewriteAccumulator,
 ) {
-    let Some(Value::Object(inner)) = map.get_mut(name) else { return };
+    let Some(Value::Object(inner)) = map.get_mut(name) else {
+        return;
+    };
 
     // 先在独立对象里算好；任何冲突都不回写。
     let mut planned: Map<String, Value> = Map::new();
@@ -1458,7 +1636,11 @@ fn rewrite_scalar_ref(
 
 /// 资源引用（`assetId` / `visualFallbackAssetId`）：仅当 map 中存在映射才换；
 /// 绝不臆造，且**不**计入未映射列表。
-fn rewrite_asset_id(value: &mut Value, id_map: &BTreeMap<String, String>, outcome: &mut RewriteAccumulator) {
+fn rewrite_asset_id(
+    value: &mut Value,
+    id_map: &BTreeMap<String, String>,
+    outcome: &mut RewriteAccumulator,
+) {
     if let Value::String(current) = value {
         if let Some(stable) = id_map.get(current) {
             *current = stable.clone();
@@ -1674,7 +1856,10 @@ fn canonical_group_index(canonical: &Value) -> Vec<CanonicalGroupIndex> {
 /// 权威稿的答案槽身份索引。
 ///
 /// 所属题组通过 `responseGroups[].slotIds` **反查**得到，而不是靠 `qN` 命名规则猜。
-fn canonical_slot_index(canonical: &Value, groups: &[CanonicalGroupIndex]) -> Vec<CanonicalSlotIndex> {
+fn canonical_slot_index(
+    canonical: &Value,
+    groups: &[CanonicalGroupIndex],
+) -> Vec<CanonicalSlotIndex> {
     let Some(slots) = canonical.get("answerSlots").and_then(Value::as_object) else {
         return Vec::new();
     };
@@ -1882,7 +2067,13 @@ fn assign_group_inner_ids(
     for container in ["instructions", "stimulus"] {
         if let Some(cloud_nodes) = cloud_group.get(container) {
             let canonical_nodes = canonical_group.and_then(|group| group.get(container));
-            assign_node_ids(cloud_nodes, canonical_nodes, stable_task_id, &mut counter, id_map);
+            assign_node_ids(
+                cloud_nodes,
+                canonical_nodes,
+                stable_task_id,
+                &mut counter,
+                id_map,
+            );
         }
     }
 
@@ -1911,13 +2102,18 @@ fn assign_group_inner_ids(
                         .and_then(|bank| bank.get("options"))
                         .and_then(Value::as_array)
                         .and_then(|arr| {
-                            arr.iter()
-                                .find(|candidate| {
-                                    candidate.get("label").and_then(Value::as_str) == Some(label)
-                                })
+                            arr.iter().find(|candidate| {
+                                candidate.get("label").and_then(Value::as_str) == Some(label)
+                            })
                         })
                         .and_then(|candidate| candidate.get("content"));
-                    assign_node_ids(content, canonical_content, stable_task_id, &mut counter, id_map);
+                    assign_node_ids(
+                        content,
+                        canonical_content,
+                        stable_task_id,
+                        &mut counter,
+                        id_map,
+                    );
                 }
             }
         }
@@ -1932,7 +2128,13 @@ fn assign_group_inner_ids(
                     .and_then(Value::as_array)
                     .and_then(|arr| arr.first())
                     .and_then(|group| group.get("prompt"));
-                assign_node_ids(prompt, canonical_prompt, stable_task_id, &mut counter, id_map);
+                assign_node_ids(
+                    prompt,
+                    canonical_prompt,
+                    stable_task_id,
+                    &mut counter,
+                    id_map,
+                );
             }
             if let Some(options) = response_group.get("options").and_then(Value::as_array) {
                 for option in options {
@@ -2091,7 +2293,11 @@ fn fill_content_node_defaults(value: &mut Value) {
         }
         Value::Object(map) => {
             if map.get("type").map(Value::is_string).unwrap_or(false) {
-                if !map.get("sourceAnchors").map(Value::is_array).unwrap_or(false) {
+                if !map
+                    .get("sourceAnchors")
+                    .map(Value::is_array)
+                    .unwrap_or(false)
+                {
                     map.insert("sourceAnchors".to_string(), json!([]));
                 }
                 map.insert("provenanceStatus".to_string(), json!("source"));
@@ -2107,7 +2313,11 @@ fn fill_content_node_defaults(value: &mut Value) {
 }
 
 fn ensure_source_anchors(map: &mut Map<String, Value>) {
-    if !map.get("sourceAnchors").map(Value::is_array).unwrap_or(false) {
+    if !map
+        .get("sourceAnchors")
+        .map(Value::is_array)
+        .unwrap_or(false)
+    {
         map.insert("sourceAnchors".to_string(), json!([]));
     }
 }
@@ -2137,7 +2347,10 @@ fn fill_backend_owned_defaults(draft: &mut Value) {
                     fill_content_node_defaults(nodes);
                 }
             }
-            if let Some(bank) = group_map.get_mut("optionBank").and_then(Value::as_object_mut) {
+            if let Some(bank) = group_map
+                .get_mut("optionBank")
+                .and_then(Value::as_object_mut)
+            {
                 ensure_source_anchors(bank);
                 if let Some(title) = bank.get_mut("title") {
                     fill_content_node_defaults(title);
@@ -2152,8 +2365,9 @@ fn fill_backend_owned_defaults(draft: &mut Value) {
                     }
                 }
             }
-            if let Some(response_groups) =
-                group_map.get_mut("responseGroups").and_then(Value::as_array_mut)
+            if let Some(response_groups) = group_map
+                .get_mut("responseGroups")
+                .and_then(Value::as_array_mut)
             {
                 for response in response_groups.iter_mut().filter_map(Value::as_object_mut) {
                     ensure_source_anchors(response);
@@ -2174,7 +2388,10 @@ fn fill_backend_owned_defaults(draft: &mut Value) {
             }
         }
     }
-    if let Some(slots) = document.get_mut("answerSlots").and_then(Value::as_object_mut) {
+    if let Some(slots) = document
+        .get_mut("answerSlots")
+        .and_then(Value::as_object_mut)
+    {
         for slot in slots.values_mut().filter_map(Value::as_object_mut) {
             ensure_source_anchors(slot);
             slot.remove("provenanceStatus");
@@ -2200,7 +2417,10 @@ fn sanitize_cloud_authoring_draft(draft: &mut Value, identity: &CloudAuthoringId
                 continue;
             };
             normalize_enum_field(group_map, "taskType", &[]);
-            if let Some(bank) = group_map.get_mut("optionBank").and_then(Value::as_object_mut) {
+            if let Some(bank) = group_map
+                .get_mut("optionBank")
+                .and_then(Value::as_object_mut)
+            {
                 normalize_enum_field(bank, "scope", &[]);
                 retain_keys(
                     bank,
@@ -2220,13 +2440,20 @@ fn sanitize_cloud_authoring_draft(draft: &mut Value, identity: &CloudAuthoringId
                         };
                         retain_keys(
                             option_map,
-                            &["optionId", "label", "content", "sourceAnchors", "provenanceStatus"],
+                            &[
+                                "optionId",
+                                "label",
+                                "content",
+                                "sourceAnchors",
+                                "provenanceStatus",
+                            ],
                         );
                     }
                 }
             }
-            if let Some(response_groups) =
-                group_map.get_mut("responseGroups").and_then(Value::as_array_mut)
+            if let Some(response_groups) = group_map
+                .get_mut("responseGroups")
+                .and_then(Value::as_array_mut)
             {
                 for response_group in response_groups.iter_mut() {
                     let Some(response_map) = response_group.as_object_mut() else {
@@ -2258,7 +2485,10 @@ fn sanitize_cloud_authoring_draft(draft: &mut Value, identity: &CloudAuthoringId
         }
     }
 
-    if let Some(slots) = document.get_mut("answerSlots").and_then(Value::as_object_mut) {
+    if let Some(slots) = document
+        .get_mut("answerSlots")
+        .and_then(Value::as_object_mut)
+    {
         for (_, slot) in slots.iter_mut() {
             let Some(slot_map) = slot.as_object_mut() else {
                 continue;
@@ -2309,7 +2539,10 @@ fn sanitize_cloud_authoring_draft(draft: &mut Value, identity: &CloudAuthoringId
             // 答案值的 assignment 是 `AnswerAssignmentV2`（ordered），与响应组的
             // `AssignmentV2`（ordered_slots）不是同一个枚举，这里如实收敛。
             normalize_enum_field(entry_map, "assignment", &[("ordered_slots", "ordered")]);
-            retain_keys(entry_map, &["kind", "values", "normalization", "labels", "assignment"]);
+            retain_keys(
+                entry_map,
+                &["kind", "values", "normalization", "labels", "assignment"],
+            );
         }
     }
 }
@@ -2424,7 +2657,11 @@ fn apply_cloud_listening_parts(
         .unwrap_or_default();
     let mut used_part_ids: BTreeSet<String> = canonical_parts
         .iter()
-        .filter_map(|part| part.get("partId").and_then(Value::as_str).map(str::to_string))
+        .filter_map(|part| {
+            part.get("partId")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
         .collect();
 
     let mut parts: Vec<Value> = Vec::new();
@@ -2607,7 +2844,13 @@ pub(crate) fn normalize_cloud_authoring(
     let mut source_coverage_notes: Vec<String> = raw
         .get("sourceCoverageNotes")
         .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
         .unwrap_or_default();
     let unresolved_regions: Vec<CloudCandidateUnresolvedRegionV1> = raw
         .get("unresolvedRegions")
@@ -2770,8 +3013,7 @@ pub(crate) fn normalize_cloud_authoring(
             .get(key)
             .or_else(|| cloud_owner.get(&cloud_slot_id))
             .copied();
-        let owner_task_id = owner
-            .and_then(|index| group_stable.get(index).cloned().flatten());
+        let owner_task_id = owner.and_then(|index| group_stable.get(index).cloned().flatten());
         let candidates: Vec<&CanonicalSlotIndex> = canonical_slots
             .iter()
             .filter(|candidate| candidate.question_number == question_number as u32)
@@ -3000,7 +3242,10 @@ pub(crate) fn normalize_cloud_authoring(
 
     document.insert(
         "answerSlots".to_string(),
-        draft.get("answerSlots").cloned().unwrap_or_else(|| json!({})),
+        draft
+            .get("answerSlots")
+            .cloned()
+            .unwrap_or_else(|| json!({})),
     );
     document.insert(
         "answerKey".to_string(),
@@ -3200,10 +3445,11 @@ pub(crate) fn format_question_numbers(numbers: &[u32]) -> String {
 /// 3. 相邻小块按顺序合并，直到超过 [`MAX_CHUNK_QUESTIONS`]；
 /// 4. 最后不足两块 ⇒ 返回空计划，调用方回到一次整卷请求。
 pub(crate) fn plan_candidate_chunks(source_text: &str) -> Vec<CandidateChunk> {
-    let blocks: Vec<BTreeSet<u32>> = crate::ielts_grammar::source_coverage::declared_question_blocks(source_text)
-        .into_iter()
-        .map(|numbers| numbers.into_iter().collect::<BTreeSet<u32>>())
-        .collect();
+    let blocks: Vec<BTreeSet<u32>> =
+        crate::ielts_grammar::source_coverage::declared_question_blocks(source_text)
+            .into_iter()
+            .map(|numbers| numbers.into_iter().collect::<BTreeSet<u32>>())
+            .collect();
     // 保留极大块（不被任何更大的块严格包含），相同块去重。
     let mut maximal: Vec<BTreeSet<u32>> = Vec::new();
     for block in &blocks {
@@ -3271,7 +3517,10 @@ fn collect_asset_ids(value: &Value, out: &mut BTreeSet<String>) {
     match value {
         Value::Object(map) => {
             for (key, child) in map {
-                if matches!(key.as_str(), "assetId" | "visualFallbackAssetId" | "assetRef") {
+                if matches!(
+                    key.as_str(),
+                    "assetId" | "visualFallbackAssetId" | "assetRef"
+                ) {
                     if let Some(text) = child.as_str() {
                         out.insert(text.to_string());
                     }
@@ -3324,7 +3573,12 @@ pub(crate) fn merge_candidate_chunks(
                 .cloned()
                 .map(|mut inner| {
                     // 说明类字段可能在外层：一并带进来。
-                    for key in ["unresolvedRegions", "sourceCoverageNotes", "warnings", "listeningParts"] {
+                    for key in [
+                        "unresolvedRegions",
+                        "sourceCoverageNotes",
+                        "warnings",
+                        "listeningParts",
+                    ] {
                         if let Some(extra) = value.get(key) {
                             inner[key] = extra.clone();
                         }
@@ -3334,7 +3588,10 @@ pub(crate) fn merge_candidate_chunks(
                 .unwrap_or(value),
             Err(error) => {
                 uncovered.extend(chunk.question_numbers.iter().copied());
-                warnings.push(json!(format!("cloud_candidate_chunk_failed:{}:{error}", chunk.label)));
+                warnings.push(json!(format!(
+                    "cloud_candidate_chunk_failed:{}:{error}",
+                    chunk.label
+                )));
                 failures.push(format!("{}:{error}", chunk.label));
                 chunks_meta.push(json!({"label": chunk.label, "questionNumbers": chunk.question_numbers, "ok": false, "error": error}));
                 continue;
@@ -3342,14 +3599,25 @@ pub(crate) fn merge_candidate_chunks(
         };
         if let Err(error) = namespace_chunk_ids(&mut output, &prefix) {
             uncovered.extend(chunk.question_numbers.iter().copied());
-            warnings.push(json!(format!("cloud_candidate_chunk_failed:{}:{error}", chunk.label)));
+            warnings.push(json!(format!(
+                "cloud_candidate_chunk_failed:{}:{error}",
+                chunk.label
+            )));
             failures.push(format!("{}:{error}", chunk.label));
             chunks_meta.push(json!({"label": chunk.label, "questionNumbers": chunk.question_numbers, "ok": false, "error": error}));
             continue;
         }
         succeeded += 1;
-        chunks_meta.push(json!({"label": chunk.label, "questionNumbers": chunk.question_numbers, "ok": true}));
-        task_groups.extend(output.get("taskGroups").and_then(Value::as_array).cloned().unwrap_or_default());
+        chunks_meta.push(
+            json!({"label": chunk.label, "questionNumbers": chunk.question_numbers, "ok": true}),
+        );
+        task_groups.extend(
+            output
+                .get("taskGroups")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+        );
         if let Some(slots) = output.get("answerSlots").and_then(Value::as_object) {
             answer_slots.extend(slots.clone());
         }
@@ -3362,7 +3630,13 @@ pub(crate) fn merge_candidate_chunks(
             ("warnings", &mut warnings),
             ("listeningParts", &mut listening_parts),
         ] {
-            target.extend(output.get(key).and_then(Value::as_array).cloned().unwrap_or_default());
+            target.extend(
+                output
+                    .get(key)
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default(),
+            );
         }
     }
     if succeeded == 0 {
@@ -3485,7 +3759,13 @@ mod tests {
             ]
         });
         let candidate = cloud_candidate_from_value(
-            &raw, "batch-1", "item-1", "job-1", "file-1", &"a".repeat(64), 4,
+            &raw,
+            "batch-1",
+            "item-1",
+            "job-1",
+            "file-1",
+            &"a".repeat(64),
+            4,
         );
         assert_eq!(candidate.status, ChainStatusV1::Partial);
         assert_eq!(candidate.task_groups.len(), 1);
@@ -3495,8 +3775,14 @@ mod tests {
         assert_eq!(salvage.total_groups, 2);
         assert_eq!(salvage.kept_groups, 1);
         assert_eq!(salvage.dropped_groups, 1);
-        assert!(salvage.dropped_reasons.iter().any(|r| r.contains("task_type_invalid")));
-        assert_eq!(candidate.reason_code.as_deref(), Some(reason::SALVAGE_PARTIAL));
+        assert!(salvage
+            .dropped_reasons
+            .iter()
+            .any(|r| r.contains("task_type_invalid")));
+        assert_eq!(
+            candidate.reason_code.as_deref(),
+            Some(reason::SALVAGE_PARTIAL)
+        );
     }
 
     #[test]
@@ -3504,18 +3790,35 @@ mod tests {
         let raw = json!({"groups": [{"taskId": "task-1", "range": {"kind":"set","values":[1]},
             "taskType": "nonsense", "responseGroups": [], "slots": []}]});
         let candidate = cloud_candidate_from_value(
-            &raw, "batch-1", "item-1", "job-1", "file-1", &"a".repeat(64), 4,
+            &raw,
+            "batch-1",
+            "item-1",
+            "job-1",
+            "file-1",
+            &"a".repeat(64),
+            4,
         );
         assert_eq!(candidate.status, ChainStatusV1::Unusable);
-        assert_eq!(candidate.reason_code.as_deref(), Some(reason::MODEL_INVALID_OUTPUT));
+        assert_eq!(
+            candidate.reason_code.as_deref(),
+            Some(reason::MODEL_INVALID_OUTPUT)
+        );
     }
 
     #[test]
     fn expand_question_numbers_handles_range_set_and_mixed() {
-        assert_eq!(expand_question_numbers(&json!({"kind":"range","start":3,"end":5})), vec![3, 4, 5]);
-        assert_eq!(expand_question_numbers(&json!({"kind":"set","values":[7,6]})), vec![6, 7]);
         assert_eq!(
-            expand_question_numbers(&json!({"kind":"mixed","values":[1, {"kind":"range","start":3,"end":4}]})),
+            expand_question_numbers(&json!({"kind":"range","start":3,"end":5})),
+            vec![3, 4, 5]
+        );
+        assert_eq!(
+            expand_question_numbers(&json!({"kind":"set","values":[7,6]})),
+            vec![6, 7]
+        );
+        assert_eq!(
+            expand_question_numbers(
+                &json!({"kind":"mixed","values":[1, {"kind":"range","start":3,"end":4}]})
+            ),
             vec![1, 3, 4]
         );
     }
@@ -3523,7 +3826,13 @@ mod tests {
     #[test]
     fn not_run_candidate_always_carries_a_reason_code() {
         let candidate = not_run_candidate(
-            ChainKindV1::Cloud, "batch-1", "item-1", "job-1", "file-1", &"a".repeat(64), 1,
+            ChainKindV1::Cloud,
+            "batch-1",
+            "item-1",
+            "job-1",
+            "file-1",
+            &"a".repeat(64),
+            1,
             reason::NO_PROFILE,
         );
         assert_eq!(candidate.status, ChainStatusV1::NotRun);
@@ -3559,12 +3868,24 @@ mod tests {
             "confidence": 0.9,
             "warnings": []
         });
-        let candidate = cloud_candidate_from_value(&raw, "batch-1", "item-1", "job-1", "file-1", &"a".repeat(64), 4);
+        let candidate = cloud_candidate_from_value(
+            &raw,
+            "batch-1",
+            "item-1",
+            "job-1",
+            "file-1",
+            &"a".repeat(64),
+            4,
+        );
         assert_eq!(candidate.status, ChainStatusV1::Succeeded);
         assert_eq!(candidate.salvage, None);
         assert_eq!(candidate.task_groups.len(), 1);
         assert_eq!(candidate.slots.len(), 5);
-        let numbers: Vec<u32> = candidate.slots.iter().map(|slot| slot.question_number).collect();
+        let numbers: Vec<u32> = candidate
+            .slots
+            .iter()
+            .map(|slot| slot.question_number)
+            .collect();
         assert_eq!(numbers, vec![1, 2, 3, 4, 5]);
         // 每题答案与 answerKey 一致（归一成文本形态，未伪造）。
         assert_eq!(
@@ -3573,7 +3894,9 @@ mod tests {
         );
         assert_eq!(
             candidate.slots[2].answer,
-            Some(json!({"kind": "text", "values": ["NOT GIVEN"], "normalization": "ielts_default"}))
+            Some(
+                json!({"kind": "text", "values": ["NOT GIVEN"], "normalization": "ielts_default"})
+            )
         );
         assert!(candidate.slots[0].has_source_evidence);
     }
@@ -3602,9 +3925,21 @@ mod tests {
             "confidence": 0.8,
             "warnings": []
         });
-        let candidate = cloud_candidate_from_value(&raw, "batch-1", "item-1", "job-1", "file-1", &"a".repeat(64), 4);
+        let candidate = cloud_candidate_from_value(
+            &raw,
+            "batch-1",
+            "item-1",
+            "job-1",
+            "file-1",
+            &"a".repeat(64),
+            4,
+        );
         assert_eq!(candidate.status, ChainStatusV1::Succeeded);
-        let numbers: Vec<u32> = candidate.slots.iter().map(|slot| slot.question_number).collect();
+        let numbers: Vec<u32> = candidate
+            .slots
+            .iter()
+            .map(|slot| slot.question_number)
+            .collect();
         assert_eq!(numbers, vec![1, 3, 5]);
         assert_eq!(candidate.slots.len(), 3);
     }
@@ -3635,7 +3970,9 @@ mod tests {
                 host_type: "prompt".into(),
                 host_node_id: None,
                 participation: "scoring".into(),
-                answer: Some(json!({"kind": "option", "labels": ["B"], "assignment": "unordered_set"})),
+                answer: Some(
+                    json!({"kind": "option", "labels": ["B"], "assignment": "unordered_set"}),
+                ),
                 has_source_evidence: false,
             }],
             unresolved_regions: vec![],
@@ -3674,12 +4011,27 @@ mod tests {
             salvage: None,
             warnings: vec![],
         };
-        let local_key = answer_compare_key(local.slot_by_question(14).and_then(|slot| slot.answer.as_ref()));
-        let before = answer_compare_key(cloud.slot_by_question(14).and_then(|slot| slot.answer.as_ref()));
+        let local_key = answer_compare_key(
+            local
+                .slot_by_question(14)
+                .and_then(|slot| slot.answer.as_ref()),
+        );
+        let before = answer_compare_key(
+            cloud
+                .slot_by_question(14)
+                .and_then(|slot| slot.answer.as_ref()),
+        );
         assert_ne!(local_key, before, "前置：对齐前形状不同，会被判为分歧");
         align_cloud_answer_shapes(&mut cloud, &local);
-        let after = answer_compare_key(cloud.slot_by_question(14).and_then(|slot| slot.answer.as_ref()));
-        assert_eq!(local_key, after, "对齐后云端与本地比较键必须一致（消除假分歧）");
+        let after = answer_compare_key(
+            cloud
+                .slot_by_question(14)
+                .and_then(|slot| slot.answer.as_ref()),
+        );
+        assert_eq!(
+            local_key, after,
+            "对齐后云端与本地比较键必须一致（消除假分歧）"
+        );
         // 且保留云端自己的值，仅改形状为 option + 同 assignment。
         assert_eq!(
             cloud.slots[0].answer,
@@ -3878,7 +4230,15 @@ mod tests {
             "confidence": 0.5,
             "warnings": []
         });
-        let candidate = cloud_candidate_from_value(&raw, "batch-1", "item-1", "job-1", "file-1", &"a".repeat(64), 4);
+        let candidate = cloud_candidate_from_value(
+            &raw,
+            "batch-1",
+            "item-1",
+            "job-1",
+            "file-1",
+            &"a".repeat(64),
+            4,
+        );
         assert_ne!(candidate.status, ChainStatusV1::Succeeded);
         assert!(candidate.reason_code.is_some());
         assert_eq!(candidate.task_groups.len(), 0);
@@ -3900,7 +4260,15 @@ mod tests {
             "confidence": 0.5,
             "warnings": []
         });
-        let candidate = cloud_candidate_from_value(&raw, "batch-1", "item-1", "job-1", "file-1", &"a".repeat(64), 4);
+        let candidate = cloud_candidate_from_value(
+            &raw,
+            "batch-1",
+            "item-1",
+            "job-1",
+            "file-1",
+            &"a".repeat(64),
+            4,
+        );
         assert_ne!(candidate.status, ChainStatusV1::Succeeded);
         assert!(candidate.reason_code.is_some());
     }
@@ -3914,8 +4282,16 @@ mod tests {
             option_bank_id: "ob".into(),
             allow_reuse: false,
             options: vec![
-                CandidateOptionV1 { option_id: "o1".into(), label: "A".into(), text: "warm climate".into() },
-                CandidateOptionV1 { option_id: "o2".into(), label: "B".into(), text: "the cold weather".into() },
+                CandidateOptionV1 {
+                    option_id: "o1".into(),
+                    label: "A".into(),
+                    text: "warm climate".into(),
+                },
+                CandidateOptionV1 {
+                    option_id: "o2".into(),
+                    label: "B".into(),
+                    text: "the cold weather".into(),
+                },
             ],
         };
         let option_shape = json!({"kind": "option", "labels": ["B"], "assignment": "per_slot"});
@@ -3943,7 +4319,11 @@ mod tests {
     /// 形状已一致时返回 `None`（= 不改写）。改写只会引入假一致。
     #[test]
     fn align_answer_value_leaves_equal_shapes_untouched() {
-        let bank = CandidateOptionBankV1 { option_bank_id: "ob".into(), allow_reuse: false, options: vec![] };
+        let bank = CandidateOptionBankV1 {
+            option_bank_id: "ob".into(),
+            allow_reuse: false,
+            options: vec![],
+        };
         let shape = json!({"kind": "text", "values": ["x"]});
         assert_eq!(align_answer_value(&shape, &shape, Some(&bank)), None);
         assert_eq!(align_answer_value(&shape, &shape, None), None);
@@ -3954,391 +4334,589 @@ mod tests {
     fn align_answer_value_returns_none_without_a_legal_mapping() {
         let option_shape = json!({"kind": "option", "labels": ["B"], "assignment": "per_slot"});
         let text_value = json!({"kind": "text", "values": ["the cold weather"]});
-        assert_eq!(align_answer_value(&text_value, &option_shape, None), None, "无选项库 → 无法映射，保留原值");
+        assert_eq!(
+            align_answer_value(&text_value, &option_shape, None),
+            None,
+            "无选项库 → 无法映射，保留原值"
+        );
 
         // 选项库存在但没有该文本 → 同样无法映射。
         let bank = CandidateOptionBankV1 {
             option_bank_id: "ob".into(),
             allow_reuse: false,
-            options: vec![CandidateOptionV1 { option_id: "o1".into(), label: "A".into(), text: "warm climate".into() }],
+            options: vec![CandidateOptionV1 {
+                option_id: "o1".into(),
+                label: "A".into(),
+                text: "warm climate".into(),
+            }],
         };
-        assert_eq!(align_answer_value(&text_value, &option_shape, Some(&bank)), None);
+        assert_eq!(
+            align_answer_value(&text_value, &option_shape, Some(&bank)),
+            None
+        );
 
         // 缺少 `kind` 的值不参与对齐（返回 None，由调用方原样保留）。
-        assert_eq!(align_answer_value(&json!({"values": ["x"]}), &option_shape, Some(&bank)), None);
+        assert_eq!(
+            align_answer_value(&json!({"values": ["x"]}), &option_shape, Some(&bank)),
+            None
+        );
     }
 
-// ── rewrite_authoring_references 机械重写 ──────────────────────────────
+    // ── rewrite_authoring_references 机械重写 ──────────────────────────────
 
-fn rewrite_fixture() -> Value {
-    json!({
-        "schemaVersion": "IeltsAuthoringIRV2",
-        "jobId": "job-1",
-        "sourceDocumentId": "doc-1",
-        "taskGroups": [{
-            "taskId": "cloud-task-1",
-            "displayRange": {"kind": "range", "start": 14, "end": 15},
-            "taskType": "sentence_completion",
-            "instructions": [{"type": "text", "id": "cloud-node-instr", "text": "Complete."}],
-            "optionBank": {
-                "optionBankId": "cloud-ob-1",
-                "scope": "task_group",
-                "options": [{"optionId": "cloud-opt-1", "label": "A", "content": [{"type": "text", "id": "cloud-node-opt", "text": "alpha"}]}],
-                "allowReuse": false,
+    fn rewrite_fixture() -> Value {
+        json!({
+            "schemaVersion": "IeltsAuthoringIRV2",
+            "jobId": "job-1",
+            "sourceDocumentId": "doc-1",
+            "taskGroups": [{
+                "taskId": "cloud-task-1",
+                "displayRange": {"kind": "range", "start": 14, "end": 15},
+                "taskType": "sentence_completion",
+                "instructions": [{"type": "text", "id": "cloud-node-instr", "text": "Complete."}],
+                "optionBank": {
+                    "optionBankId": "cloud-ob-1",
+                    "scope": "task_group",
+                    "options": [{"optionId": "cloud-opt-1", "label": "A", "content": [{"type": "text", "id": "cloud-node-opt", "text": "alpha"}]}],
+                    "allowReuse": false,
+                    "sourceAnchors": []
+                },
+                "responseGroups": [{
+                    "responseGroupId": "cloud-rg-1",
+                    "kind": "text_entry",
+                    "slotIds": ["cloud-q14", "cloud-q15"],
+                    "optionBankRef": "cloud-ob-1",
+                    "options": [{"optionId": "cloud-opt-2", "label": "B", "content": []}],
+                    "cardinality": {"min": 1, "max": 1},
+                    "assignment": "per_slot",
+                    "scoringPolicy": "per_slot_binary",
+                    "duplicatePolicy": "ignore_duplicates",
+                    "allowOptionReuse": false,
+                    "sourceAnchors": [{"sourceFileId": "file-1", "pageIndex": 0, "nodeIds": ["cloud-node-1"], "extractionMode": "pdf_native", "sourceHash": "a"}]
+                }],
+                "sourceAnchors": [{"sourceFileId": "file-1", "pageIndex": 0, "nodeIds": ["cloud-node-1"], "extractionMode": "pdf_native", "sourceHash": "a"}],
+                "quality": {"score": 1.0, "sourceCoverage": 1.0, "hardFailures": []},
+                "reviewState": "unreviewed"
+            }],
+            "answerSlots": {
+                "cloud-q14": {"slotId": "cloud-q14", "questionNumber": 14, "displayLabel": "14", "hostType": "prompt", "interaction": "text", "participation": "scoring", "hostNodeId": "cloud-node-host", "sourceAnchors": [], "confidence": 0.9},
+                "cloud-q15": {"slotId": "cloud-q15", "questionNumber": 15, "displayLabel": "15", "hostType": "prompt", "interaction": "text", "participation": "scoring", "hostNodeId": null, "sourceAnchors": [], "confidence": 0.9}
+            },
+            "answerKey": {
+                "cloud-q14": {"kind": "text", "values": ["books"]},
+                "cloud-q15": {"kind": "text", "values": ["pen"]}
+            },
+            "assets": [{"assetId": "cloud-asset-1", "kind": "raster_image", "mime": "image/png", "relativePath": "a.png", "sha256": "b", "byteLength": 1, "extractionMode": "embedded"}],
+            "passage": {
+                "title": "P",
+                "content": [
+                    {"type": "paragraph", "id": "cloud-node-para", "sourceAnchors": [], "provenanceStatus": "source", "children": [
+                        {"type": "answer_slot", "id": "cloud-node-ans", "slotId": "cloud-q14", "displayLabel": "14", "inline": true}
+                    ]}
+                ],
                 "sourceAnchors": []
             },
-            "responseGroups": [{
-                "responseGroupId": "cloud-rg-1",
-                "kind": "text_entry",
-                "slotIds": ["cloud-q14", "cloud-q15"],
-                "optionBankRef": "cloud-ob-1",
-                "options": [{"optionId": "cloud-opt-2", "label": "B", "content": []}],
-                "cardinality": {"min": 1, "max": 1},
-                "assignment": "per_slot",
-                "scoringPolicy": "per_slot_binary",
-                "duplicatePolicy": "ignore_duplicates",
-                "allowOptionReuse": false,
+            "quality": {"score": 1.0},
+            "audit": {"revision": 1, "source": "auto_extract", "humanVerified": false, "llmUsed": true, "updatedAt": "x", "notes": []}
+        })
+    }
+
+    fn rewrite_map() -> BTreeMap<String, String> {
+        [
+            ("cloud-task-1", "task-1"),
+            ("cloud-ob-1", "ob-1"),
+            ("cloud-opt-1", "opt-1"),
+            ("cloud-opt-2", "opt-2"),
+            ("cloud-rg-1", "rg-1"),
+            ("cloud-q14", "slot-14"),
+            ("cloud-q15", "slot-15"),
+            ("cloud-node-1", "node-1"),
+            ("cloud-node-host", "node-host"),
+            ("cloud-node-instr", "node-instr"),
+            ("cloud-node-opt", "node-opt"),
+            ("cloud-node-para", "node-para"),
+            ("cloud-node-ans", "node-ans"),
+            ("cloud-asset-1", "asset-1"),
+        ]
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+    }
+
+    /// `rewrite_map` 中所有临时 id 的全集，作为 `temp_ids` 参数传给被测函数。
+    fn rewrite_temp_ids() -> BTreeSet<String> {
+        rewrite_map().keys().cloned().collect()
+    }
+
+    /// 测试 1：全字段重写。逐个 pointer 断言，确保每一处都被换掉。
+    #[test]
+    fn rewrite_covers_every_reference_field() {
+        let mut doc = rewrite_fixture();
+        let outcome = rewrite_authoring_references(&mut doc, &rewrite_map(), &rewrite_temp_ids());
+        assert!(
+            outcome.unmapped.is_empty(),
+            "所有引用都应被映射，实际未映射: {0:?}",
+            outcome.unmapped
+        );
+        assert!(outcome.applied, "映射命中了文档里的引用，应当发生实际改写");
+        assert!(outcome.conflicts.is_empty(), "无冲突");
+
+        assert_eq!(
+            doc.pointer("/taskGroups/0/taskId").and_then(Value::as_str),
+            Some("task-1")
+        );
+        assert_eq!(
+            doc.pointer("/taskGroups/0/optionBank/optionBankId")
+                .and_then(Value::as_str),
+            Some("ob-1")
+        );
+        assert_eq!(
+            doc.pointer("/taskGroups/0/optionBank/options/0/optionId")
+                .and_then(Value::as_str),
+            Some("opt-1")
+        );
+        assert_eq!(
+            doc.pointer("/taskGroups/0/responseGroups/0/responseGroupId")
+                .and_then(Value::as_str),
+            Some("rg-1")
+        );
+        assert_eq!(
+            doc.pointer("/taskGroups/0/responseGroups/0/slotIds/0")
+                .and_then(Value::as_str),
+            Some("slot-14")
+        );
+        assert_eq!(
+            doc.pointer("/taskGroups/0/responseGroups/0/slotIds/1")
+                .and_then(Value::as_str),
+            Some("slot-15")
+        );
+        assert_eq!(
+            doc.pointer("/taskGroups/0/responseGroups/0/optionBankRef")
+                .and_then(Value::as_str),
+            Some("ob-1")
+        );
+        assert_eq!(
+            doc.pointer("/taskGroups/0/responseGroups/0/options/0/optionId")
+                .and_then(Value::as_str),
+            Some("opt-2")
+        );
+        assert_eq!(
+            doc.pointer("/taskGroups/0/instructions/0/id")
+                .and_then(Value::as_str),
+            Some("node-instr")
+        );
+        assert_eq!(
+            doc.pointer("/taskGroups/0/optionBank/options/0/content/0/id")
+                .and_then(Value::as_str),
+            Some("node-opt")
+        );
+
+        // answerSlots / answerKey 的键被重命名，原键消失。
+        assert!(doc.pointer("/answerSlots/cloud-q14").is_none());
+        assert!(doc.pointer("/answerSlots/slot-14").is_some());
+        assert!(doc.pointer("/answerKey/cloud-q14").is_none());
+        assert!(doc.pointer("/answerKey/slot-14").is_some());
+        assert_eq!(
+            doc.pointer("/answerSlots/slot-14/slotId")
+                .and_then(Value::as_str),
+            Some("slot-14")
+        );
+        assert_eq!(
+            doc.pointer("/answerSlots/slot-14/hostNodeId")
+                .and_then(Value::as_str),
+            Some("node-host")
+        );
+        assert_eq!(
+            doc.pointer("/answerSlots/slot-15/hostNodeId"),
+            Some(&Value::Null),
+            "null 不得被改写"
+        );
+        assert_eq!(
+            doc.pointer("/answerSlots/slot-15/slotId")
+                .and_then(Value::as_str),
+            Some("slot-15")
+        );
+
+        // 内容节点 id 与 answer_slot 节点的 slotId。
+        assert_eq!(
+            doc.pointer("/passage/content/0/id").and_then(Value::as_str),
+            Some("node-para")
+        );
+        assert_eq!(
+            doc.pointer("/passage/content/0/children/0/id")
+                .and_then(Value::as_str),
+            Some("node-ans")
+        );
+        assert_eq!(
+            doc.pointer("/passage/content/0/children/0/slotId")
+                .and_then(Value::as_str),
+            Some("slot-14")
+        );
+        assert_eq!(
+            doc.pointer("/assets/0/assetId").and_then(Value::as_str),
+            Some("asset-1")
+        );
+
+        // 规则 3：sourceAnchors[].nodeIds 即使等于 map 的某个 key（`cloud-node-1`）也不得被改写。
+        assert_eq!(
+            doc.pointer("/taskGroups/0/sourceAnchors/0/nodeIds/0")
+                .and_then(Value::as_str),
+            Some("cloud-node-1")
+        );
+        assert_eq!(
+            doc.pointer("/taskGroups/0/responseGroups/0/sourceAnchors/0/nodeIds/0")
+                .and_then(Value::as_str),
+            Some("cloud-node-1")
+        );
+    }
+
+    /// 测试 2：answerSlots 与 answerKey 的键被重命名（最容易漏的一处）。
+    #[test]
+    fn rewrite_renames_answer_slots_and_answer_key_keys() {
+        let mut doc = json!({
+            "answerSlots": {
+                "cloud-q14": {"slotId": "cloud-q14"},
+                "cloud-q15": {"slotId": "cloud-q15"}
+            },
+            "answerKey": {
+                "cloud-q14": {"kind": "text", "values": ["x"]},
+                "cloud-q15": {"kind": "text", "values": ["y"]}
+            }
+        });
+        let map: BTreeMap<String, String> = [("cloud-q14", "slot-14"), ("cloud-q15", "slot-15")]
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let temp_ids: BTreeSet<String> = ["cloud-q14", "cloud-q15"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
+        assert!(outcome.unmapped.is_empty());
+        assert!(
+            outcome.applied,
+            "answerSlots / answerKey 键被重命名，应当发生实际改写"
+        );
+
+        assert!(doc.pointer("/answerSlots/cloud-q14").is_none());
+        assert!(doc.pointer("/answerSlots/slot-14").is_some());
+        assert!(doc.pointer("/answerSlots/cloud-q15").is_none());
+        assert!(doc.pointer("/answerSlots/slot-15").is_some());
+        assert!(doc.pointer("/answerKey/cloud-q14").is_none());
+        assert!(doc.pointer("/answerKey/slot-14").is_some());
+        assert!(doc.pointer("/answerKey/cloud-q15").is_none());
+        assert!(doc.pointer("/answerKey/slot-15").is_some());
+    }
+
+    /// 测试 3：source anchors 不被重写（构造一个源节点 id 恰好等于 map 的某个 key 的用例）。
+    #[test]
+    fn rewrite_never_touches_source_anchor_node_ids() {
+        // 把所有其它引用字段都放进 map，使它们被正常改写、不进入未映射列表；
+        // 本测试唯一要验证的是 `sourceAnchors[].nodeIds[]` 即便等于某个 map key 也绝不改写。
+        let mut doc = json!({
+            "taskGroups": [{
+                "taskId": "cloud-node-1",
                 "sourceAnchors": [{"sourceFileId": "file-1", "pageIndex": 0, "nodeIds": ["cloud-node-1"], "extractionMode": "pdf_native", "sourceHash": "a"}]
             }],
-            "sourceAnchors": [{"sourceFileId": "file-1", "pageIndex": 0, "nodeIds": ["cloud-node-1"], "extractionMode": "pdf_native", "sourceHash": "a"}],
-            "quality": {"score": 1.0, "sourceCoverage": 1.0, "hardFailures": []},
-            "reviewState": "unreviewed"
-        }],
-        "answerSlots": {
-            "cloud-q14": {"slotId": "cloud-q14", "questionNumber": 14, "displayLabel": "14", "hostType": "prompt", "interaction": "text", "participation": "scoring", "hostNodeId": "cloud-node-host", "sourceAnchors": [], "confidence": 0.9},
-            "cloud-q15": {"slotId": "cloud-q15", "questionNumber": 15, "displayLabel": "15", "hostType": "prompt", "interaction": "text", "participation": "scoring", "hostNodeId": null, "sourceAnchors": [], "confidence": 0.9}
-        },
-        "answerKey": {
-            "cloud-q14": {"kind": "text", "values": ["books"]},
-            "cloud-q15": {"kind": "text", "values": ["pen"]}
-        },
-        "assets": [{"assetId": "cloud-asset-1", "kind": "raster_image", "mime": "image/png", "relativePath": "a.png", "sha256": "b", "byteLength": 1, "extractionMode": "embedded"}],
-        "passage": {
-            "title": "P",
-            "content": [
-                {"type": "paragraph", "id": "cloud-node-para", "sourceAnchors": [], "provenanceStatus": "source", "children": [
-                    {"type": "answer_slot", "id": "cloud-node-ans", "slotId": "cloud-q14", "displayLabel": "14", "inline": true}
-                ]}
-            ],
-            "sourceAnchors": []
-        },
-        "quality": {"score": 1.0},
-        "audit": {"revision": 1, "source": "auto_extract", "humanVerified": false, "llmUsed": true, "updatedAt": "x", "notes": []}
-    })
-}
+            "answerSlots": {
+                "cloud-node-1": {"slotId": "cloud-node-1", "sourceAnchors": [{"sourceFileId": "file-1", "pageIndex": 0, "nodeIds": ["cloud-node-1"], "extractionMode": "pdf_native", "sourceHash": "a"}]}
+            }
+        });
+        // map 里放 `cloud-node-1 -> node-1`，用来证明：即便源节点 id 等于某个 map key，也不改写。
+        let map: BTreeMap<String, String> = [("cloud-node-1", "node-1")]
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let temp_ids: BTreeSet<String> = ["cloud-node-1"].iter().map(|s| s.to_string()).collect();
+        let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
+        assert!(outcome.unmapped.is_empty());
+        assert_eq!(
+            doc.pointer("/taskGroups/0/sourceAnchors/0/nodeIds/0")
+                .and_then(Value::as_str),
+            Some("cloud-node-1")
+        );
+        // 钥匙被重命名后，仍能在新键下验证源节点 id 未被改写。
+        assert_eq!(
+            doc.pointer("/answerSlots/node-1/sourceAnchors/0/nodeIds/0")
+                .and_then(Value::as_str),
+            Some("cloud-node-1")
+        );
+    }
 
-fn rewrite_map() -> BTreeMap<String, String> {
-    [
-        ("cloud-task-1", "task-1"),
-        ("cloud-ob-1", "ob-1"),
-        ("cloud-opt-1", "opt-1"),
-        ("cloud-opt-2", "opt-2"),
-        ("cloud-rg-1", "rg-1"),
-        ("cloud-q14", "slot-14"),
-        ("cloud-q15", "slot-15"),
-        ("cloud-node-1", "node-1"),
-        ("cloud-node-host", "node-host"),
-        ("cloud-node-instr", "node-instr"),
-        ("cloud-node-opt", "node-opt"),
-        ("cloud-node-para", "node-para"),
-        ("cloud-node-ans", "node-ans"),
-        ("cloud-asset-1", "asset-1"),
-    ]
-    .iter()
-    .map(|(k, v)| (k.to_string(), v.to_string()))
-    .collect()
-}
+    /// 测试 4：未映射引用原样保留，且出现在返回列表里；列表有序去重
+    /// （两个未映射引用 cloud-q88 / cloud-q99，其中 cloud-q99 重复出现）。
+    #[test]
+    fn rewrite_preserves_unmapped_refs_and_reports_them_sorted_dedup() {
+        let mut doc = json!({
+            "answerSlots": {
+                "cloud-q99": {"slotId": "cloud-q99"},
+                "cloud-q88": {"slotId": "cloud-q88"}
+            },
+            "answerKey": {
+                "cloud-q99": {"kind": "text", "values": ["x"]}
+            }
+        });
+        // 非空 map，但只含一个与本稿无关的映射，确保 cloud-q88 / cloud-q99 都映射不上。
+        let map: BTreeMap<String, String> = [("cloud-q14", "slot-14")]
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let temp_ids: BTreeSet<String> = ["cloud-q88", "cloud-q99"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
 
-/// `rewrite_map` 中所有临时 id 的全集，作为 `temp_ids` 参数传给被测函数。
-fn rewrite_temp_ids() -> BTreeSet<String> {
-    rewrite_map().keys().cloned().collect()
-}
+        // 原样保留。
+        assert_eq!(
+            doc.pointer("/answerSlots/cloud-q99/slotId")
+                .and_then(Value::as_str),
+            Some("cloud-q99")
+        );
+        assert_eq!(
+            doc.pointer("/answerSlots/cloud-q88/slotId")
+                .and_then(Value::as_str),
+            Some("cloud-q88")
+        );
+        assert!(doc.pointer("/answerKey/cloud-q99").is_some());
 
-/// 测试 1：全字段重写。逐个 pointer 断言，确保每一处都被换掉。
-#[test]
-fn rewrite_covers_every_reference_field() {
-    let mut doc = rewrite_fixture();
-    let outcome = rewrite_authoring_references(&mut doc, &rewrite_map(), &rewrite_temp_ids());
-    assert!(outcome.unmapped.is_empty(), "所有引用都应被映射，实际未映射: {0:?}", outcome.unmapped);
-    assert!(outcome.applied, "映射命中了文档里的引用，应当发生实际改写");
-    assert!(outcome.conflicts.is_empty(), "无冲突");
+        // 返回列表有序去重：cloud-q99 在 answerSlots 键、值 slotId、answerKey 键各出现一次 → 去重为一个。
+        assert_eq!(
+            outcome.unmapped,
+            vec!["cloud-q88".to_string(), "cloud-q99".to_string()]
+        );
+        assert!(
+            !outcome.applied,
+            "映射与本文档引用完全不相交，没有任何改写发生"
+        );
+    }
 
-    assert_eq!(doc.pointer("/taskGroups/0/taskId").and_then(Value::as_str), Some("task-1"));
-    assert_eq!(doc.pointer("/taskGroups/0/optionBank/optionBankId").and_then(Value::as_str), Some("ob-1"));
-    assert_eq!(doc.pointer("/taskGroups/0/optionBank/options/0/optionId").and_then(Value::as_str), Some("opt-1"));
-    assert_eq!(doc.pointer("/taskGroups/0/responseGroups/0/responseGroupId").and_then(Value::as_str), Some("rg-1"));
-    assert_eq!(doc.pointer("/taskGroups/0/responseGroups/0/slotIds/0").and_then(Value::as_str), Some("slot-14"));
-    assert_eq!(doc.pointer("/taskGroups/0/responseGroups/0/slotIds/1").and_then(Value::as_str), Some("slot-15"));
-    assert_eq!(doc.pointer("/taskGroups/0/responseGroups/0/optionBankRef").and_then(Value::as_str), Some("ob-1"));
-    assert_eq!(doc.pointer("/taskGroups/0/responseGroups/0/options/0/optionId").and_then(Value::as_str), Some("opt-2"));
-    assert_eq!(doc.pointer("/taskGroups/0/instructions/0/id").and_then(Value::as_str), Some("node-instr"));
-    assert_eq!(doc.pointer("/taskGroups/0/optionBank/options/0/content/0/id").and_then(Value::as_str), Some("node-opt"));
+    /// 测试 5：空 map ⇒ 前后完全相等 + 返回空。
+    #[test]
+    fn rewrite_with_empty_map_is_a_noop() {
+        let mut doc = rewrite_fixture();
+        let before = doc.clone();
+        let map: BTreeMap<String, String> = BTreeMap::new();
+        // 空 temp_ids：空 map 下不应有任何 key 被误报为 unmapped。
+        let temp_ids: BTreeSet<String> = BTreeSet::new();
+        let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
+        assert_eq!(doc, before, "空 map 时文档必须字节级不变");
+        assert!(outcome.unmapped.is_empty());
+        assert!(!outcome.applied, "空映射不得表示引用已全部解析成功");
+    }
 
-    // answerSlots / answerKey 的键被重命名，原键消失。
-    assert!(doc.pointer("/answerSlots/cloud-q14").is_none());
-    assert!(doc.pointer("/answerSlots/slot-14").is_some());
-    assert!(doc.pointer("/answerKey/cloud-q14").is_none());
-    assert!(doc.pointer("/answerKey/slot-14").is_some());
-    assert_eq!(doc.pointer("/answerSlots/slot-14/slotId").and_then(Value::as_str), Some("slot-14"));
-    assert_eq!(doc.pointer("/answerSlots/slot-14/hostNodeId").and_then(Value::as_str), Some("node-host"));
-    assert_eq!(doc.pointer("/answerSlots/slot-15/hostNodeId"), Some(&Value::Null), "null 不得被改写");
-    assert_eq!(doc.pointer("/answerSlots/slot-15/slotId").and_then(Value::as_str), Some("slot-15"));
+    /// 钉死：两个源键映射到同一目标时整篇放弃——文档原样不动，连内容都不得改写。
+    #[test]
+    fn rewrite_reports_conflict_when_two_sources_share_one_target() {
+        let mut doc = json!({
+            "answerSlots": {
+                "cloud-a": {"slotId": "cloud-a", "questionNumber": 1},
+                "cloud-b": {"slotId": "cloud-b", "questionNumber": 2}
+            }
+        });
+        let before = doc.clone();
+        let map: BTreeMap<String, String> = [("cloud-a", "slot-x"), ("cloud-b", "slot-x")]
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let temp_ids: BTreeSet<String> = ["cloud-a", "cloud-b"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
+        assert!(
+            !outcome.conflicts.is_empty(),
+            "两源键挤向同一目标必须报冲突"
+        );
+        assert!(
+            outcome.conflicts.iter().any(|c| c.contains("answerSlots")),
+            "冲突信息应点名 answerSlots: {0:?}",
+            outcome.conflicts
+        );
+        assert!(!outcome.applied, "冲突时不应发生任何改写");
+        assert_eq!(doc, before, "冲突必须整篇放弃，文档原样不动");
+    }
 
-    // 内容节点 id 与 answer_slot 节点的 slotId。
-    assert_eq!(doc.pointer("/passage/content/0/id").and_then(Value::as_str), Some("node-para"));
-    assert_eq!(doc.pointer("/passage/content/0/children/0/id").and_then(Value::as_str), Some("node-ans"));
-    assert_eq!(doc.pointer("/passage/content/0/children/0/slotId").and_then(Value::as_str), Some("slot-14"));
-    assert_eq!(doc.pointer("/assets/0/assetId").and_then(Value::as_str), Some("asset-1"));
+    /// 钉死：键互换（A→B、B→A）时内容跟着键走且零丢失——绝不能静默覆盖。
+    #[test]
+    fn rewrite_swaps_slot_keys_without_losing_content() {
+        let mut doc = json!({
+            "answerSlots": {
+                "cloud-a": {"slotId": "cloud-a", "questionNumber": 1},
+                "cloud-b": {"slotId": "cloud-b", "questionNumber": 2}
+            },
+            "answerKey": {
+                "cloud-a": {"kind": "text", "values": ["A1"]},
+                "cloud-b": {"kind": "text", "values": ["B1"]}
+            }
+        });
+        let map: BTreeMap<String, String> = [("cloud-a", "cloud-b"), ("cloud-b", "cloud-a")]
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let temp_ids: BTreeSet<String> = ["cloud-a", "cloud-b"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
+        assert!(outcome.conflicts.is_empty(), "互换不冲突");
+        assert!(outcome.applied, "至少发生了键重命名");
+        // 两个键都还在。
+        assert!(
+            doc.pointer("/answerSlots/cloud-a").is_some(),
+            "cloud-a 键应仍在"
+        );
+        assert!(
+            doc.pointer("/answerSlots/cloud-b").is_some(),
+            "cloud-b 键应仍在"
+        );
+        // 内容跟着键走：原 cloud-b 的 questionNumber=2 现在在 cloud-a 键下。
+        assert_eq!(
+            doc.pointer("/answerSlots/cloud-a/questionNumber")
+                .and_then(Value::as_i64),
+            Some(2)
+        );
+        // slotId 自身也被换到对应稳定 id。
+        assert_eq!(
+            doc.pointer("/answerSlots/cloud-a/slotId")
+                .and_then(Value::as_str),
+            Some("cloud-a")
+        );
+        // answerKey 的内容同样跟着键走，cloud-a 键下应是原 cloud-b 的 ["B1"]。
+        assert_eq!(
+            doc.pointer("/answerKey/cloud-a/values"),
+            Some(&json!(["B1"]))
+        );
+    }
 
-    // 规则 3：sourceAnchors[].nodeIds 即使等于 map 的某个 key（`cloud-node-1`）也不得被改写。
-    assert_eq!(doc.pointer("/taskGroups/0/sourceAnchors/0/nodeIds/0").and_then(Value::as_str), Some("cloud-node-1"));
-    assert_eq!(doc.pointer("/taskGroups/0/responseGroups/0/sourceAnchors/0/nodeIds/0").and_then(Value::as_str), Some("cloud-node-1"));
-}
+    /// 钉死：目标键撞上一个未被映射、须保留的键时，整篇放弃、文档原样不动。
+    #[test]
+    fn rewrite_reports_conflict_when_target_key_is_a_preserved_key() {
+        let mut doc = json!({
+            "answerSlots": {
+                "cloud-a": {"slotId": "cloud-a"},
+                "cloud-b": {"slotId": "cloud-b"}
+            }
+        });
+        let before = doc.clone();
+        // 仅映射 cloud-a → cloud-b；cloud-b 在 temp_ids 中但未被映射，须保留为 cloud-b，
+        // 于是与 cloud-a 的目标相撞。
+        let map: BTreeMap<String, String> = [("cloud-a", "cloud-b")]
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let temp_ids: BTreeSet<String> = ["cloud-a", "cloud-b"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
+        assert!(!outcome.conflicts.is_empty(), "目标键撞上保留键必须报冲突");
+        assert_eq!(doc, before, "冲突必须整篇放弃，文档原样不动");
+        assert!(!outcome.applied, "冲突时不应发生任何改写");
+    }
 
-/// 测试 2：answerSlots 与 answerKey 的键被重命名（最容易漏的一处）。
-#[test]
-fn rewrite_renames_answer_slots_and_answer_key_keys() {
-    let mut doc = json!({
-        "answerSlots": {
-            "cloud-q14": {"slotId": "cloud-q14"},
-            "cloud-q15": {"slotId": "cloud-q15"}
-        },
-        "answerKey": {
-            "cloud-q14": {"kind": "text", "values": ["x"]},
-            "cloud-q15": {"kind": "text", "values": ["y"]}
-        }
-    });
-    let map: BTreeMap<String, String> =
-        [("cloud-q14", "slot-14"), ("cloud-q15", "slot-15")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-    let temp_ids: BTreeSet<String> = ["cloud-q14", "cloud-q15"].iter().map(|s| s.to_string()).collect();
-    let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
-    assert!(outcome.unmapped.is_empty());
-    assert!(outcome.applied, "answerSlots / answerKey 键被重命名，应当发生实际改写");
+    /// 钉死：listening.parts[].taskIds[] 逐元素改写，未映射的引用保持原位并如实上报。
+    #[test]
+    fn rewrite_rewrites_listening_part_task_ids() {
+        let mut doc = json!({
+            "listening": {"parts": [{"partId": "p1", "taskIds": ["cloud-task-1", "cloud-task-2"]}]}
+        });
+        let map: BTreeMap<String, String> = [("cloud-task-1", "task-1")]
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let temp_ids: BTreeSet<String> = ["cloud-task-1", "cloud-task-2"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
+        assert_eq!(
+            doc.pointer("/listening/parts/0/taskIds/0")
+                .and_then(Value::as_str),
+            Some("task-1")
+        );
+        assert_eq!(
+            doc.pointer("/listening/parts/0/taskIds/1")
+                .and_then(Value::as_str),
+            Some("cloud-task-2")
+        );
+        assert_eq!(outcome.unmapped, vec!["cloud-task-2".to_string()]);
+        assert!(outcome.applied, "cloud-task-1 被改写，应当 applied");
+    }
 
-    assert!(doc.pointer("/answerSlots/cloud-q14").is_none());
-    assert!(doc.pointer("/answerSlots/slot-14").is_some());
-    assert!(doc.pointer("/answerSlots/cloud-q15").is_none());
-    assert!(doc.pointer("/answerSlots/slot-15").is_some());
-    assert!(doc.pointer("/answerKey/cloud-q14").is_none());
-    assert!(doc.pointer("/answerKey/slot-14").is_some());
-    assert!(doc.pointer("/answerKey/cloud-q15").is_none());
-    assert!(doc.pointer("/answerKey/slot-15").is_some());
-}
+    /// 钉死：源文档引用（sourceTableId / sourceAnchors[].nodeIds）永不被重写、永不上报未映射。
+    #[test]
+    fn rewrite_never_rewrites_source_table_id() {
+        let mut doc = json!({
+            "reading": {"tables": [{"sourceTableId": "cloud-table-1"}]},
+            "taskGroups": [{"sourceAnchors": [{"sourceFileId": "f1", "pageIndex": 1, "nodeIds": ["cloud-table-1"]}]}]
+        });
+        let map: BTreeMap<String, String> = [("cloud-table-1", "table-1")]
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let temp_ids: BTreeSet<String> = ["cloud-table-1"].iter().map(|s| s.to_string()).collect();
+        let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
+        assert_eq!(
+            doc.pointer("/reading/tables/0/sourceTableId")
+                .and_then(Value::as_str),
+            Some("cloud-table-1")
+        );
+        assert_eq!(
+            doc.pointer("/taskGroups/0/sourceAnchors/0/nodeIds/0")
+                .and_then(Value::as_str),
+            Some("cloud-table-1")
+        );
+        assert!(
+            outcome.unmapped.is_empty(),
+            "源文档引用不是草稿空间缺口，绝不报未映射"
+        );
+    }
 
-/// 测试 3：source anchors 不被重写（构造一个源节点 id 恰好等于 map 的某个 key 的用例）。
-#[test]
-fn rewrite_never_touches_source_anchor_node_ids() {
-    // 把所有其它引用字段都放进 map，使它们被正常改写、不进入未映射列表；
-    // 本测试唯一要验证的是 `sourceAnchors[].nodeIds[]` 即便等于某个 map key 也绝不改写。
-    let mut doc = json!({
-        "taskGroups": [{
-            "taskId": "cloud-node-1",
-            "sourceAnchors": [{"sourceFileId": "file-1", "pageIndex": 0, "nodeIds": ["cloud-node-1"], "extractionMode": "pdf_native", "sourceHash": "a"}]
-        }],
-        "answerSlots": {
-            "cloud-node-1": {"slotId": "cloud-node-1", "sourceAnchors": [{"sourceFileId": "file-1", "pageIndex": 0, "nodeIds": ["cloud-node-1"], "extractionMode": "pdf_native", "sourceHash": "a"}]}
-        }
-    });
-    // map 里放 `cloud-node-1 -> node-1`，用来证明：即便源节点 id 等于某个 map key，也不改写。
-    let map: BTreeMap<String, String> =
-        [("cloud-node-1", "node-1")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-    let temp_ids: BTreeSet<String> = ["cloud-node-1"].iter().map(|s| s.to_string()).collect();
-    let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
-    assert!(outcome.unmapped.is_empty());
-    assert_eq!(doc.pointer("/taskGroups/0/sourceAnchors/0/nodeIds/0").and_then(Value::as_str), Some("cloud-node-1"));
-    // 钥匙被重命名后，仍能在新键下验证源节点 id 未被改写。
-    assert_eq!(doc.pointer("/answerSlots/node-1/sourceAnchors/0/nodeIds/0").and_then(Value::as_str), Some("cloud-node-1"));
-}
+    /// 钉死：已有稳定引用（非 temp_ids）即便与某个映射目标同形也不算缺口、不触发 applied。
+    #[test]
+    fn rewrite_does_not_report_existing_stable_refs_as_unmapped() {
+        let mut doc = json!({
+            "taskGroups": [{
+                "taskId": "task-1",
+                "responseGroups": [{"responseGroupId": "rg-1", "slotIds": ["slot-14"]}]
+            }]
+        });
+        let map: BTreeMap<String, String> = [("cloud-q14", "slot-14")]
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let temp_ids: BTreeSet<String> = ["cloud-q14"].iter().map(|s| s.to_string()).collect();
+        let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
+        assert!(
+            outcome.unmapped.is_empty(),
+            "稳定引用不是缺口，依赖 temp_ids 而非字符串前缀区分"
+        );
+        assert!(outcome.conflicts.is_empty());
+        assert!(
+            !outcome.applied,
+            "映射未命中本文档任何引用，applied 应为 false"
+        );
+    }
 
-/// 测试 4：未映射引用原样保留，且出现在返回列表里；列表有序去重
-/// （两个未映射引用 cloud-q88 / cloud-q99，其中 cloud-q99 重复出现）。
-#[test]
-fn rewrite_preserves_unmapped_refs_and_reports_them_sorted_dedup() {
-    let mut doc = json!({
-        "answerSlots": {
-            "cloud-q99": {"slotId": "cloud-q99"},
-            "cloud-q88": {"slotId": "cloud-q88"}
-        },
-        "answerKey": {
-            "cloud-q99": {"kind": "text", "values": ["x"]}
-        }
-    });
-    // 非空 map，但只含一个与本稿无关的映射，确保 cloud-q88 / cloud-q99 都映射不上。
-    let map: BTreeMap<String, String> =
-        [("cloud-q14", "slot-14")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-    let temp_ids: BTreeSet<String> = ["cloud-q88", "cloud-q99"].iter().map(|s| s.to_string()).collect();
-    let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
-
-    // 原样保留。
-    assert_eq!(doc.pointer("/answerSlots/cloud-q99/slotId").and_then(Value::as_str), Some("cloud-q99"));
-    assert_eq!(doc.pointer("/answerSlots/cloud-q88/slotId").and_then(Value::as_str), Some("cloud-q88"));
-    assert!(doc.pointer("/answerKey/cloud-q99").is_some());
-
-    // 返回列表有序去重：cloud-q99 在 answerSlots 键、值 slotId、answerKey 键各出现一次 → 去重为一个。
-    assert_eq!(outcome.unmapped, vec!["cloud-q88".to_string(), "cloud-q99".to_string()]);
-    assert!(!outcome.applied, "映射与本文档引用完全不相交，没有任何改写发生");
-}
-
-/// 测试 5：空 map ⇒ 前后完全相等 + 返回空。
-#[test]
-fn rewrite_with_empty_map_is_a_noop() {
-    let mut doc = rewrite_fixture();
-    let before = doc.clone();
-    let map: BTreeMap<String, String> = BTreeMap::new();
-    // 空 temp_ids：空 map 下不应有任何 key 被误报为 unmapped。
-    let temp_ids: BTreeSet<String> = BTreeSet::new();
-    let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
-    assert_eq!(doc, before, "空 map 时文档必须字节级不变");
-    assert!(outcome.unmapped.is_empty());
-    assert!(!outcome.applied, "空映射不得表示引用已全部解析成功");
-}
-
-/// 钉死：两个源键映射到同一目标时整篇放弃——文档原样不动，连内容都不得改写。
-#[test]
-fn rewrite_reports_conflict_when_two_sources_share_one_target() {
-    let mut doc = json!({
-        "answerSlots": {
-            "cloud-a": {"slotId": "cloud-a", "questionNumber": 1},
-            "cloud-b": {"slotId": "cloud-b", "questionNumber": 2}
-        }
-    });
-    let before = doc.clone();
-    let map: BTreeMap<String, String> =
-        [("cloud-a", "slot-x"), ("cloud-b", "slot-x")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-    let temp_ids: BTreeSet<String> = ["cloud-a", "cloud-b"].iter().map(|s| s.to_string()).collect();
-    let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
-    assert!(!outcome.conflicts.is_empty(), "两源键挤向同一目标必须报冲突");
-    assert!(
-        outcome.conflicts.iter().any(|c| c.contains("answerSlots")),
-        "冲突信息应点名 answerSlots: {0:?}", outcome.conflicts
-    );
-    assert!(!outcome.applied, "冲突时不应发生任何改写");
-    assert_eq!(doc, before, "冲突必须整篇放弃，文档原样不动");
-}
-
-/// 钉死：键互换（A→B、B→A）时内容跟着键走且零丢失——绝不能静默覆盖。
-#[test]
-fn rewrite_swaps_slot_keys_without_losing_content() {
-    let mut doc = json!({
-        "answerSlots": {
-            "cloud-a": {"slotId": "cloud-a", "questionNumber": 1},
-            "cloud-b": {"slotId": "cloud-b", "questionNumber": 2}
-        },
-        "answerKey": {
-            "cloud-a": {"kind": "text", "values": ["A1"]},
-            "cloud-b": {"kind": "text", "values": ["B1"]}
-        }
-    });
-    let map: BTreeMap<String, String> =
-        [("cloud-a", "cloud-b"), ("cloud-b", "cloud-a")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-    let temp_ids: BTreeSet<String> = ["cloud-a", "cloud-b"].iter().map(|s| s.to_string()).collect();
-    let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
-    assert!(outcome.conflicts.is_empty(), "互换不冲突");
-    assert!(outcome.applied, "至少发生了键重命名");
-    // 两个键都还在。
-    assert!(doc.pointer("/answerSlots/cloud-a").is_some(), "cloud-a 键应仍在");
-    assert!(doc.pointer("/answerSlots/cloud-b").is_some(), "cloud-b 键应仍在");
-    // 内容跟着键走：原 cloud-b 的 questionNumber=2 现在在 cloud-a 键下。
-    assert_eq!(
-        doc.pointer("/answerSlots/cloud-a/questionNumber").and_then(Value::as_i64),
-        Some(2)
-    );
-    // slotId 自身也被换到对应稳定 id。
-    assert_eq!(
-        doc.pointer("/answerSlots/cloud-a/slotId").and_then(Value::as_str),
-        Some("cloud-a")
-    );
-    // answerKey 的内容同样跟着键走，cloud-a 键下应是原 cloud-b 的 ["B1"]。
-    assert_eq!(doc.pointer("/answerKey/cloud-a/values"), Some(&json!(["B1"])));
-}
-
-/// 钉死：目标键撞上一个未被映射、须保留的键时，整篇放弃、文档原样不动。
-#[test]
-fn rewrite_reports_conflict_when_target_key_is_a_preserved_key() {
-    let mut doc = json!({
-        "answerSlots": {
-            "cloud-a": {"slotId": "cloud-a"},
-            "cloud-b": {"slotId": "cloud-b"}
-        }
-    });
-    let before = doc.clone();
-    // 仅映射 cloud-a → cloud-b；cloud-b 在 temp_ids 中但未被映射，须保留为 cloud-b，
-    // 于是与 cloud-a 的目标相撞。
-    let map: BTreeMap<String, String> =
-        [("cloud-a", "cloud-b")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-    let temp_ids: BTreeSet<String> = ["cloud-a", "cloud-b"].iter().map(|s| s.to_string()).collect();
-    let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
-    assert!(!outcome.conflicts.is_empty(), "目标键撞上保留键必须报冲突");
-    assert_eq!(doc, before, "冲突必须整篇放弃，文档原样不动");
-    assert!(!outcome.applied, "冲突时不应发生任何改写");
-}
-
-/// 钉死：listening.parts[].taskIds[] 逐元素改写，未映射的引用保持原位并如实上报。
-#[test]
-fn rewrite_rewrites_listening_part_task_ids() {
-    let mut doc = json!({
-        "listening": {"parts": [{"partId": "p1", "taskIds": ["cloud-task-1", "cloud-task-2"]}]}
-    });
-    let map: BTreeMap<String, String> =
-        [("cloud-task-1", "task-1")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-    let temp_ids: BTreeSet<String> = ["cloud-task-1", "cloud-task-2"].iter().map(|s| s.to_string()).collect();
-    let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
-    assert_eq!(doc.pointer("/listening/parts/0/taskIds/0").and_then(Value::as_str), Some("task-1"));
-    assert_eq!(doc.pointer("/listening/parts/0/taskIds/1").and_then(Value::as_str), Some("cloud-task-2"));
-    assert_eq!(outcome.unmapped, vec!["cloud-task-2".to_string()]);
-    assert!(outcome.applied, "cloud-task-1 被改写，应当 applied");
-}
-
-/// 钉死：源文档引用（sourceTableId / sourceAnchors[].nodeIds）永不被重写、永不上报未映射。
-#[test]
-fn rewrite_never_rewrites_source_table_id() {
-    let mut doc = json!({
-        "reading": {"tables": [{"sourceTableId": "cloud-table-1"}]},
-        "taskGroups": [{"sourceAnchors": [{"sourceFileId": "f1", "pageIndex": 1, "nodeIds": ["cloud-table-1"]}]}]
-    });
-    let map: BTreeMap<String, String> =
-        [("cloud-table-1", "table-1")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-    let temp_ids: BTreeSet<String> = ["cloud-table-1"].iter().map(|s| s.to_string()).collect();
-    let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
-    assert_eq!(doc.pointer("/reading/tables/0/sourceTableId").and_then(Value::as_str), Some("cloud-table-1"));
-    assert_eq!(
-        doc.pointer("/taskGroups/0/sourceAnchors/0/nodeIds/0").and_then(Value::as_str),
-        Some("cloud-table-1")
-    );
-    assert!(outcome.unmapped.is_empty(), "源文档引用不是草稿空间缺口，绝不报未映射");
-}
-
-/// 钉死：已有稳定引用（非 temp_ids）即便与某个映射目标同形也不算缺口、不触发 applied。
-#[test]
-fn rewrite_does_not_report_existing_stable_refs_as_unmapped() {
-    let mut doc = json!({
-        "taskGroups": [{
-            "taskId": "task-1",
-            "responseGroups": [{"responseGroupId": "rg-1", "slotIds": ["slot-14"]}]
-        }]
-    });
-    let map: BTreeMap<String, String> =
-        [("cloud-q14", "slot-14")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-    let temp_ids: BTreeSet<String> = ["cloud-q14"].iter().map(|s| s.to_string()).collect();
-    let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
-    assert!(outcome.unmapped.is_empty(), "稳定引用不是缺口，依赖 temp_ids 而非字符串前缀区分");
-    assert!(outcome.conflicts.is_empty());
-    assert!(!outcome.applied, "映射未命中本文档任何引用，applied 应为 false");
-}
-
-/// 钉死：未知的（后端未登记的）资源 id 属资源校验失败，绝不报为未映射缺口。
-#[test]
-fn rewrite_does_not_report_unknown_asset_ids_as_unmapped() {
-    let mut doc = json!({
-        "assets": [{"assetId": "asset-unknown"}]
-    });
-    let map: BTreeMap<String, String> =
-        [("cloud-asset-1", "asset-1")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-    let temp_ids: BTreeSet<String> = ["cloud-asset-1"].iter().map(|s| s.to_string()).collect();
-    let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
-    assert_eq!(doc.pointer("/assets/0/assetId").and_then(Value::as_str), Some("asset-unknown"));
-    assert!(outcome.unmapped.is_empty(), "未知资源不是 id 映射缺口");
-}
+    /// 钉死：未知的（后端未登记的）资源 id 属资源校验失败，绝不报为未映射缺口。
+    #[test]
+    fn rewrite_does_not_report_unknown_asset_ids_as_unmapped() {
+        let mut doc = json!({
+            "assets": [{"assetId": "asset-unknown"}]
+        });
+        let map: BTreeMap<String, String> = [("cloud-asset-1", "asset-1")]
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let temp_ids: BTreeSet<String> = ["cloud-asset-1"].iter().map(|s| s.to_string()).collect();
+        let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
+        assert_eq!(
+            doc.pointer("/assets/0/assetId").and_then(Value::as_str),
+            Some("asset-unknown")
+        );
+        assert!(outcome.unmapped.is_empty(), "未知资源不是 id 映射缺口");
+    }
 }
 
 /// 云端完整候选标准化与身份对齐的测试。
@@ -4535,7 +5113,9 @@ mod cloud_authoring_tests {
         assert_eq!(candidate.authoring.answer_slots["q14"].slot_id, "q14");
         // `hostNodeId` 必须指向 canonical 的提示节点，不能残留临时 ID。
         assert_eq!(
-            candidate.authoring.answer_slots["q14"].host_node_id.as_deref(),
+            candidate.authoring.answer_slots["q14"]
+                .host_node_id
+                .as_deref(),
             Some("early-approaches-shared-prompt")
         );
 
@@ -4581,7 +5161,10 @@ mod cloud_authoring_tests {
         assert!(candidate.authoring.answer_slots.contains_key("q16"));
         assert!(candidate.authoring.answer_slots.contains_key("q17"));
         // 响应组 / 选项库 / 选项 / 内容节点都必须拿到后端 ID。
-        assert_eq!(group.response_groups[0].response_group_id, "cloud-tg-16-17-rg-1");
+        assert_eq!(
+            group.response_groups[0].response_group_id,
+            "cloud-tg-16-17-rg-1"
+        );
         assert_eq!(
             group.option_bank.as_ref().unwrap().option_bank_id,
             "cloud-tg-16-17-options"
@@ -4651,7 +5234,10 @@ mod cloud_authoring_tests {
         assert_eq!(candidate.batch_id, "batch-1");
         assert_eq!(candidate.authoring.job_id, "job-1");
         assert_eq!(candidate.authoring.schema_version, "IeltsAuthoringIRV2");
-        assert!(!candidate.authoring.audit.human_verified, "模型不得声称已人工核验");
+        assert!(
+            !candidate.authoring.audit.human_verified,
+            "模型不得声称已人工核验"
+        );
         assert!(candidate.authoring.audit.llm_used);
         assert_ne!(
             candidate.authoring.quality.state,
@@ -4665,8 +5251,8 @@ mod cloud_authoring_tests {
     fn cloud_authoring_without_task_groups_is_unusable_not_a_shell() {
         let canonical = golden_authoring();
         let raw = json!({"authoring": {"taskGroups": [], "answerSlots": {}, "answerKey": {}}});
-        let normalized =
-            normalize_cloud_authoring(&identity(), Some(&canonical), &raw).expect("标准化必须返回结果");
+        let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), &raw)
+            .expect("标准化必须返回结果");
         assert_eq!(normalized.status, ChainStatusV1::Unusable);
         assert_eq!(
             normalized.reason_code.as_deref(),
@@ -4759,10 +5345,17 @@ Questions 14-20\nQuestions 21-26\n\
 You should spend about 20 minutes on Questions 2 7 – 4 0\n\
 Questions 2 7 – 3 1\nQuestions 32-40\n";
         let plan = plan_candidate_chunks(text);
-        let ranges: Vec<Vec<u32>> = plan.iter().map(|chunk| chunk.question_numbers.clone()).collect();
+        let ranges: Vec<Vec<u32>> = plan
+            .iter()
+            .map(|chunk| chunk.question_numbers.clone())
+            .collect();
         assert_eq!(
             ranges,
-            vec![(1..=13).collect::<Vec<u32>>(), (14..=26).collect(), (27..=40).collect()]
+            vec![
+                (1..=13).collect::<Vec<u32>>(),
+                (14..=26).collect(),
+                (27..=40).collect()
+            ]
         );
         assert_eq!(plan[2].label, "Questions 27-40");
     }
@@ -4771,13 +5364,21 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
     /// （调用方回到一次整卷请求）。没有任何声明 ⇒ 空计划。
     #[test]
     fn chunk_plan_packs_small_groups_and_falls_back_to_one_request() {
-        assert!(plan_candidate_chunks("Questions 1-5\nQuestions 6-9\nQuestions 10-13\n").is_empty());
+        assert!(
+            plan_candidate_chunks("Questions 1-5\nQuestions 6-9\nQuestions 10-13\n").is_empty()
+        );
         assert!(plan_candidate_chunks("A passage with no question declarations.").is_empty());
         let plan = plan_candidate_chunks(
             "Questions 1-7\nQuestions 8-13\nQuestions 14-20\nQuestions 21-26\n",
         );
-        let ranges: Vec<Vec<u32>> = plan.iter().map(|chunk| chunk.question_numbers.clone()).collect();
-        assert_eq!(ranges, vec![(1..=13).collect::<Vec<u32>>(), (14..=26).collect()]);
+        let ranges: Vec<Vec<u32>> = plan
+            .iter()
+            .map(|chunk| chunk.question_numbers.clone())
+            .collect();
+        assert_eq!(
+            ranges,
+            vec![(1..=13).collect::<Vec<u32>>(), (14..=26).collect()]
+        );
     }
 
     /// 两块都用 `cloud-tg-1` / `cloud-rg-1` / `cloud-ob-1` 这类临时 id：不加命名空间直接合并，
@@ -4788,7 +5389,10 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
         let canonical = golden_authoring();
         let first = cloud_draft(&[14, 15], "cloud");
         let second = cloud_draft(&[16, 17], "cloud");
-        assert_eq!(first["taskGroups"][0]["taskId"], second["taskGroups"][0]["taskId"], "测试前提：临时 id 相撞");
+        assert_eq!(
+            first["taskGroups"][0]["taskId"], second["taskGroups"][0]["taskId"],
+            "测试前提：临时 id 相撞"
+        );
 
         let merged = merge_candidate_chunks(vec![
             (chunk(&[14, 15]), Ok(first)),
@@ -4804,25 +5408,41 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
         assert_eq!(task_ids.len(), 2);
         assert_ne!(task_ids[0], task_ids[1], "合并后临时 id 必须带块命名空间");
 
-        let normalized =
-            normalize_cloud_authoring(&identity(), Some(&canonical), &merged).expect("合并稿必须能标准化");
-        assert_eq!(normalized.status, ChainStatusV1::Succeeded, "{:?}", normalized.unresolved_references);
+        let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), &merged)
+            .expect("合并稿必须能标准化");
+        assert_eq!(
+            normalized.status,
+            ChainStatusV1::Succeeded,
+            "{:?}",
+            normalized.unresolved_references
+        );
         assert!(normalized.uncovered_question_numbers.is_empty());
         let candidate =
             cloud_authoring_candidate_from_normalized(&identity(), normalized).expect("必须可装配");
         let groups = &candidate.authoring.task_groups;
         assert_eq!(groups.len(), 2);
-        assert_eq!(groups[0].task_id, "early-approaches-q14-15", "14-15 必须接到权威稿题组");
-        assert_eq!(groups[1].task_id, "cloud-tg-16-17", "16-17 是新题组，由后端分配身份");
+        assert_eq!(
+            groups[0].task_id, "early-approaches-q14-15",
+            "14-15 必须接到权威稿题组"
+        );
+        assert_eq!(
+            groups[1].task_id, "cloud-tg-16-17",
+            "16-17 是新题组，由后端分配身份"
+        );
         assert_ne!(
             groups[0].response_groups[0].response_group_id,
             groups[1].response_groups[0].response_group_id
         );
         for key in ["q14", "q15", "q16", "q17"] {
-            assert!(candidate.authoring.answer_slots.contains_key(key), "缺 {key}");
+            assert!(
+                candidate.authoring.answer_slots.contains_key(key),
+                "缺 {key}"
+            );
         }
         assert_eq!(
-            candidate.authoring.answer_slots["q16"].host_node_id.as_deref(),
+            candidate.authoring.answer_slots["q16"]
+                .host_node_id
+                .as_deref(),
             groups[1].response_groups[0]
                 .prompt
                 .as_ref()
@@ -4840,11 +5460,14 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
         let canonical = golden_authoring();
         let merged = merge_candidate_chunks(vec![
             (chunk(&[14, 15]), Ok(cloud_draft(&[14, 15], "cloud"))),
-            (chunk(&[16, 17]), Err("llm_timeout_budget_exhausted:llm_http_timeout".to_string())),
+            (
+                chunk(&[16, 17]),
+                Err("llm_timeout_budget_exhausted:llm_http_timeout".to_string()),
+            ),
         ])
         .expect("只要有一块成功就不是整份失败");
-        let normalized =
-            normalize_cloud_authoring(&identity(), Some(&canonical), &merged).expect("必须能标准化");
+        let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), &merged)
+            .expect("必须能标准化");
         assert_eq!(normalized.status, ChainStatusV1::Partial);
         assert_eq!(normalized.uncovered_question_numbers, vec![16, 17]);
         assert_eq!(
@@ -4863,8 +5486,8 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
             .warnings
             .iter()
             .any(|warning| warning.contains("llm_timeout_budget_exhausted")));
-        let candidate =
-            cloud_authoring_candidate_from_normalized(&identity(), normalized).expect("部分候选仍可装配");
+        let candidate = cloud_authoring_candidate_from_normalized(&identity(), normalized)
+            .expect("部分候选仍可装配");
         assert_eq!(candidate.status, ChainStatusV1::Partial);
 
         let all_failed = merge_candidate_chunks(vec![
@@ -4872,7 +5495,10 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
             (chunk(&[16, 17]), Err("llm_http_500:b".to_string())),
         ]);
         let error = all_failed.expect_err("全部失败必须如实失败");
-        assert!(error.contains("llm_http_500:a") && error.contains("llm_http_500:b"), "{error}");
+        assert!(
+            error.contains("llm_http_500:a") && error.contains("llm_http_500:b"),
+            "{error}"
+        );
     }
 
     // ── 听力候选：Part 结构 ────────────────────────────────────────────────
@@ -4940,15 +5566,14 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
         let task_ids = parts[0]["taskIds"].as_array().expect("taskIds 必须是数组");
         assert_eq!(task_ids.len(), 1);
         assert_ne!(
-            task_ids[0], json!("cloud-tg-1"),
+            task_ids[0],
+            json!("cloud-tg-1"),
             "Part 的 taskIds 必须被改写成稳定 ID"
         );
         assert!(
-            normalized
-                .warnings
-                .iter()
-                .any(|warning| warning.contains("cloud_listening_part_media_dropped")
-                    && warning.contains("Part 1")),
+            normalized.warnings.iter().any(|warning| warning
+                .contains("cloud_listening_part_media_dropped")
+                && warning.contains("Part 1")),
             "丢掉模型的音频字段必须留痕：{:?}",
             normalized.warnings
         );
@@ -4972,7 +5597,10 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
 
         let normalized = normalize_cloud_authoring(&listening_identity(), Some(&canonical), &raw)
             .expect("标准化必须成功");
-        let part = &normalized.document.pointer("/listening/parts/0").expect("必须有 Part");
+        let part = &normalized
+            .document
+            .pointer("/listening/parts/0")
+            .expect("必须有 Part");
 
         assert_eq!(
             part["partId"],
@@ -5068,8 +5696,9 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
         ])
         .expect("两块都成功必须能合并");
 
-        let normalized = normalize_cloud_authoring(&listening_identity(), Some(&canonical), &merged)
-            .expect("标准化必须成功");
+        let normalized =
+            normalize_cloud_authoring(&listening_identity(), Some(&canonical), &merged)
+                .expect("标准化必须成功");
         let parts = normalized
             .document
             .pointer("/listening/parts")
@@ -5088,7 +5717,11 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
             unique_before,
             "分段身份必须唯一，不能出现两个同 partId 的分段：{parts:?}"
         );
-        assert_eq!(parts.len(), 2, "两个不同的题号集合只该产出两个分段：{parts:?}");
+        assert_eq!(
+            parts.len(),
+            2,
+            "两个不同的题号集合只该产出两个分段：{parts:?}"
+        );
 
         let part_3 = parts
             .iter()

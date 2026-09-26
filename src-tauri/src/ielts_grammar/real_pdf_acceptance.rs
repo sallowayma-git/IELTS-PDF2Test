@@ -2262,7 +2262,11 @@ fn expected_group_question_numbers(metadata: &Value, group_id: &str) -> Vec<u32>
         .flatten()
         .filter_map(|slot| {
             let id = slot.get("id").and_then(Value::as_str)?.to_string();
-            let number = slot.get("displayNumber").and_then(Value::as_str)?.parse().ok()?;
+            let number = slot
+                .get("displayNumber")
+                .and_then(Value::as_str)?
+                .parse()
+                .ok()?;
             Some((id, number))
         })
         .collect();
@@ -2289,7 +2293,10 @@ fn expected_group_question_numbers(metadata: &Value, group_id: &str) -> Vec<u32>
 }
 
 /// 产出题组按题号集合与期望题组一一配对（无顺序假设；未配对 = miss）。
-fn match_groups_by_question_numbers(produced: &Value, numbers_of_expected: &[Vec<u32>]) -> Vec<Option<usize>> {
+fn match_groups_by_question_numbers(
+    produced: &Value,
+    numbers_of_expected: &[Vec<u32>],
+) -> Vec<Option<usize>> {
     let produced_groups = produced
         .get("taskGroups")
         .and_then(Value::as_array)
@@ -2396,18 +2403,33 @@ fn expected_denominator_metrics(ir: &Value, metadata: &Value) -> Value {
         .filter(|asset| {
             matches!(
                 asset.get("type").and_then(Value::as_str),
-                Some("flowchart") | Some("map") | Some("vector_figure") | Some("smartart") | Some("diagram") | Some("embedded_image")
+                Some("flowchart")
+                    | Some("map")
+                    | Some("vector_figure")
+                    | Some("smartart")
+                    | Some("diagram")
+                    | Some("embedded_image")
             )
         })
         .filter_map(|asset| asset.get("id").and_then(Value::as_str))
         .map(str::to_string)
         .collect();
     let mut visual_fail = 0usize;
-    let visual_assets = ir.get("assets").and_then(Value::as_array).cloned().unwrap_or_default();
+    let visual_assets = ir
+        .get("assets")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
 
     for (index, expected_group) in expected_groups.iter().enumerate() {
-        let group_id = expected_group.get("id").and_then(Value::as_str).unwrap_or_default();
-        let expected_kind = expected_group.get("kind").and_then(Value::as_str).unwrap_or_default();
+        let group_id = expected_group
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let expected_kind = expected_group
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         let expected_numbers = numbers_of_expected.get(index).cloned().unwrap_or_default();
         let produced_index = pairing.get(index).copied().flatten();
         let produced_group = produced_index.and_then(|i| produced_groups.get(i));
@@ -2416,7 +2438,11 @@ fn expected_denominator_metrics(ir: &Value, metadata: &Value) -> Value {
         // 不跨桶计入 statement/matching 分母，避免 value>1.0）。
         let (produced_type, type_match) = match produced_group {
             Some(group) => {
-                let produced_type = group.get("taskType").and_then(Value::as_str).unwrap_or_default().to_string();
+                let produced_type = group
+                    .get("taskType")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
                 let matches_kind = produced_type == expected_kind
                     || (expected_kind == "matching" && produced_type.starts_with("matching"));
                 (produced_type, matches_kind)
@@ -2477,8 +2503,10 @@ fn expected_denominator_metrics(ir: &Value, metadata: &Value) -> Value {
         }
 
         // matching exact structure：类型 + slot 集合 + response-group 绑定。
-        if matches!(expected_kind, "matching" | "heading_matching" | "classification")
-            || expected_kind.starts_with("matching")
+        if matches!(
+            expected_kind,
+            "matching" | "heading_matching" | "classification"
+        ) || expected_kind.starts_with("matching")
         {
             matching_groups += 1;
             let produced_numbers = produced_group
@@ -2538,7 +2566,9 @@ fn expected_denominator_metrics(ir: &Value, metadata: &Value) -> Value {
                     .and_then(Value::as_array)
                     .into_iter()
                     .flatten()
-                    .any(|node| node.get("assetId").and_then(Value::as_str) == Some(asset_id.as_str()))
+                    .any(|node| {
+                        node.get("assetId").and_then(Value::as_str) == Some(asset_id.as_str())
+                    })
             });
         if !materialized {
             visual_fail += 1;
@@ -2573,7 +2603,10 @@ fn expected_denominator_metrics(ir: &Value, metadata: &Value) -> Value {
 }
 
 fn classify_corpus(fixture: &Value) -> Value {
-    let source_path = fixture.get("sourcePath").and_then(Value::as_str).unwrap_or_default();
+    let source_path = fixture
+        .get("sourcePath")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let real = source_path.contains("private-real");
     let synthetic = source_path.contains("synthetic");
     json!({
@@ -2617,7 +2650,11 @@ fn phase4_metrics_for_fixture_v2(
         file_id: format!("phase4-metrics-{fixture_id}"),
         original_name: original_name.clone(),
         stored_name: format!("{fixture_id}.{}", if is_docx { "docx" } else { "pdf" }),
-        file_type: if is_docx { "docx".to_string() } else { "pdf".to_string() },
+        file_type: if is_docx {
+            "docx".to_string()
+        } else {
+            "pdf".to_string()
+        },
         sha256: fixture
             .get("sha256")
             .and_then(Value::as_str)
@@ -2651,15 +2688,26 @@ fn phase4_metrics_for_fixture_v2(
     let authoring_v1 = make_dynamic_authoring_ir(&job, &split, Some(&document));
     let physical_path = output_dir.join("document-ir-v2.physical.json");
     let physical = if is_docx {
-        crate::docx_facts_shadow::write_docx_facts_shadow(&job, &source, &source_path, &physical_path)
-            .map_err(|error| format!("{fixture_id}: docx facts: {error}"))?
+        crate::docx_facts_shadow::write_docx_facts_shadow(
+            &job,
+            &source,
+            &source_path,
+            &physical_path,
+        )
+        .map_err(|error| format!("{fixture_id}: docx facts: {error}"))?
     } else {
         write_pdf_facts_shadow(&job, &source, &source_path, &physical_path)
             .map_err(|error| format!("{fixture_id}: pdf facts: {error}"))?
     };
     // legacy 链（side-by-side baseline）。
-    let legacy = build_authoring_v2_shadow(&job, &authoring_v1, &split, Some(&document), Some(&physical))
-        .map_err(|error| format!("{fixture_id}: legacy shadow: {error}"))?;
+    let legacy = build_authoring_v2_shadow(
+        &job,
+        &authoring_v1,
+        &split,
+        Some(&document),
+        Some(&physical),
+    )
+    .map_err(|error| format!("{fixture_id}: legacy shadow: {error}"))?;
     write_json(&output_dir.join("authoring-ir-v2.shadow.json"), &legacy)?;
     // 被测链：flag-on direct canonical 真实构建入口。
     let graph = crate::recognition::write_question_layout_graph_artifact(
@@ -2667,13 +2715,10 @@ fn phase4_metrics_for_fixture_v2(
         &output_dir.join("question-layout-graph.json"),
     )
     .map_err(|error| format!("{fixture_id}: qlg: {error}"))?;
-    let no_assets = |_: &str| -> Option<crate::recognition::direct_canonical::ResolvedVisualAsset> { None };
+    let no_assets =
+        |_: &str| -> Option<crate::recognition::direct_canonical::ResolvedVisualAsset> { None };
     let direct = crate::recognition::direct_canonical::build_direct_canonical(
-        &job,
-        &graph,
-        &physical,
-        &split,
-        &no_assets,
+        &job, &graph, &physical, &split, &no_assets,
     )
     .map_err(|error| format!("{fixture_id}: direct: {error}"))?;
     write_json(&output_dir.join("direct-canonical.json"), &direct)?;
@@ -2828,7 +2873,9 @@ fn phase4_metrics_report_only_over_available_corpus() {
         }
         match phase4_metrics_for_fixture_v2(&root, id, fixture) {
             Ok(metrics) => results.push(metrics),
-            Err(error) => results.push(json!({"fixtureId": id, "status": "pipeline_error", "error": error})),
+            Err(error) => {
+                results.push(json!({"fixtureId": id, "status": "pipeline_error", "error": error}))
+            }
         }
     }
     let measured = results

@@ -139,7 +139,8 @@ fn span_source_anchor(page: &PageNodeV2, span_id: &str) -> Option<SourceAnchorV2
 /// almost always years in IELTS papers, and §6.5 rejects them explicitly.
 fn parse_small_numeric_token(text: &str) -> Option<u32> {
     let trimmed = text.trim();
-    if trimmed.is_empty() || trimmed.len() > 3 || !trimmed.bytes().all(|byte| byte.is_ascii_digit()) {
+    if trimmed.is_empty() || trimmed.len() > 3 || !trimmed.bytes().all(|byte| byte.is_ascii_digit())
+    {
         return None;
     }
     let value = trimmed.parse::<u32>().ok()?;
@@ -178,8 +179,8 @@ fn leading_option_label(text: &str) -> Option<(String, String)> {
             continue;
         };
         let rest_trimmed = rest_raw.trim_start();
-        let separated = rest_trimmed.len() != rest_raw.len()
-            || rest_raw.starts_with(['.', ')', ':', ']', '-']);
+        let separated =
+            rest_trimmed.len() != rest_raw.len() || rest_raw.starts_with(['.', ')', ':', ']', '-']);
         if !separated {
             continue;
         }
@@ -346,8 +347,8 @@ fn score_region_role(
         features.push("region_kind_chrome".to_string());
         scores.push((SemanticRegionRole::HeaderFooter, 1.0));
     } else {
-        let near_edge =
-            region.bbox.y <= page.height_pt * 0.08 || bottom_of(&region.bbox) >= page.height_pt * 0.92;
+        let near_edge = region.bbox.y <= page.height_pt * 0.08
+            || bottom_of(&region.bbox) >= page.height_pt * 0.92;
         if near_edge && text.chars().count() < 80 {
             features.push("page_edge_short_text".to_string());
             scores.push((SemanticRegionRole::HeaderFooter, 0.55));
@@ -568,8 +569,7 @@ fn score_number_token(inputs: &NumberTokenInputs<'_>) -> (f64, Vec<String>) {
         features.push("text_adjacent".to_string());
     }
 
-    if let (Some(token_size), Some(median_size)) =
-        (inputs.token_font_size, inputs.median_font_size)
+    if let (Some(token_size), Some(median_size)) = (inputs.token_font_size, inputs.median_font_size)
     {
         if (token_size - median_size).abs() <= 0.75 {
             score += 0.10;
@@ -704,9 +704,7 @@ fn assemble_stem(
     let mut ambiguities: Vec<String> = Vec::new();
     let mut confidence = 1.0f64;
 
-    let interval_bottom = next_token
-        .map(|next| next.bbox.y)
-        .unwrap_or(page.height_pt);
+    let interval_bottom = next_token.map(|next| next.bbox.y).unwrap_or(page.height_pt);
 
     // Same row: the token's own line (inline stem) then text nodes to its right.
     let inline = line_text_without_span(page, token_line, &token.node_id);
@@ -787,7 +785,10 @@ fn assemble_stem(
         .join(" ");
 
     if text.is_empty() || node_ids.is_empty() {
-        if !ambiguities.iter().any(|code| code == issue_codes::PROMPT_EMPTY) {
+        if !ambiguities
+            .iter()
+            .any(|code| code == issue_codes::PROMPT_EMPTY)
+        {
             ambiguities.push(issue_codes::PROMPT_EMPTY.to_string());
         }
         confidence = confidence.min(0.2);
@@ -811,9 +812,7 @@ fn assemble_blocks(
     for (index, token) in tokens.iter().enumerate() {
         let next_token = tokens.get(index + 1);
         let stem = assemble_stem(page, token, next_token, reserved);
-        let interval_bottom = next_token
-            .map(|next| next.bbox.y)
-            .unwrap_or(page.height_pt);
+        let interval_bottom = next_token.map(|next| next.bbox.y).unwrap_or(page.height_pt);
 
         let interval_lines: Vec<&LineNodeV2> = page
             .lines
@@ -827,15 +826,16 @@ fn assemble_blocks(
             .collect();
 
         // A local option run belongs to this block when it sits inside the interval.
-        let option_run = detect_option_run_from_lines(interval_lines.iter().copied()).map(|options| {
-            OptionRunCandidateV2 {
-                run_id: format!("run-{}-{}", page.page_index, token.value),
-                labels: options.iter().map(|option| option.label.clone()).collect(),
-                label_column_x: options.first().map(|option| option.bbox.x),
-                options,
-                confidence: 0.8,
-            }
-        });
+        let option_run =
+            detect_option_run_from_lines(interval_lines.iter().copied()).map(|options| {
+                OptionRunCandidateV2 {
+                    run_id: format!("run-{}-{}", page.page_index, token.value),
+                    labels: options.iter().map(|option| option.label.clone()).collect(),
+                    label_column_x: options.first().map(|option| option.bbox.x),
+                    options,
+                    confidence: 0.8,
+                }
+            });
 
         for node_id in stem.node_ids.iter() {
             consumed.insert(node_id.clone());
@@ -945,7 +945,8 @@ fn collect_visual_stimuli(
             let question_refs = tokens
                 .iter()
                 .filter(|token| {
-                    token.bbox.y <= bottom_of(&region.bbox) && bottom_of(&token.bbox) >= region.bbox.y
+                    token.bbox.y <= bottom_of(&region.bbox)
+                        && bottom_of(&token.bbox) >= region.bbox.y
                 })
                 .map(|token| token.value)
                 .collect();
@@ -1000,10 +1001,7 @@ fn collect_unassigned_evidence(
         let Some(region_id) = bank.region_id.as_deref() else {
             continue;
         };
-        if let Some(region) = regions
-            .iter()
-            .find(|region| region.region_id == region_id)
-        {
+        if let Some(region) = regions.iter().find(|region| region.region_id == region_id) {
             exonerated.extend(region.child_line_ids.iter().map(String::as_str));
         }
     }
@@ -1286,7 +1284,13 @@ mod tests {
             72.0,
             24.0,
             200.0,
-            vec![span("h-1", "IELTS Reading Practice Test 1", 72.0, 24.0, 200.0)],
+            vec![span(
+                "h-1",
+                "IELTS Reading Practice Test 1",
+                72.0,
+                24.0,
+                200.0,
+            )],
         );
         page.line(
             "i-1",
@@ -1316,7 +1320,13 @@ mod tests {
             200.0,
             vec![
                 span("n-1", "1", 72.0, 124.0, 8.0),
-                span("t-1", " The harbour was closed to shipping.", 80.0, 124.0, 192.0),
+                span(
+                    "t-1",
+                    " The harbour was closed to shipping.",
+                    80.0,
+                    124.0,
+                    192.0,
+                ),
             ],
         );
         page.line(
@@ -1343,7 +1353,13 @@ mod tests {
             180.0,
             vec![
                 span("n-3", "3", 72.0, 180.0, 8.0),
-                span("t-3", " Local fishermen opposed the new", 80.0, 180.0, 172.0),
+                span(
+                    "t-3",
+                    " Local fishermen opposed the new",
+                    80.0,
+                    180.0,
+                    172.0,
+                ),
             ],
         );
         page.line(
@@ -1409,7 +1425,12 @@ mod tests {
             );
         }
 
-        page.region("r-header", "header", rect(60.0, 20.0, 480.0, 18.0), &["h-line"]);
+        page.region(
+            "r-header",
+            "header",
+            rect(60.0, 20.0, 480.0, 18.0),
+            &["h-line"],
+        );
         page.region(
             "r-instruction",
             "text",
@@ -1458,7 +1479,10 @@ mod tests {
                 .expect("region role")
         };
         assert_eq!(role_of("r-header"), SemanticRegionRole::HeaderFooter);
-        assert_eq!(role_of("r-instruction"), SemanticRegionRole::QuestionInstruction);
+        assert_eq!(
+            role_of("r-instruction"),
+            SemanticRegionRole::QuestionInstruction
+        );
         assert_eq!(role_of("r-prompt"), SemanticRegionRole::QuestionPrompt);
         assert_eq!(role_of("r-bank"), SemanticRegionRole::SharedOptionBank);
 
@@ -1513,12 +1537,10 @@ mod tests {
         assert_eq!(bank.options[0].text, "Historic harbour");
 
         // Exactly one bank on the page: every prompt can point at it.
-        assert!(
-            graph
-                .question_blocks
-                .iter()
-                .all(|block| block.shared_option_bank_ref.as_deref() == Some(bank.bank_id.as_str()))
-        );
+        assert!(graph
+            .question_blocks
+            .iter()
+            .all(|block| block.shared_option_bank_ref.as_deref() == Some(bank.bank_id.as_str())));
 
         for block in &graph.question_blocks {
             assert_eq!(block.source_coverage, 1.0, "{}", block.candidate_id);
@@ -1607,8 +1629,20 @@ mod tests {
                 y,
                 160.0,
                 vec![
-                    span(&format!("o-{}-label", label.to_lowercase()), label, 72.0, y, 10.0),
-                    span(&format!("o-{}-text", label.to_lowercase()), city, 82.0, y, 150.0),
+                    span(
+                        &format!("o-{}-label", label.to_lowercase()),
+                        label,
+                        72.0,
+                        y,
+                        10.0,
+                    ),
+                    span(
+                        &format!("o-{}-text", label.to_lowercase()),
+                        city,
+                        82.0,
+                        y,
+                        150.0,
+                    ),
                 ],
             );
         }
@@ -1651,12 +1685,10 @@ mod tests {
 
         // No shared bank on this page, so no block may claim one.
         assert!(graph.option_banks.is_empty());
-        assert!(
-            graph
-                .question_blocks
-                .iter()
-                .all(|block| block.shared_option_bank_ref.is_none())
-        );
+        assert!(graph
+            .question_blocks
+            .iter()
+            .all(|block| block.shared_option_bank_ref.is_none()));
         assert!(graph.unassigned_evidence.is_empty());
     }
 
@@ -1671,7 +1703,8 @@ mod tests {
 
     #[test]
     fn producer_gate_rejects_foreign_and_unsupported_documents() {
-        let malformed = question_layout_graph_from_document_value(&json!({"schemaVersion": "Nope"}));
+        let malformed =
+            question_layout_graph_from_document_value(&json!({"schemaVersion": "Nope"}));
         assert!(malformed
             .expect_err("malformed document must be rejected")
             .starts_with("QUESTION_LAYOUT_GRAPH_DOCUMENT_IR_INVALID:"));

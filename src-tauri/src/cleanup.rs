@@ -280,7 +280,10 @@ mod tests {
 
         cleanup_parser_cache_for_job(&root, "job-1").unwrap();
 
-        assert!(!cache.join("job-1-document-ir.json").exists(), "自己的产物必须删掉");
+        assert!(
+            !cache.join("job-1-document-ir.json").exists(),
+            "自己的产物必须删掉"
+        );
         assert!(!cache.join("job-1-answer-src-2-document-ir.json").exists());
         assert!(!cache.join("job-1").exists());
         assert!(
@@ -288,8 +291,14 @@ mod tests {
             "job-10 不是 job-1：前缀匹配会删掉别人的解析产物"
         );
         assert!(cache.join("job-10").is_dir(), "job-10 不是 job-1");
-        assert!(cache.join("job-11-document-ir.json").exists(), "job-11 不是 job-1");
-        assert!(cache.join("image-assets").is_dir(), "共享资产目录不属于任何单个条目");
+        assert!(
+            cache.join("job-11-document-ir.json").exists(),
+            "job-11 不是 job-1"
+        );
+        assert!(
+            cache.join("image-assets").is_dir(),
+            "共享资产目录不属于任何单个条目"
+        );
 
         let _ = fs::remove_dir_all(&root);
     }

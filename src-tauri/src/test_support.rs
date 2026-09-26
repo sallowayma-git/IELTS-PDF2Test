@@ -29,7 +29,8 @@ pub(crate) const FIXTURE_SAMPLE_RATE_HZ: u32 = 16_000;
 pub(crate) fn wav_bytes_with_tone(hz: f64) -> Vec<u8> {
     let samples = (0..FIXTURE_SAMPLE_RATE_HZ)
         .map(|index| {
-            ((index as f64 / FIXTURE_SAMPLE_RATE_HZ as f64) * hz * std::f64::consts::TAU).sin() * 8_000.0
+            ((index as f64 / FIXTURE_SAMPLE_RATE_HZ as f64) * hz * std::f64::consts::TAU).sin()
+                * 8_000.0
         })
         .map(|value| value as i16)
         .collect::<Vec<_>>();
@@ -113,7 +114,9 @@ pub(crate) fn listening_audio_asset(ordinal: u32) -> crate::schema::common::Asse
 
 /// Per-part `media` pointing at the same asset `listening_audio_asset` describes, with a probe
 /// that passed (the compiler refuses a part whose audio was never decoded).
-pub(crate) fn listening_audio_media(ordinal: u32) -> crate::schema::ielts_authoring_v2::ListeningPartMediaV2 {
+pub(crate) fn listening_audio_media(
+    ordinal: u32,
+) -> crate::schema::ielts_authoring_v2::ListeningPartMediaV2 {
     let (_, sha) = part_audio(ordinal);
     serde_json::from_value(serde_json::json!({
         "assetId": format!("audio-{sha}"),
@@ -156,7 +159,9 @@ impl ListeningPartSpec {
 /// four sections at one asset, which meant a packager that only staged a single file — or a
 /// validator that only closed the asset set for one part — would still look correct. Four parts
 /// with four digests is what a real paper looks like.
-pub(crate) fn listening_exam(parts: Vec<ListeningPartSpec>) -> crate::schema::ielts_authoring_v2::IeltsAuthoringIRV2 {
+pub(crate) fn listening_exam(
+    parts: Vec<ListeningPartSpec>,
+) -> crate::schema::ielts_authoring_v2::IeltsAuthoringIRV2 {
     use crate::schema::ielts_authoring_v2::{
         AnswerSlotV2, AnswerValueV2, ExamModalityV2, IeltsAuthoringIRV2, ListeningPartV2,
         ListeningPlaybackPolicyV2, ListeningScopeV2, ListeningStructureV2, TaskGroupV2,

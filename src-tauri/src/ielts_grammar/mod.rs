@@ -24,9 +24,9 @@ mod prompt_assembler;
 pub(crate) mod quality;
 pub(crate) mod question_number;
 mod reading;
-pub(crate) mod source_coverage;
 #[cfg(test)]
 mod real_pdf_acceptance;
+pub(crate) mod source_coverage;
 
 pub(crate) use quality::evaluate_quality;
 
@@ -1135,7 +1135,8 @@ fn build_responses_and_slots(
             || matches!(
                 task_type,
                 TaskTypeV2::TableCompletion | TaskTypeV2::FlowchartCompletion
-            )) && !has_structural_source;
+            ))
+            && !has_structural_source;
         let embed_completion_slot_in_prompt = is_completion_task(task_type)
             && !structured_completion_slots
             && !matches!(
@@ -3322,12 +3323,18 @@ mod listening_draft_builder_tests {
             .flat_map(|part| part["taskIds"].as_array().unwrap().iter())
             .map(|task_id| task_id.as_str().unwrap().to_string())
             .collect::<Vec<_>>();
-        assert_eq!(assigned, vec!["g1", "g2", "g3", "g4", "g5", "g6", "g7", "g8"]);
+        assert_eq!(
+            assigned,
+            vec!["g1", "g2", "g3", "g4", "g5", "g6", "g7", "g8"]
+        );
         assert_eq!(
             parts[0]["expectedQuestionNumbers"],
             json!([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
         );
-        assert_eq!(parts[3]["expectedQuestionNumbers"], json!((31..=40).collect::<Vec<u32>>()));
+        assert_eq!(
+            parts[3]["expectedQuestionNumbers"],
+            json!((31..=40).collect::<Vec<u32>>())
+        );
         // Every declared question number appears exactly once across the parts.
         let mut numbers = parts
             .iter()
@@ -3344,7 +3351,9 @@ mod listening_draft_builder_tests {
         let issues = authoring["quality"]["issues"].as_array().unwrap();
         let audio = issues
             .iter()
-            .filter(|issue| issue["code"] == json!(crate::ielts_grammar::issue_codes::LISTENING_AUDIO_MISSING))
+            .filter(|issue| {
+                issue["code"] == json!(crate::ielts_grammar::issue_codes::LISTENING_AUDIO_MISSING)
+            })
             .collect::<Vec<_>>();
         assert_eq!(audio.len(), 4, "{issues:?}");
         assert!(audio
@@ -3419,7 +3428,9 @@ mod listening_draft_builder_tests {
         let quality = crate::ielts_grammar::quality::evaluate_quality_with_managed_audio(
             &authoring,
             None,
-            Some(&crate::ielts_grammar::quality::ManagedAudioFactsV1::new(verified)),
+            Some(&crate::ielts_grammar::quality::ManagedAudioFactsV1::new(
+                verified,
+            )),
         );
         authoring["quality"] = quality;
         let issues = authoring["quality"]["issues"].as_array().unwrap();
@@ -3439,8 +3450,10 @@ mod listening_draft_builder_tests {
             codes(crate::ielts_grammar::issue_codes::LISTENING_AUDIO_MISSING).len(),
             2
         );
-        assert!(codes(crate::ielts_grammar::issue_codes::LISTENING_AUDIO_PROBE_BLOCKED)[0]["targetId"]
-            == json!("part-2"));
+        assert!(
+            codes(crate::ielts_grammar::issue_codes::LISTENING_AUDIO_PROBE_BLOCKED)[0]["targetId"]
+                == json!("part-2")
+        );
         // 台账核对通过的这两段音频不该再被拿去和 PDF 的 shadow 比。
         assert!(
             codes(crate::ielts_grammar::issue_codes::ASSET_REFERENCE_MISSING).is_empty(),

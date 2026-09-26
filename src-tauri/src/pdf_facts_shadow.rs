@@ -4128,7 +4128,11 @@ mod tests {
         // The declared length is wrong on purpose: it is what routes this file
         // through `repair_classic_pdf_structure`.
         bytes.extend_from_slice(
-            format!("4 0 obj\n<< /Length {} >>\nstream\n", page_one_text.len() + 17).as_bytes(),
+            format!(
+                "4 0 obj\n<< /Length {} >>\nstream\n",
+                page_one_text.len() + 17
+            )
+            .as_bytes(),
         );
         bytes.extend_from_slice(page_one_text.as_bytes());
         bytes.extend_from_slice(b"endstream\nendobj\n");
@@ -4255,8 +4259,7 @@ mod tests {
         if !fixture_path(relative).exists() {
             return;
         }
-        let (job, source, input) =
-            fixture_source_named(relative, "listening-vol7-t9-shadow-pages");
+        let (job, source, input) = fixture_source_named(relative, "listening-vol7-t9-shadow-pages");
         let value = extract_pdf_facts_shadow(&job, &source, &input).expect("shadow extraction");
         let pages = value["pages"].as_array().expect("shadow pages");
         assert_eq!(

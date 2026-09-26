@@ -604,10 +604,7 @@ pub(crate) fn make_repair_authoring_step_input(
         "rules": repair_tool_rules(context)
     });
     let packet_mode = context.get("contextMode").and_then(Value::as_str) == Some("packets");
-    let attach_full_source = context
-        .get("attachFullSource")
-        .and_then(Value::as_bool)
-        == Some(true);
+    let attach_full_source = context.get("attachFullSource").and_then(Value::as_bool) == Some(true);
     // L0-L2 只传包证据，连本机 PDF 路径也不进入 repair input；只有 L3 后端确实要附整份
     // PDF 时才把路径交给网关。legacy 则保留原有路径，作为 L3 与回归对照。
     if !packet_mode || attach_full_source {
@@ -639,7 +636,7 @@ pub(crate) fn repair_tools_table(main_source_file_id: &str) -> Value {
         },
         "read_source": {
             "purpose": "Read the ORIGINAL FILE evidence. You cannot choose a path. \
-In packet mode a page range or a quote is REQUIRED and one call returns at most 3 pages.",
+    In packet mode a page range or a quote is REQUIRED and one call returns at most 3 pages.",
             "arguments": {"pageIndex": 1, "pageTo": 2, "quote": "optional exact quote to locate"}
         },
         "search_source": {
@@ -668,7 +665,7 @@ In packet mode a page range or a quote is REQUIRED and one call returns at most 
         },
         "record_ruling": {
             "purpose": "Adjudicate a difference that is listed in the context, WITHOUT editing anything. \
-Use it when you have checked the original file and the difference does not need the user.",
+    Use it when you have checked the original file and the difference does not need the user.",
             "arguments": {
                 "rulings": [{
                     "targetType": "slot | task_group | response_group | part",
@@ -682,7 +679,7 @@ Use it when you have checked the original file and the difference does not need 
         },
         "report_insufficient_context": {
             "purpose": "Say that the evidence you were given is NOT enough to judge, and ask for exactly what you need. \
-Use this instead of guessing: a guess that cannot be checked against the file is worse than saying you do not know. packetId and a non-empty reason are required.",
+    Use this instead of guessing: a guess that cannot be checked against the file is worse than saying you do not know. packetId and a non-empty reason are required.",
             "arguments": {
                 "packetId": "the packetId you were given",
                 "reason": "why the current evidence is not enough, in one sentence",
@@ -1291,7 +1288,10 @@ mod tests {
             .iter()
             .filter_map(Value::as_str)
             .collect();
-        assert_eq!(declared, crate::cloud_repair::tools::MODEL_ALLOWED_OPS.to_vec());
+        assert_eq!(
+            declared,
+            crate::cloud_repair::tools::MODEL_ALLOWED_OPS.to_vec()
+        );
     }
 
     /// 观察历史有界：多轮修复不该让 prompt 无限增长。最近的保留，省略的如实计数。
@@ -1303,7 +1303,11 @@ mod tests {
         let input = repair_input(&observations, "reading");
         let kept = input["observations"].as_array().expect("observations");
         assert_eq!(kept.len(), MAX_REPAIR_OBSERVATIONS);
-        assert_eq!(kept.last().unwrap()["callId"], json!("c39"), "必须保留最近的观察");
+        assert_eq!(
+            kept.last().unwrap()["callId"],
+            json!("c39"),
+            "必须保留最近的观察"
+        );
         assert_eq!(
             input["omittedObservationCount"],
             json!(40 - MAX_REPAIR_OBSERVATIONS),
@@ -1314,7 +1318,10 @@ mod tests {
     /// 模态钩子：输入带上模态，后续 prompt 按模态措辞。
     #[test]
     fn candidate_and_repair_inputs_carry_the_modality() {
-        assert_eq!(repair_input(&[], "listening")["modality"], json!("listening"));
+        assert_eq!(
+            repair_input(&[], "listening")["modality"],
+            json!("listening")
+        );
         let candidate = make_cloud_authoring_candidate_input(
             &json!({"model": "m"}),
             &fixture_job(),
@@ -1325,7 +1332,9 @@ mod tests {
             "listening",
         );
         assert_eq!(candidate["modality"], json!("listening"));
-        assert!(candidate["outputContract"]["shape"].get("listeningParts").is_some());
+        assert!(candidate["outputContract"]["shape"]
+            .get("listeningParts")
+            .is_some());
     }
 
     #[test]
@@ -1391,7 +1400,9 @@ mod tests {
         );
 
         assert!(
-            build(&json!({"contextMode": "legacy"})).get("pdfPath").is_some(),
+            build(&json!({"contextMode": "legacy"}))
+                .get("pdfPath")
+                .is_some(),
             "legacy regression path must keep the PDF source"
         );
     }
@@ -1408,7 +1419,10 @@ mod tests {
         let mut allowed_names = crate::schema::cloud_repair_v1::CLOUD_REPAIR_TOOLS.to_vec();
         table_names.sort_unstable();
         allowed_names.sort_unstable();
-        assert_eq!(table_names, allowed_names, "tool table and parser allow-list must match");
+        assert_eq!(
+            table_names, allowed_names,
+            "tool table and parser allow-list must match"
+        );
 
         for (tool, expected) in [
             ("read_draft", vec!["questionNumbers", "taskGroupIds"]),
@@ -1419,7 +1433,10 @@ mod tests {
             ("read_candidate", vec!["questionNumbers", "taskIds"]),
             ("apply_edits", vec!["baseVersion", "commands", "evidence"]),
             ("record_ruling", vec!["rulings"]),
-            ("report_insufficient_context", vec!["needs", "packetId", "reason"]),
+            (
+                "report_insufficient_context",
+                vec!["needs", "packetId", "reason"],
+            ),
             ("finish_packet", vec!["note", "unresolved"]),
             ("finish", vec!["note", "unresolved"]),
         ] {

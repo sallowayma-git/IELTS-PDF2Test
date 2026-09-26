@@ -131,7 +131,10 @@ impl CloudRepairContextNeedV1 {
         match self.kind.as_str() {
             "pages" => match (self.from, self.to) {
                 (Some(from), _) if from >= 1 => Ok(()),
-                _ => Err("CLOUD_NEED_MALFORMED:pages: needs {\"from\": N} (and optionally \"to\")".to_string()),
+                _ => Err(
+                    "CLOUD_NEED_MALFORMED:pages: needs {\"from\": N} (and optionally \"to\")"
+                        .to_string(),
+                ),
             },
             "search" => match self.quote.as_deref().map(str::trim) {
                 Some(quote) if !quote.is_empty() => Ok(()),
@@ -139,7 +142,10 @@ impl CloudRepairContextNeedV1 {
             },
             "page_region" => match self.page_index {
                 Some(page) if page >= 1 => Ok(()),
-                _ => Err("CLOUD_NEED_MALFORMED:page_region: needs {\"pageIndex\": N} (1-based)".to_string()),
+                _ => Err(
+                    "CLOUD_NEED_MALFORMED:page_region: needs {\"pageIndex\": N} (1-based)"
+                        .to_string(),
+                ),
             },
             "passage" => {
                 if self.paragraph_labels.is_empty() && self.question_numbers.is_empty() {
@@ -175,7 +181,6 @@ impl CloudRepairContextNeedV1 {
         }
     }
 }
-
 
 /// 裁定的两种结论。**只有这两种**：模型不能通过裁定声称「已修好」。
 ///
@@ -381,8 +386,8 @@ mod tests {
     #[test]
     fn every_context_need_kind_requires_its_own_fields() {
         for kind in CLOUD_CONTEXT_NEED_KINDS {
-            let error = need(json!({"kind": kind}))
-                .expect_err("只给 kind 必须被拒（该带什么都没说）");
+            let error =
+                need(json!({"kind": kind})).expect_err("只给 kind 必须被拒（该带什么都没说）");
             assert!(
                 error.starts_with(&format!("CLOUD_NEED_MALFORMED:{kind}")),
                 "{kind}: 错误必须具体到该补什么：{error}"
@@ -409,7 +414,10 @@ mod tests {
     #[test]
     fn an_unknown_context_need_kind_is_rejected_with_the_allowed_list() {
         let error = need(json!({"kind": "everything"})).expect_err("未知 kind 必须被拒");
-        assert!(error.starts_with("CLOUD_NEED_UNKNOWN_KIND:everything"), "{error}");
+        assert!(
+            error.starts_with("CLOUD_NEED_UNKNOWN_KIND:everything"),
+            "{error}"
+        );
         assert!(error.contains("pages"), "必须列出允许的取值：{error}");
     }
 
@@ -434,9 +442,18 @@ mod tests {
     fn insufficient_context_has_its_own_tool_and_reason_code() {
         assert!(CLOUD_REPAIR_TOOLS.contains(&CLOUD_REPAIR_INSUFFICIENT_CONTEXT_TOOL));
         assert!(CLOUD_REPAIR_TOOLS.contains(&CLOUD_REPAIR_FINISH_PACKET_TOOL));
-        assert_eq!(CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT, "CONTEXT_INSUFFICIENT");
+        assert_eq!(
+            CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT,
+            "CONTEXT_INSUFFICIENT"
+        );
         // 裁定语义只有两种，理由码不在其中——它描述的是「没核对过」，不是一种结论。
-        assert_ne!(CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT, CLOUD_RULING_CURRENT_IS_CORRECT);
-        assert_ne!(CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT, CLOUD_RULING_CANNOT_RESOLVE);
+        assert_ne!(
+            CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT,
+            CLOUD_RULING_CURRENT_IS_CORRECT
+        );
+        assert_ne!(
+            CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT,
+            CLOUD_RULING_CANNOT_RESOLVE
+        );
     }
 }

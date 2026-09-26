@@ -56,7 +56,11 @@ pub(super) fn build_task_groups(
             .get(&zone_index)
             .into_iter()
             .flatten()
-            .filter_map(|block| blocks.iter().find(|candidate| candidate.candidate_id == *block))
+            .filter_map(|block| {
+                blocks
+                    .iter()
+                    .find(|candidate| candidate.candidate_id == *block)
+            })
             .collect();
         groups.push(build_group(
             format!("group-{}", zone_index + 1),
@@ -77,7 +81,11 @@ pub(super) fn build_task_groups(
     //    breaks, so undeclared questions are never silently dropped.
     let orphan_ids: Vec<&String> = blocks
         .iter()
-        .filter(|block| !assignment.values().any(|ids| ids.contains(&block.candidate_id)))
+        .filter(|block| {
+            !assignment
+                .values()
+                .any(|ids| ids.contains(&block.candidate_id))
+        })
         .map(|block| &block.candidate_id)
         .collect();
     for (run_index, run) in contiguous_runs(blocks, &orphan_ids).into_iter().enumerate() {
@@ -85,9 +93,15 @@ pub(super) fn build_task_groups(
             .iter()
             .filter_map(|id| blocks.iter().find(|block| block.candidate_id == *id))
             .collect();
-        let numbers: Vec<u32> = group_blocks.iter().map(|block| block.question_number).collect();
+        let numbers: Vec<u32> = group_blocks
+            .iter()
+            .map(|block| block.question_number)
+            .collect();
         let display_range = numbers.first().zip(numbers.last()).map(|(a, b)| [*a, *b]);
-        let page_index = group_blocks.first().map(|block| block.page_index).unwrap_or(0);
+        let page_index = group_blocks
+            .first()
+            .map(|block| block.page_index)
+            .unwrap_or(0);
         groups.push(build_group(
             format!("group-undeclared-{}", run_index + 1),
             page_index,
@@ -493,7 +507,8 @@ fn check_choice_closure(
 
     // `require_expected_option_labels`: a choice task needs options from somewhere —
     // either the block's own run or a shared bank.
-    let has_answer_options = bank.is_some() || blocks.iter().any(|block| block.option_run.is_some());
+    let has_answer_options =
+        bank.is_some() || blocks.iter().any(|block| block.option_run.is_some());
     if !has_answer_options {
         push_issue(issues, issue_codes::OPTION_LABEL_MISSING);
         push_issue(issues, issue_codes::OPTION_RUN_INCOMPLETE);
@@ -577,7 +592,11 @@ fn check_matching_closure(
     if bank.options.len() < MIN_BANK_OPTIONS {
         push_issue(issues, issue_codes::OPTION_BANK_MISSING);
     }
-    if bank.options.iter().any(|option| option.text.trim().is_empty()) {
+    if bank
+        .options
+        .iter()
+        .any(|option| option.text.trim().is_empty())
+    {
         push_issue(issues, issue_codes::OPTION_TEXT_MISSING);
     }
 }
@@ -751,7 +770,11 @@ mod tests {
         let banks = vec![bank("bank-0-1", Some("List of People"), &["A", "B", "C"])];
         let groups = build_task_groups(
             &[page()],
-            &[zone(None, "Questions 1-2 Match each scientist with a discovery.", vec![1, 2])],
+            &[zone(
+                None,
+                "Questions 1-2 Match each scientist with a discovery.",
+                vec![1, 2],
+            )],
             &blocks,
             &banks,
             &[],
@@ -765,11 +788,7 @@ mod tests {
         let blocks = vec![block("b1", 1, "Which TWO developments are mentioned?")];
         let groups = build_task_groups(
             &[page()],
-            &[zone(
-                None,
-                "Questions 1 Choose TWO letters, A-E.",
-                vec![1],
-            )],
+            &[zone(None, "Questions 1 Choose TWO letters, A-E.", vec![1])],
             &blocks,
             &[],
             &[],
@@ -907,7 +926,11 @@ mod tests {
         };
         let groups = build_task_groups(
             &[page()],
-            &[zone(None, "Questions 1 Choose the correct letter A, B, C or D.", vec![1])],
+            &[zone(
+                None,
+                "Questions 1 Choose the correct letter A, B, C or D.",
+                vec![1],
+            )],
             &blocks,
             &[],
             &[],

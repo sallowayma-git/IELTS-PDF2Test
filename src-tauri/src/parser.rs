@@ -2481,7 +2481,10 @@ pub(crate) fn extract_pdf_images_for_vision(
         Ok(failed) => {
             let _ = fs::remove_file(&staging_path);
             match reusable_cached_extraction(output_path) {
-                Some(cached) => Ok(reuse_cached_page_images(cached, cached_reuse_warnings(&failed))),
+                Some(cached) => Ok(reuse_cached_page_images(
+                    cached,
+                    cached_reuse_warnings(&failed),
+                )),
                 None => Ok(failed),
             }
         }

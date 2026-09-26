@@ -1351,7 +1351,13 @@ fn completion_slot_line_node(
     let body = &text[bullet_start..];
     let spans = merge_slot_spans(
         completion_slot_marker_spans(body, expected_numbers),
-        blank_spans_for_line(blank_slots, line, bullet_start, body.len(), expected_numbers),
+        blank_spans_for_line(
+            blank_slots,
+            line,
+            bullet_start,
+            body.len(),
+            expected_numbers,
+        ),
     );
     if spans.is_empty() {
         return None;
@@ -2243,10 +2249,7 @@ mod tests {
             &blanks,
         );
         assert!(with.closes_slots(&[1]), "the drawn blank hosts it");
-        assert_eq!(
-            with.slot_line_ids.get(&1).map(String::as_str),
-            Some("b039")
-        );
+        assert_eq!(with.slot_line_ids.get(&1).map(String::as_str), Some("b039"));
 
         let nodes = completion_context_nodes_with_slots(
             "task-drawn",
@@ -2353,7 +2356,9 @@ mod tests {
         assert_eq!(blanks[0].page_index, 0);
         assert_eq!(blanks[0].non_space_offset, None, "rule past the row's text");
         assert!(
-            blanks.iter().all(|blank| blank.line_key != "Maximumlengthofjob:10"),
+            blanks
+                .iter()
+                .all(|blank| blank.line_key != "Maximumlengthofjob:10"),
             "the neighbouring row is not this rule's owner"
         );
     }
@@ -2422,7 +2427,10 @@ mod tests {
             &[31],
             &blanks,
         );
-        assert!(structure.closes_slots(&[31]), "the printed marker closes it");
+        assert!(
+            structure.closes_slots(&[31]),
+            "the printed marker closes it"
+        );
         assert!(
             structure.inferred_slot_numbers.is_empty(),
             "a printed number is source evidence, not an inference"
@@ -2509,7 +2517,10 @@ mod tests {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        assert!(!candidates.is_empty(), "the paper splits into question groups");
+        assert!(
+            !candidates.is_empty(),
+            "the paper splits into question groups"
+        );
         let mut violations = Vec::new();
         for candidate in &candidates {
             let block_ids = candidate
@@ -2560,7 +2571,8 @@ mod tests {
             document,
             split,
         } = real_listening_paper()?;
-        let v1 = crate::authoring_pipeline::make_dynamic_authoring_ir(&job, &split, Some(&document));
+        let v1 =
+            crate::authoring_pipeline::make_dynamic_authoring_ir(&job, &split, Some(&document));
         let physical = crate::pdf_facts_shadow::write_pdf_facts_shadow_with_v1(
             &job,
             &source,
@@ -2660,7 +2672,9 @@ mod tests {
             .unwrap_or_default()
         );
 
-        let expected_all = (1..=40).map(|number| format!("q{number}")).collect::<std::collections::BTreeSet<_>>();
+        let expected_all = (1..=40)
+            .map(|number| format!("q{number}"))
+            .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(
             hosted, expected_all,
             "the paper declares forty answerable questions"
@@ -2778,9 +2792,7 @@ mod tests {
         let mut observed = Vec::new();
         let mut violations = Vec::new();
         for group in &groups {
-            let start = group
-                .pointer("/displayRange/start")
-                .and_then(Value::as_u64);
+            let start = group.pointer("/displayRange/start").and_then(Value::as_u64);
             let end = group.pointer("/displayRange/end").and_then(Value::as_u64);
             let declared = match (start, end) {
                 (Some(17), Some(20)) => "A-F",
@@ -2972,9 +2984,7 @@ mod tests {
                 .map(|(index, slot_id)| {
                     (
                         slot_id.clone(),
-                        option_value(
-                            &declared_letters[(index + 1) % declared_letters.len()],
-                        ),
+                        option_value(&declared_letters[(index + 1) % declared_letters.len()]),
                     )
                 })
                 .collect::<std::collections::BTreeMap<_, _>>();
@@ -3026,7 +3036,10 @@ mod tests {
                 "the shared bank may not be reused: {shown:?}"
             );
             assert!(
-                declared.get("optionBankRef").and_then(Value::as_str).is_some(),
+                declared
+                    .get("optionBankRef")
+                    .and_then(Value::as_str)
+                    .is_some(),
                 "the group must be bound to its shared bank: {shown:?}"
             );
             assert_eq!(

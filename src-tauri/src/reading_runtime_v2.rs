@@ -211,7 +211,8 @@ fn verify_staged_checksums(
         {
             Some(payload) => {
                 let runtime_bytes = canonical_json_bytes_js(&payload);
-                if sha256_hex(&runtime_bytes) != files.expected_runtime_sha256.to_ascii_lowercase() {
+                if sha256_hex(&runtime_bytes) != files.expected_runtime_sha256.to_ascii_lowercase()
+                {
                     issues.push(asset_issue(
                         "RUNTIME_SOURCE_HASH_MISMATCH",
                         &exam_id,
@@ -641,8 +642,7 @@ mod tests {
 
         // The buggy operand: hashing the typed re-serialization drops the null,
         // so the advertised hash no longer matches the embedded payload.
-        let typed_only =
-            sha256_hex(&canonical_json_bytes_js(&source.document().unwrap()));
+        let typed_only = sha256_hex(&canonical_json_bytes_js(&source.document().unwrap()));
         assert_ne!(typed_only, honest_runtime, "test fixture must diverge");
         let stale = ProbePackageFiles {
             expected_runtime_sha256: &typed_only,

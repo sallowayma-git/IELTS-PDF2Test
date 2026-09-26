@@ -78,7 +78,11 @@ fn persist_answer_page_state(root: &Path, job_id: &str, report: &Value) -> Comma
             object.insert("answerCount".to_string(), applied);
         }
     }
-    if !pipeline.get("parser").map(Value::is_object).unwrap_or(false) {
+    if !pipeline
+        .get("parser")
+        .map(Value::is_object)
+        .unwrap_or(false)
+    {
         pipeline["parser"] = json!({});
     }
     pipeline["parser"]["visionAnswerExtraction"] = extraction;
@@ -91,7 +95,10 @@ mod tests {
     use crate::util::ensure_app_dirs;
 
     fn temp_root(job_id: &str) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!("answer-page-step-{}", uuid::Uuid::new_v4().simple()));
+        let root = std::env::temp_dir().join(format!(
+            "answer-page-step-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
         ensure_app_dirs(&root).unwrap();
         std::fs::create_dir_all(job_dir(&root, job_id)).unwrap();
         root
@@ -122,7 +129,10 @@ mod tests {
         assert_eq!(calls, 2, "服务暂时不可用必须自动再试一次");
         assert_eq!(report["state"], "succeeded");
         let persisted = state_of(&root, "job-1");
-        assert_eq!(persisted["state"], "succeeded", "结果必须写回工作区读的那一格");
+        assert_eq!(
+            persisted["state"], "succeeded",
+            "结果必须写回工作区读的那一格"
+        );
         assert_eq!(persisted["answerCount"], 13);
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -145,8 +155,12 @@ mod tests {
     #[test]
     fn retry_without_a_cloud_profile_runs_nothing_and_says_so() {
         let root = temp_root("job-1");
-        crate::llm_profiles::save_profiles(&root, &[json!({"profileId": "off", "enabled": false})]).unwrap();
-        let report = retry_answer_page_at_root(&root, "job-1", &mut |_, _, _| panic!("没有云端连接时不能调用视觉服务")).unwrap();
+        crate::llm_profiles::save_profiles(&root, &[json!({"profileId": "off", "enabled": false})])
+            .unwrap();
+        let report = retry_answer_page_at_root(&root, "job-1", &mut |_, _, _| {
+            panic!("没有云端连接时不能调用视觉服务")
+        })
+        .unwrap();
         assert_eq!(report["stateReason"], "no_cloud_profile");
         let _ = std::fs::remove_dir_all(&root);
     }

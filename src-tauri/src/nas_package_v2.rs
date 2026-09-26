@@ -12,11 +12,11 @@ use crate::authoring_v2_commands::{
 };
 use crate::export_artifacts::{build_wrapper, safe_exam_id};
 use crate::export_nas_library::{nas_reading_exams_dir, normalize_nas_library_root};
+use crate::listening_source_v1::{compile_exam_source_v2, CompiledExamSourceV2};
 use crate::reading_runtime_v2::{
     run_student_loader_probe_with_files, safe_join_asset_path, ExamAssetManifestV2,
     ProbePackageFiles, StudentProbeReportV2,
 };
-use crate::listening_source_v1::{compile_exam_source_v2, CompiledExamSourceV2};
 use crate::schema::common::{canonical_json_bytes, canonical_json_bytes_js};
 use crate::schema::IeltsAuthoringIRV2;
 use crate::CommandResult;
@@ -95,7 +95,11 @@ fn validate_v2_export_binding(
         .get("files")
         .and_then(Value::as_array)
         .ok_or_else(|| "nas_package_v2_export_receipt_invalid:files".to_string())?;
-    let expected_files = ["authoring-ir-v2.json", expected_runtime_file, "manifest-v2.json"];
+    let expected_files = [
+        "authoring-ir-v2.json",
+        expected_runtime_file,
+        "manifest-v2.json",
+    ];
     if files.len() != expected_files.len()
         || expected_files
             .iter()
@@ -157,40 +161,40 @@ fn validate_v2_export_binding(
     }
 
     if manifest.get("authoringSource").and_then(Value::as_str) != Some("canonical_ds") {
-    let paths = JobArtifactPaths::for_job(root, job_id)?;
-    let persisted_path = if revision == 0 {
-        paths.job_dir.join(AUTHORING_V2_SHADOW_FILE)
-    } else {
-        paths.revision_path(revision)
-    };
-    let persisted_bytes = fs::read(&persisted_path).map_err(|error| {
-        format!(
-            "nas_package_v2_export_binding_missing:{}:{error}",
-            persisted_path.display()
-        )
-    })?;
-    let persisted_value: Value = serde_json::from_slice(&persisted_bytes).map_err(|error| {
-        format!(
-            "nas_package_v2_export_binding_invalid:{}:{error}",
-            persisted_path.display()
-        )
-    })?;
-    // `quality` is a derived report and is refreshed during every export, so
-    // it is deliberately excluded from the persisted-content binding. The
-    // receipt still authenticates the exact exported authoring bytes via
-    // authoringSha256 above; this comparison only prevents exporting an old
-    // or unrelated authoring revision from the same job.
-    let persisted_binding = authoring_binding_value(&persisted_value);
-    let exported_binding = authoring_binding_value(&authoring_value);
-    let persisted_canonical =
-        canonical_json_bytes(&persisted_binding).map_err(|error| error.to_string())?;
-    let exported_canonical =
-        canonical_json_bytes(&exported_binding).map_err(|error| error.to_string())?;
-    if sha256_hex(&persisted_canonical) != sha256_hex(&exported_canonical)
-        || persisted_binding != exported_binding
-    {
-        return Err("nas_package_v2_export_binding_detached".to_string());
-    }
+        let paths = JobArtifactPaths::for_job(root, job_id)?;
+        let persisted_path = if revision == 0 {
+            paths.job_dir.join(AUTHORING_V2_SHADOW_FILE)
+        } else {
+            paths.revision_path(revision)
+        };
+        let persisted_bytes = fs::read(&persisted_path).map_err(|error| {
+            format!(
+                "nas_package_v2_export_binding_missing:{}:{error}",
+                persisted_path.display()
+            )
+        })?;
+        let persisted_value: Value = serde_json::from_slice(&persisted_bytes).map_err(|error| {
+            format!(
+                "nas_package_v2_export_binding_invalid:{}:{error}",
+                persisted_path.display()
+            )
+        })?;
+        // `quality` is a derived report and is refreshed during every export, so
+        // it is deliberately excluded from the persisted-content binding. The
+        // receipt still authenticates the exact exported authoring bytes via
+        // authoringSha256 above; this comparison only prevents exporting an old
+        // or unrelated authoring revision from the same job.
+        let persisted_binding = authoring_binding_value(&persisted_value);
+        let exported_binding = authoring_binding_value(&authoring_value);
+        let persisted_canonical =
+            canonical_json_bytes(&persisted_binding).map_err(|error| error.to_string())?;
+        let exported_canonical =
+            canonical_json_bytes(&exported_binding).map_err(|error| error.to_string())?;
+        if sha256_hex(&persisted_canonical) != sha256_hex(&exported_canonical)
+            || persisted_binding != exported_binding
+        {
+            return Err("nas_package_v2_export_binding_detached".to_string());
+        }
     }
     let bound_authoring: IeltsAuthoringIRV2 = serde_json::from_value(authoring_value.clone())
         .map_err(|error| format!("nas_package_v2_export_binding_invalid:authoring:{error}"))?;
@@ -200,9 +204,11 @@ fn validate_v2_export_binding(
             serde_json::to_string(&issues).unwrap_or_default()
         )
     })?;
-    let exported_source = CompiledExamSourceV2::parse(&serde_json::from_slice::<Value>(source_bytes)
-        .map_err(|error| format!("nas_package_v2_export_binding_invalid:runtime:{error}"))?)
-        .map_err(|error| format!("nas_package_v2_export_binding_invalid:runtime:{error}"))?;
+    let exported_source = CompiledExamSourceV2::parse(
+        &serde_json::from_slice::<Value>(source_bytes)
+            .map_err(|error| format!("nas_package_v2_export_binding_invalid:runtime:{error}"))?,
+    )
+    .map_err(|error| format!("nas_package_v2_export_binding_invalid:runtime:{error}"))?;
     if exported_source != bound_source {
         return Err("nas_package_v2_export_binding_detached:runtime".to_string());
     }
@@ -284,15 +290,16 @@ pub(crate) struct ForceOverride {
 
 pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> CommandResult<Value> {
     use crate::library::repository::{get_canonical_ds, open_library_connection};
-    if input.item_ids.is_empty() { return Err("PUBLISH_ITEMS_REQUIRED".to_string()); }
+    if input.item_ids.is_empty() {
+        return Err("PUBLISH_ITEMS_REQUIRED".to_string());
+    }
     // 放行确认在任何写入之前校验：结构不合法已由 serde 拒绝；时间戳不合法同样明确
     // 报错，绝不静默降级成严格发布（那会让用户以为自己的点击生效了）。
     let mode = match input.force.as_ref() {
         None => PublishMode::Strict,
         Some(force) => {
-            chrono::DateTime::parse_from_rfc3339(force.confirmed_at.trim()).map_err(|error| {
-                format!("PUBLISH_FORCE_OVERRIDE_INVALID:confirmedAt:{error}")
-            })?;
+            chrono::DateTime::parse_from_rfc3339(force.confirmed_at.trim())
+                .map_err(|error| format!("PUBLISH_FORCE_OVERRIDE_INVALID:confirmedAt:{error}"))?;
             PublishMode::Forced {
                 confirmed_at: force.confirmed_at.trim().to_string(),
                 acknowledged_reasons: force.acknowledged_reasons.clone(),
@@ -300,23 +307,35 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
         }
     };
     let ids: BTreeSet<_> = input.item_ids.iter().collect();
-    for id in &ids { crate::library::migration::migrate_single_item(root, id)?; }
+    for id in &ids {
+        crate::library::migration::migrate_single_item(root, id)?;
+    }
     let mut conn = open_library_connection(root)?;
     let transaction = conn.transaction().map_err(|error| error.to_string())?;
-    let snapshots = ids.iter().map(|id| {
-        let (ds, version) = get_canonical_ds(&transaction, id)?.ok_or_else(|| format!("ITEM_DS_NOT_SEEDED:{id}"))?;
-        Ok(((*id).clone(), ds, version))
-    }).collect::<CommandResult<Vec<_>>>()?;
+    let snapshots = ids
+        .iter()
+        .map(|id| {
+            let (ds, version) = get_canonical_ds(&transaction, id)?
+                .ok_or_else(|| format!("ITEM_DS_NOT_SEEDED:{id}"))?;
+            Ok(((*id).clone(), ds, version))
+        })
+        .collect::<CommandResult<Vec<_>>>()?;
     transaction.commit().map_err(|error| error.to_string())?;
 
-    let library_root = normalize_nas_library_root(&absolute_path("library_root", &input.destination)?);
+    let library_root =
+        normalize_nas_library_root(&absolute_path("library_root", &input.destination)?);
     let reading_root = nas_reading_exams_dir(&library_root);
     let paths = make_paths(&library_root, &reading_root, "batch")?;
     fs::create_dir_all(paths.lock_path.parent().unwrap()).map_err(|error| error.to_string())?;
     fs::create_dir_all(&reading_root).map_err(|error| error.to_string())?;
-    let lock = OpenOptions::new().create(true).read(true).write(true).open(&paths.lock_path)
+    let lock = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&paths.lock_path)
         .map_err(|error| error.to_string())?;
-    lock.try_lock_exclusive().map_err(|error| format!("nas_package_v2_lock_busy:{error}"))?;
+    lock.try_lock_exclusive()
+        .map_err(|error| format!("nas_package_v2_lock_busy:{error}"))?;
     recover_incomplete_transactions(&paths)?;
     let base_hash = manifest_sha256(&paths.manifest_path)?;
     let mut manifest = load_existing_manifest(&paths.manifest_path)?;
@@ -347,15 +366,27 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
             // （编译不过、答案没闭合同理），所以走到 `?` 的只剩 IO 与安全类硬错误：
             // 资产缺失/越界、examId 路径不安全、目录不可写、清单 CAS、锁。把这类错误吞成
             // 「这条没发出去」，等于替用户接受环境故障——而他要的是「发布」。
-            let materialized = crate::authoring_v2_commands::export_authoring_snapshot_with_mode(root,
+            let materialized = crate::authoring_v2_commands::export_authoring_snapshot_with_mode(
+                root,
                 crate::authoring_v2_commands::ExportAuthoringV2Input {
-                    job_id: item_id.clone(), export_dir: staging.join("snapshots").to_string_lossy().into_owned(),
-                    revision: None, authoring: Some(ds.clone()), edit_version: Some(*version as u64),
-                }, &mode)?;
+                    job_id: item_id.clone(),
+                    export_dir: staging.join("snapshots").to_string_lossy().into_owned(),
+                    revision: None,
+                    authoring: Some(ds.clone()),
+                    edit_version: Some(*version as u64),
+                },
+                &mode,
+            )?;
             let receipt = materialized.get("receipt").cloned().unwrap_or(Value::Null);
             let publish_override = receipt.get("publishOverride").cloned();
-            let student_loadable = receipt.get("studentLoadable").and_then(Value::as_bool).unwrap_or(false);
-            let verdict = receipt.get("publishVerdict").cloned().ok_or("PUBLISH_VERDICT_MISSING")?;
+            let student_loadable = receipt
+                .get("studentLoadable")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let verdict = receipt
+                .get("publishVerdict")
+                .cloned()
+                .ok_or("PUBLISH_VERDICT_MISSING")?;
             let reasons = publish_override
                 .as_ref()
                 .and_then(|value| value.get("reasons").cloned())
@@ -372,19 +403,37 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
             // 严格发布不降级——用户没说「发一半也行」，后端不该替他决定。
             let package_check: CommandResult<Option<(StagedPackage, usize)>> = if student_loadable {
                 (|| {
-                    let source_path = PathBuf::from(receipt.get("runtimePath").and_then(Value::as_str).ok_or("PUBLISH_RUNTIME_MISSING")?);
+                    let source_path = PathBuf::from(
+                        receipt
+                            .get("runtimePath")
+                            .and_then(Value::as_str)
+                            .ok_or("PUBLISH_RUNTIME_MISSING")?,
+                    );
                     let source_value: Value = crate::util::read_json(&source_path)?;
-                    let source = CompiledExamSourceV2::parse(&source_value).map_err(|error| error.to_string())?;
+                    let source = CompiledExamSourceV2::parse(&source_value)
+                        .map_err(|error| error.to_string())?;
                     let mut staged_paths = paths.clone();
                     staged_paths.staging_root = staging.clone();
                     staged_paths.staging_exam_path = staging.join(format!("{exam_id}.js"));
                     staged_paths.staging_resource_path = staging.join("resources").join(&exam_id);
                     let package_input = NasPackagePublishInput {
-                        library_root: input.destination.clone(), source_path: source_path.to_string_lossy().into_owned(),
-                        asset_root: None, exam_id: Some(exam_id.clone()), minimum_runtime_version: None,
-                        expected_manifest_sha256: None, fault: None, job_id: None, revision: None,
+                        library_root: input.destination.clone(),
+                        source_path: source_path.to_string_lossy().into_owned(),
+                        asset_root: None,
+                        exam_id: Some(exam_id.clone()),
+                        minimum_runtime_version: None,
+                        expected_manifest_sha256: None,
+                        fault: None,
+                        job_id: None,
+                        revision: None,
                     };
-                    let staged = stage_package_files(&package_input, &source, &source_value, &source_path, &staged_paths)?;
+                    let staged = stage_package_files(
+                        &package_input,
+                        &source,
+                        &source_value,
+                        &source_path,
+                        &staged_paths,
+                    )?;
                     Ok(Some((staged, source.assets().len())))
                 })()
             } else {
@@ -395,10 +444,18 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
             let record_id = Uuid::new_v4().simple().to_string();
             let attempt = match package_check {
                 Ok(None) => ItemAttempt::AuthoringOnly {
-                    publish_override, verdict, reasons, package_error: None,
+                    publish_override,
+                    verdict,
+                    reasons,
+                    package_error: None,
                 },
                 Ok(Some((staged, asset_count))) => ItemAttempt::Packaged {
-                    staged, exam_id: exam_id.clone(), asset_count, publish_override, verdict, reasons,
+                    staged,
+                    exam_id: exam_id.clone(),
+                    asset_count,
+                    publish_override,
+                    verdict,
+                    reasons,
                 },
                 Err(error)
                     if matches!(mode, PublishMode::Forced { .. })
@@ -412,16 +469,26 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
                     let _ = fs::remove_dir_all(staging.join("resources").join(&exam_id));
                     let _ = fs::remove_file(staging.join(format!("{exam_id}.js")));
                     ItemAttempt::AuthoringOnly {
-                        publish_override, verdict, reasons, package_error: Some(error),
+                        publish_override,
+                        verdict,
+                        reasons,
+                        package_error: Some(error),
                     }
                 }
                 Err(error) => return Err(error),
             };
             match attempt {
-                ItemAttempt::AuthoringOnly { publish_override, verdict, reasons, package_error } => {
+                ItemAttempt::AuthoringOnly {
+                    publish_override,
+                    verdict,
+                    reasons,
+                    package_error,
+                } => {
                     let forced = publish_override.is_some();
                     // 授权快照已写在 staging/snapshots（随 release 一起提交）；不进学生清单。
-                    if !exam_ids.insert(exam_id.clone()) { return Err(format!("PUBLISH_DUPLICATE_EXAM_ID:{exam_id}")); }
+                    if !exam_ids.insert(exam_id.clone()) {
+                        return Err(format!("PUBLISH_DUPLICATE_EXAM_ID:{exam_id}"));
+                    }
                     let mut entry = json!({"itemId": item_id, "examId": exam_id, "studentLoadable": false,
                         "verdictStatus": verdict.get("status").cloned().unwrap_or(Value::Null),
                         "confirmedAt": publish_override.as_ref().and_then(|value| value.get("confirmedAt").cloned())});
@@ -436,31 +503,60 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
                     }
                     forced_items.push(entry);
                     outcomes.push(outcome);
-                    publications.push(ItemPublication { item_id: item_id.clone(), edit_version: *version, record_id,
-                        forced, student_loadable: false, verdict, reasons });
+                    publications.push(ItemPublication {
+                        item_id: item_id.clone(),
+                        edit_version: *version,
+                        record_id,
+                        forced,
+                        student_loadable: false,
+                        verdict,
+                        reasons,
+                    });
                 }
-                ItemAttempt::Packaged { mut staged, exam_id, asset_count, publish_override, verdict, reasons } => {
+                ItemAttempt::Packaged {
+                    mut staged,
+                    exam_id,
+                    asset_count,
+                    publish_override,
+                    verdict,
+                    reasons,
+                } => {
                     let forced = publish_override.is_some();
-                    if !exam_ids.insert(exam_id.clone()) { return Err(format!("PUBLISH_DUPLICATE_EXAM_ID:{exam_id}")); }
+                    if !exam_ids.insert(exam_id.clone()) {
+                        return Err(format!("PUBLISH_DUPLICATE_EXAM_ID:{exam_id}"));
+                    }
                     loadable_exam_ids.insert(exam_id.clone());
                     // 脚本放进不可变的 releases/ 目录；资源路径保持根级 `resources/<examId>/`，
                     // 因为学生端 resolver 固定从 reading 根解析 `resources/${examId}`，不消费 resourcesBase。
-                    let script_relative = staged.entry["script"].as_str().ok_or("PUBLISH_PATH_MISSING")?.trim_start_matches("./");
-                    staged.entry["script"] = json!(format!("./releases/{batch_id}/{script_relative}"));
+                    let script_relative = staged.entry["script"]
+                        .as_str()
+                        .ok_or("PUBLISH_PATH_MISSING")?
+                        .trim_start_matches("./");
+                    staged.entry["script"] =
+                        json!(format!("./releases/{batch_id}/{script_relative}"));
                     // 学生端忽略未知的清单条目字段；放行标记留在条目上供审计。
                     if let Some(publish_override) = publish_override.as_ref() {
                         staged.entry["publishOverride"] = publish_override.clone();
-                        forced_items.push(json!({"itemId": item_id, "examId": exam_id, "studentLoadable": true,
+                        forced_items.push(
+                            json!({"itemId": item_id, "examId": exam_id, "studentLoadable": true,
                             "verdictStatus": verdict.get("status").cloned().unwrap_or(Value::Null),
-                            "confirmedAt": publish_override.get("confirmedAt").cloned()}));
+                            "confirmedAt": publish_override.get("confirmedAt").cloned()}),
+                        );
                     }
                     manifest.insert(exam_id.clone(), staged.entry);
                     outcomes.push(json!({"itemId": item_id, "ok": true, "examId": exam_id,
                         "editVersion": version, "manifestPath": paths.manifest_path, "assetCount": asset_count,
                         "forced": forced, "studentLoadable": true, "publishRecordId": record_id,
                         "verdictStatus": verdict.get("status").cloned().unwrap_or(Value::Null)}));
-                    publications.push(ItemPublication { item_id: item_id.clone(), edit_version: *version, record_id,
-                        forced, student_loadable: true, verdict, reasons });
+                    publications.push(ItemPublication {
+                        item_id: item_id.clone(),
+                        edit_version: *version,
+                        record_id,
+                        forced,
+                        student_loadable: true,
+                        verdict,
+                        reasons,
+                    });
                 }
             }
             if input.fault.as_deref() == Some(&format!("after_item_{}", index + 1)) {
@@ -472,8 +568,11 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
             "assetCount": manifest.len(), "generatedAt": Utc::now().to_rfc3339(), "batchId": batch_id,
             "forcedItems": forced_items}));
         let candidate = staging.join("manifest.js");
-        let candidate_bytes = format!("window.__READING_EXAM_MANIFEST__ = {};\n",
-            serde_json::to_string_pretty(&manifest).map_err(|error| error.to_string())?).into_bytes();
+        let candidate_bytes = format!(
+            "window.__READING_EXAM_MANIFEST__ = {};\n",
+            serde_json::to_string_pretty(&manifest).map_err(|error| error.to_string())?
+        )
+        .into_bytes();
         write_synced_file(&candidate, &candidate_bytes)?;
         // 提交点判定只能靠磁盘事实。提交用的是 `atomic_replace_file`（移动），
         // 提交后 release 里已无候选清单，所以必须先把候选清单的内容哈希记进状态，
@@ -515,7 +614,8 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
             moved_resources.push((exam_id.clone(), had_resources));
             write_batch_state(&moved_resources, false)?;
             if had_resources {
-                fs::create_dir_all(backup_dir.join("resources")).map_err(|error| error.to_string())?;
+                fs::create_dir_all(backup_dir.join("resources"))
+                    .map_err(|error| error.to_string())?;
                 fs::rename(&root_resource, backup_dir.join("resources").join(exam_id))
                     .map_err(|error| error.to_string())?;
             }
@@ -525,7 +625,9 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
         verify_manifest_compare_and_swap(&paths.manifest_path, &base_hash)?;
         fs::create_dir_all(release.parent().unwrap()).map_err(|error| error.to_string())?;
         fs::rename(&staging, &release).map_err(|error| error.to_string())?;
-        if input.fault.as_deref() == Some("before_manifest") { return Err("PUBLISH_BATCH_INTERRUPTED".to_string()); }
+        if input.fault.as_deref() == Some("before_manifest") {
+            return Err("PUBLISH_BATCH_INTERRUPTED".to_string());
+        }
         // Published entries point only at immutable script files; one manifest replacement exposes the batch.
         atomic_replace_file(&release.join("manifest.js"), &paths.manifest_path)?;
         // 提交点已过：新清单引用的 scripts 与 resources 都已就位。状态文件此刻
@@ -574,7 +676,9 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
             &input.destination,
         ) {
             let _ = fs::remove_file(&paths.lock_metadata_path);
-            return Err(format!("PUBLISH_RECORD_WRITE_FAILED:manifest_committed:{error}"));
+            return Err(format!(
+                "PUBLISH_RECORD_WRITE_FAILED:manifest_committed:{error}"
+            ));
         }
         if !status_drift.is_empty() {
             let _ = fs::remove_file(&paths.lock_metadata_path);
@@ -590,7 +694,10 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
         // 冻结失败时**不**删除：没有冻结证据，删除 shadow 会让这道题再也无法正常发布。
         let mut final_versions = BTreeMap::new();
         for publication in &publications {
-            let Some((_, ds, _)) = snapshots.iter().find(|(id, _, _)| id == &publication.item_id) else {
+            let Some((_, ds, _)) = snapshots
+                .iter()
+                .find(|(id, _, _)| id == &publication.item_id)
+            else {
                 continue;
             };
             let report = match crate::library::final_version::freeze_final_version(
@@ -612,15 +719,24 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
                         &publication.item_id,
                         &purge,
                     );
-                    let failed = purge.get("failed").and_then(Value::as_array).map_or(0, Vec::len);
+                    let failed = purge
+                        .get("failed")
+                        .and_then(Value::as_array)
+                        .map_or(0, Vec::len);
                     if failed > 0 {
-                        eprintln!("[publish] source purge for {} left {failed} entries", publication.item_id);
+                        eprintln!(
+                            "[publish] source purge for {} left {failed} entries",
+                            publication.item_id
+                        );
                     }
                     json!({"frozen": true, "sourcePurged": marked.is_ok(), "purge": purge,
                         "error": marked.err()})
                 }
                 Err(error) => {
-                    eprintln!("[publish] final version freeze failed for {}: {error}", publication.item_id);
+                    eprintln!(
+                        "[publish] final version freeze failed for {}: {error}",
+                        publication.item_id
+                    );
                     json!({"frozen": false, "sourcePurged": false, "error": error})
                 }
             };
@@ -633,7 +749,11 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
                 .into_iter()
                 .flatten()
             {
-                let item_id = outcome.get("itemId").and_then(Value::as_str).unwrap_or_default().to_string();
+                let item_id = outcome
+                    .get("itemId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
                 if let Some(report) = final_versions.remove(&item_id) {
                     outcome["finalVersion"] = report;
                 }
@@ -744,10 +864,14 @@ fn write_publish_records(
 ) -> CommandResult<()> {
     let now = Utc::now().to_rfc3339();
     for publication in publications {
-        let drifted = status_drift
-            .iter()
-            .any(|drift| drift.get("itemId").and_then(Value::as_str) == Some(publication.item_id.as_str()));
-        let status = if drifted { "status_drift" } else { publication.item_status() };
+        let drifted = status_drift.iter().any(|drift| {
+            drift.get("itemId").and_then(Value::as_str) == Some(publication.item_id.as_str())
+        });
+        let status = if drifted {
+            "status_drift"
+        } else {
+            publication.item_status()
+        };
         conn.execute(
             "INSERT INTO publish_records_v2
              (id, library_item_id, edit_version, batch_id, destination, forced, verdict_json,
@@ -966,8 +1090,11 @@ fn stage_package_files(
                     descriptor.asset_id
                 )
             })?;
-        let destination_relative =
-            format!("resources/{}/{}", source.exam_id(), descriptor.relative_path);
+        let destination_relative = format!(
+            "resources/{}/{}",
+            source.exam_id(),
+            descriptor.relative_path
+        );
         let destination = paths.staging_root.join(&destination_relative);
         let collision_key = destination_relative.to_ascii_lowercase();
         if !seen_destinations.insert(collision_key) {
@@ -1047,23 +1174,28 @@ fn stage_package_files(
         .unwrap_or("0.2.0");
     validate_minimum_runtime_version(minimum_runtime_version)?;
     let entry = json!({
-            "examId": source.exam_id(),
-            "dataKey": source.exam_id(),
-            "script": format!("./{}.js", source.exam_id()),
-            "title": source.title(),
-            "category": source.category_value(),
-            "schemaVersion": source.schema_version(),
-            "modality": source.modality(),
-            "minimumRuntimeVersion": minimum_runtime_version,
-            "resourcesBase": format!("./resources/{}/", source.exam_id()),
-            "assetManifest": format!("./resources/{}/{}", source.exam_id(), ASSET_MANIFEST_FILE_NAME),
-            "checksums": {
-                "scriptSha256": script_sha256,
-                "assetManifestSha256": asset_manifest_sha256,
-                "runtimeSha256": runtime_sha256
-            }
-        });
-    Ok(StagedPackage { entry, probe, runtime_sha256, minimum_runtime_version: minimum_runtime_version.to_string() })
+        "examId": source.exam_id(),
+        "dataKey": source.exam_id(),
+        "script": format!("./{}.js", source.exam_id()),
+        "title": source.title(),
+        "category": source.category_value(),
+        "schemaVersion": source.schema_version(),
+        "modality": source.modality(),
+        "minimumRuntimeVersion": minimum_runtime_version,
+        "resourcesBase": format!("./resources/{}/", source.exam_id()),
+        "assetManifest": format!("./resources/{}/{}", source.exam_id(), ASSET_MANIFEST_FILE_NAME),
+        "checksums": {
+            "scriptSha256": script_sha256,
+            "assetManifestSha256": asset_manifest_sha256,
+            "runtimeSha256": runtime_sha256
+        }
+    });
+    Ok(StagedPackage {
+        entry,
+        probe,
+        runtime_sha256,
+        minimum_runtime_version: minimum_runtime_version.to_string(),
+    })
 }
 
 fn stage_and_commit(
@@ -1075,8 +1207,12 @@ fn stage_and_commit(
     paths: &PackagePaths,
     export_id: &str,
 ) -> CommandResult<Value> {
-    let StagedPackage { entry, probe, runtime_sha256, minimum_runtime_version } =
-        stage_package_files(input, source, source_value, source_path, paths)?;
+    let StagedPackage {
+        entry,
+        probe,
+        runtime_sha256,
+        minimum_runtime_version,
+    } = stage_package_files(input, source, source_value, source_path, paths)?;
     verify_manifest_compare_and_swap(&paths.manifest_path, &paths.base_manifest_sha256)?;
     let mut manifest = load_existing_manifest(&paths.manifest_path)?;
     manifest.insert(source.exam_id().to_string(), entry);
@@ -1725,9 +1861,15 @@ fn atomic_replace_file(source: &Path, destination: &Path) -> CommandResult<()> {
     {
         use std::os::windows::ffi::OsStrExt;
         #[link(name = "kernel32")]
-        extern "system" { fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32; }
+        extern "system" {
+            fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
+        }
         let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
-        let destination: Vec<u16> = destination.as_os_str().encode_wide().chain(Some(0)).collect();
+        let destination: Vec<u16> = destination
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
         // Both buffers are NUL-terminated and live for the duration of the call.
         if unsafe { MoveFileExW(source.as_ptr(), destination.as_ptr(), 0x1 | 0x8) } == 0 {
             return Err(std::io::Error::last_os_error().to_string());
@@ -1735,7 +1877,9 @@ fn atomic_replace_file(source: &Path, destination: &Path) -> CommandResult<()> {
         Ok(())
     }
     #[cfg(not(windows))]
-    { fs::rename(source, destination).map_err(|error| error.to_string()) }
+    {
+        fs::rename(source, destination).map_err(|error| error.to_string())
+    }
 }
 
 fn validate_backup_contents(
@@ -1953,7 +2097,11 @@ fn recover_interrupted_batches(paths: &PackagePaths, control_root: &Path) -> Com
             let _ = fs::remove_dir_all(&dir);
             continue;
         }
-        for exam in state.get("exams").and_then(Value::as_array).unwrap_or(&Vec::new()) {
+        for exam in state
+            .get("exams")
+            .and_then(Value::as_array)
+            .unwrap_or(&Vec::new())
+        {
             let Some(exam_id) = exam.get("examId").and_then(Value::as_str) else {
                 continue;
             };
@@ -1974,7 +2122,11 @@ fn recover_interrupted_batches(paths: &PackagePaths, control_root: &Path) -> Com
             }
         }
         restore_manifest_baseline(paths, &dir)?;
-        let _ = fs::remove_dir_all(paths.reading_root.join(format!(".batch-staging-{batch_id}")));
+        let _ = fs::remove_dir_all(
+            paths
+                .reading_root
+                .join(format!(".batch-staging-{batch_id}")),
+        );
         let _ = fs::remove_dir_all(paths.reading_root.join("releases").join(batch_id));
         let _ = fs::remove_dir_all(&dir);
     }
@@ -2262,7 +2414,10 @@ mod tests {
         assert_eq!(make(false, true).item_status(), "published");
         assert_eq!(make(true, true).item_status(), "published_forced");
         assert_eq!(make(false, false).item_status(), "published_not_loadable");
-        assert_eq!(make(true, false).item_status(), "published_forced_not_loadable");
+        assert_eq!(
+            make(true, false).item_status(),
+            "published_forced_not_loadable"
+        );
         // 不变式：学生端打不开的条目永远不是 `published`，放行与否都一样。
         for forced in [false, true] {
             assert_ne!(
@@ -2293,8 +2448,7 @@ mod tests {
 
         // 冻结版本 = 1（快照时看到的），库里现在是 2（期间被编辑过）。
         let drift =
-            commit_published_status(&conn, &[strict_publication("item-drifted", 1)])
-                .unwrap();
+            commit_published_status(&conn, &[strict_publication("item-drifted", 1)]).unwrap();
 
         assert_eq!(
             drift.len(),
@@ -2328,9 +2482,11 @@ mod tests {
 
         // 反向：版本一致时不得误报，否则每次正常发布都会被判"漂移"。
         let confirmed =
-            commit_published_status(&conn, &[strict_publication("item-drifted", 2)])
-                .unwrap();
-        assert!(confirmed.is_empty(), "版本一致时必须确认成功：{confirmed:?}");
+            commit_published_status(&conn, &[strict_publication("item-drifted", 2)]).unwrap();
+        assert!(
+            confirmed.is_empty(),
+            "版本一致时必须确认成功：{confirmed:?}"
+        );
         let status: String = conn
             .query_row(
                 "SELECT status FROM library_items_v2 WHERE id = ?1",
@@ -2493,7 +2649,11 @@ mod tests {
             .unwrap_or_else(|| panic!("the exam is in the manifest: {manifest:?}"));
         assert_eq!(entry["schemaVersion"], "ListeningExamSourceV1", "{entry}");
         assert_eq!(entry["modality"], "listening", "{entry}");
-        assert_eq!(entry["category"], Value::Null, "a listening paper has no passage category");
+        assert_eq!(
+            entry["category"],
+            Value::Null,
+            "a listening paper has no passage category"
+        );
         assert_eq!(entry["resourcesBase"], "./resources/early-approaches/");
 
         // Four sections, four files, each byte-identical to what the descriptor promised.
@@ -2501,10 +2661,14 @@ mod tests {
         for ordinal in 1..=4 {
             let descriptor = crate::test_support::listening_audio_asset(ordinal);
             let staged = resource_dir.join(&descriptor.relative_path);
-            let bytes = fs::read(&staged)
-                .unwrap_or_else(|error| panic!("{}: {error}", staged.display()));
+            let bytes =
+                fs::read(&staged).unwrap_or_else(|error| panic!("{}: {error}", staged.display()));
             assert_eq!(sha256_hex(&bytes), descriptor.sha256, "section {ordinal}");
-            assert_eq!(bytes.len() as u64, descriptor.byte_length, "section {ordinal}");
+            assert_eq!(
+                bytes.len() as u64,
+                descriptor.byte_length,
+                "section {ordinal}"
+            );
         }
 
         let asset_manifest: Value =
@@ -2522,7 +2686,10 @@ mod tests {
         // only the payload inside it differs (parts instead of a passage).
         let script = fs::read_to_string(nas_parent.join("early-approaches.js"))
             .unwrap_or_else(|error| panic!("the exam script must be readable: {error}"));
-        assert!(script.contains("__READING_EXAM_DATA__.register("), "{script}");
+        assert!(
+            script.contains("__READING_EXAM_DATA__.register("),
+            "{script}"
+        );
         assert!(script.contains("\"ListeningExamSourceV1\""), "{script}");
         assert!(
             !script.contains("\"passage\""),
@@ -2559,7 +2726,10 @@ mod tests {
             !nas_parent.join("manifest.js").exists(),
             "no discovery manifest may be committed for a paper we cannot ship"
         );
-        assert!(!nas_parent.join("resources").join("early-approaches").exists());
+        assert!(!nas_parent
+            .join("resources")
+            .join("early-approaches")
+            .exists());
 
         let _ = fs::remove_dir_all(root);
     }
@@ -3114,7 +3284,12 @@ mod tests {
             .join(format!("batch-{batch_id}"))
     }
 
-    fn write_batch_backup_state(dir: &Path, committed: bool, exams: Value, pending_manifest_sha256: Option<&str>) {
+    fn write_batch_backup_state(
+        dir: &Path,
+        committed: bool,
+        exams: Value,
+        pending_manifest_sha256: Option<&str>,
+    ) {
         fs::create_dir_all(dir).unwrap();
         let state = json!({
             "schemaVersion": "NasBatchBackupStateV1",
@@ -3141,11 +3316,7 @@ mod tests {
         fs::write(live.join("asset.bin"), "old-asset").unwrap();
         let backup_dir = root.join("backup");
 
-        rollback_batch_resources(
-            &reading_root,
-            &backup_dir,
-            &[("v2-p1".to_string(), true)],
-        );
+        rollback_batch_resources(&reading_root, &backup_dir, &[("v2-p1".to_string(), true)]);
 
         assert_eq!(
             fs::read_to_string(live.join("asset.bin")).unwrap(),
@@ -3247,7 +3418,11 @@ mod tests {
         let dir = batch_control_dir(&library_root, "deadbeef");
         fs::create_dir_all(&dir).unwrap();
         // 基线：批次开始前的旧清单，与线上不同 → 说明清单已被替换。
-        fs::write(dir.join("manifest.js"), b"window.__READING_EXAM_MANIFEST__ = {\"batch\":\"old\"};\n").unwrap();
+        fs::write(
+            dir.join("manifest.js"),
+            b"window.__READING_EXAM_MANIFEST__ = {\"batch\":\"old\"};\n",
+        )
+        .unwrap();
         // 旧格式状态：没有 pendingManifestSha256，且 manifestCommitted 仍是 false。
         fs::write(
             dir.join("state.json"),

@@ -165,7 +165,12 @@ pub(crate) fn run_preview_e2e_core(root: &Path, job_id: &str) -> CommandResult<V
         .unwrap_or(false);
     let publish_readiness = if static_report_passed {
         if let Some(ir) = authoring.as_ref() {
-            Some(publish_readiness_gate(root, job_id, ir, static_report.clone())?)
+            Some(publish_readiness_gate(
+                root,
+                job_id,
+                ir,
+                static_report.clone(),
+            )?)
         } else {
             None
         }

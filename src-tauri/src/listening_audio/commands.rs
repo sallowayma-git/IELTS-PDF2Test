@@ -57,7 +57,10 @@ pub(crate) fn bind_audio_command_path(
     item_id: &str,
     part_ordinal: i64,
     path: &Path,
-) -> CommandResult<(store::ListeningAudioAssetV1, super::canonical_media::AudioMediaSyncV1)> {
+) -> CommandResult<(
+    store::ListeningAudioAssetV1,
+    super::canonical_media::AudioMediaSyncV1,
+)> {
     let bound = store::bind_audio(root, item_id, part_ordinal, path)?;
     // Mirror onto the canonical draft's part `media` through a real edit
     // transaction, so preview/export/student runtime read one document.
@@ -70,19 +73,27 @@ pub(crate) fn bind_audio_command_path(
 }
 
 #[tauri::command]
-pub(crate) async fn bind_listening_audio(input: BindListeningAudioInput, app: AppHandle) -> CommandResult<Value> {
+pub(crate) async fn bind_listening_audio(
+    input: BindListeningAudioInput,
+    app: AppHandle,
+) -> CommandResult<Value> {
     let root = crate::app_root(&app)?;
     allow_managed_audio(&app, &root);
     let item_id = input.item_id.clone();
     let part_ordinal = input.part_ordinal;
     let path = input.path.clone();
-    let bound = blocking(move || bind_audio_command_path(&root, &item_id, part_ordinal, Path::new(&path)))
-        .await?;
+    let bound =
+        blocking(move || bind_audio_command_path(&root, &item_id, part_ordinal, Path::new(&path)))
+            .await?;
     to_value(bound.0)
 }
 
 #[tauri::command]
-pub(crate) async fn bind_listening_audio_folder(item_id: String, folder: String, app: AppHandle) -> CommandResult<Value> {
+pub(crate) async fn bind_listening_audio_folder(
+    item_id: String,
+    folder: String,
+    app: AppHandle,
+) -> CommandResult<Value> {
     let root = crate::app_root(&app)?;
     allow_managed_audio(&app, &root);
     let bound = blocking(move || {
@@ -95,7 +106,11 @@ pub(crate) async fn bind_listening_audio_folder(item_id: String, folder: String,
 }
 
 #[tauri::command]
-pub(crate) async fn unbind_listening_audio(item_id: String, part_ordinal: i64, app: AppHandle) -> CommandResult<Value> {
+pub(crate) async fn unbind_listening_audio(
+    item_id: String,
+    part_ordinal: i64,
+    app: AppHandle,
+) -> CommandResult<Value> {
     let root = crate::app_root(&app)?;
     let removed = blocking(move || {
         let removed = store::unbind_audio(&root, &item_id, part_ordinal)?;
@@ -108,7 +123,11 @@ pub(crate) async fn unbind_listening_audio(item_id: String, part_ordinal: i64, a
 
 /// Bindings + readiness. `verify: true` re-probes each managed file against its hash.
 #[tauri::command]
-pub(crate) async fn get_listening_audio(item_id: String, verify: Option<bool>, app: AppHandle) -> CommandResult<Value> {
+pub(crate) async fn get_listening_audio(
+    item_id: String,
+    verify: Option<bool>,
+    app: AppHandle,
+) -> CommandResult<Value> {
     let root = crate::app_root(&app)?;
     allow_managed_audio(&app, &root);
     let status = blocking(move || {

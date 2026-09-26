@@ -146,7 +146,8 @@ pub(crate) fn list_library_items_core(root: &Path, include_deleted: bool) -> Com
     for row in rows {
         let processing = crate::processing::queue::get_job(&conn, &row.id)?;
         let mut value = serde_json::to_value(row).map_err(|error| error.to_string())?;
-        value["processing"] = serde_json::to_value(processing).map_err(|error| error.to_string())?;
+        value["processing"] =
+            serde_json::to_value(processing).map_err(|error| error.to_string())?;
         result.push(value);
     }
     Ok(Value::Array(result))

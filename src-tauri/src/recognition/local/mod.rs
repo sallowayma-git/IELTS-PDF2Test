@@ -314,10 +314,13 @@ impl QuestionLayoutGraphV1 {
             .question_blocks
             .iter()
             .flat_map(|block| {
-                block.ambiguities.iter().map(|code| RecognitionBlockerTargetV2 {
-                    code: code.clone(),
-                    target: format!("q{}", block.question_number),
-                })
+                block
+                    .ambiguities
+                    .iter()
+                    .map(|code| RecognitionBlockerTargetV2 {
+                        code: code.clone(),
+                        target: format!("q{}", block.question_number),
+                    })
             })
             .chain(self.task_groups.iter().flat_map(|group| {
                 group.issues.iter().map(|code| RecognitionBlockerTargetV2 {

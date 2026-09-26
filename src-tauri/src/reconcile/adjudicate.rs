@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::Value;
 
 use super::candidate::align_answer_value;
-use super::engine::{classify_cloud_error, ModelCallFailure, AdjudicationRunner};
+use super::engine::{classify_cloud_error, AdjudicationRunner, ModelCallFailure};
 use super::rules::{
     answer_compare_key, answer_is_empty, answer_patch, canonical_answer, compare, CompareInput,
 };
@@ -156,10 +156,7 @@ fn patch_answer_value(patch: &Value) -> Option<&Value> {
 }
 
 /// 自动应用资格（确定性，不使用模型置信度）。
-fn auto_apply_eligible(
-    item: &DecisionItemV1,
-    input: &AdjudicateInput<'_>,
-) -> bool {
+fn auto_apply_eligible(item: &DecisionItemV1, input: &AdjudicateInput<'_>) -> bool {
     if item.resolution != DecisionResolutionV1::NeedsReview {
         return false;
     }
@@ -170,8 +167,12 @@ fn auto_apply_eligible(
     if item.field != DecisionFieldV1::Answer {
         return false;
     }
-    let Some(patch) = item.proposed_patch.as_ref() else { return false };
-    let Some(proposed) = patch_answer_value(patch) else { return false };
+    let Some(patch) = item.proposed_patch.as_ref() else {
+        return false;
+    };
+    let Some(proposed) = patch_answer_value(patch) else {
+        return false;
+    };
 
     let canonical_value = canonical_answer(input.canonical, &item.target.target_id);
     // 1) 只补空，绝不覆盖已有答案。
@@ -179,7 +180,9 @@ fn auto_apply_eligible(
         return false;
     }
     // 2) 权威稿必须与本地识别结果一致（用户没有改过这一槽位）。
-    let Some(local_slot) = input.local.slot(&item.target.target_id) else { return false };
+    let Some(local_slot) = input.local.slot(&item.target.target_id) else {
+        return false;
+    };
     let local_key = answer_compare_key(local_slot.answer.as_ref());
     if answer_compare_key(canonical_value) != local_key {
         return false;
@@ -284,7 +287,11 @@ fn apply_ruling(
         .trim()
         .to_string();
     let Some(chosen) = ruling.get("chosen").and_then(Value::as_str) else {
-        return mark_unruled(item, reason::ADJUDICATION_DECLINED, "模型没有给出采用哪一路的结论");
+        return mark_unruled(
+            item,
+            reason::ADJUDICATION_DECLINED,
+            "模型没有给出采用哪一路的结论",
+        );
     };
     if chosen == "unresolved" {
         return mark_unruled(item, reason::ADJUDICATION_DECLINED, "模型核阅后仍无法裁定");
@@ -305,9 +312,11 @@ fn apply_ruling(
         .slot(&item.target.target_id)
         .and_then(|slot| slot.answer.clone())
         .or_else(|| canonical_answer(canonical, &item.target.target_id).cloned());
-    let bank = local
-        .slot(&item.target.target_id)
-        .and_then(|slot| local.group(&slot.task_id).and_then(|group| group.option_bank.as_ref()));
+    let bank = local.slot(&item.target.target_id).and_then(|slot| {
+        local
+            .group(&slot.task_id)
+            .and_then(|group| group.option_bank.as_ref())
+    });
     let aligned = target_shape
         .as_ref()
         .and_then(|shape| align_answer_value(raw_value, shape, bank))
@@ -349,7 +358,10 @@ fn apply_ruling(
     if item.resolution == DecisionResolutionV1::Unverifiable {
         item.resolution = DecisionResolutionV1::NeedsReview;
     }
-    item.user_message = format!("{}（模型核阅后建议采用{label}的结果，{reason_text}，请确认）", item.user_message);
+    item.user_message = format!(
+        "{}（模型核阅后建议采用{label}的结果，{reason_text}，请确认）",
+        item.user_message
+    );
     item.evidence.push(DecisionEvidenceV1 {
         chain: match chosen {
             "local" => ChainKindV1::Local,
@@ -358,7 +370,11 @@ fn apply_ruling(
         },
         anchor_kind: "adjudication_ruling".to_string(),
         page_index: None,
-        quote: if rationale.is_empty() { None } else { Some(rationale) },
+        quote: if rationale.is_empty() {
+            None
+        } else {
+            Some(rationale)
+        },
         anchor: Some(serde_json::json!({
             "chosen": chosen,
             "corroborated": true,
@@ -370,7 +386,10 @@ fn apply_ruling(
 
 fn mark_unruled(item: &mut DecisionItemV1, code: &str, note: &str) -> RulingOutcome {
     item.reason_code = code.to_string();
-    item.user_message = format!("{}（{note}，未作为已核验结论，请人工确认）", item.user_message);
+    item.user_message = format!(
+        "{}（{note}，未作为已核验结论，请人工确认）",
+        item.user_message
+    );
     RulingOutcome::Unruled
 }
 
@@ -464,7 +483,11 @@ fn apply_adjudication(items: &mut [DecisionItemV1], input: &AdjudicateInput<'_>)
             ruling.get("decisionId").and_then(Value::as_str) == Some(decision_id.as_str())
         }) else {
             // 模型漏答：**不能**当作「已经裁过了」，如实记成未获裁定。
-            mark_unruled(item, reason::ADJUDICATION_DECLINED, "模型本次未对该项给出裁定");
+            mark_unruled(
+                item,
+                reason::ADJUDICATION_DECLINED,
+                "模型本次未对该项给出裁定",
+            );
             declined += 1;
             continue;
         };
@@ -540,7 +563,10 @@ pub(crate) fn adjudicate(input: AdjudicateInput<'_>) -> AdjudicationOutcome {
     let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for item in &items {
         if let Some(group) = &item.dependency_group {
-            groups.entry(group.clone()).or_default().push(item.decision_id.clone());
+            groups
+                .entry(group.clone())
+                .or_default()
+                .push(item.decision_id.clone());
         }
     }
     for (_, members) in groups.iter() {
@@ -552,13 +578,19 @@ pub(crate) fn adjudicate(input: AdjudicateInput<'_>) -> AdjudicationOutcome {
     }
 
     // 合并后结构校验：单独合法、合并后损坏 → 全部降级。
-    if !validate_auto_batch(&items, &eligible.clone().into_iter().collect::<Vec<_>>(), &input) {
+    if !validate_auto_batch(
+        &items,
+        &eligible.clone().into_iter().collect::<Vec<_>>(),
+        &input,
+    ) {
         for item in items.iter_mut() {
             if eligible.contains(&item.decision_id) {
                 item.reason_code = reason::DEPENDENCY_BLOCKED.to_string();
                 item.title = format!("{}（需整组确认）", item.title);
-                item.user_message =
-                    format!("{}相关修正在合并后会让题目结构不完整，请整组确认。", item.user_message);
+                item.user_message = format!(
+                    "{}相关修正在合并后会让题目结构不完整，请整组确认。",
+                    item.user_message
+                );
             }
         }
         eligible.clear();
@@ -742,12 +774,12 @@ pub(crate) fn undo_patch_for(item: &DecisionItemV1) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reconcile::source::verify_against_source;
     use crate::schema::recognition_v1::{
-        CandidateResponseGroupV1, CandidateSlotV1, CandidateTaskGroupV1, ChainKindV1, ChainStatusV1,
-        DecisionEvidenceV1, DecisionTargetV1, RecognitionCandidateV1,
+        CandidateResponseGroupV1, CandidateSlotV1, CandidateTaskGroupV1, ChainKindV1,
+        ChainStatusV1, DecisionEvidenceV1, DecisionTargetV1, RecognitionCandidateV1,
         RECOGNITION_CANDIDATE_V1_SCHEMA_VERSION,
     };
-    use crate::reconcile::source::verify_against_source;
     use serde_json::json;
 
     fn slot(slot_id: &str, number: u32, answer: Option<Value>, anchors: bool) -> CandidateSlotV1 {
@@ -766,7 +798,11 @@ mod tests {
         }
     }
 
-    fn candidate(chain: ChainKindV1, slots: Vec<CandidateSlotV1>, status: ChainStatusV1) -> RecognitionCandidateV1 {
+    fn candidate(
+        chain: ChainKindV1,
+        slots: Vec<CandidateSlotV1>,
+        status: ChainStatusV1,
+    ) -> RecognitionCandidateV1 {
         RecognitionCandidateV1 {
             schema_version: RECOGNITION_CANDIDATE_V1_SCHEMA_VERSION.to_string(),
             chain,
@@ -846,24 +882,56 @@ mod tests {
         let local = candidate(
             ChainKindV1::Local,
             vec![
-                slot("slot-14", 14, Some(json!({"kind":"text","values":["stencilling"]})), true),
-                slot("slot-15", 15, Some(json!({"kind":"text","values":["books"]})), true),
+                slot(
+                    "slot-14",
+                    14,
+                    Some(json!({"kind":"text","values":["stencilling"]})),
+                    true,
+                ),
+                slot(
+                    "slot-15",
+                    15,
+                    Some(json!({"kind":"text","values":["books"]})),
+                    true,
+                ),
             ],
             ChainStatusV1::Succeeded,
         );
         let cloud = candidate(
             ChainKindV1::Cloud,
             vec![
-                slot("slot-14", 14, Some(json!({"kind":"text","values":["Stencilling"]})), true),
-                slot("slot-15", 15, Some(json!({"kind":"text","values":["books"]})), true),
+                slot(
+                    "slot-14",
+                    14,
+                    Some(json!({"kind":"text","values":["Stencilling"]})),
+                    true,
+                ),
+                slot(
+                    "slot-15",
+                    15,
+                    Some(json!({"kind":"text","values":["books"]})),
+                    true,
+                ),
             ],
             ChainStatusV1::Succeeded,
         );
         let source = verify_against_source(
             Some(&document(&["14 stencilling\n15 books"])),
             &[
-                ("slot-14".to_string(), 14, Some(json!({"kind":"text","values":["stencilling"]})), true, String::new()),
-                ("slot-15".to_string(), 15, Some(json!({"kind":"text","values":["books"]})), true, String::new()),
+                (
+                    "slot-14".to_string(),
+                    14,
+                    Some(json!({"kind":"text","values":["stencilling"]})),
+                    true,
+                    String::new(),
+                ),
+                (
+                    "slot-15".to_string(),
+                    15,
+                    Some(json!({"kind":"text","values":["books"]})),
+                    true,
+                    String::new(),
+                ),
             ],
             &[("task-1".to_string(), vec![14, 15])],
             None,
@@ -888,7 +956,10 @@ mod tests {
         assert_eq!(outcome.decision.summary.agreed, 2);
         assert_eq!(outcome.decision.summary.needs_review, 0);
         assert_eq!(outcome.decision.summary.unverifiable, 0);
-        assert!(outcome.decision.items.is_empty(), "一致内容不得出现在问题列表");
+        assert!(
+            outcome.decision.items.is_empty(),
+            "一致内容不得出现在问题列表"
+        );
         assert!(outcome.auto_apply_candidates.is_empty());
     }
 
@@ -897,17 +968,33 @@ mod tests {
     fn agreement_without_source_evidence_is_unverifiable_not_agreed() {
         let local = candidate(
             ChainKindV1::Local,
-            vec![slot("slot-14", 14, Some(json!({"kind":"text","values":["stencilling"]})), false)],
+            vec![slot(
+                "slot-14",
+                14,
+                Some(json!({"kind":"text","values":["stencilling"]})),
+                false,
+            )],
             ChainStatusV1::Succeeded,
         );
         let cloud = candidate(
             ChainKindV1::Cloud,
-            vec![slot("slot-14", 14, Some(json!({"kind":"text","values":["stencilling"]})), false)],
+            vec![slot(
+                "slot-14",
+                14,
+                Some(json!({"kind":"text","values":["stencilling"]})),
+                false,
+            )],
             ChainStatusV1::Succeeded,
         );
         let source = verify_against_source(
             None,
-            &[("slot-14".to_string(), 14, Some(json!({"kind":"text","values":["stencilling"]})), false, String::new())],
+            &[(
+                "slot-14".to_string(),
+                14,
+                Some(json!({"kind":"text","values":["stencilling"]})),
+                false,
+                String::new(),
+            )],
             &[],
             None,
         );
@@ -925,11 +1012,17 @@ mod tests {
             validate_batch: &validate,
             adjudicator: None,
         });
-        assert_eq!(outcome.decision.summary.agreed, 0, "缺少原文证据不得判为已确认");
+        assert_eq!(
+            outcome.decision.summary.agreed, 0,
+            "缺少原文证据不得判为已确认"
+        );
         assert_eq!(outcome.decision.summary.unverifiable, 1);
         let item = &outcome.decision.items[0];
         assert_eq!(item.reason_code, reason::NO_SOURCE_EVIDENCE);
-        assert!(item.proposed_patch.is_none(), "无法判断时不得给出建议 patch");
+        assert!(
+            item.proposed_patch.is_none(),
+            "无法判断时不得给出建议 patch"
+        );
     }
 
     /// 验收项 3：本地与云端有分歧 → 只形成一份统一建议。
@@ -937,18 +1030,34 @@ mod tests {
     fn divergence_merges_into_a_single_review_item() {
         let local = candidate(
             ChainKindV1::Local,
-            vec![slot("slot-14", 14, Some(json!({"kind":"text","values":["stencilling"]})), true)],
+            vec![slot(
+                "slot-14",
+                14,
+                Some(json!({"kind":"text","values":["stencilling"]})),
+                true,
+            )],
             ChainStatusV1::Succeeded,
         );
         let cloud = candidate(
             ChainKindV1::Cloud,
-            vec![slot("slot-14", 14, Some(json!({"kind":"text","values":["painting"]})), true)],
+            vec![slot(
+                "slot-14",
+                14,
+                Some(json!({"kind":"text","values":["painting"]})),
+                true,
+            )],
             ChainStatusV1::Succeeded,
         );
         // 原文既不同意本地也不同 cloud → 无法判断。
         let source = verify_against_source(
             Some(&document(&["14 carving"])),
-            &[("slot-14".to_string(), 14, Some(json!({"kind":"text","values":["stencilling"]})), true, String::new())],
+            &[(
+                "slot-14".to_string(),
+                14,
+                Some(json!({"kind":"text","values":["stencilling"]})),
+                true,
+                String::new(),
+            )],
             &[],
             None,
         );
@@ -981,17 +1090,33 @@ mod tests {
     fn empty_answer_is_auto_filled_only_when_the_source_asserts_the_value() {
         let local = candidate(
             ChainKindV1::Local,
-            vec![slot("slot-14", 14, Some(json!({"kind":"unresolved"})), true)],
+            vec![slot(
+                "slot-14",
+                14,
+                Some(json!({"kind":"unresolved"})),
+                true,
+            )],
             ChainStatusV1::Succeeded,
         );
         let cloud = candidate(
             ChainKindV1::Cloud,
-            vec![slot("slot-14", 14, Some(json!({"kind":"text","values":["stencilling"]})), true)],
+            vec![slot(
+                "slot-14",
+                14,
+                Some(json!({"kind":"text","values":["stencilling"]})),
+                true,
+            )],
             ChainStatusV1::Succeeded,
         );
         let source = verify_against_source(
             Some(&document(&["14 stencilling"])),
-            &[("slot-14".to_string(), 14, Some(json!({"kind":"unresolved"})), true, String::new())],
+            &[(
+                "slot-14".to_string(),
+                14,
+                Some(json!({"kind":"unresolved"})),
+                true,
+                String::new(),
+            )],
             &[],
             None,
         );
@@ -1012,7 +1137,11 @@ mod tests {
         assert_eq!(outcome.auto_apply_candidates.len(), 1);
         assert_eq!(outcome.auto_apply_candidates[0], "d:slot:slot-14:answer");
         let item = &outcome.decision.items[0];
-        assert_eq!(item.resolution, DecisionResolutionV1::NeedsReview, "写入前不得谎称已修正");
+        assert_eq!(
+            item.resolution,
+            DecisionResolutionV1::NeedsReview,
+            "写入前不得谎称已修正"
+        );
         assert!(item.proposed_patch.is_some());
     }
 
@@ -1021,17 +1150,33 @@ mod tests {
     fn non_empty_answer_is_never_auto_overwritten() {
         let local = candidate(
             ChainKindV1::Local,
-            vec![slot("slot-14", 14, Some(json!({"kind":"text","values":["stencilling"]})), true)],
+            vec![slot(
+                "slot-14",
+                14,
+                Some(json!({"kind":"text","values":["stencilling"]})),
+                true,
+            )],
             ChainStatusV1::Succeeded,
         );
         let cloud = candidate(
             ChainKindV1::Cloud,
-            vec![slot("slot-14", 14, Some(json!({"kind":"text","values":["stencilling"]})), true)],
+            vec![slot(
+                "slot-14",
+                14,
+                Some(json!({"kind":"text","values":["stencilling"]})),
+                true,
+            )],
             ChainStatusV1::Succeeded,
         );
         let source = verify_against_source(
             Some(&document(&["14 painting"])),
-            &[("slot-14".to_string(), 14, Some(json!({"kind":"text","values":["stencilling"]})), true, String::new())],
+            &[(
+                "slot-14".to_string(),
+                14,
+                Some(json!({"kind":"text","values":["stencilling"]})),
+                true,
+                String::new(),
+            )],
             &[],
             None,
         );
@@ -1049,7 +1194,10 @@ mod tests {
             validate_batch: &validate,
             adjudicator: None,
         });
-        assert!(outcome.auto_apply_candidates.is_empty(), "已有答案不得被自动覆盖");
+        assert!(
+            outcome.auto_apply_candidates.is_empty(),
+            "已有答案不得被自动覆盖"
+        );
         assert_eq!(outcome.decision.summary.needs_review, 1);
     }
 
@@ -1058,17 +1206,33 @@ mod tests {
     fn batch_that_breaks_structure_downgrades_the_whole_group() {
         let local = candidate(
             ChainKindV1::Local,
-            vec![slot("slot-14", 14, Some(json!({"kind":"unresolved"})), true)],
+            vec![slot(
+                "slot-14",
+                14,
+                Some(json!({"kind":"unresolved"})),
+                true,
+            )],
             ChainStatusV1::Succeeded,
         );
         let cloud = candidate(
             ChainKindV1::Cloud,
-            vec![slot("slot-14", 14, Some(json!({"kind":"text","values":["stencilling"]})), true)],
+            vec![slot(
+                "slot-14",
+                14,
+                Some(json!({"kind":"text","values":["stencilling"]})),
+                true,
+            )],
             ChainStatusV1::Succeeded,
         );
         let source = verify_against_source(
             Some(&document(&["14 stencilling"])),
-            &[("slot-14".to_string(), 14, Some(json!({"kind":"unresolved"})), true, String::new())],
+            &[(
+                "slot-14".to_string(),
+                14,
+                Some(json!({"kind":"unresolved"})),
+                true,
+                String::new(),
+            )],
             &[],
             None,
         );
@@ -1087,7 +1251,10 @@ mod tests {
             adjudicator: None,
         });
         assert!(outcome.auto_apply_candidates.is_empty());
-        assert_eq!(outcome.decision.items[0].reason_code, reason::DEPENDENCY_BLOCKED);
+        assert_eq!(
+            outcome.decision.items[0].reason_code,
+            reason::DEPENDENCY_BLOCKED
+        );
         assert_eq!(outcome.decision.summary.needs_review, 1);
     }
 
@@ -1118,7 +1285,9 @@ mod tests {
             local_value: Some(json!({"kind":"unresolved"})),
             cloud_value: None,
             source_value: None,
-            proposed_patch: Some(json!({"op":"setAnswer","slotId":"slot-14","value":{"kind":"text","values":["stencilling"]}})),
+            proposed_patch: Some(
+                json!({"op":"setAnswer","slotId":"slot-14","value":{"kind":"text","values":["stencilling"]}}),
+            ),
             undo: None,
             auto_applied: true,
             applied_at: None,
@@ -1141,12 +1310,22 @@ mod tests {
     ) {
         let local = candidate(
             ChainKindV1::Local,
-            vec![slot("slot-14", 14, Some(json!({"kind":"text","values":["stencilling"]})), true)],
+            vec![slot(
+                "slot-14",
+                14,
+                Some(json!({"kind":"text","values":["stencilling"]})),
+                true,
+            )],
             ChainStatusV1::Succeeded,
         );
         let cloud = candidate(
             ChainKindV1::Cloud,
-            vec![slot("slot-14", 14, Some(json!({"kind":"text","values":["painting"]})), true)],
+            vec![slot(
+                "slot-14",
+                14,
+                Some(json!({"kind":"text","values":["painting"]})),
+                true,
+            )],
             ChainStatusV1::Succeeded,
         );
         let source = verify_against_source(
@@ -1212,7 +1391,9 @@ mod tests {
         );
         let item = answer_item(&outcome);
         assert_eq!(
-            item.proposed_patch.as_ref().map(|patch| patch["value"].clone()),
+            item.proposed_patch
+                .as_ref()
+                .map(|patch| patch["value"].clone()),
             Some(json!({"kind":"text","values":["painting"]})),
             "裁定选中的链值必须落成具体建议 patch"
         );
@@ -1240,10 +1421,9 @@ mod tests {
     fn adjudication_budget_exhaustion_never_counts_as_ruled() {
         let (local, cloud, source, canonical) = adjudication_fixture();
         let validate = no_validation();
-        let stub =
-            |_payload: &[Value]| -> Result<Value, ModelCallFailure> {
-                Err(ModelCallFailure::BudgetExhausted)
-            };
+        let stub = |_payload: &[Value]| -> Result<Value, ModelCallFailure> {
+            Err(ModelCallFailure::BudgetExhausted)
+        };
         let adjudicator: AdjudicationRunner<'_> = &stub;
         let outcome = adjudicate(AdjudicateInput {
             canonical: &canonical,
@@ -1346,7 +1526,9 @@ mod tests {
             reason::ADJUDICATION_VALUE_NOT_CORROBORATED
         );
         assert_eq!(
-            item.proposed_patch.as_ref().map(|patch| patch["value"].clone()),
+            item.proposed_patch
+                .as_ref()
+                .map(|patch| patch["value"].clone()),
             Some(json!({"kind":"text","values":["carving"]})),
             "被拒的裁定不得改写建议；建议必须仍是确定性规则的结论"
         );
@@ -1394,12 +1576,22 @@ mod tests {
     fn adjudication_is_succeeded_when_there_is_nothing_to_decide() {
         let local = candidate(
             ChainKindV1::Local,
-            vec![slot("slot-14", 14, Some(json!({"kind":"text","values":["stencilling"]})), true)],
+            vec![slot(
+                "slot-14",
+                14,
+                Some(json!({"kind":"text","values":["stencilling"]})),
+                true,
+            )],
             ChainStatusV1::Succeeded,
         );
         let cloud = candidate(
             ChainKindV1::Cloud,
-            vec![slot("slot-14", 14, Some(json!({"kind":"text","values":["Stencilling"]})), true)],
+            vec![slot(
+                "slot-14",
+                14,
+                Some(json!({"kind":"text","values":["Stencilling"]})),
+                true,
+            )],
             ChainStatusV1::Succeeded,
         );
         let source = verify_against_source(
@@ -1428,6 +1620,9 @@ mod tests {
             validate_batch: &validate,
             adjudicator: None,
         });
-        assert_eq!(outcome.adjudication, StageStatusV1::new(StageStateV1::Succeeded));
+        assert_eq!(
+            outcome.adjudication,
+            StageStatusV1::new(StageStateV1::Succeeded)
+        );
     }
 }

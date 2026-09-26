@@ -574,7 +574,10 @@ fn split_section_evidence_for_block(block: &Value) -> SplitSectionEvidenceV1 {
 }
 
 fn split_section_evidence_for_blocks(blocks: &[Value]) -> Vec<SplitSectionEvidenceV1> {
-    blocks.iter().map(split_section_evidence_for_block).collect()
+    blocks
+        .iter()
+        .map(split_section_evidence_for_block)
+        .collect()
 }
 
 /// Every candidate is built with `block_ids` and `section_evidence` derived from
@@ -607,11 +610,7 @@ fn sync_dynamic_group_evidence_with_block_ids(
         let owned = group
             .block_ids
             .iter()
-            .filter_map(|id| {
-                blocks
-                    .iter()
-                    .find(|block| dynamic_block_id(block) == *id)
-            })
+            .filter_map(|id| blocks.iter().find(|block| dynamic_block_id(block) == *id))
             .cloned()
             .collect::<Vec<_>>();
         group.section_evidence = split_section_evidence_for_blocks(&owned);
@@ -3395,11 +3394,7 @@ fn declared_dynamic_option_bank_range(blocks: &[Value]) -> Vec<String> {
 
 /// True when the lettered run that `is_dynamic_late_passage_tail_start` keys on
 /// carries exactly the labels the instruction declares as its option bank.
-fn lettered_run_matches_declared_bank(
-    blocks: &[Value],
-    index: usize,
-    declared: &[String],
-) -> bool {
+fn lettered_run_matches_declared_bank(blocks: &[Value], index: usize, declared: &[String]) -> bool {
     let opens_the_run = blocks.get(index).is_some_and(|block| {
         let label = dynamic_lettered_paragraph_label(&dynamic_block_text(block));
         label == Some('A') && is_substantive_dynamic_lettered_article_block(block, 'A')
@@ -3694,9 +3689,9 @@ fn find_dynamic_prose_passage_tail_start(blocks: &[Value]) -> Option<usize> {
         // Any overlap with the declared bank means the prose the heuristic is
         // seeing is (part of) the group's option bank, not a passage that
         // happens to sit inside the group.
-        if declared_bank.is_some_and(|(bank_start, bank_end)| {
-            index < bank_end && bank_start < run_end
-        }) {
+        if declared_bank
+            .is_some_and(|(bank_start, bank_end)| index < bank_end && bank_start < run_end)
+        {
             continue;
         }
         return Some(index);
@@ -10532,9 +10527,7 @@ mod tests {
         ];
         assert_eq!(
             declared_dynamic_option_bank_range(&blocks),
-            ["A", "B", "C", "D", "E", "F"]
-                .map(str::to_string)
-                .to_vec()
+            ["A", "B", "C", "D", "E", "F"].map(str::to_string).to_vec()
         );
         assert_eq!(
             dynamic_late_passage_question_block_count(&blocks),

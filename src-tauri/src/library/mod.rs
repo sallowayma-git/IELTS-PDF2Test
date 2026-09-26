@@ -8,7 +8,7 @@
 //! 任何文件树、cloud raw、preview 不得反向写回。
 
 pub(crate) mod commands;
+pub(crate) mod final_version;
 pub(crate) mod migration;
 pub(crate) mod repository;
-pub(crate) mod final_version;
 pub(crate) mod schema;

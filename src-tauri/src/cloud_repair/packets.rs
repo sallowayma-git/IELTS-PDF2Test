@@ -184,7 +184,10 @@ impl GroupIndex {
     /// 目标 → 题组。三种目标类型各自查各自的表。
     fn lookup(&self, target_type: &str, target_id: &str) -> Option<String> {
         match target_type {
-            "task_group" => self.groups.contains_key(target_id).then(|| target_id.to_string()),
+            "task_group" => self
+                .groups
+                .contains_key(target_id)
+                .then(|| target_id.to_string()),
             "response_group" => self.response_owner.get(target_id).cloned(),
             "slot" => self.slot_owner.get(target_id).cloned(),
             _ => None,
@@ -224,7 +227,10 @@ fn owner_of(difference: &Value, canonical: &GroupIndex, candidate: &GroupIndex) 
         .get("targetType")
         .and_then(Value::as_str)
         .unwrap_or("");
-    let target_id = difference.get("targetId").and_then(Value::as_str).unwrap_or("");
+    let target_id = difference
+        .get("targetId")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     if target_type == "part" {
         return Owner::Part(target_id.to_string());
     }
@@ -261,17 +267,16 @@ fn owner_of_issue(issue: &Value, canonical: &GroupIndex, candidate: &GroupIndex)
                 .or_else(|| canonical.lookup("response_group", target_id))
                 .or_else(|| canonical.lookup("task_group", target_id))
                 .or_else(|| {
-                    candidate.lookup("slot", target_id).and_then(|candidate_task| {
-                        let numbers = candidate
-                            .numbers
-                            .get(&candidate_task)
-                            .cloned()
-                            .unwrap_or_default();
-                        canonical
-                            .groups_intersecting(&numbers)
-                            .into_iter()
-                            .next()
-                    })
+                    candidate
+                        .lookup("slot", target_id)
+                        .and_then(|candidate_task| {
+                            let numbers = candidate
+                                .numbers
+                                .get(&candidate_task)
+                                .cloned()
+                                .unwrap_or_default();
+                            canonical.groups_intersecting(&numbers).into_iter().next()
+                        })
                 })
         })
         .collect();
@@ -297,7 +302,11 @@ impl UnionFind {
 
     fn find(&mut self, key: &str) -> String {
         self.add(key);
-        let parent = self.parent.get(key).cloned().unwrap_or_else(|| key.to_string());
+        let parent = self
+            .parent
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| key.to_string());
         if parent == key {
             return parent;
         }
@@ -422,7 +431,10 @@ fn difference_kind(difference: &Value) -> DifferenceKind {
         .get("targetType")
         .and_then(Value::as_str)
         .unwrap_or("");
-    let field = difference.get("field").and_then(Value::as_str).unwrap_or("");
+    let field = difference
+        .get("field")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     if target_type == "slot" && field == "answer" {
         DifferenceKind::Answer
     } else {
@@ -553,10 +565,7 @@ fn expand_edge_pages(pages: &[u32], anchors: &[AnchorPage], source: &SourcePageI
 ///
 /// 定位不到时如实返回 `false`（调用方写 `answerPagesUnknown`），**不猜**——
 /// 猜出来的答案页会让模型在错误的页上「确认」答案，那比承认不知道糟得多。
-fn locate_answer_pages(
-    source: &SourcePageIndex,
-    question_numbers: &[u32],
-) -> (Vec<u32>, bool) {
+fn locate_answer_pages(source: &SourcePageIndex, question_numbers: &[u32]) -> (Vec<u32>, bool) {
     if !source.answer_pages.is_empty() {
         let mut pages = source.answer_pages.clone();
         pages.sort_unstable();
@@ -604,11 +613,7 @@ fn estimate_tokens(value: &Value, images: usize) -> usize {
 }
 
 /// 整卷极简索引：让模型知道「其他内容在哪」，但不带其他内容本身。
-fn paper_map(
-    canonical: &Value,
-    source: &SourcePageIndex,
-    canonical_index: &GroupIndex,
-) -> Value {
+fn paper_map(canonical: &Value, source: &SourcePageIndex, canonical_index: &GroupIndex) -> Value {
     let groups: Vec<Value> = canonical
         .get("taskGroups")
         .and_then(Value::as_array)
@@ -647,7 +652,11 @@ fn paper_map(
         let Some(page_list) = group.get("pages").and_then(Value::as_array) else {
             continue;
         };
-        let numbers = group.get("numbers").and_then(Value::as_array).cloned().unwrap_or_default();
+        let numbers = group
+            .get("numbers")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         for page in page_list.iter().filter_map(Value::as_u64) {
             let entry = page_tags.entry(page as u32).or_default();
             for number in &numbers {
@@ -924,9 +933,18 @@ fn packet_id_for(draft: &PacketDraft) -> String {
         .map(|difference| {
             let identity = format!(
                 "{}:{}:{}",
-                difference.get("targetType").and_then(Value::as_str).unwrap_or(""),
-                difference.get("targetId").and_then(Value::as_str).unwrap_or(""),
-                difference.get("field").and_then(Value::as_str).unwrap_or(""),
+                difference
+                    .get("targetType")
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
+                difference
+                    .get("targetId")
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
+                difference
+                    .get("field")
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
             );
             let content = serde_json::to_string(difference).unwrap_or_default();
             (identity, content)
@@ -955,9 +973,21 @@ fn dedupe(entries: &mut Vec<Value>) {
     let mut seen: BTreeSet<(String, String, String)> = BTreeSet::new();
     entries.retain(|entry| {
         let key = (
-            entry.get("targetType").and_then(Value::as_str).unwrap_or("").to_string(),
-            entry.get("targetId").and_then(Value::as_str).unwrap_or("").to_string(),
-            entry.get("field").and_then(Value::as_str).unwrap_or("").to_string(),
+            entry
+                .get("targetType")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            entry
+                .get("targetId")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            entry
+                .get("field")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
         );
         seen.insert(key)
     });
@@ -1115,7 +1145,11 @@ fn scope_pages(
 
     let mut anchors = canonical_anchors;
     anchors.extend(candidate_anchors);
-    let mut pages = expand_edge_pages(&pages.into_iter().collect::<Vec<_>>(), &anchors, input.source);
+    let mut pages = expand_edge_pages(
+        &pages.into_iter().collect::<Vec<_>>(),
+        &anchors,
+        input.source,
+    );
     pages.sort_unstable();
     pages.dedup();
     let _ = candidate_index;
@@ -1202,7 +1236,9 @@ fn build_packet(
         .filter(|target| {
             draft.document_only
                 || draft.task_ids.iter().any(|task_id| *task_id == **target)
-                || numbers.iter().any(|number| target.contains(&format!("q{number}")))
+                || numbers
+                    .iter()
+                    .any(|number| target.contains(&format!("q{number}")))
         })
         .cloned()
         .collect();
@@ -1377,7 +1413,9 @@ fn paragraph_windows(
     let mut keep: BTreeSet<usize> = BTreeSet::new();
     for id in &wanted {
         if let Some(position) = positions.get(id.as_str()) {
-            for offset in position.saturating_sub(2)..=(position + 2).min(input.source.paragraphs.len().saturating_sub(1)) {
+            for offset in position.saturating_sub(2)
+                ..=(position + 2).min(input.source.paragraphs.len().saturating_sub(1))
+            {
                 keep.insert(offset);
             }
         }
@@ -1603,7 +1641,13 @@ mod tests {
         })
     }
 
-    fn difference(target_type: &str, target_id: &str, field: &str, canonical: Value, candidate: Value) -> Value {
+    fn difference(
+        target_type: &str,
+        target_id: &str,
+        field: &str,
+        canonical: Value,
+        candidate: Value,
+    ) -> Value {
         json!({
             "targetType": target_type,
             "targetId": target_id,
@@ -1614,7 +1658,12 @@ mod tests {
         })
     }
 
-    fn plan(canonical: &Value, candidate: &Value, differences: &[Value], source: &SourcePageIndex) -> Vec<Value> {
+    fn plan(
+        canonical: &Value,
+        candidate: &Value,
+        differences: &[Value],
+        source: &SourcePageIndex,
+    ) -> Vec<Value> {
         plan_packets(&PacketPlanInput {
             canonical,
             candidate,
@@ -1676,7 +1725,11 @@ mod tests {
         let only_second = vec![difference("slot", "q8", "answer", json!("B"), json!("C"))];
         let replanned = plan(&canonical, &Value::Null, &only_second, &source);
         assert_eq!(replanned.len(), 1);
-        assert_eq!(ids(&replanned)[0], ids(&first)[1], "未受影响的包 id 不该漂移");
+        assert_eq!(
+            ids(&replanned)[0],
+            ids(&first)[1],
+            "未受影响的包 id 不该漂移"
+        );
     }
 
     /// 规则 2 第三条：本地 1-5 / 6-7、云端 1-7 ⇒ 三个题组必须落进同一个包。
@@ -1723,10 +1776,7 @@ mod tests {
     #[test]
     fn an_answer_difference_brings_the_answer_page_or_says_it_does_not_know() {
         let canonical = canonical_paper();
-        let source = index_with_pages(&[
-            (1, &["1 TRUE", "2 FALSE"]),
-            (3, &["8 B", "9 C", "10 D"]),
-        ]);
+        let source = index_with_pages(&[(1, &["1 TRUE", "2 FALSE"]), (3, &["8 B", "9 C", "10 D"])]);
         let differences = vec![difference("slot", "q8", "answer", json!("B"), json!("C"))];
 
         // ① 答案页识别产物说第 3 页是答案页 ⇒ 包里必须有第 3 页，且不许写 unknown。
@@ -1765,7 +1815,13 @@ mod tests {
             (1, &["1 TRUE", "2 FALSE"]),
             (3, &["Answers", "1 TRUE", "2 FALSE", "3 NOT GIVEN"]),
         ]);
-        let differences = vec![difference("slot", "q1", "answer", json!("TRUE"), json!("FALSE"))];
+        let differences = vec![difference(
+            "slot",
+            "q1",
+            "answer",
+            json!("TRUE"),
+            json!("FALSE"),
+        )];
         let packets = plan(&canonical, &Value::Null, &differences, &source);
         let pages: Vec<u64> = packets[0]["scope"]["pages"]
             .as_array()
@@ -1773,7 +1829,10 @@ mod tests {
             .iter()
             .filter_map(Value::as_u64)
             .collect();
-        assert!(pages.contains(&3), "文本层里能找到答案区就必须带上：{pages:?}");
+        assert!(
+            pages.contains(&3),
+            "文本层里能找到答案区就必须带上：{pages:?}"
+        );
         assert_eq!(packets[0]["scope"]["answerPagesUnknown"], json!(false));
     }
 
@@ -1781,7 +1840,8 @@ mod tests {
     #[test]
     fn anchor_pages_are_reported_one_based_and_stay_inside_the_scope() {
         let canonical = canonical_paper();
-        let source = index_with_pages(&[(1, &["page one"]), (2, &["page two"]), (3, &["page three"])]);
+        let source =
+            index_with_pages(&[(1, &["page one"]), (2, &["page two"]), (3, &["page three"])]);
         // tg-8-10 的锚点在 `pageIndex: 1`（0-based）⇒ 1-based 第 2 页。
         let differences = vec![difference("slot", "q8", "answer", json!("B"), json!("C"))];
         let packets = plan(&canonical, &Value::Null, &differences, &source);
@@ -1792,7 +1852,11 @@ mod tests {
             .iter()
             .filter_map(Value::as_u64)
             .collect();
-        assert_eq!(pages, vec![2], "锚点 pageIndex=1 必须换算成 1-based 的第 2 页：{pages:?}");
+        assert_eq!(
+            pages,
+            vec![2],
+            "锚点 pageIndex=1 必须换算成 1-based 的第 2 页：{pages:?}"
+        );
         let reported: Vec<u64> = packet["sourceEvidence"]["pages"]
             .as_array()
             .unwrap()
@@ -1800,7 +1864,10 @@ mod tests {
             .filter_map(|page| page.get("pageIndex").and_then(Value::as_u64))
             .collect();
         assert_eq!(reported, vec![2], "证据页必须与 scope 一致");
-        for line in packet["sourceEvidence"]["pages"][0]["lines"].as_array().unwrap() {
+        for line in packet["sourceEvidence"]["pages"][0]["lines"]
+            .as_array()
+            .unwrap()
+        {
             let id = line["id"].as_str().unwrap();
             assert!(id.starts_with("p2:"), "行 id 必须带正确的页号，实际 {id}");
         }
@@ -1942,10 +2009,7 @@ mod tests {
         let index = GroupIndex::build(&canonical);
 
         // 直测 `region_requests`：两种题组顺序都必须给出「区域图 + 整页图」两张。
-        for order in [
-            ["tg-a", "tg-b"],
-            ["tg-b", "tg-a"],
-        ] {
+        for order in [["tg-a", "tg-b"], ["tg-b", "tg-a"]] {
             let draft = PacketDraft {
                 task_ids: order.iter().map(|id| id.to_string()).collect(),
                 part_id: None,
@@ -1988,7 +2052,11 @@ mod tests {
             difference("slot", "q3", "answer", json!("TRUE"), json!("FALSE")),
         ];
         let packets = plan(&canonical, &Value::Null, &differences, &source);
-        assert_eq!(packets.len(), 1, "共用选项库的题组必须并成一个包：{packets:#?}");
+        assert_eq!(
+            packets.len(),
+            1,
+            "共用选项库的题组必须并成一个包：{packets:#?}"
+        );
         let task_ids: Vec<&str> = packets[0]["taskIds"]
             .as_array()
             .unwrap()
@@ -2024,7 +2092,11 @@ mod tests {
         let source = index_with_pages(&[
             (
                 1,
-                &["The passage begins here.", "A First idea.", "B Second idea."],
+                &[
+                    "The passage begins here.",
+                    "A First idea.",
+                    "B Second idea.",
+                ],
             ),
             (2, &["Questions 14-15", "C Third idea."]),
         ]);
@@ -2052,7 +2124,11 @@ mod tests {
             vec!["A".to_string(), "B".to_string()],
             "第 1 页有 A、B 两段：{map:#?}"
         );
-        assert_eq!(labels_of(2), vec!["C".to_string()], "第 2 页只有 C 段：{map:#?}");
+        assert_eq!(
+            labels_of(2),
+            vec!["C".to_string()],
+            "第 2 页只有 C 段：{map:#?}"
+        );
 
         // 与工具判据一致：`paperMap` **报出来的每一个标号**都必须真的能被 `read_passage`
         // 取到。刻意写成「遍历报出来的全部标号」而不是写死一个 "C"：写死就只能证明
@@ -2078,7 +2154,10 @@ mod tests {
                 checked += 1;
             }
         }
-        assert_eq!(checked, 3, "第 1 页 A/B、第 2 页 C，共 3 个标号都要被核对过");
+        assert_eq!(
+            checked, 3,
+            "第 1 页 A/B、第 2 页 C，共 3 个标号都要被核对过"
+        );
     }
 
     /// 阻断问题排在答案差异之前，答案差异排在文本差异之前。
@@ -2087,7 +2166,13 @@ mod tests {
         let canonical = canonical_paper();
         let source = index_with_pages(&[(1, &["1 TRUE", "2 FALSE"]), (2, &["8 B"])]);
         let differences = vec![
-            difference("task_group", "tg-8-10", "instructions", json!("a"), json!("b")),
+            difference(
+                "task_group",
+                "tg-8-10",
+                "instructions",
+                json!("a"),
+                json!("b"),
+            ),
             difference("slot", "q1", "answer", json!("TRUE"), json!("FALSE")),
         ];
         // 阻断问题落在**第三个**题组上：三种类别各占一个包，顺序才看得出来。
@@ -2140,7 +2225,13 @@ mod tests {
         assert_eq!(packets.len(), 1);
         assert_eq!(packets[0]["documentOnly"], json!(true));
         assert_eq!(packets[0]["taskIds"], json!([]));
-        assert!(packets[0]["paperMap"]["taskGroups"].as_array().unwrap().len() == 3);
+        assert!(
+            packets[0]["paperMap"]["taskGroups"]
+                .as_array()
+                .unwrap()
+                .len()
+                == 3
+        );
         assert_eq!(
             packets[0]["draftSlice"]["taskGroups"],
             json!([]),
@@ -2186,7 +2277,13 @@ mod tests {
             }
         }
         let source = index_with_pages(&[(1, &["1 TRUE"])]);
-        let differences = vec![difference("slot", "q1", "answer", json!("TRUE"), json!("FALSE"))];
+        let differences = vec![difference(
+            "slot",
+            "q1",
+            "answer",
+            json!("TRUE"),
+            json!("FALSE"),
+        )];
         let packets = plan(&canonical, &Value::Null, &differences, &source);
         assert_eq!(packets.len(), 1, "同一段 stimulus 必须合并：{packets:#?}");
         assert_eq!(packets[0]["taskIds"].as_array().unwrap().len(), 2);
@@ -2197,7 +2294,13 @@ mod tests {
     fn the_scope_manifest_names_what_is_omitted_and_how_to_fetch_it() {
         let canonical = canonical_paper();
         let source = index_with_pages(&[(1, &["1 TRUE"]), (2, &["8 B"]), (3, &["9 C"])]);
-        let differences = vec![difference("slot", "q1", "answer", json!("TRUE"), json!("FALSE"))];
+        let differences = vec![difference(
+            "slot",
+            "q1",
+            "answer",
+            json!("TRUE"),
+            json!("FALSE"),
+        )];
         let packets = plan(&canonical, &Value::Null, &differences, &source);
         let manifest = &packets[0]["scopeManifest"];
         let omitted = manifest["omitted"].as_array().expect("omitted 必须是数组");

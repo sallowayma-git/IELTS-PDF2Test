@@ -492,7 +492,10 @@ pub(crate) fn verify_evidence_quotes(
                     problems.push(format!("CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:{index}"));
                 }
             }
-            EvidenceSourceText::Paged { pages, existing_pages } => {
+            EvidenceSourceText::Paged {
+                pages,
+                existing_pages,
+            } => {
                 let found = quote_pages(pages, &needle);
                 let declared_page = entry
                     .get("pageIndex")
@@ -536,8 +539,10 @@ fn quote_is_verifiable_on_textless_page(
     pages: &BTreeMap<u32, String>,
     existing_pages: &BTreeSet<u32>,
 ) -> bool {
-
-    if declared < 1 || declared > i64::from(u32::MAX) || !existing_pages.contains(&(declared as u32)) {
+    if declared < 1
+        || declared > i64::from(u32::MAX)
+        || !existing_pages.contains(&(declared as u32))
+    {
         return false;
     }
     for offset in [-1i64, 0, 1] {
@@ -654,10 +659,7 @@ pub(crate) fn apply_cloud_edits(
             let after = blocking_diagnostic_fingerprints(ds);
             let new_ones: Vec<String> = after.difference(&before_diagnostics).cloned().collect();
             if !new_ones.is_empty() {
-                let message = format!(
-                    "CLOUD_EDIT_INTRODUCED_HARD_FAILURES:{}",
-                    new_ones.join(",")
-                );
+                let message = format!("CLOUD_EDIT_INTRODUCED_HARD_FAILURES:{}", new_ones.join(","));
                 *introduced.borrow_mut() = new_ones;
                 return Err(message);
             }
@@ -761,7 +763,10 @@ mod tests {
         .expect("允许的命令必须能被净化而不是被判死");
         assert_eq!(cleaned.len(), 1);
         let command = cleaned[0].as_object().unwrap();
-        assert!(!command.contains_key("preserveProvenance"), "越权字段必须被剥离");
+        assert!(
+            !command.contains_key("preserveProvenance"),
+            "越权字段必须被剥离"
+        );
         assert!(!command.contains_key("quality"), "模型不得提交 quality");
         assert!(
             !command.contains_key("provenanceStatus"),
@@ -769,7 +774,10 @@ mod tests {
         );
         let attrs = command["attrs"].as_object().unwrap();
         assert_eq!(attrs.get("displayLabel"), Some(&json!("(a)")));
-        assert!(!attrs.contains_key("provenanceStatus"), "来源标记必须被剥离");
+        assert!(
+            !attrs.contains_key("provenanceStatus"),
+            "来源标记必须被剥离"
+        );
         assert!(!attrs.contains_key("slotIds"), "结构引用必须被剥离");
         assert!(!attrs.contains_key("assetId"), "资源引用必须被剥离");
         // 两层都要如实回报：顶层越权字段与 attrs 内被收敛掉的属性。精确匹配而不是
@@ -880,8 +888,16 @@ mod tests {
         assert_eq!(fp_q11, blocking_diagnostic_fingerprints(&on_q11));
         assert_eq!(fp_q12, blocking_diagnostic_fingerprints(&on_q12));
         // 指纹必须包含目标，模型才能读出「哪道题」坏。
-        assert!(fp_q11.iter().any(|f| f.contains("q11")), "指纹应含目标 q11: {:?}", fp_q11);
-        assert!(fp_q12.iter().any(|f| f.contains("q12")), "指纹应含目标 q12: {:?}", fp_q12);
+        assert!(
+            fp_q11.iter().any(|f| f.contains("q11")),
+            "指纹应含目标 q11: {:?}",
+            fp_q11
+        );
+        assert!(
+            fp_q12.iter().any(|f| f.contains("q12")),
+            "指纹应含目标 q12: {:?}",
+            fp_q12
+        );
 
         // 非阻断（warning）诊断必须被排除。
         let with_warning = json!({
@@ -921,9 +937,12 @@ mod cloud_repair_write_entry_tests {
     use super::*;
     use std::path::Path;
 
-    use crate::library::repository::{get_canonical_ds, open_library_connection, seed_canonical_ds, upsert_item_shell, UpsertItemInput};
+    use crate::library::repository::{
+        get_canonical_ds, open_library_connection, seed_canonical_ds, upsert_item_shell,
+        UpsertItemInput,
+    };
     use crate::util::ensure_app_dirs;
-    use rusqlite::{OptionalExtension, params};
+    use rusqlite::{params, OptionalExtension};
 
     fn temp_root() -> std::path::PathBuf {
         std::env::temp_dir().join(format!("cloud-repair-{}", uuid::Uuid::new_v4().simple()))
@@ -942,8 +961,9 @@ mod cloud_repair_write_entry_tests {
 
     fn load_fixture() -> Value {
         let path = fixture_path();
-        let text = std::fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("读取 golden fixture 失败 path={:?} err={}", path, error));
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!("读取 golden fixture 失败 path={:?} err={}", path, error)
+        });
         serde_json::from_str(&text).expect("解析 golden fixture 为合法 IeltsAuthoringIRV2")
     }
 
@@ -976,16 +996,27 @@ mod cloud_repair_write_entry_tests {
     /// 读回某个槽位的答案条目（用于确认 canonical 真的变了 / 没变）。
     fn read_answer(root: &Path, item_id: &str, slot: &str) -> Value {
         let conn = open_library_connection(root).expect("打开库连接");
-        let (ds, _) = get_canonical_ds(&conn, item_id).expect("读 canonical").expect("稿件已播");
-        ds.pointer(&format!("/answerKey/{slot}")).cloned().unwrap_or(Value::Null)
+        let (ds, _) = get_canonical_ds(&conn, item_id)
+            .expect("读 canonical")
+            .expect("稿件已播");
+        ds.pointer(&format!("/answerKey/{slot}"))
+            .cloned()
+            .unwrap_or(Value::Null)
     }
 
     fn read_quality_hard_failures(root: &Path, item_id: &str) -> Vec<String> {
         let conn = open_library_connection(root).expect("打开库连接");
-        let (ds, _) = get_canonical_ds(&conn, item_id).expect("读 canonical").expect("稿件已播");
+        let (ds, _) = get_canonical_ds(&conn, item_id)
+            .expect("读 canonical")
+            .expect("稿件已播");
         ds.pointer("/quality/hardFailures")
             .and_then(Value::as_array)
-            .map(|arr| arr.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -997,7 +1028,12 @@ mod cloud_repair_write_entry_tests {
         })
     }
 
-    fn base_request(item_id: &str, repair_run_id: &str, base_version: i64, command: Value) -> CloudEditRequest {
+    fn base_request(
+        item_id: &str,
+        repair_run_id: &str,
+        base_version: i64,
+        command: Value,
+    ) -> CloudEditRequest {
         CloudEditRequest {
             item_id: item_id.to_string(),
             repair_run_id: repair_run_id.to_string(),
@@ -1092,14 +1128,28 @@ mod cloud_repair_write_entry_tests {
         let root = temp_root();
         let item_id = seed_item(&root, &load_fixture());
 
-        let request = base_request(&item_id, "run-success", 1, set_answer_command("q14", &["A"]));
+        let request = base_request(
+            &item_id,
+            "run-success",
+            1,
+            set_answer_command("q14", &["A"]),
+        );
         let outcome = apply(&root, &request).expect("apply_cloud_edits");
 
-        assert_eq!(outcome.status, CloudEditStatus::Applied, "errors={:?}", outcome.errors);
+        assert_eq!(
+            outcome.status,
+            CloudEditStatus::Applied,
+            "errors={:?}",
+            outcome.errors
+        );
         assert_eq!(outcome.edit_version, 2, "版本应推进到 base + 1");
         // 重新读 canonical：答案真的变了（不是只回报成功）。
         let answer = read_answer(&root, &item_id, "q14");
-        assert_eq!(answer.pointer("/labels"), Some(&json!(["A"])), "答案未实际写入 canonical");
+        assert_eq!(
+            answer.pointer("/labels"),
+            Some(&json!(["A"])),
+            "答案未实际写入 canonical"
+        );
         // journal 必须存在一行 edit_origin = 'cloud_repair' 且 repair_run_id 等于传的 run id。
         let conn = open_library_connection(&root).expect("打开库连接");
         let found: Option<(String, String)> = conn
@@ -1123,7 +1173,12 @@ mod cloud_repair_write_entry_tests {
         let root = temp_root();
         let item_id = seed_item(&root, &load_fixture());
 
-        let mut request = base_request(&item_id, "run-evidence", 1, set_answer_command("q14", &["A"]));
+        let mut request = base_request(
+            &item_id,
+            "run-evidence",
+            1,
+            set_answer_command("q14", &["A"]),
+        );
         request.evidence = vec![json!({
             "sourceFileId": "early-approaches-pdf",
             "pageIndex": 0,
@@ -1133,13 +1188,21 @@ mod cloud_repair_write_entry_tests {
 
         assert_eq!(outcome.status, CloudEditStatus::Rejected);
         assert!(
-            outcome.errors.iter().any(|e| e == "CLOUD_EDIT_EVIDENCE_PAGE_INVALID:0:0"),
-            "errors={:?}", outcome.errors
+            outcome
+                .errors
+                .iter()
+                .any(|e| e == "CLOUD_EDIT_EVIDENCE_PAGE_INVALID:0:0"),
+            "errors={:?}",
+            outcome.errors
         );
         // canonical 的版本与内容都没变。
         assert_eq!(outcome.edit_version, 1);
         let answer = read_answer(&root, &item_id, "q14");
-        assert_eq!(answer.pointer("/labels"), Some(&json!(["B"])), "证据被拒时答案不得改变");
+        assert_eq!(
+            answer.pointer("/labels"),
+            Some(&json!(["B"])),
+            "证据被拒时答案不得改变"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1158,18 +1221,31 @@ mod cloud_repair_write_entry_tests {
             .expect("写入 protected_edits_json");
         }
 
-        let request = base_request(&item_id, "run-protected", 1, set_answer_command("q14", &["A"]));
+        let request = base_request(
+            &item_id,
+            "run-protected",
+            1,
+            set_answer_command("q14", &["A"]),
+        );
         let outcome = apply(&root, &request).expect("apply_cloud_edits");
 
         assert_eq!(outcome.status, CloudEditStatus::Rejected);
         assert!(
-            outcome.errors.iter().any(|e| e.contains("EDIT_PROTECTED_TARGET:q14")),
-            "errors={:?}", outcome.errors
+            outcome
+                .errors
+                .iter()
+                .any(|e| e.contains("EDIT_PROTECTED_TARGET:q14")),
+            "errors={:?}",
+            outcome.errors
         );
         // canonical 不变。
         assert_eq!(outcome.edit_version, 1);
         let answer = read_answer(&root, &item_id, "q14");
-        assert_eq!(answer.pointer("/labels"), Some(&json!(["B"])), "受保护目标不得被改动");
+        assert_eq!(
+            answer.pointer("/labels"),
+            Some(&json!(["B"])),
+            "受保护目标不得被改动"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1180,8 +1256,11 @@ mod cloud_repair_write_entry_tests {
         let item_id = seed_item(&root, &load_fixture());
         let run = "run-undo";
 
-        let outcome = apply(&root, &base_request(&item_id, run, 1, set_answer_command("q14", &["A"])))
-            .expect("apply_cloud_edits");
+        let outcome = apply(
+            &root,
+            &base_request(&item_id, run, 1, set_answer_command("q14", &["A"])),
+        )
+        .expect("apply_cloud_edits");
         assert_eq!(outcome.status, CloudEditStatus::Applied);
         assert_eq!(outcome.edit_version, 2, "修复后版本应推进到 2");
         assert_eq!(
@@ -1222,14 +1301,19 @@ mod cloud_repair_write_entry_tests {
         assert_eq!(
             outcome.status,
             CloudEditStatus::Applied,
-            "陈旧基线不应阻断合法修复 errors={:?}", outcome.errors
+            "陈旧基线不应阻断合法修复 errors={:?}",
+            outcome.errors
         );
-        assert!(outcome.introduced_hard_failures.is_empty(), "未引入新硬失败");
+        assert!(
+            outcome.introduced_hard_failures.is_empty(),
+            "未引入新硬失败"
+        );
         // 证明：稿件真的存在旧硬失败（重算后质量块含 ANSWER_KEY_MISSING_SLOT），且答案确实改了。
         let hard = read_quality_hard_failures(&root, &item_id);
         assert!(
             hard.iter().any(|code| code == "ANSWER_KEY_MISSING_SLOT"),
-            "陈旧硬失败应仍存在: {:?}", hard
+            "陈旧硬失败应仍存在: {:?}",
+            hard
         );
         assert_eq!(
             read_answer(&root, &item_id, "q14").pointer("/labels"),
@@ -1275,7 +1359,10 @@ mod cloud_repair_write_entry_tests {
         );
         // 错误前缀必须保持可识别（任务书要求保留 CLOUD_EDIT_INTRODUCED_HARD_FAILURES:）。
         assert!(
-            outcome.errors.iter().any(|e| e.contains("CLOUD_EDIT_INTRODUCED_HARD_FAILURES")),
+            outcome
+                .errors
+                .iter()
+                .any(|e| e.contains("CLOUD_EDIT_INTRODUCED_HARD_FAILURES")),
             "错误码前缀必须保持可识别: {:?}",
             outcome.errors
         );
@@ -1391,18 +1478,31 @@ mod cloud_repair_write_entry_tests {
         let item_id = seed_item(&root, &load_fixture());
 
         // 实际当前版本是 1，但传 99。
-        let request = base_request(&item_id, "run-conflict", 99, set_answer_command("q14", &["A"]));
+        let request = base_request(
+            &item_id,
+            "run-conflict",
+            99,
+            set_answer_command("q14", &["A"]),
+        );
         let outcome = apply(&root, &request).expect("apply_cloud_edits");
 
         assert_eq!(outcome.status, CloudEditStatus::Rejected);
         assert!(
-            outcome.errors.iter().any(|e| e.contains("EDIT_VERSION_CONFLICT")),
-            "errors={:?}", outcome.errors
+            outcome
+                .errors
+                .iter()
+                .any(|e| e.contains("EDIT_VERSION_CONFLICT")),
+            "errors={:?}",
+            outcome.errors
         );
         // canonical 不变。
         assert_eq!(outcome.edit_version, 1);
         let answer = read_answer(&root, &item_id, "q14");
-        assert_eq!(answer.pointer("/labels"), Some(&json!(["B"])), "版本冲突时答案不得改变");
+        assert_eq!(
+            answer.pointer("/labels"),
+            Some(&json!(["B"])),
+            "版本冲突时答案不得改变"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
     // 8. 复核任务书里的一条怀疑：基线用 `refresh_quality_report`（全量），事务内用
@@ -1424,7 +1524,10 @@ mod cloud_repair_write_entry_tests {
         // 造一个「真实但陈旧」的阻断，落在与本次编辑**无关**的目标上（q15 缺答案）。
         ds["answerKey"].as_object_mut().unwrap().remove("q15");
         // 再给一条人工 resolution，确保「继承 resolution」这条唯一差异真的被触发。
-        if let Some(issues) = ds.pointer_mut("/quality/issues").and_then(Value::as_array_mut) {
+        if let Some(issues) = ds
+            .pointer_mut("/quality/issues")
+            .and_then(Value::as_array_mut)
+        {
             for issue in issues.iter_mut() {
                 if let Some(details) = issue.get_mut("details").and_then(Value::as_object_mut) {
                     details.insert("resolution".to_string(), json!("resolved"));
@@ -1434,7 +1537,12 @@ mod cloud_repair_write_entry_tests {
         let item_id = seed_item(&root, &ds);
 
         // 本次只改 q14：合法修复，不该被 q15 的老问题挡住。
-        let request = base_request(&item_id, "run-quality-parity", 1, set_answer_command("q14", &["A"]));
+        let request = base_request(
+            &item_id,
+            "run-quality-parity",
+            1,
+            set_answer_command("q14", &["A"]),
+        );
         let outcome = apply(&root, &request).expect("apply_cloud_edits");
         assert_eq!(
             outcome.status,
@@ -1442,11 +1550,16 @@ mod cloud_repair_write_entry_tests {
             "无关目标上的老阻断不得顶掉本次合法修复 errors={:?}",
             outcome.errors
         );
-        assert!(outcome.introduced_hard_failures.is_empty(), "本次没有引入新硬失败");
+        assert!(
+            outcome.introduced_hard_failures.is_empty(),
+            "本次没有引入新硬失败"
+        );
 
         // 直接对比两种口径：同一份稿子上必须给出**同一组**阻断指纹。
         let conn = open_library_connection(&root).expect("打开库连接");
-        let (current, _) = get_canonical_ds(&conn, &item_id).expect("读 canonical").expect("稿件已播");
+        let (current, _) = get_canonical_ds(&conn, &item_id)
+            .expect("读 canonical")
+            .expect("稿件已播");
         drop(conn);
 
         let mut full = current.clone();
@@ -1496,24 +1609,38 @@ mod cloud_repair_write_entry_tests {
         request: &CloudEditRequest,
         source: &EvidenceSourceText,
     ) -> CommandResult<CloudEditOutcome> {
-        apply_cloud_edits(root, request, &context_with(source.clone(), "early-approaches-pdf", &[]))
+        apply_cloud_edits(
+            root,
+            request,
+            &context_with(source.clone(), "early-approaches-pdf", &[]),
+        )
     }
 
     #[test]
     fn a_fabricated_quote_rejects_the_whole_batch_and_names_the_entry() {
         let root = temp_root();
         let item_id = seed_item(&root, &load_fixture());
-        let mut request =
-            base_request(&item_id, "run-quote-fabricated", 1, set_answer_command("q14", &["A"]));
+        let mut request = base_request(
+            &item_id,
+            "run-quote-fabricated",
+            1,
+            set_answer_command("q14", &["A"]),
+        );
         // 原文文本层里没有任何一行长这样：这是编造的引文。
         request.evidence = vec![json!({
             "sourceFileId": "early-approaches-pdf",
             "pageIndex": 2,
             "quote": "Totally invented sentence that appears nowhere"
         })];
-        let outcome = apply_with_source(&root, &request, &paged_source()).expect("apply_cloud_edits");
+        let outcome =
+            apply_with_source(&root, &request, &paged_source()).expect("apply_cloud_edits");
 
-        assert_eq!(outcome.status, CloudEditStatus::Rejected, "errors={:?}", outcome.errors);
+        assert_eq!(
+            outcome.status,
+            CloudEditStatus::Rejected,
+            "errors={:?}",
+            outcome.errors
+        );
         assert!(
             outcome
                 .errors
@@ -1536,7 +1663,12 @@ mod cloud_repair_write_entry_tests {
     fn a_real_quote_survives_whitespace_quote_hyphen_and_case_differences() {
         let root = temp_root();
         let item_id = seed_item(&root, &load_fixture());
-        let mut request = base_request(&item_id, "run-quote-normalized", 1, set_answer_command("q14", &["A"]));
+        let mut request = base_request(
+            &item_id,
+            "run-quote-normalized",
+            1,
+            set_answer_command("q14", &["A"]),
+        );
         // 模型抄回来的引文与原文的差异只在白名单内：空白数量、弯引号 vs 直引号、
         // U+2010 连字符 vs ASCII 连字符、大小写。规范化后必须判为同一段原文。
         request.evidence = vec![json!({
@@ -1544,14 +1676,18 @@ mod cloud_repair_write_entry_tests {
             "pageIndex": 2,
             "quote": "the preferred answer is '14 a' on the co-operation page"
         })];
-        let outcome = apply_with_source(&root, &request, &paged_source()).expect("apply_cloud_edits");
+        let outcome =
+            apply_with_source(&root, &request, &paged_source()).expect("apply_cloud_edits");
         assert_eq!(
             outcome.status,
             CloudEditStatus::Applied,
             "真实引文（仅白名单差异）必须通过，errors={:?}",
             outcome.errors
         );
-        assert!(outcome.evidence_unverifiable.is_empty(), "有文本层时不得标 unverifiable");
+        assert!(
+            outcome.evidence_unverifiable.is_empty(),
+            "有文本层时不得标 unverifiable"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1559,16 +1695,26 @@ mod cloud_repair_write_entry_tests {
     fn a_quote_two_pages_away_from_the_declared_page_is_rejected() {
         let root = temp_root();
         let item_id = seed_item(&root, &load_fixture());
-        let mut request =
-            base_request(&item_id, "run-quote-page-off", 1, set_answer_command("q14", &["A"]));
+        let mut request = base_request(
+            &item_id,
+            "run-quote-page-off",
+            1,
+            set_answer_command("q14", &["A"]),
+        );
         // 引文真实存在于第 1 页，却声明在第 3 页：差 2 页，超出跨页容差。
         request.evidence = vec![json!({
             "sourceFileId": "early-approaches-pdf",
             "pageIndex": 3,
             "quote": "Early approaches to organisational design."
         })];
-        let outcome = apply_with_source(&root, &request, &paged_source()).expect("apply_cloud_edits");
-        assert_eq!(outcome.status, CloudEditStatus::Rejected, "errors={:?}", outcome.errors);
+        let outcome =
+            apply_with_source(&root, &request, &paged_source()).expect("apply_cloud_edits");
+        assert_eq!(
+            outcome.status,
+            CloudEditStatus::Rejected,
+            "errors={:?}",
+            outcome.errors
+        );
         assert!(
             outcome
                 .errors
@@ -1584,15 +1730,20 @@ mod cloud_repair_write_entry_tests {
     fn a_quote_one_page_off_is_accepted_as_a_cross_page_citation() {
         let root = temp_root();
         let item_id = seed_item(&root, &load_fixture());
-        let mut request =
-            base_request(&item_id, "run-quote-cross-page", 1, set_answer_command("q14", &["A"]));
+        let mut request = base_request(
+            &item_id,
+            "run-quote-cross-page",
+            1,
+            set_answer_command("q14", &["A"]),
+        );
         // 引文在第 1 页，声明第 2 页：±1 的跨页容差之内，放行。
         request.evidence = vec![json!({
             "sourceFileId": "early-approaches-pdf",
             "pageIndex": 2,
             "quote": "Early approaches to organisational design."
         })];
-        let outcome = apply_with_source(&root, &request, &paged_source()).expect("apply_cloud_edits");
+        let outcome =
+            apply_with_source(&root, &request, &paged_source()).expect("apply_cloud_edits");
         assert_eq!(
             outcome.status,
             CloudEditStatus::Applied,
@@ -1629,8 +1780,12 @@ mod cloud_repair_write_entry_tests {
     fn evidence_without_a_text_layer_is_marked_unverifiable_not_rejected_or_verified() {
         let root = temp_root();
         let item_id = seed_item(&root, &load_fixture());
-        let mut request =
-            base_request(&item_id, "run-quote-unverifiable", 1, set_answer_command("q14", &["A"]));
+        let mut request = base_request(
+            &item_id,
+            "run-quote-unverifiable",
+            1,
+            set_answer_command("q14", &["A"]),
+        );
         request.evidence = vec![json!({
             "sourceFileId": "early-approaches-pdf",
             "pageIndex": 1,
@@ -1644,7 +1799,11 @@ mod cloud_repair_write_entry_tests {
             outcome.errors
         );
         // 关键：不能假装「已核验」。unverifiable 必须原样上报，摘要与工具结果据此呈现。
-        assert_eq!(outcome.evidence_unverifiable, vec![0], "证据必须标为 unverifiable");
+        assert_eq!(
+            outcome.evidence_unverifiable,
+            vec![0],
+            "证据必须标为 unverifiable"
+        );
         assert_eq!(
             read_answer(&root, &item_id, "q14").pointer("/labels"),
             Some(&json!(["A"])),
@@ -1685,13 +1844,13 @@ mod cloud_repair_write_entry_tests {
     fn paged_source_with_textless_answer_page(thin: bool) -> EvidenceSourceText {
         EvidenceSourceText::Paged {
             pages: BTreeMap::from([
-                (1u32, "Early approaches to organisational design.".to_string()),
+                (
+                    1u32,
+                    "Early approaches to organisational design.".to_string(),
+                ),
                 (2, "Notes on the reading passage".to_string()),
                 // thin=true：文本层只剩页码噪声；thin=false：整页缺席（纯扫描页）。
-                (
-                    3,
-                    if thin { "3".to_string() } else { String::new() },
-                ),
+                (3, if thin { "3".to_string() } else { String::new() }),
             ]),
             existing_pages: BTreeSet::from([1, 2, 3]),
         }
@@ -1716,9 +1875,12 @@ mod cloud_repair_write_entry_tests {
                 "pageIndex": 3,
                 "quote": "14 A"
             })];
-            let outcome =
-                apply_with_source(&root, &request, &paged_source_with_textless_answer_page(thin))
-                    .expect("apply_cloud_edits");
+            let outcome = apply_with_source(
+                &root,
+                &request,
+                &paged_source_with_textless_answer_page(thin),
+            )
+            .expect("apply_cloud_edits");
             assert_eq!(
                 outcome.status,
                 CloudEditStatus::Applied,
@@ -1743,8 +1905,12 @@ mod cloud_repair_write_entry_tests {
     fn a_missing_quote_on_a_page_with_a_real_text_layer_is_still_rejected() {
         let root = temp_root();
         let item_id = seed_item(&root, &load_fixture());
-        let mut request =
-            base_request(&item_id, "run-text-layer-rejects", 1, set_answer_command("q14", &["A"]));
+        let mut request = base_request(
+            &item_id,
+            "run-text-layer-rejects",
+            1,
+            set_answer_command("q14", &["A"]),
+        );
         request.evidence = vec![json!({
             "sourceFileId": "early-approaches-pdf",
             "pageIndex": 3,
@@ -1754,14 +1920,26 @@ mod cloud_repair_write_entry_tests {
         // 引文不在 ⇒ 编造，照拒。这一点不变。
         let source = EvidenceSourceText::Paged {
             pages: BTreeMap::from([
-                (1u32, "Early approaches to organisational design.".to_string()),
+                (
+                    1u32,
+                    "Early approaches to organisational design.".to_string(),
+                ),
                 (2, "Notes on the reading passage".to_string()),
-                (3, "Answer key with the printed answers for every question in this section".to_string()),
+                (
+                    3,
+                    "Answer key with the printed answers for every question in this section"
+                        .to_string(),
+                ),
             ]),
             existing_pages: BTreeSet::from([1, 2, 3]),
         };
         let outcome = apply_with_source(&root, &request, &source).expect("apply_cloud_edits");
-        assert_eq!(outcome.status, CloudEditStatus::Rejected, "errors={:?}", outcome.errors);
+        assert_eq!(
+            outcome.status,
+            CloudEditStatus::Rejected,
+            "errors={:?}",
+            outcome.errors
+        );
         assert!(
             outcome
                 .errors
@@ -1780,17 +1958,29 @@ mod cloud_repair_write_entry_tests {
         // 「全文都找不到」的情形，这里照拒（P9-Q 的页号归属拒绝不被图片页削弱）。
         let root = temp_root();
         let item_id = seed_item(&root, &load_fixture());
-        let mut request =
-            base_request(&item_id, "run-misattributed-page", 1, set_answer_command("q14", &["A"]));
+        let mut request = base_request(
+            &item_id,
+            "run-misattributed-page",
+            1,
+            set_answer_command("q14", &["A"]),
+        );
         request.evidence = vec![json!({
             "sourceFileId": "early-approaches-pdf",
             "pageIndex": 3,
             "quote": "Early approaches to organisational design."
         })];
-        let outcome =
-            apply_with_source(&root, &request, &paged_source_with_textless_answer_page(false))
-                .expect("apply_cloud_edits");
-        assert_eq!(outcome.status, CloudEditStatus::Rejected, "errors={:?}", outcome.errors);
+        let outcome = apply_with_source(
+            &root,
+            &request,
+            &paged_source_with_textless_answer_page(false),
+        )
+        .expect("apply_cloud_edits");
+        assert_eq!(
+            outcome.status,
+            CloudEditStatus::Rejected,
+            "errors={:?}",
+            outcome.errors
+        );
         assert!(
             outcome
                 .errors
@@ -1808,17 +1998,29 @@ mod cloud_repair_write_entry_tests {
         // 不能借「没有文本层」逃成 unverifiable。
         let root = temp_root();
         let item_id = seed_item(&root, &load_fixture());
-        let mut request =
-            base_request(&item_id, "run-phantom-page", 1, set_answer_command("q14", &["A"]));
+        let mut request = base_request(
+            &item_id,
+            "run-phantom-page",
+            1,
+            set_answer_command("q14", &["A"]),
+        );
         request.evidence = vec![json!({
             "sourceFileId": "early-approaches-pdf",
             "pageIndex": 9,
             "quote": "14 A"
         })];
-        let outcome =
-            apply_with_source(&root, &request, &paged_source_with_textless_answer_page(false))
-                .expect("apply_cloud_edits");
-        assert_eq!(outcome.status, CloudEditStatus::Rejected, "errors={:?}", outcome.errors);
+        let outcome = apply_with_source(
+            &root,
+            &request,
+            &paged_source_with_textless_answer_page(false),
+        )
+        .expect("apply_cloud_edits");
+        assert_eq!(
+            outcome.status,
+            CloudEditStatus::Rejected,
+            "errors={:?}",
+            outcome.errors
+        );
         assert!(
             outcome
                 .errors
@@ -1839,8 +2041,12 @@ mod cloud_repair_write_entry_tests {
         // 标 unverifiable，不拒绝。
         let root = temp_root();
         let item_id = seed_item(&root, &load_fixture());
-        let mut request =
-            base_request(&item_id, "run-other-source", 1, set_answer_command("q14", &["A"]));
+        let mut request = base_request(
+            &item_id,
+            "run-other-source",
+            1,
+            set_answer_command("q14", &["A"]),
+        );
         request.evidence = vec![json!({
             "sourceFileId": "answer-sheet-pdf",
             "pageIndex": 1,
@@ -1866,14 +2072,19 @@ mod cloud_repair_write_entry_tests {
         // 错误信息告诉模型合法的 sourceFileId 是什么。
         let root = temp_root();
         let item_id = seed_item(&root, &load_fixture());
-        let mut request =
-            base_request(&item_id, "run-source-unknown", 1, set_answer_command("q14", &["A"]));
+        let mut request = base_request(
+            &item_id,
+            "run-source-unknown",
+            1,
+            set_answer_command("q14", &["A"]),
+        );
         request.evidence = vec![json!({
             "sourceFileId": "answer-source",
             "pageIndex": 1,
             "quote": "a quote that appears nowhere in the file"
         })];
-        let outcome = apply_with_source(&root, &request, &paged_source()).expect("apply_cloud_edits");
+        let outcome =
+            apply_with_source(&root, &request, &paged_source()).expect("apply_cloud_edits");
         assert_eq!(
             outcome.status,
             CloudEditStatus::Rejected,

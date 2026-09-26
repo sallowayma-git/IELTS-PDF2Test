@@ -15,12 +15,11 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 
-
 use super::queue::{
-    self, advance_stage, claim_next, finalize_cancelled_without_lease, finalize_ready_without_lease,
-    get_job, renew_lease, request_cancel, set_cloud_status, STAGE_CLOUD_RECOGNITION,
+    self, advance_stage, claim_next, finalize_cancelled_without_lease,
+    finalize_ready_without_lease, get_job, renew_lease, request_cancel, set_cloud_status,
+    STAGE_CLOUD_RECOGNITION, STAGE_FAILED, STAGE_LOCAL_RECOGNITION, STAGE_READY_FOR_REVIEW,
     STAGE_RECONCILING,
-    STAGE_FAILED, STAGE_LOCAL_RECOGNITION, STAGE_READY_FOR_REVIEW,
 };
 use crate::auto_pipeline::{run_auto_pipeline_core, run_auto_pipeline_core_for_retry};
 use crate::library::repository::open_library_connection;
@@ -193,11 +192,14 @@ pub(crate) fn start(app: AppHandle, state: Arc<ProcessingState>) {
                 return;
             };
             match queue::recover_on_startup(&conn, MAX_AUTO_RECOVERY) {
-                Ok(count) if count > 0 => eprintln!("[processing] recovery requeued {count} interrupted jobs"),
+                Ok(count) if count > 0 => {
+                    eprintln!("[processing] recovery requeued {count} interrupted jobs")
+                }
                 Ok(_) => {}
                 Err(error) => eprintln!("[processing] recovery failed: {error}"),
             }
-        }).await;
+        })
+        .await;
         loop {
             tokio::time::sleep(Duration::from_millis(SCHEDULER_TICK_MS)).await;
             if state.local_permits.available_permits() == 0 {
@@ -227,7 +229,11 @@ pub(crate) fn start(app: AppHandle, state: Arc<ProcessingState>) {
 }
 
 /// 用户取消入口（queued 立即取消；running 在阶段边界退出）。
-pub(crate) async fn cancel(state: Arc<ProcessingState>, app: AppHandle, job_id: &str) -> Result<(), String> {
+pub(crate) async fn cancel(
+    state: Arc<ProcessingState>,
+    app: AppHandle,
+    job_id: &str,
+) -> Result<(), String> {
     state.cancelled.write().await.insert(job_id.to_string());
     let root = app_root(&app)?;
     let job_id_owned = job_id.to_string();
@@ -253,7 +259,11 @@ pub(crate) async fn cancel(state: Arc<ProcessingState>, app: AppHandle, job_id: 
 /// 用户重试 / 重新识别。返回是否**真的**加入了队列（正在跑的任务不会重复入队）。
 ///
 /// 云端设置按**此刻**的模型连接重新解析（`current_cloud_profile`），不沿用导入时冻结的值。
-pub(crate) async fn retry_job(state: Arc<ProcessingState>, app: AppHandle, job_id: &str) -> Result<bool, String> {
+pub(crate) async fn retry_job(
+    state: Arc<ProcessingState>,
+    app: AppHandle,
+    job_id: &str,
+) -> Result<bool, String> {
     state.cancelled.write().await.remove(job_id);
     let root = app_root(&app)?;
     let job_id_owned = job_id.to_string();
@@ -345,7 +355,9 @@ pub(crate) fn notify_item_content_changed(
 }
 
 async fn run_job(app: AppHandle, state: Arc<ProcessingState>, job: queue::ProcessingJobRow) {
-    let Some(worker_id) = job.lease_owner.clone() else { return };
+    let Some(worker_id) = job.lease_owner.clone() else {
+        return;
+    };
     let state = Arc::new(ProcessingState {
         worker_id,
         settings: state.settings.clone(),
@@ -366,8 +378,11 @@ async fn run_job(app: AppHandle, state: Arc<ProcessingState>, job: queue::Proces
                 let result = tauri::async_runtime::spawn_blocking(move || {
                     let conn = open_library_connection(&root)?;
                     renew_lease(&conn, &job_id, &worker_id)
-                }).await;
-                if !matches!(result, Ok(Ok(true))) { break; }
+                })
+                .await;
+                if !matches!(result, Ok(Ok(true))) {
+                    break;
+                }
             }
         }
     });
@@ -385,7 +400,9 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         let job_id = job_id.clone();
         let _ = tauri::async_runtime::spawn_blocking(move || {
             let conn = open_library_connection(&root)?;
-            let Some(job) = get_job(&conn, &job_id)? else { return Ok::<(), String>(()) };
+            let Some(job) = get_job(&conn, &job_id)? else {
+                return Ok::<(), String>(());
+            };
             emit_row(&conn, &app, &job);
             Ok(())
         })
@@ -419,7 +436,18 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
 
     // ── 本地识别（阻塞线程池；持 local permit）───────────────────────
     let local_permit = state.local_permits.clone().acquire_owned().await;
-    let advanced = advance(&app, &state, &job_id, STAGE_LOCAL_RECOGNITION, Some("running"), None, None, None, None).await;
+    let advanced = advance(
+        &app,
+        &state,
+        &job_id,
+        STAGE_LOCAL_RECOGNITION,
+        Some("running"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
     // G1 边界：带 durable 取消标记的行会被 advance 强制落 cancelled；
     // 以有效阶段为准，取消后不再继续识别流程。
     if let Some((_, effective)) = &advanced {
@@ -490,7 +518,11 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     // 调用方据此跳过 reconcile。
     let cloud_future: Option<
         std::pin::Pin<
-            Box<dyn std::future::Future<Output = Option<Result<serde_json::Value, String>>> + Send + 'static>,
+            Box<
+                dyn std::future::Future<Output = Option<Result<serde_json::Value, String>>>
+                    + Send
+                    + 'static,
+            >,
         >,
     > = if launch_cloud {
         let state_cloud = state.clone();
@@ -751,9 +783,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         None
     } else {
         match cloud_handle {
-            Some(handle) => handle
-                .await
-                .unwrap_or(None), // join 失败（任务异常）按「云端中止」处理：跳过修复。
+            Some(handle) => handle.await.unwrap_or(None), // join 失败（任务异常）按「云端中止」处理：跳过修复。
             None => None,
         }
     };
@@ -932,10 +962,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                             // **完成判据始终是当前 canonical**，这份摘要不参与判定。
                             let summary = report.to_json(report.applied_count > 0);
                             crate::reconcile::store::write_repair_summary(
-                                &root,
-                                &job_id,
-                                &batch_id,
-                                &summary,
+                                &root, &job_id, &batch_id, &summary,
                             )?;
                             Ok((report, summary))
                         }
@@ -964,10 +991,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                         // failed。前端读的是批次行（`repair_json` 是读取权威），用户永远
                         // 看到「云端正在自动修复」，与任务行互相矛盾。
                         repair_summary = Some(crate::cloud_repair::unavailable_summary(
-                            &root,
-                            &job_id,
-                            &batch_id,
-                            &error,
+                            &root, &job_id, &batch_id, &error,
                         ));
                     }
                 }
@@ -1065,7 +1089,9 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     }
     // 云端**真的跑过**就以修复状态为准：本地周期看不见云端，会把 cloud_status 标成
     // `not_run`（= 本次没有云端参与），拿它描述一次真实的云端修复（成功或失败）都是谎报。
-    if let Some(mapped) = cloud_status_for_job(launch_cloud, repair_status.as_deref(), repair_applied) {
+    if let Some(mapped) =
+        cloud_status_for_job(launch_cloud, repair_status.as_deref(), repair_applied)
+    {
         cloud_status = mapped;
     }
     // 同一个判定也要写进批次行：前端状态行读批次行，不改这一格的话，一次真实的云端
@@ -1218,7 +1244,9 @@ fn batch_cloud_stage_for_job(
         "not_run" if cancelled => Some(BatchCloudStage {
             chain_status: "not_run".to_string(),
             stage_state: "canceled".to_string(),
-            reason_code: Some(crate::schema::recognition_v1::reason::CLOUD_REPAIR_CANCELLED.to_string()),
+            reason_code: Some(
+                crate::schema::recognition_v1::reason::CLOUD_REPAIR_CANCELLED.to_string(),
+            ),
             message: "云端自动检查已取消，题稿没有被云端修改。".to_string(),
         }),
         _ => None,
@@ -1296,8 +1324,6 @@ where
         Err(error) => Err(format!("processing_join:{error}")),
     }
 }
-
-
 
 /// 识别周期的精简结果（调度器只关心阶段状态与待确认数量）。
 #[derive(Debug, Clone)]
@@ -1387,9 +1413,7 @@ impl CycleFailure {
 /// **整段**同步周期，而不是把客户端单独挪出去。把这段抽成独立函数（而不是在每个调用点
 /// 各写一遍 `spawn_blocking`）是为了让回归测试能对着**生产用的同一个边界**跑：
 /// 测试里复刻一份等价代码，就永远测不到这个边界本身。
-async fn run_cycle_in_blocking_boundary<F>(
-    cycle: F,
-) -> Result<RecognitionCycleReport, CycleFailure>
+async fn run_cycle_in_blocking_boundary<F>(cycle: F) -> Result<RecognitionCycleReport, CycleFailure>
 where
     F: FnOnce() -> Result<RecognitionCycleReport, String> + Send + 'static,
 {
@@ -1427,7 +1451,11 @@ fn run_recognition_cycle(
     let adjudicator = |payload: &[serde_json::Value]| {
         model_channel_call(&adjudication_calls, |repair_note| {
             crate::auto_pipeline::adjudicate_divergence_through_gateway(
-                root, job_id, profile_id, payload, repair_note,
+                root,
+                job_id,
+                profile_id,
+                payload,
+                repair_note,
             )
         })
     };
@@ -1436,7 +1464,11 @@ fn run_recognition_cycle(
     let source_verifier = |payload: &[serde_json::Value]| {
         model_channel_call(&source_verification_calls, |repair_note| {
             crate::auto_pipeline::verify_source_answers_through_gateway(
-                root, job_id, profile_id, payload, repair_note,
+                root,
+                job_id,
+                profile_id,
+                payload,
+                repair_note,
             )
         })
     };
@@ -1728,7 +1760,11 @@ async fn set_cloud_status_only(
 
 async fn fail_job(app: &AppHandle, state: &Arc<ProcessingState>, job_id: &str, error: &str) {
     // 只保留稳定错误码；完整错误在应用日志里。
-    let code = error.split(':').next().unwrap_or("processing_failed").to_string();
+    let code = error
+        .split(':')
+        .next()
+        .unwrap_or("processing_failed")
+        .to_string();
     let code = code.chars().take(80).collect::<String>();
     let advanced = advance(
         app,
@@ -1827,7 +1863,18 @@ async fn fail_recognition_cycle(
 }
 
 async fn finish_cancelled(app: &AppHandle, state: &Arc<ProcessingState>, job_id: &str) {
-    let advanced = advance(app, state, job_id, queue::STAGE_CANCELLED, None, None, None, None, None).await;
+    let advanced = advance(
+        app,
+        state,
+        job_id,
+        queue::STAGE_CANCELLED,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
     if advanced.is_none() {
         // G1 边界（复核 B）：lease 已丢（心跳瞬断/休眠唤醒）时 advance 无法
         // 提交。durable 取消标记仍在且 reclaim 守卫保证没有 worker 会接手，
@@ -1877,8 +1924,11 @@ async fn set_item_status_ready(app: &AppHandle, job_id: &str) {
             // 与 `authoring_v2_commands::get_publish_preflight_core`（发布预检）。
             let conn = open_library_connection(&root)?;
             let status = crate::library::repository::get_canonical_ds(&conn, &job_id)?
-                .filter(|(ds, _)| ds.pointer("/quality/state").and_then(Value::as_str) == Some("ready"))
-                .map(|_| "ready").unwrap_or("action_required");
+                .filter(|(ds, _)| {
+                    ds.pointer("/quality/state").and_then(Value::as_str) == Some("ready")
+                })
+                .map(|_| "ready")
+                .unwrap_or("action_required");
             crate::library::repository::set_item_status(&conn, &job_id, status)?;
             // library 状态是前端行渲染的输入之一：推进 stateVersion，
             // 否则补发事件会因 event_seq 相同被前端去重丢弃。
@@ -1931,9 +1981,14 @@ mod tests {
         local: impl FnOnce() -> Result<serde_json::Value, String> + Send + 'static,
         cloud: Option<Fut>,
         on_local_done: impl FnOnce(),
-    ) -> (Result<serde_json::Value, String>, Option<Result<serde_json::Value, String>>)
+    ) -> (
+        Result<serde_json::Value, String>,
+        Option<Result<serde_json::Value, String>>,
+    )
     where
-        Fut: std::future::Future<Output = Option<Result<serde_json::Value, String>>> + Send + 'static,
+        Fut: std::future::Future<Output = Option<Result<serde_json::Value, String>>>
+            + Send
+            + 'static,
     {
         let local_handle = tauri::async_runtime::spawn_blocking(local);
         let cloud_handle: Option<
@@ -2017,8 +2072,9 @@ mod tests {
             draft_marker.store(!cloud_finished_c2.load(Ordering::SeqCst), Ordering::SeqCst);
         };
 
-        let (local_result, cloud_result) =
-            tauri::async_runtime::block_on(run_parallel_local_cloud(local, Some(cloud), on_local_done));
+        let (local_result, cloud_result) = tauri::async_runtime::block_on(
+            run_parallel_local_cloud(local, Some(cloud), on_local_done),
+        );
 
         assert!(local_result.is_ok(), "本地识别应成功");
         assert!(
@@ -2053,12 +2109,12 @@ mod tests {
     #[test]
     fn frozen_local_snapshot_takes_precedence_over_later_user_edits() {
         use crate::reconcile::engine::resolve_local_snapshot;
-        use uuid::Uuid;
         use crate::schema::recognition_v1::ChainKindV1;
         use crate::util::{ensure_app_dirs, ensure_job_dirs, job_dir};
+        use uuid::Uuid;
 
-        let root = std::env::temp_dir()
-            .join(format!("pdf2test-freeze-{}", Uuid::new_v4().simple()));
+        let root =
+            std::env::temp_dir().join(format!("pdf2test-freeze-{}", Uuid::new_v4().simple()));
         ensure_app_dirs(&root).unwrap();
         let job_id = "freeze-job";
         ensure_job_dirs(&job_dir(&root, job_id)).unwrap();
@@ -2180,8 +2236,8 @@ mod tests {
         use crate::util::{ensure_app_dirs, ensure_job_dirs, job_dir};
         use uuid::Uuid;
 
-        let root = std::env::temp_dir()
-            .join(format!("pdf2test-freeze-real-{}", Uuid::new_v4().simple()));
+        let root =
+            std::env::temp_dir().join(format!("pdf2test-freeze-real-{}", Uuid::new_v4().simple()));
         ensure_app_dirs(&root).unwrap();
         let job_id = "freeze-real-job";
         ensure_job_dirs(&job_dir(&root, job_id)).unwrap();
@@ -2225,8 +2281,8 @@ mod tests {
         .unwrap();
         drop(conn);
 
-        let base_edit_version = freeze_local_candidate_snapshot(&root, job_id)
-            .expect("canonical 就绪时冻结必须成功");
+        let base_edit_version =
+            freeze_local_candidate_snapshot(&root, job_id).expect("canonical 就绪时冻结必须成功");
         // (3) 返回的版本必须是**行里那个版本**（外壳行初始为 1），不是调用方凭空给的 0。
         assert_eq!(
             base_edit_version, 1,
@@ -2290,8 +2346,8 @@ mod tests {
         use crate::util::{ensure_app_dirs, ensure_job_dirs, job_dir};
         use uuid::Uuid;
 
-        let root = std::env::temp_dir()
-            .join(format!("pdf2test-init-order-{}", Uuid::new_v4().simple()));
+        let root =
+            std::env::temp_dir().join(format!("pdf2test-init-order-{}", Uuid::new_v4().simple()));
         ensure_app_dirs(&root).unwrap();
         let job_id = "order-job";
         ensure_job_dirs(&job_dir(&root, job_id)).unwrap();
@@ -2458,7 +2514,10 @@ mod tests {
             Some("llm_timeout_budget_exhausted:llm_http_timeout:error sending request"),
         )
         .expect("云端起了又失败，必须改写批次行");
-        assert_eq!(stage.stage_state, "unusable", "超时是「不可用」，不是「未运行」");
+        assert_eq!(
+            stage.stage_state, "unusable",
+            "超时是「不可用」，不是「未运行」"
+        );
         assert_eq!(stage.chain_status, "unusable");
         assert_eq!(
             stage.reason_code.as_deref(),
@@ -2471,10 +2530,14 @@ mod tests {
         );
 
         // 没起云端 → 不改写（本地周期的 not_run 是实话）。
-        assert_eq!(batch_cloud_stage_for_job(false, "not_run", None, None), None);
+        assert_eq!(
+            batch_cloud_stage_for_job(false, "not_run", None, None),
+            None
+        );
 
         // failed 但没有错误串：仍必须给出可行动的结论，不能沉默返回 None。
-        let fallback = batch_cloud_stage_for_job(true, "failed", None, None).expect("failed 必须有结论");
+        let fallback =
+            batch_cloud_stage_for_job(true, "failed", None, None).expect("failed 必须有结论");
         assert_eq!(fallback.stage_state, "unusable");
         assert_eq!(
             fallback.reason_code.as_deref(),
@@ -2492,14 +2555,16 @@ mod tests {
         use crate::cloud_repair::{
             REPAIR_STATUS_CANCELLED, REPAIR_STATUS_COMPLETED, REPAIR_STATUS_NEEDS_ATTENTION,
         };
-        let succeeded = batch_cloud_stage_for_job(true, "succeeded", Some(REPAIR_STATUS_COMPLETED), None)
-            .expect("云端成功必须改写批次行，不能留着本地周期的 not_run");
+        let succeeded =
+            batch_cloud_stage_for_job(true, "succeeded", Some(REPAIR_STATUS_COMPLETED), None)
+                .expect("云端成功必须改写批次行，不能留着本地周期的 not_run");
         assert_eq!(succeeded.chain_status, "succeeded");
         assert_eq!(succeeded.stage_state, "succeeded");
         assert_eq!(succeeded.reason_code, None);
 
-        let partial = batch_cloud_stage_for_job(true, "partial", Some(REPAIR_STATUS_NEEDS_ATTENTION), None)
-            .expect("部分成功必须改写批次行");
+        let partial =
+            batch_cloud_stage_for_job(true, "partial", Some(REPAIR_STATUS_NEEDS_ATTENTION), None)
+                .expect("部分成功必须改写批次行");
         assert_eq!(partial.chain_status, "partial");
         assert_eq!(partial.stage_state, "partial");
 
@@ -2510,8 +2575,9 @@ mod tests {
         assert_eq!(cancelled_with_edits.stage_state, "partial");
 
         // 取消且一处没改 → 阶段是 canceled，不是「没启用云端」。
-        let cancelled = batch_cloud_stage_for_job(true, "not_run", Some(REPAIR_STATUS_CANCELLED), None)
-            .expect("取消也是一次真实运行，不能留着 CLOUD_DISABLED");
+        let cancelled =
+            batch_cloud_stage_for_job(true, "not_run", Some(REPAIR_STATUS_CANCELLED), None)
+                .expect("取消也是一次真实运行，不能留着 CLOUD_DISABLED");
         assert_eq!(cancelled.stage_state, "canceled");
         assert_eq!(cancelled.chain_status, "not_run");
         assert_ne!(
@@ -2565,9 +2631,13 @@ mod tests {
             Some(Err("cloud_authoring_candidate_llm_http_500".to_string()));
 
         // 主链：先由拉取结果定出修复状态初值。
-        let (repair_status, repair_error) = repair_status_for_failed_cloud_fetch(failed_fetch.as_ref())
-            .expect("拉取失败必须产出显式的修复状态，不能静默穿过");
-        assert_eq!(repair_status, crate::cloud_repair::REPAIR_STATUS_UNAVAILABLE);
+        let (repair_status, repair_error) =
+            repair_status_for_failed_cloud_fetch(failed_fetch.as_ref())
+                .expect("拉取失败必须产出显式的修复状态，不能静默穿过");
+        assert_eq!(
+            repair_status,
+            crate::cloud_repair::REPAIR_STATUS_UNAVAILABLE
+        );
         assert_eq!(repair_error, "cloud_authoring_candidate_llm_http_500");
 
         // 主链：再据此改写任务行状态（本地周期这次给出的是 not_run）。
@@ -2668,8 +2738,13 @@ mod tests {
                 },
             )
             .expect("shell");
-            seed_canonical_ds(&conn, &job.job_id, &canonical.to_string(), "action_required")
-                .expect("seed canonical");
+            seed_canonical_ds(
+                &conn,
+                &job.job_id,
+                &canonical.to_string(),
+                "action_required",
+            )
+            .expect("seed canonical");
         }
 
         let report = run_local_only_recognition_cycle(&root, &job.job_id, 0)
@@ -2750,7 +2825,9 @@ mod tests {
             .expect("enqueue");
 
         let before_seq = queue::get_job(&conn, "job-1").unwrap().unwrap().event_seq;
-        let before_version = current_edit_version(&conn, item_id).unwrap().expect("版本可读");
+        let before_version = current_edit_version(&conn, item_id)
+            .unwrap()
+            .expect("版本可读");
 
         // 模拟一次内容提交落盘：版本 +1（`apply_editor_commands_tx` 做的正是这件事）。
         conn.execute(
@@ -2770,7 +2847,11 @@ mod tests {
 
         // 断言的是**真正会发出去的那份载荷**，不是函数有没有报错。
         let committed_version = current_edit_version(&conn, item_id).unwrap();
-        assert_eq!(committed_version, Some(before_version + 1), "前提：提交确实推进了版本");
+        assert_eq!(
+            committed_version,
+            Some(before_version + 1),
+            "前提：提交确实推进了版本"
+        );
         let payload = item_updated_payload(&row, committed_version);
         assert_eq!(payload["libraryItemId"], item_id);
         assert_eq!(
@@ -2778,7 +2859,8 @@ mod tests {
             "载荷里的序号必须与推高后的行一致，否则前端仍会按旧序号去重"
         );
         assert_eq!(
-            payload["editVersion"], before_version + 1,
+            payload["editVersion"],
+            before_version + 1,
             "事件必须携带**提交后**的版本；若是提交前的值，前端会把它当成自己的回声而忽略"
         );
 
@@ -2831,8 +2913,7 @@ mod tests {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind controlled service");
         let addr = listener.local_addr().expect("local addr");
-        let seen: Arc<std::sync::Mutex<Vec<String>>> =
-            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen_thread = seen.clone();
         std::thread::spawn(move || {
             for stream in listener.incoming() {
@@ -2852,13 +2933,12 @@ mod tests {
                         Ok(read) => {
                             request.extend_from_slice(&chunk[..read]);
                             if header_end.is_none() {
-                                if let Some(position) = request
-                                    .windows(4)
-                                    .position(|window| window == b"\r\n\r\n")
+                                if let Some(position) =
+                                    request.windows(4).position(|window| window == b"\r\n\r\n")
                                 {
                                     header_end = Some(position + 4);
-                                    let headers =
-                                        String::from_utf8_lossy(&request[..position]).to_lowercase();
+                                    let headers = String::from_utf8_lossy(&request[..position])
+                                        .to_lowercase();
                                     content_length = headers
                                         .lines()
                                         .find_map(|line| line.strip_prefix("content-length:"))
@@ -2932,8 +3012,8 @@ mod tests {
         use crate::{CreateJobInput, SourceFile, WorkflowStep};
         use uuid::Uuid;
 
-        let root = std::env::temp_dir()
-            .join(format!("pdf2test-a3-boundary-{}", Uuid::new_v4().simple()));
+        let root =
+            std::env::temp_dir().join(format!("pdf2test-a3-boundary-{}", Uuid::new_v4().simple()));
         ensure_app_dirs(&root).expect("app dirs");
 
         let mut job = make_job(CreateJobInput {
@@ -2970,7 +3050,10 @@ mod tests {
         .expect("document-ir");
         let uploads = dir.join("uploads");
         std::fs::create_dir_all(&uploads).expect("uploads dir");
-        write_minimal_docx(&uploads.join("stored.docx"), "Question 14 asks about stencilling.");
+        write_minimal_docx(
+            &uploads.join("stored.docx"),
+            "Question 14 asks about stencilling.",
+        );
 
         let canonical = json!({
             "schemaVersion": "IeltsAuthoringIRV2",
@@ -3011,8 +3094,13 @@ mod tests {
                 },
             )
             .expect("shell");
-            seed_canonical_ds(&conn, &job.job_id, &canonical.to_string(), "action_required")
-                .expect("seed canonical");
+            seed_canonical_ds(
+                &conn,
+                &job.job_id,
+                &canonical.to_string(),
+                "action_required",
+            )
+            .expect("seed canonical");
         }
 
         let profile = json!({
@@ -3050,8 +3138,11 @@ mod tests {
     fn a3_verification_crosses_the_real_async_boundary_and_reaches_the_controlled_service() {
         use crate::reconcile::store::{read_current_batch, read_decision_file};
 
-        let (base_url, seen) =
-            spawn_recording_verification_service(verification_response("slot-14", 14, "stencilling"));
+        let (base_url, seen) = spawn_recording_verification_service(verification_response(
+            "slot-14",
+            14,
+            "stencilling",
+        ));
         let (root, job_id) = seed_a3_verification_job(&base_url);
 
         // 真实异步调度边界：与 `run_job_inner` 调用的是**同一个函数**。
@@ -3158,8 +3249,11 @@ mod tests {
     /// 因此这里刻意不断言具体是哪一条，只断言「在不该发生的上下文里发生了运行时 panic」。
     #[test]
     fn calling_the_cycle_inside_the_async_context_without_the_boundary_panics() {
-        let (base_url, _seen) =
-            spawn_recording_verification_service(verification_response("slot-14", 14, "stencilling"));
+        let (base_url, _seen) = spawn_recording_verification_service(verification_response(
+            "slot-14",
+            14,
+            "stencilling",
+        ));
         let (root, job_id) = seed_a3_verification_job(&base_url);
 
         // 刻意**不**经过 `run_cycle_in_blocking_boundary`：这正是修复前的写法。
@@ -3185,7 +3279,8 @@ mod tests {
             .unwrap_or_default();
         assert!(
             message.contains("Cannot start a runtime from within a runtime")
-                || message.contains("Cannot drop a runtime in a context where blocking is not allowed"),
+                || message
+                    .contains("Cannot drop a runtime in a context where blocking is not allowed"),
             "panic 必须是运行时上下文冲突那两类之一，实际为：{message}"
         );
     }
@@ -3203,7 +3298,11 @@ mod tests {
         ))
         .expect_err("阻塞任务 panic 必须变成 join 失败，而不是被吞掉");
         assert!(matches!(joined, CycleFailure::Joined(_)), "{joined:?}");
-        assert_eq!(joined.code(), CYCLE_JOIN_FAILED, "join 失败必须有独立的机器码");
+        assert_eq!(
+            joined.code(),
+            CYCLE_JOIN_FAILED,
+            "join 失败必须有独立的机器码"
+        );
 
         let failed = tauri::async_runtime::block_on(run_cycle_in_blocking_boundary(|| {
             Err("read_canonical_failed:boom".to_string())

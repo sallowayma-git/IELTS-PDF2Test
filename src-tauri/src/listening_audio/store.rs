@@ -124,8 +124,16 @@ fn audio_extension(name: &str) -> String {
         .and_then(|value| value.to_str())
         .map(|value| value.to_ascii_lowercase())
         .unwrap_or_default();
-    let clean: String = extension.chars().filter(|ch| ch.is_ascii_alphanumeric()).take(8).collect();
-    if clean.is_empty() { "bin".to_string() } else { clean }
+    let clean: String = extension
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .take(8)
+        .collect();
+    if clean.is_empty() {
+        "bin".to_string()
+    } else {
+        clean
+    }
 }
 
 fn issue_codes(probe: &ListeningAudioProbeResultV1) -> Vec<String> {
@@ -159,7 +167,11 @@ fn row_to_asset(row: &rusqlite::Row<'_>) -> rusqlite::Result<ListeningAudioAsset
     })
 }
 
-fn get_binding(conn: &Connection, item_id: &str, part_ordinal: i64) -> CommandResult<Option<ListeningAudioAssetV1>> {
+fn get_binding(
+    conn: &Connection,
+    item_id: &str,
+    part_ordinal: i64,
+) -> CommandResult<Option<ListeningAudioAssetV1>> {
     conn.query_row(
         "SELECT * FROM listening_audio_assets_v1 WHERE item_id = ?1 AND part_ordinal = ?2",
         params![item_id, part_ordinal],
@@ -169,19 +181,26 @@ fn get_binding(conn: &Connection, item_id: &str, part_ordinal: i64) -> CommandRe
     .map_err(|error| format!("listening_audio_get:{error}"))
 }
 
-pub(crate) fn list_bindings(root: &Path, item_id: &str) -> CommandResult<Vec<ListeningAudioAssetV1>> {
+pub(crate) fn list_bindings(
+    root: &Path,
+    item_id: &str,
+) -> CommandResult<Vec<ListeningAudioAssetV1>> {
     let conn = open_library_connection(root)?;
     list_bindings_conn(&conn, item_id)
 }
 
-fn list_bindings_conn(conn: &Connection, item_id: &str) -> CommandResult<Vec<ListeningAudioAssetV1>> {
+fn list_bindings_conn(
+    conn: &Connection,
+    item_id: &str,
+) -> CommandResult<Vec<ListeningAudioAssetV1>> {
     let mut statement = conn
         .prepare("SELECT * FROM listening_audio_assets_v1 WHERE item_id = ?1 ORDER BY part_ordinal")
         .map_err(|error| format!("listening_audio_list:{error}"))?;
     let rows = statement
         .query_map([item_id], row_to_asset)
         .map_err(|error| format!("listening_audio_list:{error}"))?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|error| format!("listening_audio_list:{error}"))
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("listening_audio_list:{error}"))
 }
 
 pub(crate) fn audio_status(root: &Path, item_id: &str) -> CommandResult<ListeningAudioStatusV1> {
@@ -244,7 +263,11 @@ pub(crate) fn bind_audio(
     {
         let conn = open_library_connection(root)?;
         let exists: Option<String> = conn
-            .query_row("SELECT id FROM library_items_v2 WHERE id = ?1", [item_id], |row| row.get(0))
+            .query_row(
+                "SELECT id FROM library_items_v2 WHERE id = ?1",
+                [item_id],
+                |row| row.get(0),
+            )
             .optional()
             .map_err(|error| format!("listening_audio_item:{error}"))?;
         if exists.is_none() {
@@ -265,11 +288,18 @@ pub(crate) fn bind_audio(
         let _ = fs::remove_file(&staging);
     } else if let Err(error) = fs::rename(&staging, &final_path) {
         let _ = fs::remove_file(&staging);
-        return Err(format!("listening_audio_store:{}:{error}", final_path.display()));
+        return Err(format!(
+            "listening_audio_store:{}:{error}",
+            final_path.display()
+        ));
     }
 
     // Probe the managed copy (never the user's original) and pin it to the hash we copied.
-    let probe = probe_listening_audio_v1(&final_path, Some(&sha256), &ListeningAudioProbePolicyV1::default());
+    let probe = probe_listening_audio_v1(
+        &final_path,
+        Some(&sha256),
+        &ListeningAudioProbePolicyV1::default(),
+    );
     let probe_json = serde_json::to_string(&probe).map_err(|error| error.to_string())?;
     let managed_path = final_path.to_string_lossy().to_string();
 
@@ -311,13 +341,16 @@ pub(crate) fn bind_audio(
             ],
         )
         .map_err(|error| format!("listening_audio_bind:{error}"))?;
-    transaction.commit().map_err(|error| format!("listening_audio_commit:{error}"))?;
+    transaction
+        .commit()
+        .map_err(|error| format!("listening_audio_commit:{error}"))?;
     if let Some(previous) = previous {
         if previous.managed_path != managed_path {
             remove_if_unreferenced(&conn, root, &previous.managed_path);
         }
     }
-    get_binding(&conn, item_id, part_ordinal)?.ok_or_else(|| "listening_audio_bind_lost".to_string())
+    get_binding(&conn, item_id, part_ordinal)?
+        .ok_or_else(|| "listening_audio_bind_lost".to_string())
 }
 
 pub(crate) fn unbind_audio(root: &Path, item_id: &str, part_ordinal: i64) -> CommandResult<bool> {
@@ -376,25 +409,38 @@ pub(crate) fn purge_item_audio(root: &Path, item_id: &str) -> CommandResult<Valu
             // 一个指向别处的联接：删它可能连带删掉别人。只摘掉链接本身，绝不下钻。
             match fs::remove_file(&dir) {
                 Ok(()) => directory_removed = true,
-                Err(error) => issues.push(format!("listening_audio_purge_link:{}:{error}", dir.display())),
+                Err(error) => issues.push(format!(
+                    "listening_audio_purge_link:{}:{error}",
+                    dir.display()
+                )),
             }
         }
         Ok(metadata) if metadata.is_dir() => {
             if !dir.starts_with(audio_root(root)) {
-                issues.push(format!("listening_audio_purge_outside_root:{}", dir.display()));
+                issues.push(format!(
+                    "listening_audio_purge_outside_root:{}",
+                    dir.display()
+                ));
             } else {
                 match fs::remove_dir_all(&dir) {
                     Ok(()) => directory_removed = true,
-                    Err(error) => {
-                        issues.push(format!("listening_audio_purge_dir:{}:{error}", dir.display()))
-                    }
+                    Err(error) => issues.push(format!(
+                        "listening_audio_purge_dir:{}:{error}",
+                        dir.display()
+                    )),
                 }
             }
         }
         // 没有目录：没有音频，空操作。
-        Ok(_) => issues.push(format!("listening_audio_purge_not_a_directory:{}", dir.display())),
+        Ok(_) => issues.push(format!(
+            "listening_audio_purge_not_a_directory:{}",
+            dir.display()
+        )),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => issues.push(format!("listening_audio_purge_stat:{}:{error}", dir.display())),
+        Err(error) => issues.push(format!(
+            "listening_audio_purge_stat:{}:{error}",
+            dir.display()
+        )),
     }
 
     Ok(serde_json::json!({
@@ -526,13 +572,18 @@ fn natural_key(name: &str) -> Vec<(u8, String, u128)> {
 }
 
 pub(crate) fn natural_sort_names(names: &mut [String]) {
-    names.sort_by(|left, right| natural_key(left).cmp(&natural_key(right)).then_with(|| left.cmp(right)));
+    names.sort_by(|left, right| {
+        natural_key(left)
+            .cmp(&natural_key(right))
+            .then_with(|| left.cmp(right))
+    });
 }
 
 /// `.mp3` files directly inside `folder`, naturally sorted by file name. Ordinal `n` is the
 /// n-th entry; the dialog lets the user reorder before binding.
 pub(crate) fn list_folder_mp3(folder: &Path) -> CommandResult<Vec<PathBuf>> {
-    let entries = fs::read_dir(folder).map_err(|error| format!("listening_audio_folder:{error}"))?;
+    let entries =
+        fs::read_dir(folder).map_err(|error| format!("listening_audio_folder:{error}"))?;
     let mut names: Vec<String> = entries
         .flatten()
         .filter(|entry| entry.path().is_file())
@@ -544,7 +595,11 @@ pub(crate) fn list_folder_mp3(folder: &Path) -> CommandResult<Vec<PathBuf>> {
 }
 
 /// Binds every `.mp3` in `folder` to parts `1..n` in natural name order.
-pub(crate) fn bind_folder(root: &Path, item_id: &str, folder: &Path) -> CommandResult<Vec<ListeningAudioAssetV1>> {
+pub(crate) fn bind_folder(
+    root: &Path,
+    item_id: &str,
+    folder: &Path,
+) -> CommandResult<Vec<ListeningAudioAssetV1>> {
     let files = list_folder_mp3(folder)?;
     if files.is_empty() {
         return Err("listening_audio_folder_empty".to_string());
@@ -563,7 +618,13 @@ pub(crate) fn bind_folder(root: &Path, item_id: &str, folder: &Path) -> CommandR
 pub(crate) fn probe_files(paths: &[String]) -> Vec<ListeningAudioProbeResultV1> {
     paths
         .iter()
-        .map(|path| probe_listening_audio_v1(Path::new(path), None, &ListeningAudioProbePolicyV1::default()))
+        .map(|path| {
+            probe_listening_audio_v1(
+                Path::new(path),
+                None,
+                &ListeningAudioProbePolicyV1::default(),
+            )
+        })
         .collect()
 }
 
@@ -574,7 +635,8 @@ mod tests {
     use std::io::Write;
 
     fn temp_root() -> PathBuf {
-        let root = std::env::temp_dir().join(format!("listening-audio-{}", Uuid::new_v4().simple()));
+        let root =
+            std::env::temp_dir().join(format!("listening-audio-{}", Uuid::new_v4().simple()));
         crate::util::ensure_app_dirs(&root).unwrap();
         root
     }
@@ -583,7 +645,13 @@ mod tests {
         let conn = open_library_connection(root).unwrap();
         upsert_item_shell(
             &conn,
-            &UpsertItemInput { id: item_id, modality: "listening", title: "L", status: "processing", source_asset_id: None },
+            &UpsertItemInput {
+                id: item_id,
+                modality: "listening",
+                title: "L",
+                status: "processing",
+                source_asset_id: None,
+            },
         )
         .unwrap();
         // A job directory exists for real imports; audio must never land inside it.
@@ -636,8 +704,16 @@ mod tests {
         assert_eq!(bound.original_name, "Section 1.wav");
         assert_eq!(bound.sha256.len(), 64);
         let managed = PathBuf::from(&bound.managed_path);
-        assert_eq!(managed, root.join("audio").join("item-l").join(format!("{}.wav", bound.sha256)));
-        assert!(!managed.starts_with(root.join("jobs")), "audio must not live inside a job directory");
+        assert_eq!(
+            managed,
+            root.join("audio")
+                .join("item-l")
+                .join(format!("{}.wav", bound.sha256))
+        );
+        assert!(
+            !managed.starts_with(root.join("jobs")),
+            "audio must not live inside a job directory"
+        );
 
         fs::remove_dir_all(&outside).unwrap();
         let status = verify_bindings(&root, "item-l").unwrap();
@@ -663,19 +739,31 @@ mod tests {
         let unsupported = dir.join("notes.ogg");
         write_wav(&unsupported, &vec![1_000; 1600]);
 
-        let cases = [(1, &corrupt, "AUDIO_DECODE_FAILED"), (2, &silent, "AUDIO_NEAR_SILENT"), (3, &unsupported, "AUDIO_CODEC_UNSUPPORTED")];
+        let cases = [
+            (1, &corrupt, "AUDIO_DECODE_FAILED"),
+            (2, &silent, "AUDIO_NEAR_SILENT"),
+            (3, &unsupported, "AUDIO_CODEC_UNSUPPORTED"),
+        ];
         for (part, path, code) in cases {
             let bound = bind_audio(&root, "item-bad", part, path).unwrap();
             assert!(!bound.playable, "part {part} must be blocked");
             assert_eq!(bound.probe["probe"]["status"], "blocked");
-            assert!(bound.issue_codes.iter().any(|issue| issue == code), "part {part}: {:?}", bound.issue_codes);
+            assert!(
+                bound.issue_codes.iter().any(|issue| issue == code),
+                "part {part}: {:?}",
+                bound.issue_codes
+            );
         }
         let status = audio_status(&root, "item-bad").unwrap();
         assert!(!status.audio_ready);
         assert_eq!(status.bindings.len(), 3);
         assert_eq!(
             status.blockers,
-            vec!["AUDIO_PROBE_BLOCKED:1", "AUDIO_PROBE_BLOCKED:2", "AUDIO_PROBE_BLOCKED:3"]
+            vec![
+                "AUDIO_PROBE_BLOCKED:1",
+                "AUDIO_PROBE_BLOCKED:2",
+                "AUDIO_PROBE_BLOCKED:3"
+            ]
         );
         let _ = fs::remove_dir_all(&root);
     }
@@ -704,7 +792,10 @@ mod tests {
         let old = bind_audio(&root, "item-r", 2, &first).unwrap();
         let new = bind_audio(&root, "item-r", 2, &second).unwrap();
         assert_ne!(old.sha256, new.sha256);
-        assert!(!Path::new(&old.managed_path).exists(), "the replaced managed file must be removed");
+        assert!(
+            !Path::new(&old.managed_path).exists(),
+            "the replaced managed file must be removed"
+        );
         assert!(Path::new(&new.managed_path).exists());
         let bindings = list_bindings(&root, "item-r").unwrap();
         assert_eq!(bindings.len(), 1);
@@ -736,7 +827,9 @@ mod tests {
         let root = temp_root();
         let source = root.join("x.wav");
         tone(&source, 440.0);
-        assert!(bind_audio(&root, "missing", 1, &source).unwrap_err().starts_with("ITEM_NOT_FOUND"));
+        assert!(bind_audio(&root, "missing", 1, &source)
+            .unwrap_err()
+            .starts_with("ITEM_NOT_FOUND"));
         seed_item(&root, "item-p");
         assert!(bind_audio(&root, "item-p", 0, &source).is_err());
         assert!(bind_audio(&root, "item-p", MAX_PART_ORDINAL + 1, &source).is_err());
@@ -750,7 +843,13 @@ mod tests {
         seed_item(&root, "item-f");
         let folder = root.join("cd");
         fs::create_dir_all(&folder).unwrap();
-        for name in ["Part 10.mp3", "Part 2.mp3", "part 1.MP3", "cover.jpg", "Part 3.wav"] {
+        for name in [
+            "Part 10.mp3",
+            "Part 2.mp3",
+            "part 1.MP3",
+            "cover.jpg",
+            "Part 3.wav",
+        ] {
             fs::write(folder.join(name), b"x").unwrap();
         }
         let listed: Vec<String> = list_folder_mp3(&folder)
@@ -761,7 +860,10 @@ mod tests {
         assert_eq!(listed, vec!["part 1.MP3", "Part 2.mp3", "Part 10.mp3"]);
 
         let bound = bind_folder(&root, "item-f", &folder).unwrap();
-        assert_eq!(bound.iter().map(|b| b.part_ordinal).collect::<Vec<_>>(), vec![1, 2, 3]);
+        assert_eq!(
+            bound.iter().map(|b| b.part_ordinal).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
         assert_eq!(bound[2].original_name, "Part 10.mp3");
         let _ = fs::remove_dir_all(&root);
     }
@@ -803,12 +905,22 @@ mod tests {
 
         let gone_dir = root.join("audio").join("item-gone");
         let keep_dir = root.join("audio").join("item-keep");
-        assert!(gone_dir.is_dir() && keep_dir.is_dir(), "夹具必须真的落了两份受管音频");
+        assert!(
+            gone_dir.is_dir() && keep_dir.is_dir(),
+            "夹具必须真的落了两份受管音频"
+        );
 
         let report = purge_item_audio(&root, "item-gone").unwrap();
         assert_eq!(report["rowsRemoved"], serde_json::json!(2), "{report}");
-        assert_eq!(report["directoryRemoved"], serde_json::json!(true), "{report}");
-        assert!(report["issues"].as_array().is_some_and(Vec::is_empty), "{report}");
+        assert_eq!(
+            report["directoryRemoved"],
+            serde_json::json!(true),
+            "{report}"
+        );
+        assert!(
+            report["issues"].as_array().is_some_and(Vec::is_empty),
+            "{report}"
+        );
         assert!(!gone_dir.exists(), "被永久删除的条目不该留下音频目录");
 
         // 另一个条目一个字都不许动：目录、文件、表行、可用性全部照旧。
@@ -818,7 +930,11 @@ mod tests {
         assert_eq!(status.bindings.len(), 1);
         let conn = open_library_connection(&root).unwrap();
         let remaining: i64 = conn
-            .query_row("SELECT COUNT(*) FROM listening_audio_assets_v1", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM listening_audio_assets_v1",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(remaining, 1, "表里只该剩下另一个条目的那一行");
         drop(conn);
@@ -826,7 +942,11 @@ mod tests {
         // 幂等：重复删除不报错，也不会顺手带走别的条目。
         let again = purge_item_audio(&root, "item-gone").unwrap();
         assert_eq!(again["rowsRemoved"], serde_json::json!(0), "{again}");
-        assert_eq!(again["directoryRemoved"], serde_json::json!(false), "{again}");
+        assert_eq!(
+            again["directoryRemoved"],
+            serde_json::json!(false),
+            "{again}"
+        );
         assert!(keep_dir.is_dir());
 
         let _ = fs::remove_dir_all(&root);
@@ -840,7 +960,11 @@ mod tests {
         seed_item(&root, "item-none");
         let report = purge_item_audio(&root, "item-none").unwrap();
         assert_eq!(report["rowsRemoved"], serde_json::json!(0), "{report}");
-        assert_eq!(report["directoryRemoved"], serde_json::json!(false), "{report}");
+        assert_eq!(
+            report["directoryRemoved"],
+            serde_json::json!(false),
+            "{report}"
+        );
         assert!(
             purge_item_audio(&root, "../escape").is_err(),
             "路径穿越必须被拒绝，而不是删掉音频根之外的东西"

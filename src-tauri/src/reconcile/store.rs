@@ -15,9 +15,8 @@ use serde_json::{json, Value};
 use super::source::SourceVerificationV1;
 use crate::schema::cloud_repair_v1::CloudAuthoringCandidateV1;
 use crate::schema::recognition_v1::{
-    ChainStatusSummaryV1, ChainStatusV1, DecisionItemV1, DecisionSummaryV1,
-    RecognitionCandidateV1, RecognitionChainStateV1, RecognitionDecisionV1,
-    RECOGNITION_DECISION_V1_SCHEMA_VERSION,
+    ChainStatusSummaryV1, ChainStatusV1, DecisionItemV1, DecisionSummaryV1, RecognitionCandidateV1,
+    RecognitionChainStateV1, RecognitionDecisionV1, RECOGNITION_DECISION_V1_SCHEMA_VERSION,
 };
 use crate::util::{read_json_opt, safe_job_dir, write_json};
 use crate::CommandResult;
@@ -67,7 +66,12 @@ pub(crate) fn write_cloud_authoring_candidate(
     batch_id: &str,
     candidate: &CloudAuthoringCandidateV1,
 ) -> CommandResult<PathBuf> {
-    let path = artifact_path(root, &candidate.job_id, batch_id, CLOUD_AUTHORING_CANDIDATE_FILE)?;
+    let path = artifact_path(
+        root,
+        &candidate.job_id,
+        batch_id,
+        CLOUD_AUTHORING_CANDIDATE_FILE,
+    )?;
     write_json(&path, candidate)?;
     Ok(path)
 }
@@ -169,7 +173,10 @@ pub(crate) fn write_current_batch(root: &Path, job_id: &str, batch_id: &str) -> 
 pub(crate) fn read_current_batch(root: &Path, job_id: &str) -> Option<String> {
     let path = recognition_dir(root, job_id).ok()?.join(CURRENT_BATCH_FILE);
     let value = read_json_opt(&path).ok().flatten()?;
-    value.get("batchId").and_then(Value::as_str).map(str::to_string)
+    value
+        .get("batchId")
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 pub(crate) fn read_candidate(
@@ -231,10 +238,7 @@ pub(crate) struct BatchRow {
 }
 
 /// 当前 canonical 编辑版本（前端「建议是否过期」的判据）。
-pub(crate) fn current_edit_version(
-    conn: &Connection,
-    item_id: &str,
-) -> CommandResult<Option<i64>> {
+pub(crate) fn current_edit_version(conn: &Connection, item_id: &str) -> CommandResult<Option<i64>> {
     conn.query_row(
         "SELECT current_edit_version FROM library_items_v2 WHERE id = ?1",
         [item_id],
@@ -261,7 +265,10 @@ pub(crate) fn load_batch_by_id(
     )
 }
 
-pub(crate) fn upsert_batch(conn: &Connection, decision: &RecognitionDecisionV1) -> CommandResult<()> {
+pub(crate) fn upsert_batch(
+    conn: &Connection,
+    decision: &RecognitionDecisionV1,
+) -> CommandResult<()> {
     upsert_batch_with_stages(conn, decision, None)
 }
 
@@ -870,7 +877,10 @@ mod tests {
         // 没写过修复摘要 ⇒ `None`（「没有修复记录」）。前端必须按「不知道」降级，
         // 不得当成 completed —— 否则一次无云导入会被显示成「云端已修好」。
         let row = load_batch_by_id(&conn, "batch-1").unwrap().unwrap();
-        assert!(row.repair.is_none(), "没写过摘要时必须是没有记录，而不是 completed");
+        assert!(
+            row.repair.is_none(),
+            "没写过摘要时必须是没有记录，而不是 completed"
+        );
 
         let summary = json!({
             "status": "needs_attention",
@@ -913,7 +923,9 @@ mod tests {
         let decision = decision("batch-1");
         upsert_batch(&conn, &decision).unwrap();
         replace_decision_items(&conn, &decision).unwrap();
-        let loaded = load_latest_decision(&conn, "item-1").unwrap().expect("decision must load");
+        let loaded = load_latest_decision(&conn, "item-1")
+            .unwrap()
+            .expect("decision must load");
         assert_eq!(loaded.batch_id, "batch-1");
         assert_eq!(loaded.base_edit_version, 3);
         assert_eq!(loaded.summary.agreed, 4);
@@ -955,7 +967,9 @@ mod tests {
         // 同一批次重复写入是替换语义：不会产生重复行。
         replace_decision_items(&conn, &decision).unwrap();
         let total: i64 = conn
-            .query_row("SELECT COUNT(*) FROM recognition_decisions_v1", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM recognition_decisions_v1", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(total, 2, "每个批次各留一行历史，重复写入不膨胀");
 
@@ -972,8 +986,24 @@ mod tests {
         upsert_batch(&conn, &decision).unwrap();
         replace_decision_items(&conn, &decision).unwrap();
         let item_json = serde_json::to_string(&decision.items[0]).unwrap();
-        set_decision_status(&conn, "batch-1", "d:slot:slot-14:answer", "accepted", &item_json, None).unwrap();
-        set_decision_status(&conn, "batch-1", "d:slot:slot-14:answer", "accepted", &item_json, None).unwrap();
+        set_decision_status(
+            &conn,
+            "batch-1",
+            "d:slot:slot-14:answer",
+            "accepted",
+            &item_json,
+            None,
+        )
+        .unwrap();
+        set_decision_status(
+            &conn,
+            "batch-1",
+            "d:slot:slot-14:answer",
+            "accepted",
+            &item_json,
+            None,
+        )
+        .unwrap();
         let loaded = load_latest_decision(&conn, "item-1").unwrap().unwrap();
         assert_eq!(loaded.items[0].status, DecisionStatusV1::Accepted);
         assert!(set_decision_status(&conn, "batch-1", "missing", "accepted", "{}", None).is_err());
@@ -982,8 +1012,19 @@ mod tests {
     #[test]
     fn journal_round_trip_supports_idempotent_replays() {
         let conn = memory();
-        journal_insert(&conn, "req-1", "item-1", "batch-1", 3, "{}", "{\"ok\":true}").unwrap();
-        let loaded = journal_lookup(&conn, "req-1").unwrap().expect("journal entry");
+        journal_insert(
+            &conn,
+            "req-1",
+            "item-1",
+            "batch-1",
+            3,
+            "{}",
+            "{\"ok\":true}",
+        )
+        .unwrap();
+        let loaded = journal_lookup(&conn, "req-1")
+            .unwrap()
+            .expect("journal entry");
         assert_eq!(loaded.0, "item-1");
         assert_eq!(loaded.1, "batch-1");
         assert_eq!(loaded.2, 3);
@@ -1012,8 +1053,7 @@ mod tests {
         let path = golden_authoring_path();
         let text = std::fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("读取 golden 稿失败 path={path:?} err={error}"));
-        let authoring: Value =
-            serde_json::from_str(&text).expect("golden 稿必须是合法 JSON");
+        let authoring: Value = serde_json::from_str(&text).expect("golden 稿必须是合法 JSON");
         serde_json::from_value(json!({
             "schemaVersion": "CloudAuthoringCandidateV1",
             "batchId": "batch-1",
@@ -1040,10 +1080,7 @@ mod tests {
     }
 
     fn temp_root() -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "reconcile-store-{}",
-            uuid::Uuid::new_v4().simple()
-        ))
+        std::env::temp_dir().join(format!("reconcile-store-{}", uuid::Uuid::new_v4().simple()))
     }
 
     #[test]
@@ -1095,9 +1132,11 @@ mod tests {
         )
         .unwrap();
 
-        let row_count_before: i64 =
-            conn.query_row("SELECT COUNT(*) FROM library_items_v2", [], |row| row.get(0))
-                .unwrap();
+        let row_count_before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM library_items_v2", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
         let canonical_before: String = conn
             .query_row(
                 "SELECT canonical_ds_json FROM library_items_v2 WHERE id = 'item-1'",
@@ -1107,12 +1146,15 @@ mod tests {
             .unwrap();
 
         // 关键一步：写候选。**绝不**打开数据库。
-        let written = write_cloud_authoring_candidate(&root, "batch-1", &golden_candidate()).unwrap();
+        let written =
+            write_cloud_authoring_candidate(&root, "batch-1", &golden_candidate()).unwrap();
         assert!(written.exists(), "候选必须落到独立 artifact，而非库里");
 
-        let row_count_after: i64 =
-            conn.query_row("SELECT COUNT(*) FROM library_items_v2", [], |row| row.get(0))
-                .unwrap();
+        let row_count_after: i64 = conn
+            .query_row("SELECT COUNT(*) FROM library_items_v2", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
         let canonical_after: String = conn
             .query_row(
                 "SELECT canonical_ds_json FROM library_items_v2 WHERE id = 'item-1'",
@@ -1122,7 +1164,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(row_count_before, 1, "写候选前必须恰好一条行");
-        assert_eq!(row_count_after, 1, "写候选不得新增/删除 library_items_v2 行");
+        assert_eq!(
+            row_count_after, 1,
+            "写候选不得新增/删除 library_items_v2 行"
+        );
         assert_eq!(
             canonical_after, canonical_before,
             "写候选不得改动任何行的 canonical_ds_json"
@@ -1159,7 +1204,9 @@ mod tests {
             "损坏文件必须返回明确错误，而非 None 或 panic"
         );
         assert!(
-            result.unwrap_err().contains("cloud_authoring_candidate_corrupt"),
+            result
+                .unwrap_err()
+                .contains("cloud_authoring_candidate_corrupt"),
             "错误码必须指明候选损坏（反序列化失败）"
         );
         let _ = std::fs::remove_dir_all(&root);
@@ -1187,7 +1234,9 @@ mod tests {
             adjudication: StageStatusV1::new(StageStateV1::Succeeded),
         };
         upsert_batch_with_stages(&conn, &decision, Some(&stages)).unwrap();
-        let before = load_batch_by_id(&conn, "batch-cloud-fail").unwrap().unwrap();
+        let before = load_batch_by_id(&conn, "batch-cloud-fail")
+            .unwrap()
+            .unwrap();
         assert_eq!(
             before.chain_status.cloud_reason_code.as_deref(),
             Some(reason::CLOUD_DISABLED)
@@ -1202,7 +1251,9 @@ mod tests {
         )
         .unwrap();
 
-        let after = load_batch_by_id(&conn, "batch-cloud-fail").unwrap().unwrap();
+        let after = load_batch_by_id(&conn, "batch-cloud-fail")
+            .unwrap()
+            .unwrap();
         assert_eq!(
             after.chain_status.cloud_reason_code.as_deref(),
             Some(reason::MODEL_TIMEOUT)

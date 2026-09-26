@@ -495,9 +495,9 @@ pub(crate) fn publish_verdict(
         // 编译链：V2 的唯一编译入口。编译不过就不是"能不能发"的问题，
         // 而是根本没有可发布产物。目标契约按稿件自己的 modality 命名——听力卷
         // 编译进 `ListeningExamSourceV1`，报成阅读契约会让用户按错误的契约去排查。
-        if let Ok(typed) = serde_json::from_value::<crate::schema::IeltsAuthoringIRV2>(
-            authoring.clone(),
-        ) {
+        if let Ok(typed) =
+            serde_json::from_value::<crate::schema::IeltsAuthoringIRV2>(authoring.clone())
+        {
             let schema_version =
                 crate::listening_source_v1::runtime_schema_version(&typed.modality);
             if let Err(issues) = crate::listening_source_v1::compile_exam_source_v2(&typed) {
@@ -605,12 +605,7 @@ pub(crate) fn publish_verdict(
                 }
             }
             if !ai_fallbacks.is_empty() {
-                builder.block(
-                    "AI_FALLBACK",
-                    "PublishGate",
-                    None,
-                    ai_fallbacks.join(","),
-                );
+                builder.block("AI_FALLBACK", "PublishGate", None, ai_fallbacks.join(","));
             }
             if !partial_failures.is_empty() {
                 builder.block(
@@ -625,12 +620,9 @@ pub(crate) fn publish_verdict(
 
     // 来源复核状态：两个范围都要（它是当前稿的事实，不是历史痕迹）。
     match crate::source_review::source_review_status_for_job(root, job_id) {
-        Err(error) => builder.undetermined(
-            "SOURCE_REVIEW_UNAVAILABLE",
-            "SourceReview",
-            None,
-            error,
-        ),
+        Err(error) => {
+            builder.undetermined("SOURCE_REVIEW_UNAVAILABLE", "SourceReview", None, error)
+        }
         Ok(source_review) => {
             if scope == PublishScope::FullDerived {
                 if source_review.get("schemaVersion").and_then(Value::as_str)
@@ -766,7 +758,12 @@ pub(crate) fn version_alignment(root: &Path, job_id: &str, used: &Value) -> Valu
 }
 
 /// 把 [`version_alignment`] 的结论写进产物。只新增一个字段，不改任何既有字段。
-pub(crate) fn record_version_alignment(report: &mut Value, root: &Path, job_id: &str, used: &Value) {
+pub(crate) fn record_version_alignment(
+    report: &mut Value,
+    root: &Path,
+    job_id: &str,
+    used: &Value,
+) {
     let alignment = version_alignment(root, job_id, used);
     if let Some(object) = report.as_object_mut() {
         object.insert("versionAlignment".to_string(), alignment);
@@ -778,7 +775,11 @@ pub(crate) fn record_version_alignment(report: &mut Value, root: &Path, job_id: 
 /// 只改两个字段，不动 `issues` / `layers` 的既有内容：
 /// - `passed` 改为由结论派生（修前 `report.passed` 自己就是第四个判据来源）；
 /// - 追加 `publishVerdict`（含全部 reasons），使"为什么不能发"在产物里可查。
-pub(crate) fn apply_publish_verdict(report: &mut Value, verdict: &PublishVerdict, scope: PublishScope) {
+pub(crate) fn apply_publish_verdict(
+    report: &mut Value,
+    verdict: &PublishVerdict,
+    scope: PublishScope,
+) {
     let Some(object) = report.as_object_mut() else {
         return;
     };
@@ -857,19 +858,16 @@ mod tests {
         ready["quality"]["issues"] = json!([]);
         ready["audit"]["humanVerified"] = json!(true);
 
-        let preflight = crate::authoring_v2_commands::check_publish_preflight(
-            &root,
-            job_id,
-            7,
-            &ready,
-        )
-        .get("publishVerdict")
-        .cloned()
-        .expect("preflight must expose the shared verdict");
+        let preflight =
+            crate::authoring_v2_commands::check_publish_preflight(&root, job_id, 7, &ready)
+                .get("publishVerdict")
+                .cloned()
+                .expect("preflight must expose the shared verdict");
         // These are the exact helper calls used by reading-assets and reading-js respectively.
         // They are invoked separately here to pin both export entrances to the same semantics.
         let assets = crate::export_pack::legacy_export_verdict(&root, job_id, &ready).to_value();
-        let javascript = crate::export_pack::legacy_export_verdict(&root, job_id, &ready).to_value();
+        let javascript =
+            crate::export_pack::legacy_export_verdict(&root, job_id, &ready).to_value();
         let publish = publish_verdict(
             &root,
             job_id,
@@ -892,17 +890,15 @@ mod tests {
         // not just the UI preflight.
         let mut blocked = ready.clone();
         blocked["answerKey"]["q14"] = json!({"kind": "unresolved"});
-        let blocked_preflight = crate::authoring_v2_commands::check_publish_preflight(
-            &root,
-            job_id,
-            8,
-            &blocked,
-        )
-        .get("publishVerdict")
-        .cloned()
-        .expect("blocked preflight must expose the shared verdict");
-        let blocked_assets = crate::export_pack::legacy_export_verdict(&root, job_id, &blocked).to_value();
-        let blocked_javascript = crate::export_pack::legacy_export_verdict(&root, job_id, &blocked).to_value();
+        let blocked_preflight =
+            crate::authoring_v2_commands::check_publish_preflight(&root, job_id, 8, &blocked)
+                .get("publishVerdict")
+                .cloned()
+                .expect("blocked preflight must expose the shared verdict");
+        let blocked_assets =
+            crate::export_pack::legacy_export_verdict(&root, job_id, &blocked).to_value();
+        let blocked_javascript =
+            crate::export_pack::legacy_export_verdict(&root, job_id, &blocked).to_value();
         let blocked_publish = publish_verdict(
             &root,
             job_id,
