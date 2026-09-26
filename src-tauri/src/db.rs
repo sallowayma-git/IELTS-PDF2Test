@@ -13,8 +13,9 @@
 use crate::{LibraryExamDetail, LibraryExamSummary, LibraryFilter, LibraryMetaPatch, LibraryStats};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use crate::CommandResult;
 
@@ -47,7 +48,7 @@ pub(crate) fn migrate_db_file(root: &Path) -> CommandResult<()> {
     Ok(())
 }
 
-/// 打开一个连接：设置 WAL/外键/忙等超时，并确保 schema 存在（幂等）。
+/// 打开一个连接：设置 WAL/外键/忙等超时，并确保 schema 存在（每进程/每库文件只建一次）。
 pub(crate) fn open_connection(root: &Path) -> CommandResult<Connection> {
     // 先做文件级迁移（旧 library.db → authoring_hub.db）。
     migrate_db_file(root)?;
@@ -63,8 +64,29 @@ pub(crate) fn open_connection(root: &Path) -> CommandResult<Connection> {
          PRAGMA busy_timeout=5000;",
     )
     .map_err(|error| format!("db_pragma:{}", error))?;
-    ensure_schema(&conn)?;
+    // 建表只跑一次/进程/库文件。`ensure_schema` 是 `CREATE TABLE IF NOT EXISTS` 批量，
+    // 每次开连接都重复执行是纯争用来源：编辑保存正持写锁时，另一条连接的建表批量也要
+    // 抢写锁，`busy_timeout` 耗尽即 `database is locked`。启动首开建好后，后续普通连接
+    // 只设 PRAGMA。
+    ensure_schema_once(&path, &conn)?;
     Ok(conn)
+}
+
+/// 记录已建表的库文件（进程内、按路径去重）。
+fn schema_ensured_set() -> &'static Mutex<HashSet<PathBuf>> {
+    static SCHEMA_ENSURED: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+    SCHEMA_ENSURED.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// 对某个库文件只跑一次 `ensure_schema`。并发首开时可能重复跑（`ensure_schema` 幂等），
+/// 但绝不会漏跑。
+fn ensure_schema_once(path: &Path, conn: &Connection) -> CommandResult<()> {
+    if schema_ensured_set().lock().unwrap().contains(path) {
+        return Ok(());
+    }
+    ensure_schema(conn)?;
+    schema_ensured_set().lock().unwrap().insert(path.to_path_buf());
+    Ok(())
 }
 
 /// 建表 + 索引（IF NOT EXISTS，幂等）。
@@ -842,8 +864,13 @@ pub(crate) fn upsert_library_item(
     conn: &Connection,
     record: &LibraryItemRecord,
 ) -> CommandResult<String> {
-    let tx = conn
-        .unchecked_transaction()
+    // IMMEDIATE：这是「先读后写」事务（先查现有 item 与 MAX(revision_no)，再 INSERT）。
+    // WAL 下 DEFERRED 会在首条 SELECT 取读快照，随后写时若别的连接已提交，SQLite 直接返回
+    // SQLITE_BUSY_SNAPSHOT（文字为 "database is locked"），且**不受 busy_timeout 保护**
+    // （见 listening_audio/store.rs 同类修复）。这是 save_job/save_writing_job 的双写钩子，
+    // 导入/识别期与编辑保存并发正好制造这个条件——实测四段绑定只落三行、编辑保存变红。
+    // IMMEDIATE 在 BEGIN 即取写锁，争用退回成普通等待，由 busy_timeout=5000 吸收。
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
         .map_err(|e| format!("lib_item_begin:{}", e))?;
     // 查现有 item 与最大 revision_no。
     let existing: Option<(Option<String>, i64)> = tx

@@ -565,7 +565,14 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
           <button className="ghost small" onClick={clearNotice} aria-label="关闭提示">×</button>
         </p>
       ) : null}
-      {editor.saveMessage ? <p className="workspace-notice warning" role="alert">{editor.saveMessage}</p> : null}
+      {editor.saveMessage ? (
+        <p className="workspace-notice warning" role="alert" data-testid="workspace-save-message">
+          {editor.saveMessage}
+          {readAppSettings().developerMode && editor.saveErrorDetail ? (
+            <small className="workspace-notice-detail" data-testid="workspace-save-error-detail">技术详情：{editor.saveErrorDetail}</small>
+          ) : null}
+        </p>
+      ) : null}
       {editor.deferredRemoteRefresh ? (
         <p className="workspace-notice" role="status" data-testid="workspace-remote-pending">
           {describeDeferredRemoteRefresh(editor.deferredRemoteRefresh)}

@@ -17,8 +17,30 @@ use crate::CommandResult;
 
 pub(crate) fn open_library_connection(root: &std::path::Path) -> CommandResult<Connection> {
     let conn = crate::db::open_connection(root)?;
-    ensure_v2_schema(&conn)?;
+    // V2 迁移每进程/每库文件只跑一次。`ensure_v2_schema` 内部是一个 BEGIN IMMEDIATE
+    // 事务（即使无迁移可做，也照样抢一次写锁再提交）。此前**每次开连接**都跑它，等于
+    // 每次读/写库前都先抢一次写锁——编辑保存正持锁、或后台识别在写时，这一步就会
+    // 等到 busy_timeout 耗尽而 `database is locked`。启动首开完成迁移后，后续普通连接
+    // 只设 busy_timeout / foreign_keys（见 `db::open_connection`），不再触碰写锁。
+    ensure_v2_schema_once(&crate::db::db_path(root), &conn)?;
     Ok(conn)
+}
+
+/// 记录已迁移过 V2 schema 的库文件（进程内、按路径去重）。
+fn v2_ensured_set() -> &'static std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>> {
+    static V2_ENSURED: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>,
+    > = std::sync::OnceLock::new();
+    V2_ENSURED.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+fn ensure_v2_schema_once(path: &std::path::Path, conn: &Connection) -> CommandResult<()> {
+    if v2_ensured_set().lock().unwrap().contains(path) {
+        return Ok(());
+    }
+    ensure_v2_schema(conn)?;
+    v2_ensured_set().lock().unwrap().insert(path.to_path_buf());
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize)]

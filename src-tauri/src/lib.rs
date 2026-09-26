@@ -57,6 +57,8 @@ mod db;
 mod diagnostics;
 mod docx_facts_shadow;
 mod docx_ingest;
+#[cfg(test)]
+mod edit_save_concurrency_tests;
 mod environment;
 mod export_artifacts;
 mod export_nas_library;
