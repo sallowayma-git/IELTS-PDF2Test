@@ -134,13 +134,26 @@ function OptionAddButton({ canvas, taskId, responseGroupId, options }: {
 
 const dropClasses = ["is-drop-before", "is-drop-after"];
 
-interface OptionDrag {
-  list: HTMLElement;
-  row: HTMLElement;
+/** 一次进行中的选项拖动。只存 id 与最近一次接触到的 DOM：识别中的后台草稿刷新会
+ *  重拉草稿、重渲染画布（行甚至可能换节点），会话必须越过这次刷新活着，
+ *  松手时再按**最新**的 DOM 与回调决定提交——不再在旧闭包里做任何判断。 */
+interface OptionDragSession {
+  taskId: string;
+  responseGroupId: string;
+  optionId: string;
   /** null = 指针还没移动过；undefined = 放到末尾。 */
   beforeOptionId?: string | null;
-  detach: () => void;
+  row: HTMLElement | null;
+  list: HTMLElement | null;
 }
+
+/** 拖动会话由 ExamCanvas 持有并通过 context 下发：手柄中途被刷新卸载不再取消会话
+ *  （那正是验收缺陷的静默丢弃点），只有 ExamCanvas 本身卸载（离开工作区/切预览）才取消。 */
+interface OptionDragController {
+  begin: (init: { taskId: string; responseGroupId: string; optionId: string; row: HTMLElement; list: HTMLElement }) => void;
+}
+
+const OptionDragContext = createContext<OptionDragController | null>(null);
 
 /** 作者模式下选项行左侧的拖动手柄。选项顺序只通过拖动（或聚焦手柄后按 ↑/↓）调整，
  *  不再在工具条里给每个选项放上移/下移按钮。
@@ -149,6 +162,8 @@ interface OptionDrag {
  *  （用于把文件拖进窗口），HTML5 `draggable` 在桌面端会失效。
  *  移动/松开挂在 window 上而不依赖 pointer capture：捕获会因视口变化、失焦等原因
  *  中途丢失，那时拖动会被静默取消（真实 WebView2 里复现过）。
+ *  会话本身挂在 ExamCanvas 上（见 {@link OptionDragContext}）：识别进行中的后台草稿刷新
+ *  会重渲染画布、可能换掉行节点甚至卸载本手柄——那不取消拖动，松手时按最新草稿提交。
  *  行需要带 `data-option-row` / `data-option-id`，并且是 `data-option-list` 容器的直接子元素。 */
 function OptionDragHandle({ canvas, taskId, responseGroupId, options, index }: {
   canvas: ExamCanvasProps;
@@ -157,43 +172,10 @@ function OptionDragHandle({ canvas, taskId, responseGroupId, options, index }: {
   options: OptionV2[];
   index: number;
 }) {
-  const drag = useRef<OptionDrag | null>(null);
-  // 拖动途中手柄被卸载（画布整体重载）：取消，不把旧闭包里的动作提交出去。
-  useEffect(() => () => drag.current?.detach(), []);
-  if (canvas.mode !== "author" || !canvas.onStructureAction) return null;
+  const beginDrag = useContext(OptionDragContext);
+  if (canvas.mode !== "author" || !canvas.onStructureAction || !beginDrag) return null;
   const option = options[index];
   const move = (beforeOptionId: string | undefined) => canvas.onStructureAction?.({ type: "option.move", taskId, responseGroupId, optionId: option.optionId, beforeOptionId });
-  const rowsOf = (list: HTMLElement) => Array.from(list.querySelectorAll<HTMLElement>(":scope > [data-option-row]"));
-  const clearMarks = (list: HTMLElement) => rowsOf(list).forEach((row) => row.classList.remove(...dropClasses));
-  const finish = (commit: boolean) => {
-    const current = drag.current;
-    if (!current) return;
-    current.detach();
-    if (!commit || current.beforeOptionId === null || !current.list.isConnected) return;
-    // 落在自己前后等于没动。
-    if (current.beforeOptionId === option.optionId || current.beforeOptionId === options[index + 1]?.optionId) return;
-    move(current.beforeOptionId);
-  };
-  const track = (clientX: number, clientY: number) => {
-    const current = drag.current;
-    if (!current) return;
-    const rows = rowsOf(current.list);
-    const boxes = rows.map((row) => row.getBoundingClientRect());
-    // TFNG 短标签选项横排（可换行）：同一行内按水平中线判断，跨行按上下判断；
-    // 竖排选项只看垂直中线。
-    const horizontal = boxes.length > 1 && boxes[1].top < boxes[0].bottom && boxes[1].left > boxes[0].left;
-    const target = boxes.findIndex((box) => horizontal
-      ? clientY < box.top || (clientY < box.bottom && clientX < box.left + box.width / 2)
-      : clientY < box.top + box.height / 2);
-    clearMarks(current.list);
-    if (target >= 0) {
-      rows[target].classList.add("is-drop-before");
-      current.beforeOptionId = rows[target].dataset.optionId;
-    } else {
-      rows.at(-1)?.classList.add("is-drop-after");
-      current.beforeOptionId = undefined;
-    }
-  };
   return <span
     className="v2-option-drag-handle"
     role="button"
@@ -203,39 +185,13 @@ function OptionDragHandle({ canvas, taskId, responseGroupId, options, index }: {
     // 手柄在 <label> 里：阻止点击冒泡成“选中这个选项”。
     onClick={(event) => { event.preventDefault(); event.stopPropagation(); }}
     onPointerDown={(event) => {
-      if (event.button > 0 || drag.current) return;
+      if (event.button > 0) return;
       const row = event.currentTarget.closest<HTMLElement>("[data-option-row]");
       const list = row?.parentElement?.closest<HTMLElement>("[data-option-list]");
       if (!row || !list) return;
       event.preventDefault();
       event.stopPropagation();
-      const onMove = (moveEvent: PointerEvent) => track(moveEvent.clientX, moveEvent.clientY);
-      const onUp = () => finish(true);
-      const onCancel = () => finish(false);
-      const onKey = (keyEvent: KeyboardEvent) => { if (keyEvent.key === "Escape") finish(false); };
-      window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp);
-      window.addEventListener("pointercancel", onCancel);
-      window.addEventListener("blur", onCancel);
-      window.addEventListener("keydown", onKey);
-      drag.current = {
-        list,
-        row,
-        beforeOptionId: null,
-        detach: () => {
-          window.removeEventListener("pointermove", onMove);
-          window.removeEventListener("pointerup", onUp);
-          window.removeEventListener("pointercancel", onCancel);
-          window.removeEventListener("blur", onCancel);
-          window.removeEventListener("keydown", onKey);
-          clearMarks(list);
-          row.classList.remove("is-dragging");
-          list.classList.remove("is-reordering");
-          drag.current = null;
-        }
-      };
-      row.classList.add("is-dragging");
-      list.classList.add("is-reordering");
+      beginDrag.begin({ taskId, responseGroupId, optionId: option.optionId, row, list });
     }}
     onKeyDown={(event) => {
       if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
@@ -614,6 +570,117 @@ export function ExamCanvas(props: ExamCanvasProps) {
   }), [props.mode, runtime, props.authoring.answerKey, studentAnswers, listeningPartViews, listening, selectedPart]);
   // 原文 | 题目 的可拖动分隔条（workspace.css 负责视觉，本组件只渲染元素）。
   const { dividerProps } = usePaneDivider(props.authoring.jobId);
+  // ── 选项拖动会话（见 OptionDragSession）──
+  // 会话挂在这里而不是每个手柄上：识别进行中的后台草稿刷新会重渲染画布、
+  // 可能换掉行节点甚至卸载旧手柄——旧实现里那次卸载会取消会话，把一次已完成的
+  // 拖动手势静默丢掉。现在只有 ExamCanvas 卸载（离开工作区/切学生预览）才取消；
+  // 提交发生在 window 事件里，永远读**最新** props，不能用挂监听那一刻的闭包。
+  const canvasPropsRef = useRef(props);
+  canvasPropsRef.current = props;
+  const dragRef = useRef<OptionDragSession | null>(null);
+  const optionDrag = useMemo<OptionDragController>(() => ({
+    begin: (init) => {
+      if (dragRef.current) return;
+      dragRef.current = { ...init, beforeOptionId: null };
+      init.row.classList.add("is-dragging");
+      init.list.classList.add("is-reordering");
+    }
+  }), []);
+  useEffect(() => {
+    const rowsOf = (list: HTMLElement) => Array.from(list.querySelectorAll<HTMLElement>(":scope > [data-option-row]"));
+    const clearMarks = (list: HTMLElement | null) => {
+      if (!list) return;
+      rowsOf(list).forEach((row) => row.classList.remove(...dropClasses));
+    };
+    // 后台刷新可能重建了选项行：按 id 在最新 DOM 里重新定位被拖行与它的列表，
+    // 找不到（选项已被删除）就保留最后的落点，松手时交给上层响亮失败。
+    const resolveLive = (session: OptionDragSession) => {
+      if (session.row?.isConnected && session.list?.isConnected && session.list.contains(session.row)) return;
+      const section = Array.from(document.querySelectorAll<HTMLElement>("[data-response-group-id]"))
+        .find((candidate) => candidate.dataset.responseGroupId === session.responseGroupId);
+      const row = section
+        ? Array.from(section.querySelectorAll<HTMLElement>("[data-option-row]"))
+            .find((candidate) => candidate.dataset.optionId === session.optionId) ?? null
+        : null;
+      session.row = row;
+      session.list = row?.parentElement?.closest<HTMLElement>("[data-option-list]") ?? null;
+      if (session.row) {
+        // 重建后的行不带拖动中的视觉状态，补上，避免提示线突然消失。
+        session.row.classList.add("is-dragging");
+        session.list?.classList.add("is-reordering");
+      }
+    };
+    const track = (session: OptionDragSession, clientX: number, clientY: number) => {
+      const list = session.list;
+      if (!list) return;
+      const rows = rowsOf(list);
+      const boxes = rows.map((row) => row.getBoundingClientRect());
+      // TFNG 短标签选项横排（可换行）：同一行内按水平中线判断，跨行按上下判断；
+      // 竖排选项只看垂直中线。
+      const horizontal = boxes.length > 1 && boxes[1].top < boxes[0].bottom && boxes[1].left > boxes[0].left;
+      const target = boxes.findIndex((box) => horizontal
+        ? clientY < box.top || (clientY < box.bottom && clientX < box.left + box.width / 2)
+        : clientY < box.top + box.height / 2);
+      clearMarks(list);
+      if (target >= 0) {
+        rows[target].classList.add("is-drop-before");
+        session.beforeOptionId = rows[target].dataset.optionId;
+      } else {
+        rows.at(-1)?.classList.add("is-drop-after");
+        session.beforeOptionId = undefined;
+      }
+    };
+    const detach = () => {
+      const session = dragRef.current;
+      if (!session) return;
+      dragRef.current = null;
+      clearMarks(session.list);
+      session.row?.classList.remove("is-dragging");
+      session.list?.classList.remove("is-reordering");
+    };
+    const finish = (commit: boolean) => {
+      const session = dragRef.current;
+      if (!session) return;
+      detach();
+      if (!commit || session.beforeOptionId === null) return;
+      resolveLive(session);
+      // 落在自己前后等于没动（用**最新** DOM 的行序判断；行已不在时跳过判断，
+      // 动作照常上报，由工作区对最新草稿校验并响亮失败）。
+      const rows = session.list ? rowsOf(session.list) : [];
+      const ownIndex = rows.findIndex((row) => row.dataset.optionId === session.optionId);
+      const beforeIndex = session.beforeOptionId === undefined
+        ? rows.length
+        : rows.findIndex((row) => row.dataset.optionId === session.beforeOptionId);
+      if (ownIndex >= 0 && (beforeIndex === ownIndex || beforeIndex === ownIndex + 1)) return;
+      canvasPropsRef.current.onStructureAction?.({
+        type: "option.move", taskId: session.taskId, responseGroupId: session.responseGroupId,
+        optionId: session.optionId, beforeOptionId: session.beforeOptionId ?? undefined
+      });
+    };
+    const onMove = (moveEvent: PointerEvent) => {
+      const session = dragRef.current;
+      if (!session) return;
+      resolveLive(session);
+      track(session, moveEvent.clientX, moveEvent.clientY);
+    };
+    const onUp = () => finish(true);
+    const onCancel = () => finish(false);
+    const onKey = (keyEvent: KeyboardEvent) => { if (keyEvent.key === "Escape") finish(false); };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    window.addEventListener("blur", onCancel);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      window.removeEventListener("blur", onCancel);
+      window.removeEventListener("keydown", onKey);
+      // 真正卸载（离开工作区/切学生预览）才取消会话：不提交。
+      dragRef.current = null;
+    };
+  }, []);
   // 只在作者模式挂拖动排序需要的定位属性，学生预览的 DOM 保持不变。
   const optionRowProps = (option: OptionV2) => props.mode === "author" && props.onStructureAction
     ? { "data-option-row": "", "data-option-id": option.optionId }
@@ -621,6 +688,7 @@ export function ExamCanvas(props: ExamCanvasProps) {
   const optionsFor = (task: TaskGroupV2, response: ResponseGroupV2) => interactionModel.responseGroups[response.responseGroupId]?.options ?? task.optionBank?.options ?? [];
 
   return <CanvasAnswersContext.Provider value={{ answers: canvasAnswers, setText, setOption }}>
+    <OptionDragContext.Provider value={optionDrag}>
     <div className={`exam-canvas-v2 ${props.mode === "author" ? "is-author" : "is-student"}${listening ? " is-listening" : ""}`} data-testid={`exam-canvas-v2-${props.mode}`}>
     {listening ? (
       <ListeningHeader
@@ -722,6 +790,7 @@ export function ExamCanvas(props: ExamCanvasProps) {
       onSelectPart={setSelectedPart}
     />
     </div>
+    </OptionDragContext.Provider>
   </CanvasAnswersContext.Provider>;
 }
 
