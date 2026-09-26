@@ -3682,6 +3682,82 @@ Answers
         let _ = fs::remove_dir_all(root);
     }
 
+    /// C2：渲染失败**绝不**覆盖已经生成好的页图缓存。
+    ///
+    /// 先种一份好缓存（一页真实 PNG + `pdf-images.json`），再喂一份假 PDF 让整条渲染链
+    /// 失败——Python sidecar 与 pdfium/sips 都解析不了它，**在任何机器上都失败**，所以
+    /// 这条用例的结果不依赖环境。改动前：兜底路径会把失败结果（`pages: []`）直接写进
+    /// 缓存路径，把好缓存清空——之后包模式再也拿不到区域图，而且没有任何提示。
+    /// 改动后：缓存原样保留，返回值如实带上这次失败的原因并**复用**缓存页图。
+    #[test]
+    fn a_failed_render_keeps_the_existing_page_image_cache() {
+        let job = test_job();
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        let output = root.join("cache").join("parser").join("pdf-images.json");
+        let asset_dir = root.join("cache").join("parser").join("assets");
+        let fake_pdf = root.join("fake.pdf");
+        fs::write(&fake_pdf, b"%PDF-1.4\n").unwrap();
+
+        // 好缓存：一页真实 PNG + 引用它的 `pdf-images.json`（与真实抽取产物同构）。
+        fs::create_dir_all(&asset_dir).unwrap();
+        let page_png = asset_dir.join("page-001.png");
+        {
+            let file = fs::File::create(&page_png).unwrap();
+            let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), 8, 8);
+            encoder.set_color(png::ColorType::Rgb);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&vec![255u8; 8 * 8 * 3]).unwrap();
+            writer.finish().unwrap();
+        }
+        let seeded = serde_json::json!({
+            "schemaVersion": "PdfImageExtractionV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 8.0,
+                "height": 8.0,
+                "images": [{"path": page_png.to_string_lossy(), "mimeType": "image/png"}]
+            }]
+        });
+        write_json(&output, &seeded).unwrap();
+        let seeded_bytes = fs::read(&output).unwrap();
+
+        let extraction =
+            extract_pdf_images_for_vision(&job.job_id, &fake_pdf, &output, &asset_dir)
+                .expect("抽取链应当返回良构结果（渲染失败也是结果，不是崩溃）");
+
+        // ① 缓存一个字节都不许变（改动前这里被覆盖成 `pages: []` 的失败结果）。
+        assert_eq!(
+            fs::read(&output).unwrap(),
+            seeded_bytes,
+            "渲染失败不得改写已有的页图缓存"
+        );
+        // ② 返回值如实报告这次失败，并复用了缓存里的页图。
+        assert!(
+            extraction
+                .get("warnings")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .any(|warning| warning
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("kept and reused the previously cached page images")),
+            "复用缓存时必须如实带上警告：{extraction:#?}"
+        );
+        assert_eq!(
+            image_count_from_extraction(&extraction),
+            1,
+            "返回值应当复用缓存里的那一页：{extraction:#?}"
+        );
+        // ③ 页图文件本身也还在。
+        assert!(page_png.exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn pdf_render_adapter_renders_with_macos_sips_without_ocr() {
         let sips = command_probe("sips", &["--version"]);

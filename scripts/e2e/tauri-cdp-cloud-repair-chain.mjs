@@ -892,7 +892,11 @@ async function main() {
   report.scenario.differences = [
     `task_group:${derived.rule.taskId}:instructions`,
     `response_group:${derived.fix.responseGroupId}:prompt`,
-  ];
+    // W1（答案类场景）派生成功时会带出被认领的答案槽（claim）：它同样是稿子里的一处
+    // 真实差异，按同一命名惯例登记成 `slot:<slotId>:answer`。题面类场景没有 claim，
+    // 条件项为 null，过滤掉以保持数组元素都是字符串。
+    derived.claim ? `slot:${derived.claim.slotId}:answer` : null,
+  ].filter((item) => item !== null);
   // 这一条以前只记「派生成功了、文件写哪儿了」。它真正的断言是：派生出来的修复
   // **必须是一处真实的内容差异**（改前 ≠ 改后），否则后面的「云端改对了」就没有靶子。
   const deriveProblems = [];
@@ -911,6 +915,8 @@ async function main() {
       candidate: candidatePath,
       plan: planPath,
       differences: report.scenario.differences,
+      // W1 认领信息随载荷如实上报；题面类场景没有 claim 时记 null。
+      claim: derived.claim ?? null,
       fix: { responseGroupId: derived.fix.responseGroupId, before: derived.fix.before, after: derived.fix.after },
       // 期望值的来源写清楚：断言时比的字符串来自 fixture，而不是脚本自己算的。
       golden: derived.golden,
@@ -1486,6 +1492,8 @@ async function main() {
   //   - 后端每条剩余任务的目标，都被清单里某一条接住（按 data-action-target / data-task-id）；
   //   - 后端有剩余任务时清单不能为空；
   //   - 新链路上不得渲染旧建议卡（`[data-decision-id]`）。
+  // 比较分两步：先等清单把云端条目并入完（收敛轮询），再用最后一次面板读数做严格比对；
+  // 比较基准是比较时刻新鲜读取的后端决策，而不是修复循环退出时的快照。
   // 清单是顶栏「待补充 N」按钮开合的侧栏，默认收起；收起时条目不在 DOM 里。先打开它。
   await session.evaluate(`(() => {
     const toggle = document.querySelector('[data-testid="workspace-issues"]');
@@ -1508,10 +1516,11 @@ async function main() {
     )
     .then(() => true)
     .catch(() => false);
-  // 列表折叠时展开，保证读到全部条目。
-  await session.evaluate(`(() => { const more = document.querySelector('[data-testid="workspace-tasks-more"]'); if (more) more.click(); return true; })()`);
-  const panel = await session.evaluate(
-    `(() => {
+  // 「读面板」抽成本地异步 helper：收敛轮询要反复读同一份 DOM。下面这段求值表达式
+  // 与上一版逐字一致，只是不再「读一次就比」。
+  const readTaskPanel = async () =>
+    await session.evaluate(
+      `(() => {
       const entries = [...document.querySelectorAll('[data-task-id]')].map((el) => ({
         taskId: el.getAttribute('data-task-id'),
         kind: el.getAttribute('data-task-kind'),
@@ -1527,32 +1536,76 @@ async function main() {
         legacyCardCount: legacy.length
       };
     })()`,
-  );
-  report.observed.panel = panel;
-  const remaining = finalRepair.remainingTasks ?? [];
-  const covered = new Set();
-  for (const entry of panel.entries ?? []) {
-    for (const target of entry.targets ?? []) if (target) covered.add(target);
-    for (const part of String(entry.taskId ?? "").split(/[:+]/)) if (part) covered.add(part);
-  }
-  const uncovered = remaining.filter((task) => {
-    const targets = (task.targetIds ?? []).filter(Boolean);
-    if (targets.length === 0) return (panel.entryCount ?? 0) === 0;
-    return !targets.some((id) => covered.has(id) || covered.has(String(id).replace(/^answerKey:/, "")));
+    );
+  // 覆盖集算法抽成纯函数，规则与上一版逐字一致：清单条目的 action-target 与
+  // data-task-id 按 `[:+]` 拆出的各段都算「接住」，后端任务的 targetIds 命中其一即可。
+  // 收敛判定与最终严格比对共用这一个函数，保证「等待」不会放宽比较规则本身。
+  const backendTasksNotCoveredByPanel = (remainingTasks, panelSnapshot) => {
+    const covered = new Set();
+    for (const entry of panelSnapshot.entries ?? []) {
+      for (const target of entry.targets ?? []) if (target) covered.add(target);
+      for (const part of String(entry.taskId ?? "").split(/[:+]/)) if (part) covered.add(part);
+    }
+    return remainingTasks.filter((task) => {
+      const targets = (task.targetIds ?? []).filter(Boolean);
+      if (targets.length === 0) return (panelSnapshot.entryCount ?? 0) === 0;
+      return !targets.some((id) => covered.has(id) || covered.has(String(id).replace(/^answerKey:/, "")));
+    });
+  };
+  // 列表折叠时展开，保证读到全部条目。
+  await session.evaluate(`(() => { const more = document.querySelector('[data-testid="workspace-tasks-more"]'); if (more) more.click(); return true; })()`);
+  // 比较基准不用 `finalRepair`（修复循环退出那一刻的快照）：后端剩余任务是「读取时
+  // 按当前稿重算」的，比较时刻重新读一次决策，才是真正的「界面与后端一致」。读不到
+  // （调用失败，或决策里没有 remainingTasks 字段）就沿用快照，并在载荷里如实标注来源。
+  let freshDecisionError = null;
+  const freshDecision = await readDecision().catch((error) => {
+    freshDecisionError = String(error?.message ?? error);
+    return null;
   });
+  const freshRemaining = freshDecision?.repair?.remainingTasks ?? null;
+  const remainingSource = Array.isArray(freshRemaining) ? "fresh-decision-read" : "final-repair-snapshot";
+  const remaining = remainingSource === "fresh-decision-read" ? freshRemaining : (finalRepair.remainingTasks ?? []);
+  if (freshDecisionError != null) report.observed.remainingFreshReadError = freshDecisionError;
+  // 收敛轮询：清单里的云端条目是**异步并入**的（产品侧的刷新缺陷正在另行修复），
+  // 「云端自动检查中」小字消失只说明处理结束，不代表条目已经并完。harness 必须等
+  // 后端写完、清单并完再比：最多 30 秒、每 1 秒重读一次面板，后端剩余任务全部被
+  // 接住即提前结束。等不到也让它红——下面的严格比对保留全部原有判定，超时只额外
+  // 加一条如实说明，绝不把 uncovered 掩掉。
+  const convergeStartedAt = Date.now();
+  const convergeDeadline = convergeStartedAt + 30000;
+  let panel = await readTaskPanel();
+  let converged = backendTasksNotCoveredByPanel(remaining, panel).length === 0;
+  while (!converged && Date.now() < convergeDeadline) {
+    await sleep(1000);
+    panel = await readTaskPanel();
+    converged = backendTasksNotCoveredByPanel(remaining, panel).length === 0;
+  }
+  const convergedWaitMs = Date.now() - convergeStartedAt;
+  report.observed.panel = panel;
+  const uncovered = backendTasksNotCoveredByPanel(remaining, panel);
   const panelProblems = [];
   if (remaining.length > 0 && (panel.entryCount ?? 0) === 0) panelProblems.push("后端有剩余任务，清单里一条都没有");
   if (uncovered.length > 0) panelProblems.push(`${uncovered.length} 条后端剩余任务没有被清单接住：${uncovered.map((task) => task.userTaskId).slice(0, 5).join(", ")}`);
   if (panel.legacyCardCount > 0) panelProblems.push(`新链路上仍然渲染了 ${panel.legacyCardCount} 张旧建议卡`);
   if (!processingSettled) panelProblems.push("修复结束 90 秒后标题下仍显示「云端自动检查中」");
+  if (!converged) panelProblems.push("等待 30 秒后清单仍未接住全部后端剩余任务");
   if (panelProblems.length === 0) {
     record("remaining-tasks-match-backend-and-are-actionable", SCENARIO_STATUS.PASSED, {
       remaining: remaining.length,
       entryCount: panel.entryCount,
       clearText: panel.clearText,
+      remainingSource,
+      converged,
+      convergedWaitMs,
     });
   } else {
-    record("remaining-tasks-match-backend-and-are-actionable", SCENARIO_STATUS.FAILED, { problems: panelProblems, remaining: remaining.length });
+    record("remaining-tasks-match-backend-and-are-actionable", SCENARIO_STATUS.FAILED, {
+      problems: panelProblems,
+      remaining: remaining.length,
+      remainingSource,
+      converged,
+      convergedWaitMs,
+    });
   }
   await session.screenshot("recognition-remaining-tasks");
 

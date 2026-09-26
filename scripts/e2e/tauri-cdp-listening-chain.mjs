@@ -868,20 +868,38 @@ async function main() {
         { timeoutMs: 30000, label: `player-${ordinal}` },
       );
       // 播放器是异步取 src 的（`managedAudioUrl`），所以等它真的能播再断言。
-      const playable = await session.waitFor(
-        `(() => {
-           const a = document.querySelector('audio[data-testid="listening-audio-${ordinal}"]');
-           if (!a) return null;
-           const src = a.currentSrc || a.src || '';
-           if (!src) return null;
-           if (!(a.readyState > 0)) return null;
-           if (!Number.isFinite(a.duration) || a.duration <= 0) return null;
-           return { src, readyState: a.readyState, duration: a.duration };
-         })()`,
-        { timeoutMs: 40000, label: `player-${ordinal}-loadable` },
-      );
-      const decoded = decodeURIComponent(playable.src);
+      // 「可播」必须同时要求 src 已指向**本 part** 的音频：AudioPlayer 切换 Part 时
+      // 组件状态会残留一个「prop 已换、effect 尚未清 src」的单帧窗口——testid 已经是
+      // 新 part 的、src 还是上一段的（能播、时长也对得上另一段）。不排除这个瞬态，
+      // 断言就会按机器负载间歇性误报（2026-09-25 run2 的 part-4）。
       const expectedSha = expectedShaByPart[`part-${ordinal}`];
+      let playable = null;
+      try {
+        playable = await session.waitFor(
+          `(() => {
+             const a = document.querySelector('audio[data-testid="listening-audio-${ordinal}"]');
+             if (!a) return null;
+             const src = a.currentSrc || a.src || '';
+             if (!src) return null;
+             if (!decodeURIComponent(src).toLowerCase().includes(${JSON.stringify((expectedSha ?? "").toLowerCase())})) return null;
+             if (!(a.readyState > 0)) return null;
+             if (!Number.isFinite(a.duration) || a.duration <= 0) return null;
+             return { src, readyState: a.readyState, duration: a.duration };
+           })()`,
+          { timeoutMs: 40000, label: `player-${ordinal}-loadable` },
+        );
+      } catch (error) {
+        // 超时也要带着最后观测到的状态报错，否则只知道「没等到」不知道「等的时候是什么」。
+        const snapshot = await session.evaluate(
+          `(() => {
+             const a = document.querySelector('audio[data-testid="listening-audio-${ordinal}"]');
+             if (!a) return null;
+             return { src: decodeURIComponent(a.currentSrc || a.src || ''), readyState: a.readyState, duration: a.duration };
+           })()`,
+        );
+        throw new Error(`part-${ordinal} 播放器 40 秒内没有加载到本段音频（期望 sha ${expectedSha}）；最后观测：${JSON.stringify(snapshot)}；原始等待错误：${error.message}`);
+      }
+      const decoded = decodeURIComponent(playable.src);
       const problems = [];
       if (!/^(?:asset:|https?:\/\/asset\.localhost\/)/u.test(playable.src)) {
         problems.push(`src 协议不是受管资源（asset 协议）：${playable.src.slice(0, 80)}`);

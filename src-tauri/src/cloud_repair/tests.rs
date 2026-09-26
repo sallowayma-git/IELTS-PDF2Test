@@ -5135,6 +5135,14 @@ fn packets_mode_attaches_the_region_image_and_keeps_local_paths_out_of_the_promp
 
     let not_cancelled = || false;
     let request = request(&root, &not_cancelled, 6);
+    // C3：修复循环**根本不改写**页图缓存——这条用例的结果不许取决于本机有没有
+    // Python/pdfium（循环开头曾为拿来源 id 顺手重渲染整份 PDF，渲染一旦失败就会把
+    // 下面这份缓存覆盖成 `pages: []`，区域图从此附不上）。
+    let page_images_path = crate::util::job_dir(&root, ITEM_ID)
+        .join("cache")
+        .join("vision")
+        .join("pdf-images.json");
+    let page_images_before = std::fs::read(&page_images_path).expect("读页图缓存");
     run_packets(&request, |context: &Value, observations: &[Value]| {
         repair_authoring_step_through_gateway(
             &root,
@@ -5146,6 +5154,11 @@ fn packets_mode_attaches_the_region_image_and_keeps_local_paths_out_of_the_promp
     })
     .expect("包模式循环必须跑完");
 
+    assert_eq!(
+        std::fs::read(&page_images_path).expect("页图缓存必须还在"),
+        page_images_before,
+        "修复循环不得改写页图缓存（渲染失败曾把它覆盖成空结果）"
+    );
     let seen = requests.lock().expect("requests");
     let input = request_input_json(&seen[0]);
     let regions = input
@@ -6152,6 +6165,10 @@ fn store_candidate_for_canonical(root: &Path, canonical: &Value, draft: Value) {
 ///
 /// 这是 P11 二选一里**方案 b** 的可执行版本：不改调度器阶段顺序、不动 cloud_permits、
 /// 包内仍然严格串行，只把「总时限」从常数改成随包数放宽的值。
+///
+/// 「装不装得下」用**注入的虚拟时钟**判定：每轮把钟拨快 400 毫秒（模拟真实模型延迟，
+/// 不真的睡眠），循环里的 deadline 判定全部走这口钟。判定因此是虚拟时间上的纯算术，
+/// 与机器负载无关——原先用真实 sleep 的版本余量只有约 2 秒，全量并行时必然超时。
 #[test]
 fn ten_packets_with_fixed_round_delay_finish_within_a_deadline_scaled_to_the_packet_count() {
     let root = temp_root();
@@ -6161,12 +6178,18 @@ fn ten_packets_with_fixed_round_delay_finish_within_a_deadline_scaled_to_the_pac
     store_candidate_for_canonical(&root, &canonical, multi_group_draft(10, "A", "D"));
     seed_packet_job(&root);
 
-    // 模拟「真实模型每轮要花几十秒」：把总时限缩短到 2.5 秒，同时每轮固定睡 400 毫秒。
-    // 10 个包各走 1 轮 apply + 最后一个收尾包 finish ⇒ 11 轮 ≈ 4.4 秒 + 重切开销：
-    // 按包数放宽后的时限（2.5s × 3 = 7.5s）装得下，未经放宽的 2.5 秒装不下——
-    // 这正是改动前 budget_exhausted、改动后能完成的原因。
-    let base_deadline = std::time::Duration::from_millis(2500);
-    let round_delay = std::time::Duration::from_millis(400);
+    // 基础时限 2.5 秒、每轮固定消耗 400 毫秒（虚拟时间）。10 个包各走 1 轮 apply +
+    // 收尾包 finish ⇒ 11 轮 = 4.4 秒：未放宽的 2.5 秒装不下（改动前 budget_exhausted
+    // 的原因），按包数放宽到封顶 3×（7.5 秒）装得下。
+    let base_deadline_ms = 2500u64;
+    let round_delay_ms = 400u64;
+
+    let started = std::time::Instant::now();
+    let clock = std::rc::Rc::new(std::cell::RefCell::new(started));
+    let now = {
+        let clock = clock.clone();
+        move || *clock.borrow()
+    };
 
     let not_cancelled = || false;
     let repair_request = RepairRunRequest {
@@ -6176,45 +6199,50 @@ fn ten_packets_with_fixed_round_delay_finish_within_a_deadline_scaled_to_the_pac
         batch_id: BATCH_ID,
         repair_run_id: "run-scaled-deadline",
         max_rounds: 6,
-        deadline: Instant::now() + base_deadline,
+        deadline: started + std::time::Duration::from_millis(base_deadline_ms),
         cancelled: &not_cancelled,
         progress: None,
     };
     // 每个包第一轮：把本包的答案改对（editVersion 从包的 draftSlice 里读）；
-    // 重切出的收尾包：finish_packet。每轮睡 200 毫秒模拟真实模型延迟。
+    // 重切出的收尾包：finish_packet。每轮把虚拟时钟拨快 400 毫秒模拟真实模型延迟。
     let mut rounds = 0u32;
-    let report = run_packets(&repair_request, |context: &Value, _observations: &[Value]| {
-        rounds += 1;
-        std::thread::sleep(round_delay);
-        let version = context["draftSlice"]["editVersion"].as_i64().unwrap_or(-1);
-        let task_ids: Vec<String> = context["taskIds"]
-            .as_array()
-            .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
-            .unwrap_or_default();
-        // 本包第一题的槽位：questionNumbers[0]（如 14 ⇒ q14）。**只有包内还有差异时
-        // 才 apply**：编辑重切出的收尾包同样带着 taskIds，但它没有差异——对它再 apply
-        // 是原地打转，正确动作是 finish_packet。
-        let has_differences = context["differences"]
-            .as_array()
-            .is_some_and(|differences| !differences.is_empty());
-        let slot = context["questionNumbers"]
-            .as_array()
-            .and_then(|numbers| numbers.first())
-            .and_then(Value::as_u64)
-            .map(|number| format!("q{number}"));
-        match slot {
-            Some(slot) if version > 0 && has_differences => Ok(json!({
-                "callId": format!("p{rounds}"),
-                "tool": "apply_edits",
-                "arguments": {
-                    "baseVersion": version,
-                    "commands": [{"op": "setAnswer", "slotId": slot,
-                                  "value": {"kind": "option", "labels": ["A"], "assignment": "unordered_set"}}]
-                }
-            })),
-            _ => Ok(json!({"callId": format!("p{rounds}"), "tool": "finish_packet", "arguments": {}})),
-        }
-    })
+    let step_clock = clock.clone();
+    let report = run_packet_repair_loop_with_clock(
+        &repair_request,
+        move |context: &Value, _observations: &[Value]| {
+            rounds += 1;
+            *step_clock.borrow_mut() += std::time::Duration::from_millis(round_delay_ms);
+            let version = context["draftSlice"]["editVersion"].as_i64().unwrap_or(-1);
+            let task_ids: Vec<String> = context["taskIds"]
+                .as_array()
+                .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .unwrap_or_default();
+            // 本包第一题的槽位：questionNumbers[0]（如 14 ⇒ q14）。**只有包内还有差异时
+            // 才 apply**：编辑重切出的收尾包同样带着 taskIds，但它没有差异——对它再 apply
+            // 是原地打转，正确动作是 finish_packet。
+            let has_differences = context["differences"]
+                .as_array()
+                .is_some_and(|differences| !differences.is_empty());
+            let slot = context["questionNumbers"]
+                .as_array()
+                .and_then(|numbers| numbers.first())
+                .and_then(Value::as_u64)
+                .map(|number| format!("q{number}"));
+            match slot {
+                Some(slot) if version > 0 && has_differences => Ok(json!({
+                    "callId": format!("p{rounds}"),
+                    "tool": "apply_edits",
+                    "arguments": {
+                        "baseVersion": version,
+                        "commands": [{"op": "setAnswer", "slotId": slot,
+                                      "value": {"kind": "option", "labels": ["A"], "assignment": "unordered_set"}}]
+                    }
+                })),
+                _ => Ok(json!({"callId": format!("p{rounds}"), "tool": "finish_packet", "arguments": {}})),
+            }
+        },
+        &now,
+    )
     .expect("包模式循环必须返回结果");
 
     // 全部差异都改对 ⇒ 剩余任务为空 ⇒ completed，而不是 budget_exhausted。
@@ -6241,6 +6269,23 @@ fn ten_packets_with_fixed_round_delay_finish_within_a_deadline_scaled_to_the_pac
         "每个包的编辑都必须真的落库（抽查第一组）"
     );
     assert_eq!(read_answer(&root, "q77")["labels"], json!(["A"]), "抽查最后一组");
+
+    // 时限判定本身（虚拟时间上的算术，不依赖墙钟）：
+    // - 全部轮次的虚拟工作量必须**超过**未放宽的基础时限——否则这条用例测不到「放宽」；
+    // - 又必须装得进按包数放宽后的时限（与生产同一组常数算出的封顶值）。
+    // 谁要是把放宽改回常数时限，循环会在虚拟 2.5 秒处停下（第 8 轮前 budget_exhausted），
+    // 上面的 rounds == 11 / completed 就会变红。
+    let consumed_ms = u64::from(report.rounds) * round_delay_ms;
+    assert!(
+        consumed_ms > base_deadline_ms,
+        "前提复核：11 轮的工作量（{consumed_ms}ms）必须超过未放宽的基础时限（{base_deadline_ms}ms）"
+    );
+    let scaled_ratio = (1.0 + PACKET_DEADLINE_RATE * 9.0).min(PACKET_DEADLINE_MAX_RATIO);
+    let scaled_deadline_ms = (base_deadline_ms as f64 * scaled_ratio) as u64;
+    assert!(
+        consumed_ms <= scaled_deadline_ms,
+        "按包数放宽后的时限（{scaled_deadline_ms}ms）必须装得下全部轮次（{consumed_ms}ms）"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -6486,6 +6531,12 @@ fn an_edit_quoting_an_image_only_answer_page_lands_and_is_marked_unverifiable() 
 
     let not_cancelled = || false;
     let request = request(&root, &not_cancelled, 6);
+    // C3：同上——页图缓存必须全程原样，结果不许取决于本机有没有 Python/pdfium。
+    let page_images_path = crate::util::job_dir(&root, ITEM_ID)
+        .join("cache")
+        .join("vision")
+        .join("pdf-images.json");
+    let page_images_before = std::fs::read(&page_images_path).expect("读页图缓存");
     let report = run_packets(&request, |context: &Value, observations: &[Value]| {
         repair_authoring_step_through_gateway(
             &root,
@@ -6496,6 +6547,12 @@ fn an_edit_quoting_an_image_only_answer_page_lands_and_is_marked_unverifiable() 
         )
     })
     .expect("包模式循环必须跑完（受控服务真的被驱动过）");
+
+    assert_eq!(
+        std::fs::read(&page_images_path).expect("页图缓存必须还在"),
+        page_images_before,
+        "修复循环不得改写页图缓存（渲染失败曾把它覆盖成空结果）"
+    );
 
     // ① 修改落库：从页图读来的答案值写进了权威稿。
     assert_eq!(
