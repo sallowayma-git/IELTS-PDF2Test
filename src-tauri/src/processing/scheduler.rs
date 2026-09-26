@@ -1748,6 +1748,15 @@ pub(crate) fn freeze_local_candidate_snapshot_for_attempt(
             .join(crate::authoring_v2_commands::AUTHORING_V2_SHADOW_FILE),
     )?
     .unwrap_or(canonical);
+    store::write_local_authoring_snapshot(
+        root,
+        &batch_id,
+        job_id,
+        base_edit_version,
+        &source_sha256,
+        &local_authoring,
+    )
+    .map_err(|error| format!("write_local_authoring_snapshot_failed:{error}"))?;
     let snapshot = candidate::local_candidate_from_authoring(
         &local_authoring,
         &batch_id,

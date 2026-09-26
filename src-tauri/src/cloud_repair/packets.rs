@@ -110,6 +110,9 @@ pub(crate) struct PacketPlanInput<'a> {
     pub protected: &'a BTreeSet<String>,
     pub source: &'a SourcePageIndex,
     pub edit_version: i64,
+    /// True when canonical is the adopted cloud document and candidate is the frozen local
+    /// recognition snapshot. Legacy/rejected candidates keep the original cloud challenger name.
+    pub adopted_cloud_canonical: bool,
 }
 
 /// 题组索引：把「任意目标 id」解析成「它属于哪个题组」。
@@ -1248,6 +1251,8 @@ fn build_packet(
     let mut packet = json!({
         "contextMode": "packets",
         "schemaVersion": "RepairPacketV1",
+        "comparisonMode": if input.adopted_cloud_canonical { "adopted_cloud_vs_local_snapshot" } else { "local_draft_vs_cloud_candidate" },
+        "challengerLabel": if input.adopted_cloud_canonical { "frozen_local_snapshot" } else { "cloud_candidate" },
         "packetId": packet_id,
         "escalationLevel": 0,
         "taskIds": task_ids,
@@ -1266,7 +1271,7 @@ fn build_packet(
         "blockingIssues": draft.blocking_issues,
         "protectedTargets": protected,
         "draftSlice": draft_slice,
-        "candidateSlice": candidate_slice,
+        "candidateSlice": if input.adopted_cloud_canonical { Value::Null } else { candidate_slice.clone() },
         "sourceEvidence": {
             "kind": input.source.kind,
             "sourceFileId": input.source.source_file_id,
@@ -1275,6 +1280,9 @@ fn build_packet(
             "regions": regions,
         },
     });
+    if input.adopted_cloud_canonical {
+        packet["localSnapshotSlice"] = candidate_slice;
+    }
     let images = packet
         .pointer("/sourceEvidence/regions")
         .and_then(Value::as_array)
@@ -1672,6 +1680,7 @@ mod tests {
             protected: &BTreeSet::new(),
             source,
             edit_version: 7,
+            adopted_cloud_canonical: false,
         })
     }
 
@@ -1697,6 +1706,49 @@ mod tests {
             let task_ids = packet["taskIds"].as_array().expect("taskIds");
             assert_eq!(task_ids.len(), 1, "每包只该带它自己的题组：{packet:#?}");
         }
+    }
+
+    #[test]
+    fn adopted_cloud_packets_name_the_frozen_local_challenger_explicitly() {
+        let mut cloud = canonical_paper();
+        let mut local = canonical_paper();
+        cloud["taskGroups"][1]["instructions"][0]["children"][0]["text"] =
+            json!("cloud instructions");
+        local["taskGroups"][1]["instructions"][0]["children"][0]["text"] =
+            json!("local instructions");
+        let differences = vec![difference(
+            "task_group",
+            "tg-6-7",
+            "instructions",
+            json!("cloud instructions"),
+            json!("local instructions"),
+        )];
+        let source = index_with_pages(&[(1, &["6 cloud instructions"])]);
+        let packets = plan_packets(&PacketPlanInput {
+            canonical: &cloud,
+            candidate: &local,
+            differences: &differences,
+            blocking_issues: &[],
+            protected: &BTreeSet::new(),
+            source: &source,
+            edit_version: 9,
+            adopted_cloud_canonical: true,
+        });
+
+        assert_eq!(packets.len(), 1);
+        assert_eq!(
+            packets[0]["comparisonMode"],
+            "adopted_cloud_vs_local_snapshot"
+        );
+        assert_eq!(
+            packets[0].pointer("/draftSlice/taskGroups/0/instructions/0/children/0/text"),
+            Some(&json!("cloud instructions"))
+        );
+        assert_eq!(
+            packets[0].pointer("/localSnapshotSlice/taskGroups/0/instructions/0/children/0/text"),
+            Some(&json!("local instructions"))
+        );
+        assert!(packets[0]["candidateSlice"].is_null());
     }
 
     /// 包 id 必须由**身份**派生，而不是序号：`apply_edits` 之后要重切受影响的包，
@@ -1943,6 +1995,7 @@ mod tests {
             protected: &BTreeSet::new(),
             source: &source,
             edit_version: 1,
+            adopted_cloud_canonical: false,
         };
         let requests = region_requests(&draft, &input, &index);
         let mut pages: Vec<(u64, bool)> = requests
@@ -2025,6 +2078,7 @@ mod tests {
                 protected: &BTreeSet::new(),
                 source: &source,
                 edit_version: 1,
+                adopted_cloud_canonical: false,
             };
             let requests = region_requests(&draft, &input, &index);
             let mut pages: Vec<(u64, bool)> = requests
@@ -2192,6 +2246,7 @@ mod tests {
             protected: &BTreeSet::new(),
             source: &source,
             edit_version: 7,
+            adopted_cloud_canonical: false,
         });
         assert_eq!(packets.len(), 3, "三个题组各自成包：{packets:#?}");
         assert_eq!(packets[0]["taskIds"], json!(["tg-6-7"]), "阻断包排第一");
@@ -2221,6 +2276,7 @@ mod tests {
             protected: &BTreeSet::new(),
             source: &source,
             edit_version: 7,
+            adopted_cloud_canonical: false,
         });
         assert_eq!(packets.len(), 1);
         assert_eq!(packets[0]["documentOnly"], json!(true));

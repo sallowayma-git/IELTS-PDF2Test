@@ -1831,6 +1831,10 @@ fn repair_step_prompt(input: &Value) -> String {
         .pointer("/context/contextMode")
         .and_then(Value::as_str)
         == Some("packets");
+    let adopted_cloud_mode = input
+        .pointer("/context/comparisonMode")
+        .and_then(Value::as_str)
+        == Some("adopted_cloud_vs_local_snapshot");
     let draft_example = if packet_mode {
         let task_id = input
             .pointer("/context/taskIds")
@@ -1870,6 +1874,32 @@ fn repair_step_prompt(input: &Value) -> String {
     } else {
         "- The context lists the whole document. Do not claim the paper is verified because you handled the listed differences.\n"
     };
+    let difference_guidance = if adopted_cloud_mode {
+        r#"DIFFERENCES ARE THE FROZEN LOCAL SNAPSHOT CHALLENGING THE ADOPTED CLOUD DRAFT.
+The current `draftSlice` is the official cloud-recognized draft; `localSnapshotSlice` is only the frozen local challenger. The ORIGINAL FILE remains the final authority.
+- If the original proves the local challenger is right and the cloud draft is wrong: use apply_edits to change the official draft to exactly what the source supports, with a verbatim source quote.
+- If the original proves the cloud draft is right: call record_ruling with ruling "current_is_correct" and the evidence. Do NOT edit.
+- If the original cannot settle a NON-ANSWER difference: call record_ruling with ruling "kept_cloud_default" and explain why. Keep the official cloud value; do NOT put this difference in finish.unresolved or create a user task.
+- If a conflicting ANSWER cannot be settled from the original: call record_ruling with ruling "cannot_resolve" and explain why; that answer conflict remains a user task. Never guess or copy the local answer without source evidence.
+- If neither side is right, apply_edits to the exact content supported by the source, then record_ruling "current_is_correct" for the now-correct official draft.
+- A ruling cannot remove structural problems found by the backend validator. Fix them with apply_edits or leave them for the backend's remaining-task calculation.
+- Only rule on differences you actually checked against the original file.
+"#
+    } else {
+        r#"DIFFERENCES ARE NOT AUTOMATICALLY THE USER'S PROBLEM.
+The first-pass cloud candidate is only an input and it can be wrong. For every difference listed in the context, the user should NOT have to decide it unless you genuinely cannot:
+- If the ORIGINAL FILE shows the current draft is right and the candidate is wrong: call record_ruling with ruling "current_is_correct" and the evidence you used. Do NOT edit anything.
+- If the original file does not settle it (unreadable, ambiguous, missing): call record_ruling with ruling "cannot_resolve" and say why.
+- If neither side is right: apply_edits to the correct content, then record_ruling "current_is_correct" for that difference (the candidate stays wrong).
+- A recorded ruling removes that difference from the user's list. Only rule on differences you actually checked against the file.
+- record_ruling cannot remove structural problems found by the backend validator. Fix those with apply_edits or leave them.
+"#
+    };
+    let finish_unresolved_rule = if adopted_cloud_mode {
+        "When you are done, call finish. Do not list an undecidable NON-ANSWER difference in `unresolved`; record it as `kept_cloud_default`. An undecidable answer must be recorded as `cannot_resolve` and remains user-visible. Backend structural problems are recomputed independently."
+    } else {
+        "When you are done, call finish. Put every question you could NOT settle in \"unresolved\": those become user-visible items, so leaving them out hides real uncertainty."
+    };
     let repair = input
         .get("repairNote")
         .and_then(Value::as_str)
@@ -1883,12 +1913,24 @@ fn repair_step_prompt(input: &Value) -> String {
     // 包模式下同一句话的含义变了：上下文**不是**整卷，而是一个本地预切出来的校核包。
     // 必须说清楚，否则模型会照着「你看到的是整份文档」行事，凭印象对范围外的内容下结论。
     let packet = if packet_mode {
+        let (slice_description, slice_names_rule) = if adopted_cloud_mode {
+            (
+                "the official cloud draft slice, the frozen local-snapshot challenger slice",
+                "- `draftSlice` / `localSnapshotSlice` are only this packet's targets. `candidateSlice` is null in adopted-cloud mode; `paperMap` is a one-screen index of the whole paper.",
+            )
+        } else {
+            (
+                "the draft slice, the cloud-candidate slice",
+                "- `draftSlice` / `candidateSlice` are only this packet's targets. `paperMap` is a one-screen index of the whole paper.",
+            )
+        };
+        format!(
         "\nWHAT YOU ARE LOOKING AT\n\
-This request carries ONE REPAIR PACKET, not the whole paper. A packet is a self-contained slice built locally for the differences it contains: the draft slice, the cloud-candidate slice, the source lines of the pages in scope, and a picture of the anchored regions.\n\
+This request carries ONE REPAIR PACKET, not the whole paper. A packet is a self-contained slice built locally for the differences it contains: {slice_description}, the source lines of the pages in scope, and a picture of the anchored regions.\n\
 - `scopeManifest` says what was INCLUDED, what was OMITTED, and which tool fetches an omitted part.\n\
 - `scope.pages` / `scope.answerPages` are 1-based. `sourceEvidence.pages[].lines[].id` looks like `p4:l12` (page 4, line 12).\n\
 - `sourceEvidence.regions[]` carry `imageAttached`; when it is true the region picture is attached to this request as an image.\n\
-- `draftSlice` / `candidateSlice` are only this packet's targets. `paperMap` is a one-screen index of the whole paper.\n\
+{slice_names_rule}\n\
 - If you call `read_draft`, include `taskGroupIds` and/or `questionNumbers` copied from this packet; the backend rejects empty or out-of-packet selectors.\n\
 If the packet does not contain what you need to judge a listed difference, do NOT guess and do NOT conclude from an impression:\n\
 - call `report_insufficient_context` with the exact pages / quotes / paragraphs you need, or\n\
@@ -1896,10 +1938,11 @@ If the packet does not contain what you need to judge a listed difference, do NO
 Every quote you cite must be copied VERBATIM from a line you were actually returned, and you must give its line id and page. A quote you did not receive is not evidence.\n\
 The backend verifies every quote you cite (in apply_edits and record_ruling) against the FULL source text layer — a quote that is not in the source rejects the whole batch with CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:<index>.\n\
 Call `finish_packet` when this packet is done.\n"
+        )
     } else {
-        ""
+        String::new()
     };
-    format!(
+    let prompt = format!(
         "You are repairing an {paper} authoring draft so it matches the ORIGINAL FILE.\n\
 Return JSON only: exactly one object shaped like {draft_example} (replace sample values with values from this request; arguments must follow the selected tool entry in the tools table).\n\
 Do not return Markdown, prose, or several objects.\n\
@@ -1927,7 +1970,25 @@ When you are done, call finish. Put every question you could NOT settle in \"unr
 those become user-visible items, so leaving them out hides real uncertainty.\n\
 Input JSON: {}",
         serde_json::to_string(&prompt_input).unwrap_or_default()
+    );
+    if adopted_cloud_mode {
+        let guidance_start = prompt
+            .find("DIFFERENCES ARE NOT AUTOMATICALLY THE USER'S PROBLEM.")
+            .expect("legacy difference guidance marker");
+        let input_start = prompt[guidance_start..]
+            .find("Input JSON:")
+            .map(|offset| guidance_start + offset)
+            .expect("prompt input marker");
+        format!(
+            "{}{}\n{}\n{}",
+            &prompt[..guidance_start],
+            difference_guidance,
+            finish_unresolved_rule,
+            &prompt[input_start..]
     )
+    } else {
+        prompt
+    }
 }
 
 /// 把包证据里区域图的**本机绝对路径**换成「有没有附图」。
@@ -3654,6 +3715,46 @@ mod tests {
             !prompt.contains("The context lists the whole document"),
             "包模式 prompt 不得同时宣称上下文包含整份文档：{prompt}"
         );
+    }
+
+    #[test]
+    fn adopted_cloud_repair_prompt_defaults_undecidable_non_answers_to_cloud() {
+        let prompt = repair_step_prompt(&json!({
+            "context": {
+                "comparisonMode": "adopted_cloud_vs_local_snapshot",
+                "contextMode": "packets",
+                "packetId": "packet-adopted",
+                "taskIds": ["task-1"],
+                "questionNumbers": [14]
+            }
+        }));
+        assert!(prompt.contains("`draftSlice` is the official cloud-recognized draft"));
+        assert!(prompt.contains("`localSnapshotSlice` is only the frozen local challenger"));
+        assert!(prompt.contains("kept_cloud_default"));
+        assert!(prompt.contains("conflicting ANSWER cannot be settled"));
+        assert!(!prompt.contains("The first-pass cloud candidate is only an input"));
+        assert!(prompt.contains("the frozen local-snapshot challenger slice"));
+        assert!(!prompt.contains("the cloud-candidate slice"));
+    }
+
+    #[test]
+    fn local_base_fallback_prompt_keeps_existing_uncertainty_behavior() {
+        let prompt = repair_step_prompt(&json!({
+            "context": {
+                "comparisonMode": "local_draft_vs_cloud_candidate",
+                "contextMode": "packets",
+                "packetId": "packet-fallback",
+                "taskIds": ["task-1"],
+                "questionNumbers": [14]
+            }
+        }));
+        assert!(
+            prompt.contains("The first-pass cloud candidate is only an input and it can be wrong.")
+        );
+        assert!(prompt.contains("ruling \"cannot_resolve\""));
+        assert!(!prompt.contains("kept_cloud_default"));
+        assert!(prompt.contains("the draft slice, the cloud-candidate slice"));
+        assert!(prompt.contains("`draftSlice` / `candidateSlice` are only this packet's targets"));
     }
 
     /// P9 的 prompt 契约：两种模式都必须告诉模型「引文会对照完整原文核验」、
