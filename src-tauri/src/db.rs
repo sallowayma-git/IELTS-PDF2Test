@@ -948,6 +948,86 @@ pub(crate) fn restore_library_item(conn: &Connection, id: &str) -> CommandResult
     Ok(affected > 0)
 }
 
+/// 永久删除：把某个题库条目（item id == job id）在**所有表**里的行删干净（C2 §1）。
+///
+/// 做法：遍历 `sqlite_master` 里的全部用户表，凡带已知「条目/任务 id」列
+/// （library_item_id / item_id / linked_library_item_id / created_from_job_id /
+/// ingest_job_id，以及少数以 `id` 本身为条目 id 的主表）的，就按该 id 删行。
+/// 全程在一个 IMMEDIATE 事务里，并 `defer_foreign_keys=ON` 把外键检查推迟到 commit——
+/// 这样删除顺序无所谓，只要 commit 时不再有悬空引用即可：既不必手工拓扑排序，也不会
+/// 因将来新增表/改动引用而漏删或报错（枚举式清理天然覆盖后续新表）。
+///
+/// **不动 `source_assets`**：它的行可能被多个条目共享（`library_items.source_asset_id`
+/// 指向它），按条目 id 删会误伤；原文件由 job 目录清理覆盖。
+///
+/// 返回删除的总行数（供测试断言与日志）。
+pub(crate) fn purge_all_rows_for_item(conn: &Connection, id: &str) -> CommandResult<u64> {
+    const ID_COLUMNS: &[&str] = &[
+        "library_item_id",
+        "item_id",
+        "linked_library_item_id",
+        "created_from_job_id",
+        "ingest_job_id",
+    ];
+    const ID_PK_TABLES: &[&str] = &[
+        "library_items_v2",
+        "processing_jobs_v2",
+        "library_items",
+        "ingest_jobs",
+        "exams",
+    ];
+
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| format!("purge_begin:{}", e))?;
+    tx.execute_batch("PRAGMA defer_foreign_keys=ON;")
+        .map_err(|e| format!("purge_defer_fk:{}", e))?;
+
+    let tables: Vec<String> = {
+        let mut stmt = tx
+            .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+            .map_err(|e| format!("purge_list_tables:{}", e))?;
+        let mapped = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| format!("purge_list_tables:{}", e))?;
+        let mut out = Vec::new();
+        for row in mapped {
+            out.push(row.map_err(|e| format!("purge_list_tables:{}", e))?);
+        }
+        out
+    };
+
+    let mut removed: u64 = 0;
+    for table in &tables {
+        let columns: Vec<String> = {
+            let mut stmt = tx
+                .prepare(&format!("PRAGMA table_info(\"{table}\")"))
+                .map_err(|e| format!("purge_columns:{table}:{}", e))?;
+            let mapped = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|e| format!("purge_columns:{table}:{}", e))?;
+            let mut out = Vec::new();
+            for row in mapped {
+                out.push(row.map_err(|e| format!("purge_columns:{table}:{}", e))?);
+            }
+            out
+        };
+        for column in &columns {
+            let matches = ID_COLUMNS.contains(&column.as_str())
+                || (column == "id" && ID_PK_TABLES.contains(&table.as_str()));
+            if matches {
+                let sql = format!("DELETE FROM \"{table}\" WHERE \"{column}\" = ?1");
+                removed += tx
+                    .execute(&sql, params![id])
+                    .map_err(|e| format!("purge_delete:{table}.{column}:{}", e))?
+                    as u64;
+            }
+        }
+    }
+
+    tx.commit().map_err(|e| format!("purge_commit:{}", e))?;
+    Ok(removed)
+}
+
 fn exam_record_from_library_item(conn: &Connection, id: &str) -> CommandResult<Option<ExamRecord>> {
     let mut stmt = conn
         .prepare(

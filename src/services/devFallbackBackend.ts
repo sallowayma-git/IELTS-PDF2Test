@@ -3838,6 +3838,26 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       return trashed as T;
     }
 
+    case "permanently_delete_library_exam": {
+      // 只允许删已在回收站里的条目；物理移除 job/writing 记录与 trashed 标记。
+      const id = String(args.id ?? "");
+      if (!store.trashedIds.includes(id)) throw new Error(`NOT_IN_TRASH:${id}`);
+      store.trashedIds = store.trashedIds.filter((t) => t !== id);
+      store.jobs = store.jobs.filter((j) => j.jobId !== id);
+      store.writingJobs = store.writingJobs.filter((j) => j.jobId !== id);
+      save(store);
+      return true as T;
+    }
+
+    case "empty_recycle_bin": {
+      const ids = [...store.trashedIds];
+      store.jobs = store.jobs.filter((j) => !ids.includes(j.jobId));
+      store.writingJobs = store.writingJobs.filter((j) => !ids.includes(j.jobId));
+      store.trashedIds = [];
+      save(store);
+      return { deleted: ids.length, skipped: [] as Array<{ id: string; reason: string }> } as T;
+    }
+
     case "search_library_exams": {
       const query = String(args.query ?? "").trim().toLowerCase();
       if (!query) return [] as T;

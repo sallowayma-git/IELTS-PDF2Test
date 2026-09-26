@@ -150,6 +150,39 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
     }
   }
 
+  /** 永久删除单个回收站条目（不可恢复），二次确认后执行。 */
+  async function permanentlyDelete(id: string) {
+    if (!window.confirm("永久删除后无法恢复，确定要彻底删除这道题吗？")) return;
+    try {
+      await store.permanentlyDelete(id);
+      setNotice("已永久删除。");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("ITEM_STILL_PROCESSING")) {
+        setNotice("这道题仍在识别/排队中，请先取消或等待完成，再永久删除。");
+        return;
+      }
+      setNotice(describeLibraryActionError(error, "永久删除失败，请稍后重试。"));
+    }
+  }
+
+  /** 清空回收站（不可恢复），二次确认后执行；仍在处理中的条目会被跳过并如实说明。 */
+  async function emptyTrash() {
+    if (!window.confirm("清空回收站会永久删除其中所有题目，无法恢复。确定继续吗？")) return;
+    try {
+      const result = await store.emptyTrash();
+      setNotice(
+        result.skipped.length
+          ? `已永久删除 ${result.deleted} 项；${result.skipped.length} 项仍在识别/排队中被跳过，请先取消或等待完成。`
+          : `已清空回收站，永久删除 ${result.deleted} 项。`
+      );
+    } catch (error) {
+      setNotice(describeLibraryActionError(error, "清空回收站失败，请稍后重试。"));
+    }
+  }
+
+  const trashedCount = counts.trash;
+
   return (
     <section className="library-page" data-testid="library-page">
       <LibraryHeader
@@ -186,6 +219,14 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
         </ul>
       ) : null}
 
+      {tab === "trash" && trashedCount > 0 ? (
+        <div className="library-trash-toolbar" data-testid="library-trash-toolbar">
+          <button className="danger small" data-testid="library-empty-trash" onClick={emptyTrash}>
+            清空回收站（{trashedCount}）
+          </button>
+        </div>
+      ) : null}
+
       <LibraryItemList
         rows={visibleRows}
         loading={store.loading}
@@ -195,6 +236,7 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
         onOpen={(id) => go(store.rows.find((row) => row.id === id)?.modality === "writing" ? legacyPath("writing", id) : workspacePath(id))}
         onTrash={trash}
         onRestore={restore}
+        onPermanentDelete={permanentlyDelete}
         onRetry={retry}
       />
 

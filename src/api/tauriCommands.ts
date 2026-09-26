@@ -365,3 +365,18 @@ export async function restoreLibraryExam(id: string): Promise<boolean> {
 export async function listTrashedExams(): Promise<LibraryExamSummary[]> {
   return command("list_trashed_exams");
 }
+
+/** 永久删除单个回收站条目（不可恢复）。调用方须先二次确认。 */
+export async function permanentlyDeleteExam(id: string): Promise<boolean> {
+  return command("permanently_delete_library_exam", { id });
+}
+
+export interface EmptyRecycleBinResult {
+  deleted: number;
+  skipped: Array<{ id: string; reason: string }>;
+}
+
+/** 清空回收站（不可恢复）。仍在识别/排队中的条目会被跳过并回报原因。 */
+export async function emptyRecycleBin(): Promise<EmptyRecycleBinResult> {
+  return command("empty_recycle_bin");
+}

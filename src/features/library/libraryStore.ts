@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { subscribeProcessing } from "../../api/processingClient";
-import { deleteLibraryExam, listJobs, listLibraryExams, listTrashedExams, restoreLibraryExam } from "../../api/tauriCommands";
+import {
+  deleteLibraryExam,
+  emptyRecycleBin,
+  listJobs,
+  listLibraryExams,
+  listTrashedExams,
+  permanentlyDeleteExam,
+  restoreLibraryExam,
+  type EmptyRecycleBinResult
+} from "../../api/tauriCommands";
 import { listLibraryItems, type LibraryItemSummaryV2 } from "../../api/workspaceClient";
 import type { ImportJob, LibraryExamSummary } from "../../types";
 import { buildRow, type LibraryRowV1 } from "./libraryTypes";
@@ -47,6 +56,10 @@ export interface LibraryStore {
   prependOptimistic: (rows: LibraryRowV1[]) => void;
   moveToTrash: (id: string) => Promise<void>;
   restore: (id: string) => Promise<void>;
+  /** 永久删除单个回收站条目（不可恢复）。调用方须先二次确认。 */
+  permanentlyDelete: (id: string) => Promise<void>;
+  /** 清空回收站（不可恢复）。返回删除数与被跳过（仍在处理中）的条目。 */
+  emptyTrash: () => Promise<EmptyRecycleBinResult>;
 }
 
 export function useLibraryStore(): LibraryStore {
@@ -125,5 +138,16 @@ export function useLibraryStore(): LibraryStore {
     refresh();
   }, [refresh]);
 
-  return { rows, loading, error, refresh, prependOptimistic, moveToTrash, restore };
+  const permanentlyDelete = useCallback(async (id: string) => {
+    await permanentlyDeleteExam(id);
+    refresh();
+  }, [refresh]);
+
+  const emptyTrash = useCallback(async () => {
+    const result = await emptyRecycleBin();
+    refresh();
+    return result;
+  }, [refresh]);
+
+  return { rows, loading, error, refresh, prependOptimistic, moveToTrash, restore, permanentlyDelete, emptyTrash };
 }

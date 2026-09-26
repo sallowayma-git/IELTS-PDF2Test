@@ -1685,6 +1685,36 @@ async fn list_trashed_exams(app: AppHandle) -> CommandResult<Vec<LibraryExamSumm
         .map_err(|error| error.to_string())?
 }
 
+/// 永久删除单个回收站条目（不可恢复）。前端应二次确认后再调用。
+#[tauri::command]
+async fn permanently_delete_library_exam(id: String, app: AppHandle) -> CommandResult<bool> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        library_commands::permanently_delete_library_exam_core(&root, &id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// 清空回收站（不可恢复）。返回 `{ deleted, skipped: [{ id, reason }] }`；
+/// 仍在识别/排队中的条目会被跳过并如实回报，而不是静默吞掉。
+#[tauri::command]
+async fn empty_recycle_bin(app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    let (deleted, skipped) = tauri::async_runtime::spawn_blocking(move || {
+        library_commands::empty_recycle_bin_core(&root)
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    Ok(serde_json::json!({
+        "deleted": deleted,
+        "skipped": skipped
+            .into_iter()
+            .map(|(id, reason)| serde_json::json!({ "id": id, "reason": reason }))
+            .collect::<Vec<_>>(),
+    }))
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -1807,7 +1837,9 @@ pub fn run() {
             search_library_exams,
             get_library_stats,
             restore_library_exam,
-            list_trashed_exams
+            list_trashed_exams,
+            permanently_delete_library_exam,
+            empty_recycle_bin
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

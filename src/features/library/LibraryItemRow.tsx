@@ -22,6 +22,7 @@ export function LibraryItemRow({
   onOpen,
   onTrash,
   onRestore,
+  onPermanentDelete,
   onRetry
 }: {
   row: LibraryRowV1;
@@ -30,6 +31,7 @@ export function LibraryItemRow({
   onOpen: (id: string) => void;
   onTrash: (id: string) => void;
   onRestore: (id: string) => void;
+  onPermanentDelete: (id: string) => void;
   onRetry?: (id: string) => void;
 }) {
   const processing = isProcessingStage(row.stage);
@@ -73,7 +75,16 @@ export function LibraryItemRow({
 
       <div className="library-row-actions">
         {row.inTrash ? (
-          <button className="ghost small" onClick={() => onRestore(row.id)}>恢复</button>
+          <>
+            <button className="ghost small" onClick={() => onRestore(row.id)}>恢复</button>
+            <button
+              className="danger small"
+              data-testid="library-row-permanent-delete"
+              onClick={() => onPermanentDelete(row.id)}
+            >
+              永久删除
+            </button>
+          </>
         ) : (
           <>
             {canRetryRow(row) && onRetry ? (
