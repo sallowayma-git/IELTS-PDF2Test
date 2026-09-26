@@ -152,8 +152,18 @@ async function ensureMsedgedriver() {
  * 启动前被清掉的环境残留，以及 msedgedriver 给 WebView2 分配的 %TEMP%\scoped_dir*
  * （它会覆盖 WEBVIEW2_USER_DATA_FOLDER）里有没有生成 EBWebView 配置、chrome_debug.log 写了什么。
  */
-function logLaunchDiagnostics(sinceMs) {
+function logLaunchDiagnostics(sinceMs, runDir) {
   try {
+    // WebView2 的配置目录可能落在：我们指定的 WEBVIEW2_USER_DATA_FOLDER、msedgedriver 的
+    // scoped_dir、或应用默认的 %LOCALAPPDATA%\<identifier>\EBWebView。哪个都没有 = WebView2 根本没起来。
+    const localAppData = process.env.LOCALAPPDATA;
+    for (const dir of [
+      path.join(runDir, "appdata", "webview"),
+      localAppData ? path.join(localAppData, "com.ielts.author.studio") : null,
+    ].filter(Boolean)) {
+      const profile = path.join(dir, "EBWebView");
+      console.log(`[e2e:tauri] ${dir}: EBWebView=${fs.existsSync(profile)}${fs.existsSync(profile) ? ` DevToolsActivePort=${fs.existsSync(path.join(profile, "DevToolsActivePort"))}` : ""}`);
+    }
     const env = process.env;
     const proxies = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]
       .filter((key) => env[key]);
@@ -179,6 +189,57 @@ function logLaunchDiagnostics(sinceMs) {
     }
   } catch (error) {
     console.log(`[e2e:tauri] launch diagnostics failed: ${error.message}`);
+  }
+}
+
+/**
+ * 绕开 tauri-driver / msedgedriver，直接用 WebView2 官方变量打开调试端点启动被测 exe，
+ * 判断「这台机器上 WebView2 调试端点能不能起来」：能起来 → 问题在驱动链；起不来 → 问题在
+ * WebView2 本身（打印 chrome_debug.log）。只在会话建立失败时运行，只做诊断。
+ */
+async function probeWebView2Directly(exePath, runDir) {
+  let child = null;
+  try {
+    const port = await freePort();
+    const profileRoot = path.join(runDir, "appdata", "probe-webview");
+    fs.mkdirSync(profileRoot, { recursive: true });
+    const env = {
+      ...sanitizedAppEnv(process.env),
+      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --remote-allow-origins=* --enable-logging --v=0`,
+      WEBVIEW2_USER_DATA_FOLDER: profileRoot,
+      PDF2TEST_AUTOMATION_DATA_DIR: path.join(runDir, "appdata", "probe-data"),
+    };
+    let output = "";
+    let exitCode = null;
+    child = spawn(exePath, [], { stdio: ["ignore", "pipe", "pipe"], env, windowsHide: true });
+    child.stdout.on("data", (chunk) => { output += String(chunk); });
+    child.stderr.on("data", (chunk) => { output += String(chunk); });
+    child.on("exit", (code) => { exitCode = code; });
+    const deadline = Date.now() + 45000;
+    let version = null;
+    while (Date.now() < deadline && exitCode === null && !version) {
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/json/version`);
+        if (response.ok) version = await response.json();
+      } catch {}
+      if (!version) await sleep(500);
+    }
+    const profile = path.join(profileRoot, "EBWebView");
+    console.log(
+      `[e2e:tauri] direct WebView2 probe: endpoint=${version ? `up (${version.Browser ?? "?"})` : "down"} ` +
+      `exit=${exitCode ?? "running"} EBWebView=${fs.existsSync(profile)} ` +
+      `DevToolsActivePort=${fs.existsSync(path.join(profile, "DevToolsActivePort"))}`
+    );
+    if (output.trim()) console.log(`[e2e:tauri] direct probe app output (tail):\n${output.slice(-2000)}`);
+    const debugLog = path.join(profile, "chrome_debug.log");
+    if (fs.existsSync(debugLog)) {
+      console.log(`[e2e:tauri] direct probe chrome_debug.log (tail):\n${fs.readFileSync(debugLog, "utf8").slice(-3000)}`);
+    }
+  } catch (error) {
+    console.log(`[e2e:tauri] direct WebView2 probe failed: ${error.message}`);
+  } finally {
+    try { child?.kill(); } catch {}
+    await sleep(1000);
   }
 }
 
@@ -446,7 +507,8 @@ export async function launchTauriApp({ exePath, pdfPath, keep = false, runPrefix
     try { await driver?.quit(); } catch {}
     try { driverProcess.kill(); } catch {}
     if (driverStderr.trim()) console.log(`[e2e:tauri] tauri-driver stderr (tail):\n${driverStderr.slice(-3000)}`);
-    logLaunchDiagnostics(launchStartedAt);
+    logLaunchDiagnostics(launchStartedAt, runDir);
+    await probeWebView2Directly(exePath, runDir);
     if (!keep) {
       await sleep(1500);
       try { fs.rmSync(runDir, { recursive: true, force: true }); } catch {}
