@@ -1,10 +1,10 @@
 {
-  "recordedAt": "2026-09-26T08:54:20.291Z",
+  "recordedAt": "2026-09-26T08:58:09.284Z",
   "surface": {
-    "commitSha": "de298f701908632c33f9d3e970e747a305147737",
+    "commitSha": "1bacf9a591829582a29f0490f1f8366d4ce313e9",
     "schemaHash": {
       "files": 44,
-      "sha256": "18d262a61f346386db20a287cf2b8fcbe9e2f66266008f65b188db11923b2055"
+      "sha256": "309fbdb2f4e2dde794bf22df2e1e06f2023ca36eaf474ef96a68ac13500e8da2"
     },
     "corpus": {
       "publicSyntheticPdf": [
@@ -322,6 +322,14 @@
         "  productModules.src/exam-canvas: 5 -> 13 files",
         "  productModules.src/styles: 10 -> 11 files",
         "  schemaHash: 640a09516984 (40 files) -> 18d262a61f34 (44 files)"
+      ]
+    },
+    {
+      "at": "2026-09-26T08:58:09.283Z",
+      "commit": "1bacf9a591829582a29f0490f1f8366d4ce313e9",
+      "reason": "schemaHash 改为按 posix 路径计算（此前 Windows 用反斜杠路径入 hash，与 Linux CI 结果不一致），仅重算 hash，合同内容无变化。",
+      "driftSummary": [
+        "  schemaHash: 18d262a61f34 (44 files) -> 309fbdb2f4e2 (44 files)"
       ]
     }
   ]

@@ -150,15 +150,16 @@ function sha256(content) {
   return crypto.createHash("sha256").update(content).digest("hex");
 }
 
-/** 合同 schema 的内容寻址 hash：路径 + 内容一起进 hash，任何一端漂移都会改变它。 */
+/** 合同 schema 的内容寻址 hash：路径 + 内容一起进 hash，任何一端漂移都会改变它。
+ *  路径一律用 posix 分隔符，否则 Windows 与 Linux 算出的 hash 不同，strict 门禁只能在一端通过。 */
 function schemaHash() {
-  const roots = ["contracts", path.join("src-tauri", "src", "schema"), "src/types"];
+  const roots = ["contracts", "src-tauri/src/schema", "src/types"];
   const files = [];
   const walk = (dir) => {
     const full = path.join(repoRoot, dir);
     if (!fs.existsSync(full)) return;
     for (const entry of fs.readdirSync(full, { withFileTypes: true })) {
-      const rel = path.join(dir, entry.name);
+      const rel = path.posix.join(dir, entry.name);
       if (entry.isDirectory()) walk(rel);
       else if (/\.(json|rs|ts)$/.test(entry.name)) files.push(rel);
     }
