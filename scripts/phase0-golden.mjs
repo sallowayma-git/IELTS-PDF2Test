@@ -26,6 +26,19 @@ const requiredPhase1Flags = [
   "authoringV2Shadow",
   "qualityGateV2"
 ];
+// The golden manifest records the Phase 0 capture, when every flag was closed. The source
+// defaults have since moved on: 2dedd83 made the geometry-backed V2 pipeline the main path, so
+// these defaults are expected to be open. Every other flag, including any new one, must default
+// closed, and pdfPerQuestionLlmRepair stays closed as a safety constraint.
+const promotedDefaultFlags = [
+  "documentIrV2",
+  "authoringV2",
+  "runtimeSourceV2",
+  "nasPackageV2",
+  "documentIrV2Shadow",
+  "authoringV2Shadow",
+  "qualityGateV2"
+];
 
 const args = parseArgs(process.argv.slice(2));
 const command = args._[0] ?? "verify";
@@ -233,32 +246,37 @@ function validateFeatureFlagDefaults(manifest, errors) {
     "DEFAULT_PHASE0_FEATURE_FLAGS",
     defaults.DEFAULT_PHASE0_FEATURE_FLAGS,
     requiredPhase0Flags,
-    errors
+    errors,
+    promotedDefaultFlags
   );
   validateClosedFlagSet(
     "DEFAULT_PHASE1_FEATURE_FLAGS",
     defaults.DEFAULT_PHASE1_FEATURE_FLAGS,
     requiredPhase1Flags,
-    errors
+    errors,
+    promotedDefaultFlags
   );
+  const expectedDefault = (name) => promotedDefaultFlags.includes(name);
   return {
     path: toRepoPath(featureFlagsPath),
     phase0DefaultCount: Object.keys(defaults.DEFAULT_PHASE0_FEATURE_FLAGS ?? {}).length,
     phase1DefaultCount: Object.keys(defaults.DEFAULT_PHASE1_FEATURE_FLAGS ?? {}).length,
-    allRequiredDefaultsClosed: requiredPhase0Flags.every((name) => manifestFlags[name] === false)
-      && requiredPhase0Flags.every((name) => defaults.DEFAULT_PHASE0_FEATURE_FLAGS?.[name] === false)
-      && requiredPhase1Flags.every((name) => defaults.DEFAULT_PHASE1_FEATURE_FLAGS?.[name] === false)
+    promotedDefaultFlags,
+    allRequiredDefaultsAsExpected: requiredPhase0Flags.every((name) => manifestFlags[name] === false)
+      && requiredPhase0Flags.every((name) => defaults.DEFAULT_PHASE0_FEATURE_FLAGS?.[name] === expectedDefault(name))
+      && requiredPhase1Flags.every((name) => defaults.DEFAULT_PHASE1_FEATURE_FLAGS?.[name] === expectedDefault(name))
   };
 }
 
-function validateClosedFlagSet(label, flags, requiredNames, errors) {
+function validateClosedFlagSet(label, flags, requiredNames, errors, openNames = []) {
   if (!flags || typeof flags !== "object") {
     errors.push(`${label} is missing`);
     return;
   }
   for (const name of requiredNames) {
+    const expected = openNames.includes(name);
     if (!Object.hasOwn(flags, name)) errors.push(`${label} required flag is missing: ${name}`);
-    else if (flags[name] !== false) errors.push(`${label} feature flag must be false: ${name}`);
+    else if (flags[name] !== expected) errors.push(`${label} feature flag must be ${expected}: ${name}`);
   }
   for (const [name, value] of Object.entries(flags)) {
     if (value !== false && !requiredNames.includes(name)) {
@@ -268,10 +286,11 @@ function validateClosedFlagSet(label, flags, requiredNames, errors) {
 }
 
 function runFeatureFlagSelfTest({ quiet = false } = {}) {
-  const phase0 = requiredPhase0Flags.map((name) => `${name}: false`).join(",\n");
+  const flagEntry = (name) => `${name}: ${promotedDefaultFlags.includes(name)}`;
+  const phase0 = requiredPhase0Flags.map(flagEntry).join(",\n");
   const phase1Only = requiredPhase1Flags
     .filter((name) => !requiredPhase0Flags.includes(name))
-    .map((name) => `${name}: false`)
+    .map(flagEntry)
     .join(",\n");
   const validSource = `
     export const DEFAULT_PHASE0_FEATURE_FLAGS = Object.freeze({${phase0}});
@@ -282,7 +301,7 @@ function runFeatureFlagSelfTest({ quiet = false } = {}) {
   `;
   const parsed = parseFeatureFlagDefaultObjects(validSource, "feature-flags-self-test.ts");
   const validationCases = [
-    { id: "all-required-disabled", flags: parsed.DEFAULT_PHASE1_FEATURE_FLAGS, required: requiredPhase1Flags, expectedErrors: 0 },
+    { id: "expected-defaults", flags: parsed.DEFAULT_PHASE1_FEATURE_FLAGS, required: requiredPhase1Flags, expectedErrors: 0 },
     {
       id: "missing-required-flag",
       flags: Object.fromEntries(Object.entries(parsed.DEFAULT_PHASE0_FEATURE_FLAGS).filter(([name]) => name !== "authoringV2")),
@@ -290,8 +309,14 @@ function runFeatureFlagSelfTest({ quiet = false } = {}) {
       expectedErrors: 1
     },
     {
-      id: "required-flag-enabled",
-      flags: { ...parsed.DEFAULT_PHASE1_FEATURE_FLAGS, qualityGateV2: true },
+      id: "promoted-flag-closed",
+      flags: { ...parsed.DEFAULT_PHASE1_FEATURE_FLAGS, qualityGateV2: false },
+      required: requiredPhase1Flags,
+      expectedErrors: 1
+    },
+    {
+      id: "safety-flag-enabled",
+      flags: { ...parsed.DEFAULT_PHASE1_FEATURE_FLAGS, pdfPerQuestionLlmRepair: true },
       required: requiredPhase1Flags,
       expectedErrors: 1
     },
@@ -304,7 +329,7 @@ function runFeatureFlagSelfTest({ quiet = false } = {}) {
   ];
   for (const testCase of validationCases) {
     const errors = [];
-    validateClosedFlagSet(testCase.id, testCase.flags, testCase.required, errors);
+    validateClosedFlagSet(testCase.id, testCase.flags, testCase.required, errors, promotedDefaultFlags);
     if (errors.length !== testCase.expectedErrors) {
       throw new Error(
         `feature flag self-test failed: ${testCase.id}: expectedErrors=${testCase.expectedErrors}:actual=${errors.length}`
@@ -314,11 +339,11 @@ function runFeatureFlagSelfTest({ quiet = false } = {}) {
   const rejectedSources = [
     {
       id: "indirect-default",
-      source: validSource.replace("documentIrV2: false", "documentIrV2: CLOSED")
+      source: validSource.replace("listeningV1: false", "listeningV1: CLOSED")
     },
     {
       id: "duplicate-default",
-      source: validSource.replace("documentIrV2: false", "documentIrV2: false, documentIrV2: false")
+      source: validSource.replace("listeningV1: false", "listeningV1: false, listeningV1: false")
     },
     {
       id: "unknown-spread",
