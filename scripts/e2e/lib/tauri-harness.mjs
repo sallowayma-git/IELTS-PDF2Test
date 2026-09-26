@@ -192,6 +192,24 @@ function logLaunchDiagnostics(sinceMs, runDir) {
   }
 }
 
+/** 打印当前 msedgewebview2.exe 浏览器进程的命令行，以及可能覆盖 WebView2 参数的策略注册表项。 */
+function logWebViewCommandLines() {
+  const processes = runCapture("powershell", [
+    "-NoProfile", "-Command",
+    "Get-CimInstance Win32_Process -Filter \"name='msedgewebview2.exe'\" | "
+      + "Where-Object { $_.CommandLine -notmatch '--type=' -and $_.CommandLine -match 'ielts-author-studio' } | ForEach-Object { $_.CommandLine }",
+  ]);
+  console.log(`[e2e:tauri] msedgewebview2 browser process command lines:\n${processes.stdout.trim().slice(0, 4000) || "(none)"}`);
+  for (const key of [
+    "HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge",
+    "HKCU\\SOFTWARE\\Policies\\Microsoft\\Edge",
+    "HKLM\\SOFTWARE\\WOW6432Node\\Policies\\Microsoft\\Edge",
+  ]) {
+    const query = runCapture("reg", ["query", key, "/s"]);
+    console.log(`[e2e:tauri] ${key}: ${query.status === 0 ? `\n${query.stdout.trim().slice(0, 2000)}` : "(absent)"}`);
+  }
+}
+
 /**
  * 绕开 tauri-driver / msedgedriver，直接用 WebView2 官方变量打开调试端点启动被测 exe，
  * 判断「这台机器上 WebView2 调试端点能不能起来」：能起来 → 问题在驱动链；起不来 → 问题在
@@ -215,16 +233,30 @@ async function probeWebView2Directly(exePath, runDir) {
     child.stdout.on("data", (chunk) => { output += String(chunk); });
     child.stderr.on("data", (chunk) => { output += String(chunk); });
     child.on("exit", (code) => { exitCode = code; });
-    const deadline = Date.now() + 45000;
+    const probeStartedAt = Date.now();
+    const deadline = probeStartedAt + 90000;
+    const profile = path.join(profileRoot, "EBWebView");
     let version = null;
+    let profileAppearedMs = null;
+    let commandLinesLogged = false;
     while (Date.now() < deadline && exitCode === null && !version) {
       try {
         const response = await fetch(`http://127.0.0.1:${port}/json/version`);
         if (response.ok) version = await response.json();
       } catch {}
+      if (profileAppearedMs === null && fs.existsSync(profile)) profileAppearedMs = Date.now() - probeStartedAt;
+      // 浏览器进程起来后读一次它的真实命令行：参数有没有真正传到 msedgewebview2.exe，一眼可见。
+      if (!commandLinesLogged && profileAppearedMs !== null && Date.now() - probeStartedAt - profileAppearedMs > 5000) {
+        commandLinesLogged = true;
+        logWebViewCommandLines();
+      }
       if (!version) await sleep(500);
     }
-    const profile = path.join(profileRoot, "EBWebView");
+    if (!commandLinesLogged) logWebViewCommandLines();
+    console.log(`[e2e:tauri] direct probe: EBWebView appeared after ${profileAppearedMs ?? "never"} ms`);
+    if (fs.existsSync(profile)) {
+      console.log(`[e2e:tauri] direct probe EBWebView entries: ${fs.readdirSync(profile).join(", ")}`);
+    }
     console.log(
       `[e2e:tauri] direct WebView2 probe: endpoint=${version ? `up (${version.Browser ?? "?"})` : "down"} ` +
       `exit=${exitCode ?? "running"} EBWebView=${fs.existsSync(profile)} ` +
