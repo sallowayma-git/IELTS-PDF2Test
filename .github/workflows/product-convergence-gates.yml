@@ -93,6 +93,10 @@ jobs:
 
       - run: npm ci
 
+      # tauri-build 要求 lib/pdfium-linux/libpdfium.so 这个资源存在，缺了 cargo check 直接失败。
+      - name: Fetch pdfium
+        run: npm run fetch:pdfium
+
       - name: Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
 

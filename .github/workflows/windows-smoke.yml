@@ -33,6 +33,10 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # tauri-build 要求 lib/pdfium-windows/pdfium.dll 这个资源存在，缺了连 cargo test 都编不过。
+      - name: Fetch pdfium
+        run: npm run fetch:pdfium
+
       - name: TypeScript check
         run: npm run check
 
