@@ -143,7 +143,11 @@ pub(crate) fn list_library_items_core(root: &Path, include_deleted: bool) -> Com
     let conn = open_library_connection(root)?;
     let rows = list_items(&conn, include_deleted)?;
     let mut result = Vec::new();
-    for row in rows {
+    for mut row in rows {
+        // C4：首次列表加载时惰性回填 Part 标签（判不出记 sentinel，避免每次重算；手动来源不动）。
+        if row.part_source.is_none() && row.has_canonical_ds {
+            backfill_part_label(&conn, &mut row);
+        }
         let processing = crate::processing::queue::get_job(&conn, &row.id)?;
         let mut value = serde_json::to_value(row).map_err(|error| error.to_string())?;
         value["processing"] =
@@ -151,4 +155,82 @@ pub(crate) fn list_library_items_core(root: &Path, include_deleted: bool) -> Com
         result.push(value);
     }
     Ok(Value::Array(result))
+}
+
+/// 手动设置某条目的 Part 标签（C4）：来源记为 `manual`，压过一切自动判定。
+/// `label` 为空/None 表示清除手动值，回到自动判定（下次列表重新推断）。
+pub(crate) fn set_library_item_part_core(
+    root: &Path,
+    item_id: &str,
+    label: Option<&str>,
+) -> CommandResult<bool> {
+    let conn = open_library_connection(root)?;
+    let trimmed = label.map(str::trim).filter(|value| !value.is_empty());
+    match trimmed {
+        Some(value) => super::repository::set_item_part(&conn, item_id, Some(value), Some("manual")),
+        None => super::repository::set_item_part(&conn, item_id, None, None),
+    }
+}
+
+/// 判不出 Part 时写入的 sentinel：区分「算过但没有」与「还没算过（NULL）」，避免每次列表都重算。
+const PART_SOURCE_NONE: &str = "none";
+
+/// 从权威稿 + 标题推断 Part 标签并回填。手动来源不覆盖。
+fn backfill_part_label(conn: &rusqlite::Connection, row: &mut super::repository::LibraryItemRowV2) {
+    let Ok(Some((ds, _))) = super::repository::get_canonical_ds(conn, &row.id) else {
+        return;
+    };
+    let (lines, numbers) = part_inputs_from_ds(&ds);
+    let detected = crate::library::part_detection::detect_part(
+        &crate::library::part_detection::PartDetectionInput {
+            modality: &row.modality,
+            manual_label: None,
+            task_type: ds.get("taskType").and_then(Value::as_str),
+            source_lines: &lines,
+            question_numbers: &numbers,
+            filename: &row.title,
+        },
+    );
+    let (label, source) = match detected {
+        Some(part) => (Some(part.label), part.source.as_str().to_string()),
+        None => (None, PART_SOURCE_NONE.to_string()),
+    };
+    if let Err(error) =
+        super::repository::set_item_part(conn, &row.id, label.as_deref(), Some(&source))
+    {
+        eprintln!("[library] part backfill failed for {}: {error}", row.id);
+        return;
+    }
+    row.part_label = label;
+    row.part_source = Some(source);
+}
+
+/// 从权威稿抽取 Part 判定输入：题号（answerKey 的 `q<n>` 键）+ 可能含标题行的文本
+/// （passage 标题/正文、exam 标题）。best-effort：抽不到就交给文件名判定。
+fn part_inputs_from_ds(ds: &Value) -> (Vec<String>, Vec<u32>) {
+    let mut numbers: Vec<u32> = Vec::new();
+    if let Some(answer_key) = ds.get("answerKey").and_then(Value::as_object) {
+        for key in answer_key.keys() {
+            if let Some(digits) = key.strip_prefix('q').or(Some(key.as_str())) {
+                if let Ok(number) = digits.parse::<u32>() {
+                    numbers.push(number);
+                }
+            }
+        }
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut push_strings = |value: Option<&Value>| {
+        if let Some(text) = value.and_then(Value::as_str) {
+            for line in text.lines() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    lines.push(trimmed.to_string());
+                }
+            }
+        }
+    };
+    push_strings(ds.pointer("/exam/title"));
+    push_strings(ds.pointer("/passage/title"));
+    push_strings(ds.pointer("/passage/content"));
+    (lines, numbers)
 }

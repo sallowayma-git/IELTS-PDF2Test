@@ -1715,6 +1715,21 @@ async fn empty_recycle_bin(app: AppHandle) -> CommandResult<Value> {
     }))
 }
 
+/// 手动设置题库条目的 Part 标签（C4）。`label` 为空表示清除手动值、回到自动判定。
+#[tauri::command]
+async fn set_library_item_part(
+    item_id: String,
+    label: Option<String>,
+    app: AppHandle,
+) -> CommandResult<bool> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        library::commands::set_library_item_part_core(&root, &item_id, label.as_deref())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -1839,7 +1854,8 @@ pub fn run() {
             restore_library_exam,
             list_trashed_exams,
             permanently_delete_library_exam,
-            empty_recycle_bin
+            empty_recycle_bin,
+            set_library_item_part
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -8,6 +8,7 @@ import {
   listTrashedExams,
   permanentlyDeleteExam,
   restoreLibraryExam,
+  setLibraryItemPart,
   type EmptyRecycleBinResult
 } from "../../api/tauriCommands";
 import { listLibraryItems, type LibraryItemSummaryV2 } from "../../api/workspaceClient";
@@ -60,6 +61,8 @@ export interface LibraryStore {
   permanentlyDelete: (id: string) => Promise<void>;
   /** 清空回收站（不可恢复）。返回删除数与被跳过（仍在处理中）的条目。 */
   emptyTrash: () => Promise<EmptyRecycleBinResult>;
+  /** 手动设置 Part 标签（C4）；`label` 为 null 表示清除、回到自动判定。 */
+  setPart: (id: string, label: string | null) => Promise<void>;
 }
 
 export function useLibraryStore(): LibraryStore {
@@ -149,5 +152,10 @@ export function useLibraryStore(): LibraryStore {
     return result;
   }, [refresh]);
 
-  return { rows, loading, error, refresh, prependOptimistic, moveToTrash, restore, permanentlyDelete, emptyTrash };
+  const setPart = useCallback(async (id: string, label: string | null) => {
+    await setLibraryItemPart(id, label);
+    refresh();
+  }, [refresh]);
+
+  return { rows, loading, error, refresh, prependOptimistic, moveToTrash, restore, permanentlyDelete, emptyTrash, setPart };
 }

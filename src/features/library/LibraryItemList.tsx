@@ -11,6 +11,7 @@ export function LibraryItemList({
   onTrash,
   onRestore,
   onPermanentDelete,
+  onSetPart,
   onRetry
 }: {
   rows: LibraryRowV1[];
@@ -22,6 +23,7 @@ export function LibraryItemList({
   onTrash: (id: string) => void;
   onRestore: (id: string) => void;
   onPermanentDelete: (id: string) => void;
+  onSetPart: (id: string, label: string | null) => void;
   onRetry: (id: string) => void;
 }) {
   if (loading && !rows.length) return <p className="empty">加载中…</p>;
@@ -44,6 +46,7 @@ export function LibraryItemList({
           onTrash={onTrash}
           onRestore={onRestore}
           onPermanentDelete={onPermanentDelete}
+          onSetPart={onSetPart}
           onRetry={onRetry}
         />
       ))}

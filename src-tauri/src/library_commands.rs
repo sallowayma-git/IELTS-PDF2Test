@@ -859,6 +859,75 @@ mod tests {
     }
 
     #[test]
+    fn part_label_backfills_from_ds_and_manual_overrides() {
+        use crate::library::repository::{
+            open_library_connection, seed_canonical_ds, upsert_item_shell, UpsertItemInput,
+        };
+        let root = make_reading_appdata();
+        {
+            let conn = open_library_connection(&root).unwrap();
+            upsert_item_shell(
+                &conn,
+                &UpsertItemInput {
+                    id: "import-test-1",
+                    modality: "reading",
+                    title: "no filename hint",
+                    status: "ready",
+                    source_asset_id: None,
+                },
+            )
+            .unwrap();
+            // synthetic 阅读稿 answerKey = q14/q15 → 题号范围落在 Passage 2。
+            let ds = fs::read(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join("fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"),
+            )
+            .unwrap();
+            let ds: serde_json::Value = serde_json::from_slice(&ds).unwrap();
+            seed_canonical_ds(&conn, "import-test-1", &ds.to_string(), "ready").unwrap();
+        }
+
+        let find = |value: &serde_json::Value| -> serde_json::Value {
+            value
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["id"] == "import-test-1")
+                .unwrap()
+                .clone()
+        };
+
+        // 首次列表：从原文/题号自动判定为 P2。
+        let listed = crate::library::commands::list_library_items_core(&root, false).unwrap();
+        let row = find(&listed);
+        assert_eq!(row["partLabel"], "P2", "题号 14–15 应判为 Passage 2");
+        let source = row["partSource"].as_str().unwrap();
+        assert!(
+            source == "range" || source == "content",
+            "自动判定来源应为 range/content，实得 {source}"
+        );
+
+        // 手动改成 P1，来源记为 manual。
+        assert!(
+            crate::library::commands::set_library_item_part_core(&root, "import-test-1", Some("P1"))
+                .unwrap()
+        );
+        let row = find(&crate::library::commands::list_library_items_core(&root, false).unwrap());
+        assert_eq!(row["partLabel"], "P1");
+        assert_eq!(row["partSource"], "manual");
+
+        // 清除手动值 → 回到自动判定 P2。
+        assert!(
+            crate::library::commands::set_library_item_part_core(&root, "import-test-1", None)
+                .unwrap()
+        );
+        let row = find(&crate::library::commands::list_library_items_core(&root, false).unwrap());
+        assert_eq!(row["partLabel"], "P2", "清除手动值后应回到自动判定");
+        cleanup(&root);
+    }
+
+    #[test]
     fn restore_rehydrates_legacy_exam_row_deleted_by_old_flow() {        let root = make_reading_appdata();
         migrate_existing_into_library(&root).unwrap();
         assert!(delete_library_exam_core(&root, "import-test-1").unwrap());

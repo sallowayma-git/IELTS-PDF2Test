@@ -64,6 +64,8 @@ export interface LibraryRowV1 {
   progressPercent?: number;
   actionableCount: number;
   category?: string;
+  /** C4：Part 标签（P1/P2/P3 / Part 1–4 / Task 1/2）；判不出为 undefined，不显示。 */
+  part?: string;
   updatedAt: string;
   inTrash: boolean;
   /** 已发布，且那次发布时检查没有全部通过、由用户点击发布放行（后端 `published_forced`）。 */
@@ -215,6 +217,7 @@ export function buildRow(
     progressPercent: job && isProcessingStage(stage) ? STEP_PROGRESS[job.currentStep] : undefined,
     actionableCount: actionable,
     category: summary?.category ?? job?.category,
+    part: v2?.partLabel ?? undefined,
     updatedAt: v2?.updatedAt ?? job?.updatedAt ?? summary?.updatedAt ?? "",
     inTrash: Boolean(options.inTrash),
     publishedForced:
@@ -251,4 +254,17 @@ export function matchesSearch(row: LibraryRowV1, query: string): boolean {
   const trimmed = query.trim().toLowerCase();
   if (!trimmed) return true;
   return row.title.toLowerCase().includes(trimmed) || row.id.toLowerCase().includes(trimmed);
+}
+
+/** C4：某题型下可手动选择的 Part 标签。 */
+export const PART_OPTIONS: Record<LibraryModality, readonly string[]> = {
+  reading: ["P1", "P2", "P3"],
+  listening: ["Part 1", "Part 2", "Part 3", "Part 4"],
+  writing: ["Task 1", "Task 2"]
+};
+
+/** C4：Part 筛选。`part` 为 undefined 表示不筛选。 */
+export function matchesPart(row: LibraryRowV1, part: string | undefined): boolean {
+  if (!part) return true;
+  return row.part === part;
 }

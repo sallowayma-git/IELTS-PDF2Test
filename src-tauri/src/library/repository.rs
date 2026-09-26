@@ -56,6 +56,10 @@ pub(crate) struct LibraryItemRowV2 {
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,
+    /// Part 标签（C4）：阅读 P1/P2/P3、听力 Part 1–4、写作 Task 1/2；判不出为 None。
+    pub part_label: Option<String>,
+    /// 判定来源：manual | content | range | filename。
+    pub part_source: Option<String>,
 }
 
 fn row_from(row: &rusqlite::Row<'_>) -> rusqlite::Result<LibraryItemRowV2> {
@@ -71,11 +75,29 @@ fn row_from(row: &rusqlite::Row<'_>) -> rusqlite::Result<LibraryItemRowV2> {
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
         deleted_at: row.get("deleted_at")?,
+        part_label: row.get("part_label")?,
+        part_source: row.get("part_source")?,
     })
 }
 
 const ITEM_COLUMNS: &str =
-    "id, modality, title, status, current_edit_version, canonical_ds_json, source_asset_id, created_at, updated_at, deleted_at";
+    "id, modality, title, status, current_edit_version, canonical_ds_json, source_asset_id, created_at, updated_at, deleted_at, part_label, part_source";
+
+/// 写入 Part 标签与来源（`None` 清空）。返回是否有行被更新。
+pub(crate) fn set_item_part(
+    conn: &Connection,
+    item_id: &str,
+    part_label: Option<&str>,
+    part_source: Option<&str>,
+) -> CommandResult<bool> {
+    let affected = conn
+        .execute(
+            "UPDATE library_items_v2 SET part_label = ?2, part_source = ?3 WHERE id = ?1",
+            params![item_id, part_label, part_source],
+        )
+        .map_err(|error| format!("library_v2_set_part:{error}"))?;
+    Ok(affected > 0)
+}
 
 pub(crate) fn get_item(
     conn: &Connection,

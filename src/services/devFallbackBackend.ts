@@ -2492,10 +2492,21 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
           editVersion: session.revision, hasCanonicalDs: true, updatedAt: now() }, issues: session.authoring.quality.issues } as T;
     }
     case "list_library_items": {
-      return Object.entries(store.authoringV2).map(([itemId, ds]) => ({ id: itemId, title: ds.exam.title,
-        modality: "reading", status: ds.quality.state === "ready" ? "ready" : "action_required",
-        currentEditVersion: store.authoringV2Revisions[itemId] ?? 0, hasCanonicalDs: true,
-        createdAt: now(), updatedAt: now(), deletedAt: null, sourceAssetId: null })) as T;
+      return Object.entries(store.authoringV2).map(([itemId, ds]) => {
+        const manualPart = localStorage.getItem(`dev-part:${itemId}`);
+        return { id: itemId, title: ds.exam.title,
+          modality: "reading", status: ds.quality.state === "ready" ? "ready" : "action_required",
+          currentEditVersion: store.authoringV2Revisions[itemId] ?? 0, hasCanonicalDs: true,
+          createdAt: now(), updatedAt: now(), deletedAt: null, sourceAssetId: null,
+          partLabel: manualPart ?? null, partSource: manualPart ? "manual" : null };
+      }) as T;
+    }
+    case "set_library_item_part": {
+      const id = String(args.itemId ?? "");
+      const label = args.label == null ? null : String(args.label).trim();
+      if (label) localStorage.setItem(`dev-part:${id}`, label);
+      else localStorage.removeItem(`dev-part:${id}`);
+      return true as T;
     }
     case "apply_editor_commands": {
       const input = args.input as { itemId: string; baseVersion: number; commands: ApplyAuthoringV2PatchesInput["patches"]; title?: string; requestId?: string };

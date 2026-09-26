@@ -11,7 +11,7 @@ import { LibraryItemList } from "./LibraryItemList";
 import { readAppSettings, writeAppSettings } from "../settings/appSettings";
 import { toUserFacingError } from "../../utils/userFacingError";
 import { useLibraryStore } from "./libraryStore";
-import { matchesSearch, matchesTab, type LibraryFilterTab } from "./libraryTypes";
+import { matchesPart, matchesSearch, matchesTab, type LibraryFilterTab } from "./libraryTypes";
 
 // 题库是产品中心（计划 §0.3 / §16.4）：导入、批量任务进度、搜索、打开、选择发布都在这一页完成。
 // 已退休的独立页面：Dashboard、JobList、ImportWizard、ExportPage、LibraryExamDetail。
@@ -28,6 +28,7 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
   const store = useLibraryStore();
   const [tab, setTab] = useState<LibraryFilterTab>("all");
   const [search, setSearch] = useState("");
+  const [partFilter, setPartFilter] = useState<string | undefined>(undefined);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [drawerOpen, setDrawerOpen] = useState(intent === "import");
   const [rejected, setRejected] = useState<ImportRejection[]>([]);
@@ -45,10 +46,27 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
     return result;
   }, [store.rows]);
 
-  const visibleRows = useMemo(
+  const tabRows = useMemo(
     () => store.rows.filter((row) => matchesTab(row, tab) && matchesSearch(row, search)),
     [store.rows, tab, search]
   );
+
+  // C4：当前题面里实际出现的 Part（P1/P2/P3 / Part 1–4 / Task 1/2），用于渲染筛选按钮。
+  const availableParts = useMemo(() => {
+    const set = new Set<string>();
+    for (const row of tabRows) if (row.part) set.add(row.part);
+    return [...set].sort();
+  }, [tabRows]);
+
+  const visibleRows = useMemo(
+    () => tabRows.filter((row) => matchesPart(row, partFilter)),
+    [tabRows, partFilter]
+  );
+
+  // 选中的 Part 不再出现在当前列表时（切了标签/搜索/删除），清掉筛选，避免空列表卡死。
+  useEffect(() => {
+    if (partFilter && !availableParts.includes(partFilter)) setPartFilter(undefined);
+  }, [availableParts, partFilter]);
 
   // 行离开可见集合（被删除、被筛掉）后不应继续留在选择集中。
   useEffect(() => {
@@ -183,6 +201,15 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
 
   const trashedCount = counts.trash;
 
+  /** C4：手动设置/清除某条目的 Part 标签。 */
+  async function setPart(id: string, label: string | null) {
+    try {
+      await store.setPart(id, label);
+    } catch (error) {
+      setNotice(describeLibraryActionError(error, "设置 Part 标签失败，请稍后重试。"));
+    }
+  }
+
   return (
     <section className="library-page" data-testid="library-page">
       <LibraryHeader
@@ -219,6 +246,22 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
         </ul>
       ) : null}
 
+      {tab !== "trash" && availableParts.length ? (
+        <div className="library-part-filter" data-testid="library-part-filter" role="group" aria-label="按 Part 筛选">
+          <button className={`chip small${!partFilter ? " is-active" : ""}`} onClick={() => setPartFilter(undefined)}>全部</button>
+          {availableParts.map((part) => (
+            <button
+              key={part}
+              className={`chip small${partFilter === part ? " is-active" : ""}`}
+              data-testid={`library-part-chip-${part}`}
+              onClick={() => setPartFilter(part)}
+            >
+              {part}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       {tab === "trash" && trashedCount > 0 ? (
         <div className="library-trash-toolbar" data-testid="library-trash-toolbar">
           <button className="danger small" data-testid="library-empty-trash" onClick={emptyTrash}>
@@ -237,6 +280,7 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
         onTrash={trash}
         onRestore={restore}
         onPermanentDelete={permanentlyDelete}
+        onSetPart={setPart}
         onRetry={retry}
       />
 

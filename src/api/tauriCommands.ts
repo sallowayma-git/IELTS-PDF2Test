@@ -380,3 +380,8 @@ export interface EmptyRecycleBinResult {
 export async function emptyRecycleBin(): Promise<EmptyRecycleBinResult> {
   return command("empty_recycle_bin");
 }
+
+/** 手动设置题库条目的 Part 标签（C4）。`label` 传 null 表示清除手动值、回到自动判定。 */
+export async function setLibraryItemPart(itemId: string, label: string | null): Promise<boolean> {
+  return command("set_library_item_part", { itemId, label });
+}
