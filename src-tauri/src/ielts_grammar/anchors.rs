@@ -115,7 +115,10 @@ fn opens_with_an_ordinal(text: &str) -> bool {
         return false;
     }
     matches!(
-        trimmed[digits..].get(..2).map(str::to_ascii_lowercase).as_deref(),
+        trimmed[digits..]
+            .get(..2)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
         Some("th") | Some("st") | Some("nd") | Some("rd")
     )
 }

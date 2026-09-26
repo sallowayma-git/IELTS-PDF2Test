@@ -30,7 +30,9 @@ use std::time::Instant;
 
 use serde_json::{json, Value};
 
-use crate::library::repository::{get_canonical_ds, human_protected_targets, open_library_connection};
+use crate::library::repository::{
+    get_canonical_ds, human_protected_targets, open_library_connection,
+};
 use crate::reconcile::candidate::{nodes_text, normalize_text};
 use crate::reconcile::store;
 use crate::schema::cloud_repair_v1::{CloudRepairToolCallV1, CloudRepairToolResultV1};
@@ -385,7 +387,11 @@ fn option_bank_digest(group: &Value) -> Vec<Value> {
 /// 一个题组覆盖的答案槽（键 → 答案值）。
 fn group_answers(document: &Value, group: &Value) -> BTreeMap<String, Value> {
     let mut out = BTreeMap::new();
-    if document.get("answerSlots").and_then(Value::as_object).is_none() {
+    if document
+        .get("answerSlots")
+        .and_then(Value::as_object)
+        .is_none()
+    {
         return out;
     }
     let keys: BTreeSet<String> = group
@@ -413,7 +419,14 @@ fn group_answers(document: &Value, group: &Value) -> BTreeMap<String, Value> {
     out
 }
 
-fn push_difference(out: &mut Vec<Value>, target_type: &str, target_id: &str, field: &str, current: Value, candidate: Value) {
+fn push_difference(
+    out: &mut Vec<Value>,
+    target_type: &str,
+    target_id: &str,
+    field: &str,
+    current: Value,
+    candidate: Value,
+) {
     out.push(json!({
         "targetType": target_type,
         "targetId": target_id,
@@ -463,7 +476,11 @@ fn canonical_json(value: &Value) -> String {
         }
         Value::Array(items) => format!(
             "[{}]",
-            items.iter().map(canonical_json).collect::<Vec<_>>().join(",")
+            items
+                .iter()
+                .map(canonical_json)
+                .collect::<Vec<_>>()
+                .join(",")
         ),
         other => serde_json::to_string(other).unwrap_or_default(),
     }
@@ -650,7 +667,9 @@ fn effective_adjudicated_count(canonical: &Value, candidate: &Value, rulings: &[
         .filter(|difference| {
             fresh_ruling_for_difference(rulings, difference).is_some_and(|ruling| {
                 ruling.get("reason").and_then(Value::as_str)
-                    != Some(crate::schema::cloud_repair_v1::CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT)
+                    != Some(
+                        crate::schema::cloud_repair_v1::CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT,
+                    )
             })
         })
         .map(difference_key)
@@ -769,12 +788,17 @@ pub(crate) fn candidate_differences(canonical: &Value, candidate: &Value) -> Vec
             }));
             continue;
         };
-        for (field, pointer) in [
-            ("instructions", "/instructions"),
-            ("stimulus", "/stimulus"),
-        ] {
-            let current_text = nodes_text(current_group.get(pointer.trim_start_matches('/')).unwrap_or(&Value::Null));
-            let candidate_text = nodes_text(candidate_group.get(pointer.trim_start_matches('/')).unwrap_or(&Value::Null));
+        for (field, pointer) in [("instructions", "/instructions"), ("stimulus", "/stimulus")] {
+            let current_text = nodes_text(
+                current_group
+                    .get(pointer.trim_start_matches('/'))
+                    .unwrap_or(&Value::Null),
+            );
+            let candidate_text = nodes_text(
+                candidate_group
+                    .get(pointer.trim_start_matches('/'))
+                    .unwrap_or(&Value::Null),
+            );
             if normalize_text(&current_text) != normalize_text(&candidate_text) {
                 push_difference(
                     &mut out,
@@ -818,7 +842,8 @@ pub(crate) fn candidate_differences(canonical: &Value, candidate: &Value) -> Vec
                 .get(response_id)
                 .map(|response| nodes_text(response.get("prompt").unwrap_or(&Value::Null)))
                 .unwrap_or_default();
-            let candidate_prompt = nodes_text(candidate_response.get("prompt").unwrap_or(&Value::Null));
+            let candidate_prompt =
+                nodes_text(candidate_response.get("prompt").unwrap_or(&Value::Null));
             if normalize_text(&current_prompt) != normalize_text(&candidate_prompt) {
                 push_difference(
                     &mut out,
@@ -833,7 +858,9 @@ pub(crate) fn candidate_differences(canonical: &Value, candidate: &Value) -> Vec
         // 选项库。
         let current_options = option_bank_digest(current_group);
         let candidate_options = option_bank_digest(candidate_group);
-        if serde_json::to_string(&current_options).ok() != serde_json::to_string(&candidate_options).ok() {
+        if serde_json::to_string(&current_options).ok()
+            != serde_json::to_string(&candidate_options).ok()
+        {
             push_difference(
                 &mut out,
                 "task_group",
@@ -883,11 +910,17 @@ pub(crate) fn candidate_differences(canonical: &Value, candidate: &Value) -> Vec
     for (part_id, candidate_part) in &candidate_parts {
         match current_parts.get(part_id) {
             Some(current_part) => {
-                for (field, pointer) in [("part_label", "/displayLabel"), ("part_tasks", "/taskIds")]
+                for (field, pointer) in
+                    [("part_label", "/displayLabel"), ("part_tasks", "/taskIds")]
                 {
-                    let current_value = current_part.pointer(pointer).cloned().unwrap_or(Value::Null);
-                    let candidate_value =
-                        candidate_part.pointer(pointer).cloned().unwrap_or(Value::Null);
+                    let current_value = current_part
+                        .pointer(pointer)
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    let candidate_value = candidate_part
+                        .pointer(pointer)
+                        .cloned()
+                        .unwrap_or(Value::Null);
                     if current_value != candidate_value {
                         push_difference(
                             &mut out,
@@ -1004,15 +1037,17 @@ pub(crate) fn build_repair_context(
 }
 
 /// `read_draft`：按题组 / 题号读取当前稿片段（含稳定 ID 与当前答案）。
-pub(crate) fn read_draft_section(
-    canonical: &Value,
-    edit_version: i64,
-    arguments: &Value,
-) -> Value {
+pub(crate) fn read_draft_section(canonical: &Value, edit_version: i64, arguments: &Value) -> Value {
     let requested_groups: BTreeSet<String> = arguments
         .get("taskGroupIds")
         .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
         .unwrap_or_default();
     let requested_numbers: BTreeSet<u32> = arguments
         .get("questionNumbers")
@@ -1112,7 +1147,12 @@ fn source_page_texts(root: &Path, job_id: &str) -> BTreeMap<u64, String> {
     let mut out: BTreeMap<u64, String> = BTreeMap::new();
 
     if let Ok(Some(ir)) = crate::util::read_json_opt(&dir.join("document-ir.json")) {
-        for page in ir.get("pages").and_then(Value::as_array).into_iter().flatten() {
+        for page in ir
+            .get("pages")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let Some(index) = page.get("pageIndex").and_then(Value::as_u64) else {
                 continue;
             };
@@ -1223,7 +1263,10 @@ pub(crate) fn pdf_read_source_response(
         })
         .unwrap_or_default();
     let pages = attach_page_texts(&selected, page_texts);
-    let quoted_pages = pages.iter().filter(|page| page.get("text").is_some()).count();
+    let quoted_pages = pages
+        .iter()
+        .filter(|page| page.get("text").is_some())
+        .count();
     json!({
         "kind": "pdf",
         "sourceFileId": evidence.get("sourceFileId").cloned().unwrap_or(Value::Null),
@@ -1371,7 +1414,9 @@ impl PacketTools<'_> {
             );
         }
         let hits_task = task_ids.iter().any(|id| self.task_ids.contains(id));
-        let hits_number = numbers.iter().any(|number| self.question_numbers.contains(number));
+        let hits_number = numbers
+            .iter()
+            .any(|number| self.question_numbers.contains(number));
         if hits_task || hits_number {
             return None;
         }
@@ -1400,7 +1445,11 @@ fn evidence_source_text(
     // 包模式的 PDF：抓取工具的 `source` 就是整份原文索引（不是包切片），零额外 I/O。
     if let Some(tools) = packet_tools {
         if tools.source.kind == "pdf" {
-            return source_context(request, tools.source.source_file_id.clone(), paged_source_text(tools.source));
+            return source_context(
+                request,
+                tools.source.source_file_id.clone(),
+                paged_source_text(tools.source),
+            );
         }
     }
     // 只需要**身份**（id / 类型）：曾经在这里调 `cloud_source_evidence`，PDF 会因此被
@@ -1415,13 +1464,11 @@ fn evidence_source_text(
     let text = match source_meta.get("kind").and_then(Value::as_str) {
         Some("text") => {
             // 非 PDF 的全文：只读抽取（原文件直读，不渲染、不写盘）。
-            let text = crate::auto_pipeline::cloud_source_text_evidence(
-                request.root,
-                request.job_id,
-            )
-            .ok()
-            .and_then(|meta| meta.get("text").and_then(Value::as_str).map(str::to_string))
-            .unwrap_or_default();
+            let text =
+                crate::auto_pipeline::cloud_source_text_evidence(request.root, request.job_id)
+                    .ok()
+                    .and_then(|meta| meta.get("text").and_then(Value::as_str).map(str::to_string))
+                    .unwrap_or_default();
             if text.trim().is_empty() {
                 tools::EvidenceSourceText::Unavailable
             } else {
@@ -1542,16 +1589,31 @@ fn execute_tool(
                     .arguments
                     .get("taskGroupIds")
                     .and_then(Value::as_array)
-                    .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect()
+                    })
                     .unwrap_or_default();
                 let requested_numbers: Vec<u32> = call
                     .arguments
                     .get("questionNumbers")
                     .and_then(Value::as_array)
-                    .map(|items| items.iter().filter_map(Value::as_u64).map(|n| n as u32).collect())
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(Value::as_u64)
+                            .map(|n| n as u32)
+                            .collect()
+                    })
                     .unwrap_or_default();
                 if let Some(error) = tools.scope_error(&requested_groups, &requested_numbers) {
-                    return (CloudRepairToolResultV1::rejected(&call.call_id, vec![error]), None);
+                    return (
+                        CloudRepairToolResultV1::rejected(&call.call_id, vec![error]),
+                        None,
+                    );
                 }
             }
             let canonical = match current_canonical(request) {
@@ -1566,7 +1628,10 @@ fn execute_tool(
                     )
                 }
                 Err(error) => {
-                    return (CloudRepairToolResultV1::rejected(&call.call_id, vec![error]), None)
+                    return (
+                        CloudRepairToolResultV1::rejected(&call.call_id, vec![error]),
+                        None,
+                    )
                 }
             };
             (
@@ -1586,13 +1651,19 @@ fn execute_tool(
             };
             match result {
                 Ok(value) => (CloudRepairToolResultV1::ok(&call.call_id, value), None),
-                Err(error) => (CloudRepairToolResultV1::rejected(&call.call_id, vec![error]), None),
+                Err(error) => (
+                    CloudRepairToolResultV1::rejected(&call.call_id, vec![error]),
+                    None,
+                ),
             }
         }
         "search_source" => match packet.as_deref_mut() {
             Some(tools) => match grab::search_source(tools.source, &call.arguments, tools.budget) {
                 Ok(value) => (CloudRepairToolResultV1::ok(&call.call_id, value), None),
-                Err(error) => (CloudRepairToolResultV1::rejected(&call.call_id, vec![error]), None),
+                Err(error) => (
+                    CloudRepairToolResultV1::rejected(&call.call_id, vec![error]),
+                    None,
+                ),
             },
             None => (
                 CloudRepairToolResultV1::rejected(
@@ -1611,7 +1682,10 @@ fn execute_tool(
                 tools.budget,
             ) {
                 Ok(value) => (CloudRepairToolResultV1::ok(&call.call_id, value), None),
-                Err(error) => (CloudRepairToolResultV1::rejected(&call.call_id, vec![error]), None),
+                Err(error) => (
+                    CloudRepairToolResultV1::rejected(&call.call_id, vec![error]),
+                    None,
+                ),
             },
             None => (
                 CloudRepairToolResultV1::rejected(
@@ -1624,7 +1698,10 @@ fn execute_tool(
         "read_passage" => match packet.as_deref_mut() {
             Some(tools) => match grab::read_passage(tools.source, &call.arguments, tools.budget) {
                 Ok(value) => (CloudRepairToolResultV1::ok(&call.call_id, value), None),
-                Err(error) => (CloudRepairToolResultV1::rejected(&call.call_id, vec![error]), None),
+                Err(error) => (
+                    CloudRepairToolResultV1::rejected(&call.call_id, vec![error]),
+                    None,
+                ),
             },
             None => (
                 CloudRepairToolResultV1::rejected(
@@ -1648,13 +1725,25 @@ fn execute_tool(
                 .arguments
                 .get("taskIds")
                 .and_then(Value::as_array)
-                .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
                 .unwrap_or_default();
             let requested_numbers: Vec<u32> = call
                 .arguments
                 .get("questionNumbers")
                 .and_then(Value::as_array)
-                .map(|items| items.iter().filter_map(Value::as_u64).map(|n| n as u32).collect())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_u64)
+                        .map(|n| n as u32)
+                        .collect()
+                })
                 .unwrap_or_default();
             // 候选切片的 id 是**云端** id，与本地 taskId 不同名，所以允许两套：包内本地
             // taskId，以及候选切片里出现过的 taskId。
@@ -1676,7 +1765,10 @@ fn execute_tool(
                 question_numbers: tools.question_numbers.clone(),
             };
             if let Some(error) = scoped.scope_error(&requested_groups, &requested_numbers) {
-                return (CloudRepairToolResultV1::rejected(&call.call_id, vec![error]), None);
+                return (
+                    CloudRepairToolResultV1::rejected(&call.call_id, vec![error]),
+                    None,
+                );
             }
             let candidate = store::read_cloud_authoring_candidate(
                 request.root,
@@ -1789,7 +1881,10 @@ fn execute_tool(
                 }
             }
             if !errors.is_empty() {
-                return (CloudRepairToolResultV1::rejected(&call.call_id, errors), None);
+                return (
+                    CloudRepairToolResultV1::rejected(&call.call_id, errors),
+                    None,
+                );
             }
             let (satisfied, unsatisfied, deferred) = grab::satisfy_needs(
                 request.root,
@@ -1806,12 +1901,24 @@ fn execute_tool(
                 let numbers: Vec<u32> = need
                     .get("questionNumbers")
                     .and_then(Value::as_array)
-                    .map(|items| items.iter().filter_map(Value::as_u64).map(|n| n as u32).collect())
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(Value::as_u64)
+                            .map(|n| n as u32)
+                            .collect()
+                    })
                     .unwrap_or_default();
                 let task_ids: Vec<String> = need
                     .get("taskIds")
                     .and_then(Value::as_array)
-                    .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect()
+                    })
                     .unwrap_or_default();
                 if let Some(error) = tools.scope_error(&task_ids, &numbers) {
                     unsatisfied.push(error);
@@ -1832,7 +1939,9 @@ fn execute_tool(
                     current_canonical(request)
                         .ok()
                         .flatten()
-                        .map(|(canonical, version)| read_draft_section(&canonical, version, &arguments))
+                        .map(|(canonical, version)| {
+                            read_draft_section(&canonical, version, &arguments)
+                        })
                 };
                 match slice {
                     Some(slice) => fetched.push(json!({"kind": kind, "result": slice})),
@@ -2010,7 +2119,8 @@ fn execute_tool(
                     continue;
                 }
                 let Some(difference) = differences.iter().find(|difference| {
-                    difference_key(difference) == (target_type.clone(), target_id.clone(), field.clone())
+                    difference_key(difference)
+                        == (target_type.clone(), target_id.clone(), field.clone())
                 }) else {
                     errors.push(format!(
                         "CLOUD_RULING_NO_SUCH_DIFFERENCE:{target_type}:{target_id}:{field}: \
@@ -2018,7 +2128,8 @@ fn execute_tool(
                     ));
                     continue;
                 };
-                let (canonical_digest, candidate_digest, context_digest) = difference_digests(difference);
+                let (canonical_digest, candidate_digest, context_digest) =
+                    difference_digests(difference);
                 // P9：裁定证据与 apply_edits 走**同一套**校验——先结构，再引文对照完整原文。
                 // 编造引文的裁定不得记录：那等于允许模型给它没看过的结论盖章。
                 // 原文没有文本层时照常记录，但每条证据标 unverifiable，不算已核验。
@@ -2068,7 +2179,10 @@ fn execute_tool(
                 }));
             }
             if recorded.is_empty() {
-                return (CloudRepairToolResultV1::rejected(&call.call_id, errors), None);
+                return (
+                    CloudRepairToolResultV1::rejected(&call.call_id, errors),
+                    None,
+                );
             }
             (
                 CloudRepairToolResultV1::ok(
@@ -2342,7 +2456,9 @@ fn remaining_tasks(
                     // 已裁定「当前稿对、候选错」：差异**已了结**，不再问用户。
                     Some(ruling)
                         if ruling.get("ruling").and_then(Value::as_str)
-                            == Some(crate::schema::cloud_repair_v1::CLOUD_RULING_CURRENT_IS_CORRECT) =>
+                            == Some(
+                                crate::schema::cloud_repair_v1::CLOUD_RULING_CURRENT_IS_CORRECT,
+                            ) =>
                     {
                         continue;
                     }
@@ -2358,7 +2474,10 @@ fn remaining_tasks(
                             format!(
                                 "{}；云端已查过原文件但无法定论：{}",
                                 describe_difference(&difference),
-                                ruling.get("reason").and_then(Value::as_str).unwrap_or("未说明理由")
+                                ruling
+                                    .get("reason")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("未说明理由")
                             )
                         };
                         let mut task = json!({
@@ -2452,7 +2571,10 @@ fn remaining_tasks(
     // （证据的问题）。云端没读到的地方，用户有权知道——否则他会以为整份文件都核过了。
     if let Some(candidate) = candidate.as_ref() {
         for (index, region) in candidate.unresolved_regions.iter().enumerate() {
-            let task_id = format!("cloud-coverage:{}:{}:{index}", region.source_file_id, region.page_index);
+            let task_id = format!(
+                "cloud-coverage:{}:{}:{index}",
+                region.source_file_id, region.page_index
+            );
             push_repair_task(
                 &mut tasks,
                 &mut by_key,
@@ -2571,7 +2693,8 @@ pub(crate) fn refresh_repair_summary(
     repair: &Value,
 ) -> Value {
     let status = repair.get("status").and_then(Value::as_str).unwrap_or("");
-    if status == REPAIR_STATUS_RUNNING || repair.get("reasonCode").is_some() || !repair.is_object() {
+    if status == REPAIR_STATUS_RUNNING || repair.get("reasonCode").is_some() || !repair.is_object()
+    {
         return repair.clone();
     }
     let Ok(tasks) = current_remaining_tasks(root, item_id, job_id, batch_id) else {
@@ -2777,21 +2900,18 @@ where
     // 已落盘的裁定先读回来：重试 / 重启后再跑一次修复，不该让用户第二次回答同一个问题。
     // 读回来的裁定是否仍然有效由**内容指纹**决定（见 `fresh_ruling_for_difference`），
     // 所以这里不需要额外判断「是不是同一轮」。
-    let mut rulings: Vec<Value> = match store::read_repair_rulings(
-        request.root,
-        request.job_id,
-        request.batch_id,
-    ) {
-        Ok(rulings) => rulings
-            .and_then(|value| value.get("rulings").and_then(Value::as_array).cloned())
-            .unwrap_or_default(),
-        Err(error) => {
-            // 读不回旧裁定不该让整次修复失败——但必须如实记下来：这次可能重复问了
-            // 用户一个上次已经回答过的问题。
-            last_error = Some(error);
-            Vec::new()
-        }
-    };
+    let mut rulings: Vec<Value> =
+        match store::read_repair_rulings(request.root, request.job_id, request.batch_id) {
+            Ok(rulings) => rulings
+                .and_then(|value| value.get("rulings").and_then(Value::as_array).cloned())
+                .unwrap_or_default(),
+            Err(error) => {
+                // 读不回旧裁定不该让整次修复失败——但必须如实记下来：这次可能重复问了
+                // 用户一个上次已经回答过的问题。
+                last_error = Some(error);
+                Vec::new()
+            }
+        };
     let mut model_questions: Vec<Value> = Vec::new();
 
     // 开工就先落一次 `running`：修复循环最长十分钟，用户在它结束之前就该能看到
@@ -3059,21 +3179,18 @@ where
     let loop_started = now();
     let deadline = scaled_packet_deadline(request.deadline, loop_started, queue.len());
 
-    let mut rulings: Vec<Value> = match store::read_repair_rulings(
-        request.root,
-        request.job_id,
-        request.batch_id,
-    ) {
-        Ok(rulings) => rulings
-            .and_then(|value| value.get("rulings").and_then(Value::as_array).cloned())
-            .unwrap_or_default(),
-        Err(error) => {
-            // 读不回旧裁定不该让整次修复失败——但必须如实记下来（这次可能重复问了
-            // 用户一个上次已经回答过的问题）。
-            let _ = error;
-            Vec::new()
-        }
-    };
+    let mut rulings: Vec<Value> =
+        match store::read_repair_rulings(request.root, request.job_id, request.batch_id) {
+            Ok(rulings) => rulings
+                .and_then(|value| value.get("rulings").and_then(Value::as_array).cloned())
+                .unwrap_or_default(),
+            Err(error) => {
+                // 读不回旧裁定不该让整次修复失败——但必须如实记下来（这次可能重复问了
+                // 用户一个上次已经回答过的问题）。
+                let _ = error;
+                Vec::new()
+            }
+        };
     let mut model_questions: Vec<Value> = Vec::new();
     let mut observations: Vec<Value> = Vec::new();
     let mut applied_count = 0usize;
@@ -3140,12 +3257,24 @@ where
         let question_numbers: Vec<u32> = packet
             .get("questionNumbers")
             .and_then(Value::as_array)
-            .map(|items| items.iter().filter_map(Value::as_u64).map(|n| n as u32).collect())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_u64)
+                    .map(|n| n as u32)
+                    .collect()
+            })
             .unwrap_or_default();
         let task_ids: BTreeSet<String> = packet
             .get("taskIds")
             .and_then(Value::as_array)
-            .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
             .unwrap_or_default();
         let mut level = packet
             .get("escalationLevel")
@@ -3236,20 +3365,20 @@ where
                     continue;
                 }
             };
-        // 指纹里带上**本包当前升级级别**。理由：模型连着两轮说「不够」时，后端在中间
-        // 已经给它加了材料（L2 整页图 / L3 整份原文）——那不是「原地打转」，而是升级
-        // 阶梯在推进。若不带上级别，L1 的第三次重复就会被判成 `no_progress` 而**掐断
-        // 阶梯**，本包永远到不了 L4，最后只好谎报「预算耗尽」。
-        let fingerprint = format!(
-            "{}:{}:{}",
-            call.tool,
-            level,
-            serde_json::to_string(&call.arguments).unwrap_or_default()
-        );
-        let counter = repeats.entry(fingerprint).or_insert(0);
-        *counter += 1;
-        if *counter > REPEAT_LIMIT {
-            packet_observations.push(
+            // 指纹里带上**本包当前升级级别**。理由：模型连着两轮说「不够」时，后端在中间
+            // 已经给它加了材料（L2 整页图 / L3 整份原文）——那不是「原地打转」，而是升级
+            // 阶梯在推进。若不带上级别，L1 的第三次重复就会被判成 `no_progress` 而**掐断
+            // 阶梯**，本包永远到不了 L4，最后只好谎报「预算耗尽」。
+            let fingerprint = format!(
+                "{}:{}:{}",
+                call.tool,
+                level,
+                serde_json::to_string(&call.arguments).unwrap_or_default()
+            );
+            let counter = repeats.entry(fingerprint).or_insert(0);
+            *counter += 1;
+            if *counter > REPEAT_LIMIT {
+                packet_observations.push(
                 serde_json::to_value(CloudRepairToolResultV1::rejected(
                     &call.call_id,
                     vec![
@@ -3259,11 +3388,12 @@ where
                 ))
                 .unwrap_or(Value::Null),
             );
-            packet_status = "no_progress";
-            break;
-        }
+                packet_status = "no_progress";
+                break;
+            }
 
-            let is_finish_packet = call.tool == crate::schema::cloud_repair_v1::CLOUD_REPAIR_FINISH_PACKET_TOOL;
+            let is_finish_packet =
+                call.tool == crate::schema::cloud_repair_v1::CLOUD_REPAIR_FINISH_PACKET_TOOL;
             let is_finish = call.tool == "finish";
             let is_insufficient =
                 call.tool == crate::schema::cloud_repair_v1::CLOUD_REPAIR_INSUFFICIENT_CONTEXT_TOOL;
@@ -3286,7 +3416,10 @@ where
             if valid_insufficient
                 || matches!(
                     call.tool.as_str(),
-                    "read_source" | "search_source" | "read_page_region" | "read_passage"
+                    "read_source"
+                        | "search_source"
+                        | "read_page_region"
+                        | "read_passage"
                         | "read_candidate"
                 )
             {
@@ -3386,8 +3519,7 @@ where
                                     .is_some_and(|id| !done_packets.contains(id))
                             })
                             .collect();
-                        global_round_cap = rounds
-                            + PACKET_MAX_ROUNDS * (queue.len().max(1) as u32);
+                        global_round_cap = rounds + PACKET_MAX_ROUNDS * (queue.len().max(1) as u32);
                     }
                     Err(error) => {
                         last_error = Some(error);
@@ -3468,9 +3600,9 @@ where
     // 注意 `remaining_tasks` 仍会在收尾处按当前 canonical 重算：稿子里还有没解决的差异
     // 时，状态会被抬成 `needs_attention`（见 `finish_repair_run`）。
     if status == REPAIR_STATUS_COMPLETED && !finished {
-        let any_context_insufficient = packet_reports
-            .iter()
-            .any(|packet| packet.get("status").and_then(Value::as_str) == Some("context_insufficient"));
+        let any_context_insufficient = packet_reports.iter().any(|packet| {
+            packet.get("status").and_then(Value::as_str) == Some("context_insufficient")
+        });
         status = if any_context_insufficient {
             REPAIR_STATUS_NEEDS_ATTENTION
         } else if incomplete {
@@ -3533,13 +3665,10 @@ fn plan_repair_packets(
     let canonical = current_canonical(request)?
         .map(|(document, _)| document)
         .unwrap_or(Value::Null);
-    let candidate = store::read_cloud_authoring_candidate(
-        request.root,
-        request.job_id,
-        request.batch_id,
-    )?
-    .and_then(|candidate| serde_json::to_value(&candidate.authoring).ok())
-    .unwrap_or(Value::Null);
+    let candidate =
+        store::read_cloud_authoring_candidate(request.root, request.job_id, request.batch_id)?
+            .and_then(|candidate| serde_json::to_value(&candidate.authoring).ok())
+            .unwrap_or(Value::Null);
     let differences: Vec<Value> = context
         .get("differences")
         .and_then(Value::as_array)
@@ -3549,9 +3678,18 @@ fn plan_repair_packets(
     let protected: BTreeSet<String> = context
         .get("protectedTargets")
         .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
         .unwrap_or_default();
-    let edit_version = context.get("editVersion").and_then(Value::as_i64).unwrap_or(0);
+    let edit_version = context
+        .get("editVersion")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
 
     let planned = packets::plan_packets(&packets::PacketPlanInput {
         canonical: &canonical,
@@ -3597,7 +3735,12 @@ fn packet_token_estimate(packet: &Value) -> usize {
     let images = packet
         .pointer("/sourceEvidence/regions")
         .and_then(Value::as_array)
-        .map(|regions| regions.iter().filter(|region| !region["image"].is_null()).count())
+        .map(|regions| {
+            regions
+                .iter()
+                .filter(|region| !region["image"].is_null())
+                .count()
+        })
         .unwrap_or(0);
     chars / packets::PACKET_CHARS_PER_TOKEN + images * packets::PACKET_IMAGE_TOKENS
 }
@@ -3941,8 +4084,7 @@ fn force_context_insufficient_rulings(
             continue;
         }
         let (target_type, target_id, field) = difference_key(difference);
-        let (canonical_digest, candidate_digest, context_digest) =
-            difference_digests(difference);
+        let (canonical_digest, candidate_digest, context_digest) = difference_digests(difference);
         rulings.push(json!({
             "targetType": target_type,
             "targetId": target_id,

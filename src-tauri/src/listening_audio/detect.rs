@@ -27,18 +27,52 @@ pub(crate) struct ModalityDetection {
 
 const LISTENING_CUES: &[(&str, &[&str])] = &[
     ("listening_heading", &["listening"]),
-    ("while_you_listen", &["whileyouarelistening", "asyoulisten", "whileyoulisten"]),
-    ("you_will_hear", &["youwillhear", "youwillnowhear", "youhearsome", "youwillbegiven"]),
-    ("four_parts", &["fourparts", "4parts", "foursections", "4sections"]),
-    ("recording", &["therecording", "recordingsonce", "hearthe", "heareach"]),
-    ("transfer_answers", &["transferyouranswers", "totransferyour"]),
-    ("section_questions", &["section1questions", "part1questions", "section1question"]),
+    (
+        "while_you_listen",
+        &["whileyouarelistening", "asyoulisten", "whileyoulisten"],
+    ),
+    (
+        "you_will_hear",
+        &[
+            "youwillhear",
+            "youwillnowhear",
+            "youhearsome",
+            "youwillbegiven",
+        ],
+    ),
+    (
+        "four_parts",
+        &["fourparts", "4parts", "foursections", "4sections"],
+    ),
+    (
+        "recording",
+        &["therecording", "recordingsonce", "hearthe", "heareach"],
+    ),
+    (
+        "transfer_answers",
+        &["transferyouranswers", "totransferyour"],
+    ),
+    (
+        "section_questions",
+        &["section1questions", "part1questions", "section1question"],
+    ),
 ];
 
 const READING_CUES: &[(&str, &[&str])] = &[
     ("reading_passage", &["readingpassage"]),
-    ("spend_twenty_minutes", &["youshouldspendabout20minutes", "spendabout20minutes"]),
-    ("read_the_text", &["readthetext", "readthepassage", "passage1below", "readingpassage1"]),
+    (
+        "spend_twenty_minutes",
+        &["youshouldspendabout20minutes", "spendabout20minutes"],
+    ),
+    (
+        "read_the_text",
+        &[
+            "readthetext",
+            "readthepassage",
+            "passage1below",
+            "readingpassage1",
+        ],
+    ),
 ];
 
 fn squash(text: &str) -> String {
@@ -64,7 +98,10 @@ pub(crate) fn detect_text_modality(text: &str) -> (String, Vec<String>) {
     }
     let listening = matched(&squashed, LISTENING_CUES);
     let reading = matched(&squashed, READING_CUES);
-    let mut cues: Vec<String> = listening.iter().map(|cue| format!("listening:{cue}")).collect();
+    let mut cues: Vec<String> = listening
+        .iter()
+        .map(|cue| format!("listening:{cue}"))
+        .collect();
     cues.extend(reading.iter().map(|cue| format!("reading:{cue}")));
     let modality = if !reading.is_empty() {
         "reading"
@@ -96,9 +133,13 @@ fn first_paragraphs_docx_text(path: &Path) -> Option<String> {
         let mut rest = chunk;
         while let Some(start) = rest.find("<w:t") {
             let after = &rest[start..];
-            let Some(open_end) = after.find('>') else { break };
+            let Some(open_end) = after.find('>') else {
+                break;
+            };
             let body = &after[open_end + 1..];
-            let Some(close) = body.find("</w:t>") else { break };
+            let Some(close) = body.find("</w:t>") else {
+                break;
+            };
             if !after[..open_end].ends_with('/') {
                 out.push_str(&body[..close]);
             }
@@ -120,7 +161,9 @@ pub(crate) fn detect_file_modality(path: &str) -> ModalityDetection {
     } else if lower.ends_with(".docx") {
         first_paragraphs_docx_text(Path::new(path))
     } else if lower.ends_with(".txt") || lower.ends_with(".md") {
-        std::fs::read_to_string(path).ok().map(|text| text.chars().take(4000).collect())
+        std::fs::read_to_string(path)
+            .ok()
+            .map(|text| text.chars().take(4000).collect())
     } else {
         None
     };
@@ -128,11 +171,18 @@ pub(crate) fn detect_file_modality(path: &str) -> ModalityDetection {
         Some(text) => detect_text_modality(&text),
         None => ("unknown".to_string(), vec!["unreadable".to_string()]),
     };
-    ModalityDetection { path: path.to_string(), modality, cues }
+    ModalityDetection {
+        path: path.to_string(),
+        modality,
+        cues,
+    }
 }
 
 pub(crate) fn detect_import_modality(paths: &[String]) -> Vec<ModalityDetection> {
-    paths.iter().map(|path| detect_file_modality(path)).collect()
+    paths
+        .iter()
+        .map(|path| detect_file_modality(path))
+        .collect()
 }
 
 #[cfg(test)]
@@ -158,12 +208,17 @@ mod tests {
 
     #[test]
     fn a_lone_listening_word_is_not_enough() {
-        let (modality, _) = detect_text_modality("Listening to the Ocean\nThe oceans cover more than 70 per cent of the planet.");
+        let (modality, _) = detect_text_modality(
+            "Listening to the Ocean\nThe oceans cover more than 70 per cent of the planet.",
+        );
         assert_eq!(modality, "unknown");
         let (modality, _) = detect_text_modality("The history of glass");
         assert_eq!(modality, "reading");
         let (modality, cues) = detect_text_modality("   ");
-        assert_eq!((modality.as_str(), cues), ("unknown", vec!["no_text".to_string()]));
+        assert_eq!(
+            (modality.as_str(), cues),
+            ("unknown", vec!["no_text".to_string()])
+        );
     }
 
     #[test]

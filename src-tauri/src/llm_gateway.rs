@@ -75,7 +75,10 @@ fn truncate_for_record(text: &str) -> String {
     if text.chars().count() <= RECORD_ERROR_MAX_CHARS {
         text.to_string()
     } else {
-        let mut kept = text.chars().take(RECORD_ERROR_MAX_CHARS).collect::<String>();
+        let mut kept = text
+            .chars()
+            .take(RECORD_ERROR_MAX_CHARS)
+            .collect::<String>();
         kept.push_str("...[truncated]");
         kept
     }
@@ -826,7 +829,7 @@ fn compact_packet_grayscale_png(bytes: &[u8]) -> Option<Vec<u8>> {
                 + u64::from(output_height)
                 - 1)
                 / u64::from(output_height))
-                .min(u64::from(info.height))) as u32;
+            .min(u64::from(info.height))) as u32;
             for target_x in 0..output_width {
                 let left =
                     (u64::from(target_x) * u64::from(info.width) / u64::from(output_width)) as u32;
@@ -834,7 +837,7 @@ fn compact_packet_grayscale_png(bytes: &[u8]) -> Option<Vec<u8>> {
                     + u64::from(output_width)
                     - 1)
                     / u64::from(output_width))
-                    .min(u64::from(info.width))) as u32;
+                .min(u64::from(info.width))) as u32;
                 let mut sums = [0u64; 2];
                 let mut samples = 0u64;
                 for source_y in top..bottom.max(top + 1) {
@@ -1133,8 +1136,8 @@ fn run_openai_compatible_cloud_outline_llm(
             "type": "text",
             "text": format!(
                 "The original file is not a PDF, so no page image is attached. \
-The extracted source text below is the ONLY evidence you may use; do not invent content.\n\
---- SOURCE TEXT BEGIN ---\n{source_text}\n--- SOURCE TEXT END ---"
+        The extracted source text below is the ONLY evidence you may use; do not invent content.\n\
+        --- SOURCE TEXT BEGIN ---\n{source_text}\n--- SOURCE TEXT END ---"
             )
         }));
     } else {
@@ -1187,7 +1190,10 @@ The extracted source text below is the ONLY evidence you may use; do not invent 
 /// 不带原因地重试同一句话，只会再拿到同一种错误——那不是修复，只是多烧一次配额。
 fn authoring_candidate_prompt(input: &Value) -> String {
     let modality = crate::llm_suggestions::candidate_modality(
-        input.get("modality").and_then(Value::as_str).unwrap_or("reading"),
+        input
+            .get("modality")
+            .and_then(Value::as_str)
+            .unwrap_or("reading"),
     );
     let paper = ielts_paper_label(modality);
     let repair = input
@@ -1281,8 +1287,8 @@ fn run_openai_compatible_authoring_candidate_llm(
             "type": "text",
             "text": format!(
                 "The original file is not a PDF, so no page image is attached. \
-The extracted source text below is the ONLY evidence you may use; do not invent content.\n\
---- SOURCE TEXT BEGIN ---\n{source_text}\n--- SOURCE TEXT END ---"
+        The extracted source text below is the ONLY evidence you may use; do not invent content.\n\
+        --- SOURCE TEXT BEGIN ---\n{source_text}\n--- SOURCE TEXT END ---"
             )
         }));
     } else {
@@ -1316,7 +1322,10 @@ The extracted source text below is the ONLY evidence you may use; do not invent 
     let mut parsed = parse_llm_json_content(&content)?;
     validate_authoring_candidate_output_for_chunk(
         &mut parsed,
-        input.get("modality").and_then(Value::as_str).unwrap_or("reading"),
+        input
+            .get("modality")
+            .and_then(Value::as_str)
+            .unwrap_or("reading"),
         input.get("chunk"),
     )?;
     if !warnings.is_empty() {
@@ -1403,24 +1412,36 @@ fn validate_authoring_candidate_output(output: &mut Value, modality: &str) -> Co
             .ok_or_else(|| format!("cloud_authoring_output_group_task_id_missing:{index}"))?;
         task_ids.insert(task_id.to_string());
         let Some(range) = group_object.get("displayRange").and_then(Value::as_object) else {
-            return Err(format!("cloud_authoring_output_group_range_missing:{index}"));
+            return Err(format!(
+                "cloud_authoring_output_group_range_missing:{index}"
+            ));
         };
-        validate_candidate_display_range(range)
-            .map_err(|problem| format!("cloud_authoring_output_group_range_invalid:{index}:{problem}"))?;
+        validate_candidate_display_range(range).map_err(|problem| {
+            format!("cloud_authoring_output_group_range_invalid:{index}:{problem}")
+        })?;
         if non_empty_str(group_object.get("taskType")).is_none() {
-            return Err(format!("cloud_authoring_output_group_task_type_missing:{index}"));
+            return Err(format!(
+                "cloud_authoring_output_group_task_type_missing:{index}"
+            ));
         }
         let Some(instructions) = group_object.get("instructions").and_then(Value::as_array) else {
-            return Err(format!("cloud_authoring_output_group_instructions_missing:{index}"));
+            return Err(format!(
+                "cloud_authoring_output_group_instructions_missing:{index}"
+            ));
         };
         validate_candidate_nodes(instructions, &format!("{index}:instructions"))?;
         if let Some(stimulus) = group_object.get("stimulus") {
             let Some(stimulus) = stimulus.as_array() else {
-                return Err(format!("cloud_authoring_output_group_stimulus_invalid:{index}"));
+                return Err(format!(
+                    "cloud_authoring_output_group_stimulus_invalid:{index}"
+                ));
             };
             validate_candidate_nodes(stimulus, &format!("{index}:stimulus"))?;
         }
-        if let Some(bank) = group_object.get("optionBank").filter(|bank| !bank.is_null()) {
+        if let Some(bank) = group_object
+            .get("optionBank")
+            .filter(|bank| !bank.is_null())
+        {
             validate_candidate_option_bank(bank, index)?;
         }
         let Some(response_groups) = group_object.get("responseGroups").and_then(Value::as_array)
@@ -1469,7 +1490,10 @@ fn validate_authoring_candidate_output(output: &mut Value, modality: &str) -> Co
                     "cloud_authoring_output_response_group_cardinality_invalid:{index}:{position}:expected {{\"min\":1,\"max\":1}}"
                 ));
             }
-            if let Some(prompt) = response_object.get("prompt").filter(|prompt| !prompt.is_null()) {
+            if let Some(prompt) = response_object
+                .get("prompt")
+                .filter(|prompt| !prompt.is_null())
+            {
                 let Some(prompt) = prompt.as_array() else {
                     return Err(format!(
                         "cloud_authoring_output_response_group_prompt_invalid:{index}:{position}"
@@ -1488,7 +1512,8 @@ fn validate_authoring_candidate_output(output: &mut Value, modality: &str) -> Co
                 ));
             }
             for slot_id in slot_ids {
-                let Some(slot_id) = slot_id.as_str().filter(|value| !value.trim().is_empty()) else {
+                let Some(slot_id) = slot_id.as_str().filter(|value| !value.trim().is_empty())
+                else {
                     return Err(format!(
                         "cloud_authoring_output_response_group_slot_id_invalid:{index}:{position}"
                     ));
@@ -1507,12 +1532,22 @@ fn validate_authoring_candidate_output(output: &mut Value, modality: &str) -> Co
             let Some(slot_object) = slot.as_object() else {
                 return Err(format!("cloud_authoring_output_slot_not_object:{key}"));
             };
-            if slot_object.get("questionNumber").and_then(Value::as_u64).is_none() {
+            if slot_object
+                .get("questionNumber")
+                .and_then(Value::as_u64)
+                .is_none()
+            {
                 return Err(format!(
                     "cloud_authoring_output_slot_question_number_missing:{key}"
                 ));
             }
-            for field in ["slotId", "displayLabel", "hostType", "interaction", "participation"] {
+            for field in [
+                "slotId",
+                "displayLabel",
+                "hostType",
+                "interaction",
+                "participation",
+            ] {
                 if non_empty_str(slot_object.get(field)).is_none() {
                     return Err(format!(
                         "cloud_authoring_output_slot_field_missing:{key}:{field}"
@@ -1536,8 +1571,9 @@ fn validate_authoring_candidate_output(output: &mut Value, modality: &str) -> Co
             if !slot_keys.contains(key) {
                 return Err(format!("cloud_authoring_output_answer_key_dangling:{key}"));
             }
-            validate_candidate_answer_value(value)
-                .map_err(|problem| format!("cloud_authoring_output_answer_key_invalid:{key}:{problem}"))?;
+            validate_candidate_answer_value(value).map_err(|problem| {
+                format!("cloud_authoring_output_answer_key_invalid:{key}:{problem}")
+            })?;
         }
     }
     if let Some(regions) = object.get("unresolvedRegions") {
@@ -1546,7 +1582,9 @@ fn validate_authoring_candidate_output(output: &mut Value, modality: &str) -> Co
         };
         for (index, region) in regions.iter().enumerate() {
             let Some(region_object) = region.as_object() else {
-                return Err(format!("cloud_authoring_output_unresolved_region_invalid:{index}"));
+                return Err(format!(
+                    "cloud_authoring_output_unresolved_region_invalid:{index}"
+                ));
             };
             if non_empty_str(region_object.get("sourceFileId")).is_none() {
                 return Err(format!(
@@ -1572,7 +1610,10 @@ fn validate_authoring_candidate_output(output: &mut Value, modality: &str) -> Co
         }
     }
     if modality == "listening" {
-        if let Some(parts) = object.get("listeningParts").filter(|parts| !parts.is_null()) {
+        if let Some(parts) = object
+            .get("listeningParts")
+            .filter(|parts| !parts.is_null())
+        {
             let Some(parts) = parts.as_array() else {
                 return Err("cloud_authoring_output_listening_parts_invalid".to_string());
             };
@@ -1673,7 +1714,9 @@ fn validate_candidate_nodes(nodes: &[Value], location: &str) -> CommandResult<()
 
 fn validate_candidate_option_bank(bank: &Value, index: usize) -> CommandResult<()> {
     let Some(bank) = bank.as_object() else {
-        return Err(format!("cloud_authoring_output_option_bank_invalid:{index}"));
+        return Err(format!(
+            "cloud_authoring_output_option_bank_invalid:{index}"
+        ));
     };
     for field in ["optionBankId", "scope"] {
         if non_empty_str(bank.get(field)).is_none() {
@@ -1682,7 +1725,11 @@ fn validate_candidate_option_bank(bank: &Value, index: usize) -> CommandResult<(
             ));
         }
     }
-    if !bank.get("allowReuse").map(Value::is_boolean).unwrap_or(false) {
+    if !bank
+        .get("allowReuse")
+        .map(Value::is_boolean)
+        .unwrap_or(false)
+    {
         return Err(format!(
             "cloud_authoring_output_option_bank_field_missing:{index}:allowReuse"
         ));
@@ -1741,7 +1788,8 @@ fn dry_run_candidate_finalize(output: &Value, modality: &'static str) -> Command
         source_document_id: "gateway-dry-run-document",
         extraction_mode: "pdf_native",
     };
-    let normalized = crate::reconcile::candidate::normalize_cloud_authoring(&identity, None, output)?;
+    let normalized =
+        crate::reconcile::candidate::normalize_cloud_authoring(&identity, None, output)?;
     crate::reconcile::candidate::cloud_authoring_candidate_from_normalized(&identity, normalized)
         .map(|_| ())
 }
@@ -1752,13 +1800,26 @@ fn dry_run_candidate_finalize(output: &Value, modality: &'static str) -> Command
 /// 提示词里写一个、分发器不认，是这类循环最典型的漂移；这里刻意引用同一份常量。
 fn repair_step_prompt(input: &Value) -> String {
     let tools = crate::schema::cloud_repair_v1::CLOUD_REPAIR_TOOLS.join(", ");
-    let paper = ielts_paper_label(input.get("modality").and_then(Value::as_str).unwrap_or("reading"));
+    let paper = ielts_paper_label(
+        input
+            .get("modality")
+            .and_then(Value::as_str)
+            .unwrap_or("reading"),
+    );
     // 只给模型它需要的：profile（baseUrl / model / timeout）、本机绝对路径、以及已经作为
     // 独立文本块附上的 DOCX 原文都不进 prompt。前两者对修复毫无用处还泄露本机信息，
     // 后者会让同一份原文在请求里出现两次。
     let mut prompt_input = input.clone();
     if let Some(object) = prompt_input.as_object_mut() {
-        for key in ["profile", "pdfPath", "sourceText", "apiKey", "apiKeySource", "pages", "repairNote"] {
+        for key in [
+            "profile",
+            "pdfPath",
+            "sourceText",
+            "apiKey",
+            "apiKeySource",
+            "pages",
+            "repairNote",
+        ] {
             object.remove(key);
         }
     }
@@ -1943,7 +2004,8 @@ The extracted source text below is the ONLY evidence you may use; do not invent 
             warnings.push("cloud_repair_source_unavailable".to_string());
         }
     } else {
-        let attached = append_packet_region_images(root, job_id, &mut content, input, &mut warnings)?;
+        let attached =
+            append_packet_region_images(root, job_id, &mut content, input, &mut warnings)?;
         with_trace(|trace| trace.image_count = Some(attached));
     }
     let mut body = json!({
@@ -2055,7 +2117,9 @@ fn append_packet_region_images(
         let data_url = match packet_image_data_url(root, job_id, image) {
             Ok(data_url) => data_url,
             Err(error) => {
-                warnings.push(format!("cloud_repair_packet_region_image_unavailable:{error}"));
+                warnings.push(format!(
+                    "cloud_repair_packet_region_image_unavailable:{error}"
+                ));
                 continue;
             }
         };
@@ -2116,7 +2180,11 @@ fn validate_repair_step_output(output: &mut Value) -> CommandResult<()> {
 /// 新增工具的信封校验（**与分发器同源**，见 `cloud_repair::grab` 与
 /// `schema::cloud_repair_v1::CloudRepairContextNeedV1`）。
 fn validate_repair_tool_arguments(tool: &str, arguments: &Value) -> CommandResult<()> {
-    let missing = |detail: &str| Err(format!("cloud_repair_step_tool_arguments_invalid:{tool}:{detail}"));
+    let missing = |detail: &str| {
+        Err(format!(
+            "cloud_repair_step_tool_arguments_invalid:{tool}:{detail}"
+        ))
+    };
     let non_empty_list = |key: &str| {
         arguments
             .get(key)
@@ -2124,7 +2192,11 @@ fn validate_repair_tool_arguments(tool: &str, arguments: &Value) -> CommandResul
             .is_some_and(|items| !items.is_empty())
     };
     match tool {
-        "search_source" => match arguments.get("query").and_then(Value::as_str).map(str::trim) {
+        "search_source" => match arguments
+            .get("query")
+            .and_then(Value::as_str)
+            .map(str::trim)
+        {
             Some(query) if !query.is_empty() => Ok(()),
             _ => missing("needs a non-empty \"query\""),
         },
@@ -2269,8 +2341,8 @@ fn run_openai_compatible_adjudication_llm(
             "type": "text",
             "text": format!(
                 "The original file is not a PDF, so no page image is attached. \
-The extracted source text below is the ONLY evidence you may use; do not invent content.\n\
---- SOURCE TEXT BEGIN ---\n{source_text}\n--- SOURCE TEXT END ---"
+        The extracted source text below is the ONLY evidence you may use; do not invent content.\n\
+        --- SOURCE TEXT BEGIN ---\n{source_text}\n--- SOURCE TEXT END ---"
             )
         }));
     } else {
@@ -2417,8 +2489,8 @@ fn run_openai_compatible_source_verification_llm(
             "type": "text",
             "text": format!(
                 "The original file is not a PDF, so no page image is attached. \
-The extracted source text below is the ONLY evidence you may use; do not invent content.\n\
---- SOURCE TEXT BEGIN ---\n{source_text}\n--- SOURCE TEXT END ---"
+        The extracted source text below is the ONLY evidence you may use; do not invent content.\n\
+        --- SOURCE TEXT BEGIN ---\n{source_text}\n--- SOURCE TEXT END ---"
             )
         }));
     } else {
@@ -2501,7 +2573,9 @@ fn validate_source_verification_output(output: &mut Value, input: &Value) -> Com
             ));
         }
         let Some(verdict) = finding_object.get("verdict").and_then(Value::as_str) else {
-            return Err(format!("source_verification_finding_verdict_missing:{index}"));
+            return Err(format!(
+                "source_verification_finding_verdict_missing:{index}"
+            ));
         };
         if !matches!(verdict, "confirmed" | "contradicted" | "not_verifiable") {
             return Err(format!(
@@ -2531,9 +2605,7 @@ fn validate_source_verification_output(output: &mut Value, input: &Value) -> Com
             .map(|quote| !quote.trim().is_empty())
             .unwrap_or(false);
         if !quote_present {
-            return Err(format!(
-                "source_verification_finding_quote_missing:{index}"
-            ));
+            return Err(format!("source_verification_finding_quote_missing:{index}"));
         }
         // 页码必须 ≥ 1：本仓库的约定里 0 表示「没有页码」。
         let page_ok = finding_object
@@ -2552,8 +2624,9 @@ fn validate_source_verification_output(output: &mut Value, input: &Value) -> Com
                     "source_verification_finding_observed_value_missing:{index}"
                 ));
             };
-            validate_answer_value_shape(observed)
-                .map_err(|error| format!("source_verification_finding_observed_value_invalid:{index}:{error}"))?;
+            validate_answer_value_shape(observed).map_err(|error| {
+                format!("source_verification_finding_observed_value_invalid:{index}:{error}")
+            })?;
         }
     }
     Ok(())
@@ -2610,7 +2683,9 @@ fn validate_adjudication_output(output: &mut Value, input: &Value) -> CommandRes
             return Err(format!("adjudication_ruling_chosen_missing:{index}"));
         };
         if !matches!(chosen, "local" | "cloud" | "source" | "unresolved") {
-            return Err(format!("adjudication_ruling_chosen_invalid:{index}:{chosen}"));
+            return Err(format!(
+                "adjudication_ruling_chosen_invalid:{index}:{chosen}"
+            ));
         }
         let rationale_present = ruling_object
             .get("rationale")
@@ -2628,9 +2703,7 @@ fn validate_adjudication_output(output: &mut Value, input: &Value) -> CommandRes
                         .map(|value| (0.0..=1.0).contains(&value))
                         .unwrap_or(false));
             if !valid {
-                return Err(format!(
-                    "adjudication_ruling_confidence_invalid:{index}"
-                ));
+                return Err(format!("adjudication_ruling_confidence_invalid:{index}"));
             }
         }
         if chosen == "unresolved" {
@@ -3311,8 +3384,7 @@ mod tests {
             "value": {"kind":"text","values":["painting"]},
             "rationale": "made up"
         }]});
-        let error =
-            validate_adjudication_output(&mut output, &input).expect_err("必须拒绝幻觉 id");
+        let error = validate_adjudication_output(&mut output, &input).expect_err("必须拒绝幻觉 id");
         assert!(error.contains("unknown_decision_id"), "实际错误：{error}");
     }
 
@@ -3378,8 +3450,8 @@ mod tests {
             {"decisionId":"d:slot:slot-14:answer","chosen":"unresolved","rationale":"a"},
             {"decisionId":"d:slot:slot-14:answer","chosen":"unresolved","rationale":"b"}
         ]});
-        let error = validate_adjudication_output(&mut duplicated, &input)
-            .expect_err("重复 id 必须被拒绝");
+        let error =
+            validate_adjudication_output(&mut duplicated, &input).expect_err("重复 id 必须被拒绝");
         assert!(error.contains("duplicate_decision_id"), "实际错误：{error}");
     }
 
@@ -3448,7 +3520,10 @@ mod tests {
         }]});
         let error = validate_source_verification_output(&mut missing, &input)
             .expect_err("contradicted 必须有 observedValue");
-        assert!(error.contains("observed_value_missing"), "实际错误：{error}");
+        assert!(
+            error.contains("observed_value_missing"),
+            "实际错误：{error}"
+        );
 
         let mut malformed = json!({"findings":[{
             "slotId": "slot-14",
@@ -3460,7 +3535,10 @@ mod tests {
         }]});
         let error = validate_source_verification_output(&mut malformed, &input)
             .expect_err("空 values 不是合法答案值");
-        assert!(error.contains("observed_value_invalid"), "实际错误：{error}");
+        assert!(
+            error.contains("observed_value_invalid"),
+            "实际错误：{error}"
+        );
     }
 
     /// 合法输出必须通过；`not_verifiable` 不要求出处（诚实说明读不出来是被允许的）。
@@ -3492,7 +3570,10 @@ mod tests {
         }]});
         let error = validate_source_verification_output(&mut bad_number, &input)
             .expect_err("questionNumber 必须是整数");
-        assert!(error.contains("question_number_invalid"), "实际错误：{error}");
+        assert!(
+            error.contains("question_number_invalid"),
+            "实际错误：{error}"
+        );
 
         // 重复 slotId 会让合并写两次同一项，必须拒绝。
         let mut duplicated = json!({"findings":[
@@ -3534,7 +3615,10 @@ mod tests {
         // 另外三类请求在真实网关上通过，正是因为它们已经声明了信封；
         // 一并钉住，避免以后有人把这几行删掉。
         let outline = cloud_outline_prompt(&json!({}));
-        assert!(outline.contains("\"groups\""), "outline prompt 丢了信封声明");
+        assert!(
+            outline.contains("\"groups\""),
+            "outline prompt 丢了信封声明"
+        );
         let repair = repair_step_prompt(&json!({"draft": {}, "observations": []}));
         assert!(
             repair.contains("\"callId\"") && repair.contains("\"tool\""),
@@ -3788,7 +3872,11 @@ mod tests {
             "pages": [{"pageIndex": 1, "images": [{"path": image_path.to_string_lossy(), "mimeType": "image/png", "assetId": "page-1"}]}],
             "outputContract": {}
         });
-        FakeJob { root, job_id, input }
+        FakeJob {
+            root,
+            job_id,
+            input,
+        }
     }
 
     fn call_records(job: &FakeJob) -> Vec<Value> {
@@ -3821,7 +3909,10 @@ mod tests {
         let elapsed = started.elapsed();
         thread::sleep(Duration::from_millis(600));
         let posts = requests.try_iter().count();
-        assert_eq!(posts, 1, "超时后不得再发页图回退请求（实际 {posts} 次 POST）；错误：{error}");
+        assert_eq!(
+            posts, 1,
+            "超时后不得再发页图回退请求（实际 {posts} 次 POST）；错误：{error}"
+        );
         assert!(
             elapsed < Duration::from_millis(2500),
             "一次调用不得超过一个超时预算太多：{elapsed:?}"
@@ -3831,13 +3922,28 @@ mod tests {
         let records = call_records(&job);
         let record = records.last().expect("必须留下调用记录");
         assert_eq!(record["ok"], json!(false));
-        assert_eq!(record["error"].as_str(), Some(error.as_str()), "记录必须保留完整错误串：{record}");
-        assert!(record["requestBytes"].as_u64().unwrap_or(0) > 0, "记录必须有请求体字节数：{record}");
-        assert!(record["pdfBytes"].as_u64().unwrap_or(0) > 0, "记录必须有 PDF 字节数：{record}");
-        let attempts = record["attempts"].as_array().expect("记录必须列出每次 HTTP 尝试");
+        assert_eq!(
+            record["error"].as_str(),
+            Some(error.as_str()),
+            "记录必须保留完整错误串：{record}"
+        );
+        assert!(
+            record["requestBytes"].as_u64().unwrap_or(0) > 0,
+            "记录必须有请求体字节数：{record}"
+        );
+        assert!(
+            record["pdfBytes"].as_u64().unwrap_or(0) > 0,
+            "记录必须有 PDF 字节数：{record}"
+        );
+        let attempts = record["attempts"]
+            .as_array()
+            .expect("记录必须列出每次 HTTP 尝试");
         assert_eq!(attempts.len(), 1, "{record}");
         assert!(
-            attempts[0]["error"].as_str().unwrap_or("").contains("llm_http_timeout"),
+            attempts[0]["error"]
+                .as_str()
+                .unwrap_or("")
+                .contains("llm_http_timeout"),
             "每次尝试必须带自己的错误：{record}"
         );
         assert_eq!(record["imageFallback"], json!(false), "{record}");
@@ -3874,7 +3980,10 @@ mod tests {
             })
             .expect("被拒回复必须落盘为 <command>-rejected-<stamp>.json");
         let saved: Value = serde_json::from_str(&fs::read_to_string(rejected).unwrap()).unwrap();
-        assert_eq!(saved["rawContent"].as_str(), Some("Sure! Here is the draft: {not json"));
+        assert_eq!(
+            saved["rawContent"].as_str(),
+            Some("Sure! Here is the draft: {not json")
+        );
         assert_eq!(saved["error"].as_str(), Some(error.as_str()));
         assert_eq!(saved["usage"]["total_tokens"], json!(1234));
 
@@ -3941,13 +4050,24 @@ mod tests {
         )
         .expect_err("两条都失败");
         thread::sleep(Duration::from_millis(200));
-        assert_eq!(requests.try_iter().count(), 2, "400 应当触发且只触发一次页图回退");
+        assert_eq!(
+            requests.try_iter().count(),
+            2,
+            "400 应当触发且只触发一次页图回退"
+        );
         assert!(error.contains("image too small"), "{error}");
-        assert!(error.contains("file parts unsupported"), "直传 PDF 的错误被吞掉了：{error}");
+        assert!(
+            error.contains("file parts unsupported"),
+            "直传 PDF 的错误被吞掉了：{error}"
+        );
         let record = call_records(&job).pop().unwrap();
         assert_eq!(record["imageFallback"], json!(true), "{record}");
         assert_eq!(record["imageCount"], json!(1), "{record}");
-        assert_eq!(record["attempts"].as_array().map(Vec::len), Some(2), "{record}");
+        assert_eq!(
+            record["attempts"].as_array().map(Vec::len),
+            Some(2),
+            "{record}"
+        );
     }
 
     /// Settings 允许 600000 ms，网关却静默夹到 300 s：用户设的值必须真的生效。
@@ -3972,13 +4092,19 @@ mod tests {
             .find(marker)
             .unwrap_or_else(|| panic!("prompt 缺少形状声明 `{marker}`：{prompt}"))
             + marker.len();
-        let offset = start + prompt[start..].find('{').expect("形状声明后必须跟一个 JSON 对象");
+        let offset = start
+            + prompt[start..]
+                .find('{')
+                .expect("形状声明后必须跟一个 JSON 对象");
         let end = balanced_json_end(prompt, offset).expect("形状示例必须是闭合的 JSON");
-        serde_json::from_str(&prompt[offset..end])
-            .unwrap_or_else(|error| panic!("形状示例必须是合法 JSON：{error}：{}", &prompt[offset..end]))
+        serde_json::from_str(&prompt[offset..end]).unwrap_or_else(|error| {
+            panic!("形状示例必须是合法 JSON：{error}：{}", &prompt[offset..end])
+        })
     }
 
-    fn candidate_identity(modality: &'static str) -> crate::reconcile::candidate::CloudAuthoringIdentity<'static> {
+    fn candidate_identity(
+        modality: &'static str,
+    ) -> crate::reconcile::candidate::CloudAuthoringIdentity<'static> {
         crate::reconcile::candidate::CloudAuthoringIdentity {
             job_id: "job-shape",
             item_id: "job-shape",
@@ -4004,8 +4130,10 @@ mod tests {
         let identity = candidate_identity(modality);
         let normalized =
             crate::reconcile::candidate::normalize_cloud_authoring(&identity, None, output)?;
-        crate::reconcile::candidate::cloud_authoring_candidate_from_normalized(&identity, normalized)
-            .map(|_| ())
+        crate::reconcile::candidate::cloud_authoring_candidate_from_normalized(
+            &identity, normalized,
+        )
+        .map(|_| ())
     }
 
     /// 每一个写给模型看的形状示例，都必须能通过**它自己的**校验器。
@@ -4017,7 +4145,8 @@ mod tests {
         let profile = json!({"model": "fake"});
         let payload = json!({});
 
-        let mut group = declared_shape(&llm_prompt(&json!({}), "extract_group"), "with this shape:");
+        let mut group =
+            declared_shape(&llm_prompt(&json!({}), "extract_group"), "with this shape:");
         validate_llm_suggestion_output(&mut group, "extract_group", &profile, &payload)
             .expect("group prompt 的形状示例必须通过校验");
 
@@ -4046,13 +4175,21 @@ mod tests {
         validate_repair_step_output(&mut repair).expect("repair prompt 的形状示例必须通过校验");
 
         for modality in ["reading", "listening"] {
-            let shape =
-                crate::llm_suggestions::authoring_candidate_output_contract(modality)["shape"].clone();
+            let shape = crate::llm_suggestions::authoring_candidate_output_contract(modality)
+                ["shape"]
+                .clone();
             let mut validated = shape.clone();
             validate_authoring_candidate_output(&mut validated, modality)
                 .unwrap_or_else(|error| panic!("{modality} 候选形状示例必须通过校验：{error}"));
-            finalize_candidate(&shape, if modality == "reading" { "reading" } else { "listening" })
-                .unwrap_or_else(|error| panic!("{modality} 候选形状示例必须能 finalize：{error}"));
+            finalize_candidate(
+                &shape,
+                if modality == "reading" {
+                    "reading"
+                } else {
+                    "listening"
+                },
+            )
+            .unwrap_or_else(|error| panic!("{modality} 候选形状示例必须能 finalize：{error}"));
         }
     }
 
@@ -4062,7 +4199,10 @@ mod tests {
     fn the_candidate_contract_no_longer_asks_for_the_passage() {
         for modality in ["reading", "listening"] {
             let contract = crate::llm_suggestions::authoring_candidate_output_contract(modality);
-            assert!(contract["shape"].get("passage").is_none(), "{modality}: {contract}");
+            assert!(
+                contract["shape"].get("passage").is_none(),
+                "{modality}: {contract}"
+            );
             let text = contract.to_string();
             assert!(
                 !text.contains("passage.content"),
@@ -4075,7 +4215,8 @@ mod tests {
     /// 否则缺字段的回复通过网关、在 finalize 才失败，而那里没有受约束重试。
     #[test]
     fn candidate_validator_rejects_everything_finalize_would_reject() {
-        let base = crate::llm_suggestions::authoring_candidate_output_contract("reading")["shape"].clone();
+        let base =
+            crate::llm_suggestions::authoring_candidate_output_contract("reading")["shape"].clone();
         let slot_key = base["answerSlots"]
             .as_object()
             .and_then(|slots| slots.keys().next().cloned())
@@ -4117,21 +4258,30 @@ mod tests {
             );
             let error = validate_authoring_candidate_output(&mut output, "reading")
                 .expect_err(&format!("缺 {pointer} 必须在网关校验时就被拒"));
-            assert!(error.starts_with("cloud_authoring_output_"), "{pointer}: {error}");
+            assert!(
+                error.starts_with("cloud_authoring_output_"),
+                "{pointer}: {error}"
+            );
         }
 
         let replacements = [
             ("/taskGroups/0/taskType", json!("note_completion_questions")),
             ("/taskGroups/0/displayRange", json!({"kind": "set"})),
             ("/taskGroups/0/responseGroups/0/kind", json!("radio")),
-            ("/taskGroups/0/responseGroups/0/cardinality", json!({"min": 1})),
+            (
+                "/taskGroups/0/responseGroups/0/cardinality",
+                json!({"min": 1}),
+            ),
         ];
         for (pointer, value) in replacements {
             let mut output = base.clone();
             *output.pointer_mut(pointer).unwrap() = value.clone();
             let error = validate_authoring_candidate_output(&mut output, "reading")
                 .expect_err(&format!("{pointer}={value} 必须被拒"));
-            assert!(error.starts_with("cloud_authoring_output_"), "{pointer}: {error}");
+            assert!(
+                error.starts_with("cloud_authoring_output_"),
+                "{pointer}: {error}"
+            );
         }
         let mut output = base.clone();
         output["answerSlots"][&slot_key]["interaction"] = json!("button");
@@ -4146,14 +4296,20 @@ mod tests {
     #[test]
     fn prompts_state_what_their_validators_require() {
         let outline = cloud_outline_prompt(&json!({}));
-        assert!(!outline.contains("when known"), "layoutHint 是必填，不是「已知时」：{outline}");
+        assert!(
+            !outline.contains("when known"),
+            "layoutHint 是必填，不是「已知时」：{outline}"
+        );
         assert!(
             !outline.contains("lower that group confidence"),
             "引用是必填，不能用降低置信度代替：{outline}"
         );
         assert!(outline.contains("notesText"), "{outline}");
         let contract = crate::llm_suggestions::cloud_outline_output_contract().to_string();
-        assert!(!contract.contains("Optional notes"), "notesText 是必填：{contract}");
+        assert!(
+            !contract.contains("Optional notes"),
+            "notesText 是必填：{contract}"
+        );
         assert!(!contract.contains("lower group confidence"), "{contract}");
 
         let vision_answer = vision_answer_prompt(&json!({}));
@@ -4173,7 +4329,10 @@ mod tests {
         for modality in ["reading", "listening"] {
             let prompt = authoring_candidate_prompt(&json!({"modality": modality}));
             for key in ["\"taskGroups\"", "\"answerSlots\"", "\"answerKey\""] {
-                assert!(prompt.contains(key), "{modality} 候选 prompt 缺少 {key}：{prompt}");
+                assert!(
+                    prompt.contains(key),
+                    "{modality} 候选 prompt 缺少 {key}：{prompt}"
+                );
             }
         }
         assert!(vision_prompt(&json!({})).contains("\"text\""));
@@ -4195,14 +4354,20 @@ mod tests {
         let listening = authoring_candidate_prompt(&json!({"modality": "listening"}));
         assert!(listening.contains("IELTS Listening"), "{listening}");
         assert!(!listening.contains("IELTS Reading"), "{listening}");
-        assert!(listening.contains("Part"), "listening 候选必须按 Part 组织：{listening}");
+        assert!(
+            listening.contains("Part"),
+            "listening 候选必须按 Part 组织：{listening}"
+        );
 
         let repair = repair_step_prompt(&json!({"modality": "listening"}));
         assert!(repair.contains("IELTS Listening") && !repair.contains("IELTS Reading"));
         assert!(repair_step_prompt(&json!({})).contains("IELTS Reading"));
 
         let contract = crate::llm_suggestions::authoring_candidate_output_contract("listening");
-        assert!(contract["shape"].get("listeningParts").is_some(), "{contract}");
+        assert!(
+            contract["shape"].get("listeningParts").is_some(),
+            "{contract}"
+        );
         let mut dangling = contract["shape"].clone();
         dangling["listeningParts"][0]["taskIds"] = json!(["cloud-tg-404"]);
         let error = validate_authoring_candidate_output(&mut dangling, "listening")
@@ -4232,9 +4397,15 @@ mod tests {
             "UNIQUE-SOURCE-TEXT-MARKER",
             "timeoutMs",
         ] {
-            assert!(!prompt.contains(forbidden), "修复 prompt 泄露了 {forbidden}：{prompt}");
+            assert!(
+                !prompt.contains(forbidden),
+                "修复 prompt 泄露了 {forbidden}：{prompt}"
+            );
         }
-        assert!(prompt.contains("\"differences\""), "上下文必须保留：{prompt}");
+        assert!(
+            prompt.contains("\"differences\""),
+            "上下文必须保留：{prompt}"
+        );
         assert!(
             !prompt.contains("Content changes need evidence"),
             "校验器不强制证据，prompt 不能谎称必填"
@@ -4249,14 +4420,25 @@ mod tests {
     fn a_chunk_request_is_scoped_to_its_questions_and_validated_against_them() {
         let input = json!({"modality": "reading", "chunk": {"label": "Questions 14-26", "questionNumbers": (14..=26).collect::<Vec<u32>>()}});
         let prompt = authoring_candidate_prompt(&input);
-        assert!(prompt.contains("ONLY") && prompt.contains("Questions 14-26"), "{prompt}");
+        assert!(
+            prompt.contains("ONLY") && prompt.contains("Questions 14-26"),
+            "{prompt}"
+        );
 
-        let shape = crate::llm_suggestions::authoring_candidate_output_contract("reading")["shape"].clone();
+        let shape =
+            crate::llm_suggestions::authoring_candidate_output_contract("reading")["shape"].clone();
         // 形状示例是第 1 题：对 14-26 这一块来说在范围外。
         let mut outside = shape.clone();
-        let error = validate_authoring_candidate_output_for_chunk(&mut outside, "reading", Some(&input["chunk"]))
-            .expect_err("范围外的题号必须被拒");
-        assert!(error.starts_with("cloud_authoring_output_slot_outside_chunk"), "{error}");
+        let error = validate_authoring_candidate_output_for_chunk(
+            &mut outside,
+            "reading",
+            Some(&input["chunk"]),
+        )
+        .expect_err("范围外的题号必须被拒");
+        assert!(
+            error.starts_with("cloud_authoring_output_slot_outside_chunk"),
+            "{error}"
+        );
         let mut unscoped = shape;
         validate_authoring_candidate_output_for_chunk(&mut unscoped, "reading", None)
             .expect("不分块时不做范围限制");

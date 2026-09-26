@@ -342,10 +342,16 @@ fn hotspot_value_matches(value: &str, accepted: &[String], exact: bool) -> bool 
         if exact {
             trimmed.to_string()
         } else {
-            trimmed.split_whitespace().collect::<Vec<_>>().join(" ").to_ascii_uppercase()
+            trimmed
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_ascii_uppercase()
         }
     };
-    accepted.iter().any(|candidate| normalize(candidate) == normalize(value))
+    accepted
+        .iter()
+        .any(|candidate| normalize(candidate) == normalize(value))
 }
 
 fn hotspot_content_roots_mut(source: &mut ReadingExamSourceV2) -> Vec<&mut Vec<ContentNodeV2>> {
@@ -436,7 +442,9 @@ fn for_each_hotspot_group_mut(
                 }
             }
             ContentNodeV2::FlowStep(node) => for_each_hotspot_group_mut(&mut node.children, visit),
-            ContentNodeV2::Figcaption(node) => for_each_hotspot_group_mut(&mut node.children, visit),
+            ContentNodeV2::Figcaption(node) => {
+                for_each_hotspot_group_mut(&mut node.children, visit)
+            }
             ContentNodeV2::Text(_)
             | ContentNodeV2::HardBreak(_)
             | ContentNodeV2::Image(_)
@@ -528,7 +536,9 @@ fn normalize_runtime_hotspots(source: &mut ReadingExamSourceV2) {
                 matches!(
                     source.answer_key.get(slot_id),
                     Some(AnswerValueV2::Text {
-                        normalization: Some(crate::schema::ielts_authoring_v2::AnswerNormalizationV2::Exact),
+                        normalization: Some(
+                            crate::schema::ielts_authoring_v2::AnswerNormalizationV2::Exact
+                        ),
                         ..
                     })
                 ),
@@ -551,8 +561,13 @@ fn normalize_runtime_hotspots(source: &mut ReadingExamSourceV2) {
                 let Some(accepted) = accepted_by_slot.get(&hotspot.slot_id) else {
                     continue;
                 };
-                let exact = exact_by_slot.get(&hotspot.slot_id).copied().unwrap_or(false);
-                if accepted.is_empty() || hotspot_value_matches(&hotspot.hotspot_id, accepted, exact) {
+                let exact = exact_by_slot
+                    .get(&hotspot.slot_id)
+                    .copied()
+                    .unwrap_or(false);
+                if accepted.is_empty()
+                    || hotspot_value_matches(&hotspot.hotspot_id, accepted, exact)
+                {
                     continue;
                 }
                 hotspot.hotspot_id = accepted[0].clone();
@@ -580,7 +595,9 @@ fn hotspot_issues(source: &ReadingExamSourceV2) -> Vec<CompilerIssueV2> {
                 let exact = matches!(
                     source.answer_key.get(&hotspot.slot_id),
                     Some(AnswerValueV2::Text {
-                        normalization: Some(crate::schema::ielts_authoring_v2::AnswerNormalizationV2::Exact),
+                        normalization: Some(
+                            crate::schema::ielts_authoring_v2::AnswerNormalizationV2::Exact
+                        ),
                         ..
                     })
                 );
@@ -1400,7 +1417,10 @@ mod tests {
         fs::write(target, serde_json::to_vec_pretty(&runtime).unwrap()).unwrap();
     }
 
-    fn hotspot_diagram(stimulus_id: &str, hotspots: Vec<crate::schema::content_doc_v2::DiagramHotspotV2>) -> ContentNodeV2 {
+    fn hotspot_diagram(
+        stimulus_id: &str,
+        hotspots: Vec<crate::schema::content_doc_v2::DiagramHotspotV2>,
+    ) -> ContentNodeV2 {
         ContentNodeV2::Diagram(crate::schema::content_doc_v2::DiagramNodeV2 {
             base: crate::schema::content_doc_v2::BaseContentNodeV2 {
                 id: stimulus_id.to_string(),
@@ -1418,7 +1438,10 @@ mod tests {
         })
     }
 
-    fn with_diagram_stimulus(authoring: &mut IeltsAuthoringIRV2, hotspots: Vec<crate::schema::content_doc_v2::DiagramHotspotV2>) {
+    fn with_diagram_stimulus(
+        authoring: &mut IeltsAuthoringIRV2,
+        hotspots: Vec<crate::schema::content_doc_v2::DiagramHotspotV2>,
+    ) {
         let task = &mut authoring.task_groups[0];
         task.stimulus = Some(vec![hotspot_diagram("stimulus-map", hotspots)]);
     }
@@ -1437,11 +1460,15 @@ mod tests {
         let mut authoring = fixture();
         with_diagram_stimulus(&mut authoring, vec![hotspot("task-hotspot-q14", "q14")]);
         let runtime = compile_reading_source_v2(&authoring).unwrap();
-        let ContentNodeV2::Diagram(node) = &runtime.task_groups[0].stimulus.as_ref().unwrap()[0] else {
+        let ContentNodeV2::Diagram(node) = &runtime.task_groups[0].stimulus.as_ref().unwrap()[0]
+        else {
             panic!("diagram stimulus expected");
         };
         let hotspots = node.hotspots.as_ref().unwrap();
-        assert_eq!(hotspots[0].hotspot_id, "B", "hotspot must submit the slot answer label");
+        assert_eq!(
+            hotspots[0].hotspot_id, "B",
+            "hotspot must submit the slot answer label"
+        );
         assert!(validate_reading_source_v2(&runtime).is_empty());
     }
 
@@ -1467,7 +1494,8 @@ mod tests {
         );
         with_diagram_stimulus(&mut authoring, vec![hotspot("C", "q14")]);
         let runtime = compile_reading_source_v2(&authoring).unwrap();
-        let ContentNodeV2::Diagram(node) = &runtime.task_groups[0].stimulus.as_ref().unwrap()[0] else {
+        let ContentNodeV2::Diagram(node) = &runtime.task_groups[0].stimulus.as_ref().unwrap()[0]
+        else {
             panic!("diagram stimulus expected");
         };
         assert_eq!(node.hotspots.as_ref().unwrap()[0].hotspot_id, "C");
@@ -1476,7 +1504,9 @@ mod tests {
     #[test]
     fn hotspot_with_unresolved_answer_blocks_the_runtime() {
         let mut authoring = fixture();
-        authoring.answer_key.insert("q14".to_string(), AnswerValueV2::Unresolved);
+        authoring
+            .answer_key
+            .insert("q14".to_string(), AnswerValueV2::Unresolved);
         with_diagram_stimulus(&mut authoring, vec![hotspot("task-hotspot-q14", "q14")]);
         let codes = compile_reading_source_v2(&authoring)
             .err()
@@ -1484,7 +1514,10 @@ mod tests {
             .into_iter()
             .map(|issue| issue.code)
             .collect::<BTreeSet<_>>();
-        assert!(codes.contains("RUNTIME_HOTSPOT_SUBMIT_VALUE_UNMAPPED"), "{codes:?}");
+        assert!(
+            codes.contains("RUNTIME_HOTSPOT_SUBMIT_VALUE_UNMAPPED"),
+            "{codes:?}"
+        );
     }
 
     #[test]
@@ -1536,7 +1569,10 @@ mod tests {
             .into_iter()
             .map(|issue| issue.code)
             .collect::<BTreeSet<_>>();
-        assert!(codes.contains("RUNTIME_HOTSPOT_ANSWER_NOT_OPTION"), "{codes:?}");
+        assert!(
+            codes.contains("RUNTIME_HOTSPOT_ANSWER_NOT_OPTION"),
+            "{codes:?}"
+        );
     }
 
     /// 学生端对每个槽位都要求「交互类型 ↔ 答案键类型」一致，不一致时点交卷会拒绝
@@ -1559,7 +1595,10 @@ mod tests {
             .into_iter()
             .map(|issue| issue.code)
             .collect::<BTreeSet<_>>();
-        assert!(codes.contains("RUNTIME_CHOICE_SLOT_ANSWER_NOT_OPTION"), "{codes:?}");
+        assert!(
+            codes.contains("RUNTIME_CHOICE_SLOT_ANSWER_NOT_OPTION"),
+            "{codes:?}"
+        );
     }
 
     /// 反方向：文本槽位配选项答案同样被拒。
@@ -1580,6 +1619,9 @@ mod tests {
             .into_iter()
             .map(|issue| issue.code)
             .collect::<BTreeSet<_>>();
-        assert!(codes.contains("RUNTIME_TEXT_SLOT_ANSWER_NOT_TEXT"), "{codes:?}");
+        assert!(
+            codes.contains("RUNTIME_TEXT_SLOT_ANSWER_NOT_TEXT"),
+            "{codes:?}"
+        );
     }
 }

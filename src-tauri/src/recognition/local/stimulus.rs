@@ -12,8 +12,8 @@
 
 use super::question_blocks::region_text;
 use super::{
-    QuestionBlockCandidateV1, TableCellCandidateV1, TableRowCandidateV1,
-    TableStimulusCandidateV1, VisualHotspotCandidateV1, VisualStimulusCandidateV1,
+    QuestionBlockCandidateV1, TableCellCandidateV1, TableRowCandidateV1, TableStimulusCandidateV1,
+    VisualHotspotCandidateV1, VisualStimulusCandidateV1,
 };
 use crate::ielts_grammar::issue_codes;
 use crate::schema::common::RectV2;
@@ -53,11 +53,7 @@ pub(super) fn build_stimulus(
 
 // ------------------------------------------------------------------- tables ---
 
-fn compile_table(
-    page: &PageNodeV2,
-    table: &TableNodeV2,
-    index: usize,
-) -> TableStimulusCandidateV1 {
+fn compile_table(page: &PageNodeV2, table: &TableNodeV2, index: usize) -> TableStimulusCandidateV1 {
     let mut issues = Vec::new();
     let mut by_row: BTreeMap<u32, Vec<TableCellCandidateV1>> = BTreeMap::new();
     let mut unresolved_cell = false;
@@ -117,7 +113,10 @@ fn compile_table(
         bbox: table.bbox.clone(),
         rows,
         asset_id: table.visual_fallback_asset_id.clone(),
-        confidence: table.topology_confidence.min(table.content_confidence).clamp(0.0, 1.0),
+        confidence: table
+            .topology_confidence
+            .min(table.content_confidence)
+            .clamp(0.0, 1.0),
         issues,
     }
 }
@@ -134,7 +133,10 @@ fn enrich_visual(
     let mut issues = Vec::new();
 
     let mut orphaned_slot = false;
-    for block in blocks.iter().filter(|block| block.page_index == page.page_index) {
+    for block in blocks
+        .iter()
+        .filter(|block| block.page_index == page.page_index)
+    {
         let number = &block.number_bbox;
         let center_x = number.x + number.width / 2.0;
         let center_y = number.y + number.height / 2.0;
@@ -423,11 +425,30 @@ mod tests {
         });
         // Deliberately declare the rows out of order to prove they are regrouped.
         let document = document(json!([page_value(
-            json!([line("l-a", "Year", 420.0), line("l-b", "Value", 420.0), line("l-c", "2001", 440.0)]),
             json!([
-                region("r-cell-a", "text", json!({"x": 72.0, "y": 420.0, "width": 150.0, "height": 20.0, "unit": "pt", "origin": "top-left", "pageRotation": 0}), &["l-a"]),
-                region("r-cell-b", "text", json!({"x": 222.0, "y": 420.0, "width": 150.0, "height": 20.0, "unit": "pt", "origin": "top-left", "pageRotation": 0}), &["l-b"]),
-                region("r-cell-c", "text", json!({"x": 222.0, "y": 440.0, "width": 150.0, "height": 20.0, "unit": "pt", "origin": "top-left", "pageRotation": 0}), &["l-c"])
+                line("l-a", "Year", 420.0),
+                line("l-b", "Value", 420.0),
+                line("l-c", "2001", 440.0)
+            ]),
+            json!([
+                region(
+                    "r-cell-a",
+                    "text",
+                    json!({"x": 72.0, "y": 420.0, "width": 150.0, "height": 20.0, "unit": "pt", "origin": "top-left", "pageRotation": 0}),
+                    &["l-a"]
+                ),
+                region(
+                    "r-cell-b",
+                    "text",
+                    json!({"x": 222.0, "y": 420.0, "width": 150.0, "height": 20.0, "unit": "pt", "origin": "top-left", "pageRotation": 0}),
+                    &["l-b"]
+                ),
+                region(
+                    "r-cell-c",
+                    "text",
+                    json!({"x": 222.0, "y": 440.0, "width": 150.0, "height": 20.0, "unit": "pt", "origin": "top-left", "pageRotation": 0}),
+                    &["l-c"]
+                )
             ]),
             json!([table_value]),
             json!([]),
@@ -481,7 +502,12 @@ mod tests {
         let figure_bbox = rect(100.0, 200.0, 400.0, 200.0);
         let document = document(json!([page_value(
             json!([]),
-            json!([region("r-figure", "diagram", json!({"x": 100.0, "y": 200.0, "width": 400.0, "height": 200.0, "unit": "pt", "origin": "top-left", "pageRotation": 0}), &[])]),
+            json!([region(
+                "r-figure",
+                "diagram",
+                json!({"x": 100.0, "y": 200.0, "width": 400.0, "height": 200.0, "unit": "pt", "origin": "top-left", "pageRotation": 0}),
+                &[]
+            )]),
             json!([]),
             json!([{
                 "id": "placement-1",
@@ -518,7 +544,12 @@ mod tests {
         // The figure sits far from the question numbers, so no hotspot can be placed.
         let document = document(json!([page_value(
             json!([]),
-            json!([region("r-figure", "diagram", json!({"x": 100.0, "y": 700.0, "width": 200.0, "height": 100.0, "unit": "pt", "origin": "top-left", "pageRotation": 0}), &[])]),
+            json!([region(
+                "r-figure",
+                "diagram",
+                json!({"x": 100.0, "y": 700.0, "width": 200.0, "height": 100.0, "unit": "pt", "origin": "top-left", "pageRotation": 0}),
+                &[]
+            )]),
             json!([]),
             json!([]),
             json!([])

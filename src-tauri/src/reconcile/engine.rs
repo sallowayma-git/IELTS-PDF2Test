@@ -19,7 +19,8 @@ use serde_json::Value;
 
 use super::adjudicate::{adjudicate, AdjudicateInput, AdjudicationOutcome};
 use super::candidate::{
-    align_cloud_answer_shapes, cloud_candidate_from_value, local_candidate_from_authoring, not_run_candidate,
+    align_cloud_answer_shapes, cloud_candidate_from_value, local_candidate_from_authoring,
+    not_run_candidate,
 };
 use super::source::{verify_against_source, SourceVerificationV1};
 use super::store;
@@ -69,7 +70,12 @@ pub(crate) fn classify_cloud_error(error: &str) -> CloudFailure {
     let lower = error.to_ascii_lowercase();
     // 凭据错误先判：它既不是「模型不支持」也不是「输出非法」，重试没有用，
     // 用户要去设置页修正密钥。
-    let credentials = ["llm_http_401", "llm_http_403", "invalid_api_key", "credentials_invalid"];
+    let credentials = [
+        "llm_http_401",
+        "llm_http_403",
+        "invalid_api_key",
+        "credentials_invalid",
+    ];
     if credentials.iter().any(|needle| lower.contains(needle)) {
         return CloudFailure::unusable(reason::MODEL_CREDENTIALS_INVALID, error);
     }
@@ -85,7 +91,13 @@ pub(crate) fn classify_cloud_error(error: &str) -> CloudFailure {
     if unsupported.iter().any(|needle| lower.contains(needle)) {
         return CloudFailure::not_run(reason::MODEL_UNSUPPORTED_INPUT, error);
     }
-    let timeout = ["timeout", "timed out", "deadline", "etimedout", "operation timed"];
+    let timeout = [
+        "timeout",
+        "timed out",
+        "deadline",
+        "etimedout",
+        "operation timed",
+    ];
     if timeout.iter().any(|needle| lower.contains(needle)) {
         // 超时是**不可用**而不是「未运行」：确实尝试过，只是没有拿到可用结果。
         return CloudFailure::unusable(reason::MODEL_TIMEOUT, error);
@@ -102,8 +114,7 @@ pub(crate) fn classify_cloud_error(error: &str) -> CloudFailure {
 /// **边界上是 JSON，解析与校验在网关侧完成**，判定逻辑只消费已验证的结构。
 ///
 /// `None` = 没有可用模型：分歧项全部原样留在 `NeedsReview`，行为与未接入 A4 时逐字一致。
-pub(crate) type AdjudicationRunner<'a> =
-    &'a dyn Fn(&[Value]) -> Result<Value, ModelCallFailure>;
+pub(crate) type AdjudicationRunner<'a> = &'a dyn Fn(&[Value]) -> Result<Value, ModelCallFailure>;
 
 /// A3：原文件核验的模型通道。
 ///
@@ -117,8 +128,7 @@ pub(crate) type AdjudicationRunner<'a> =
 /// 「把没验证写成已验证」的入口。
 ///
 /// `None` = 没有可用模型：只做确定性核验，结果与未接入 A3 时逐字一致。
-pub(crate) type SourceVerifyRunner<'a> =
-    &'a dyn Fn(&[Value]) -> Result<Value, ModelCallFailure>;
+pub(crate) type SourceVerifyRunner<'a> = &'a dyn Fn(&[Value]) -> Result<Value, ModelCallFailure>;
 
 /// 模型调用失败的两类原因。A3（原文件核验）与 A4（分歧裁决）**共用同一套语义**。
 ///
@@ -255,7 +265,10 @@ fn local_stage_status(local: &RecognitionCandidateV1) -> StageStatusV1 {
     }
 }
 
-fn cloud_stage_status(cloud: &RecognitionCandidateV1, failure: Option<&CloudFailure>) -> StageStatusV1 {
+fn cloud_stage_status(
+    cloud: &RecognitionCandidateV1,
+    failure: Option<&CloudFailure>,
+) -> StageStatusV1 {
     match failure {
         Some(failure) => StageStatusV1::with_reason(
             StageStateV1::from(failure.status),
@@ -376,7 +389,12 @@ pub(crate) fn reconcile_batch(input: ReconcileBatchInput<'_>) -> ReconcileBatchO
     let local_groups: Vec<(String, Vec<u32>)> = local
         .task_groups
         .iter()
-        .map(|group| (group.task_id.clone(), super::source::group_question_numbers(&group.display_range)))
+        .map(|group| {
+            (
+                group.task_id.clone(),
+                super::source::group_question_numbers(&group.display_range),
+            )
+        })
         .collect();
     let source = verify_against_source(
         input.document_ir,

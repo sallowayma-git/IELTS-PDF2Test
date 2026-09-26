@@ -71,7 +71,13 @@ fn part_source_anchors(
     source_hash: &str,
     source_type: &str,
 ) -> Vec<Value> {
-    let mut anchors = vec![part_anchor(part, lines, source_file_id, source_hash, source_type)];
+    let mut anchors = vec![part_anchor(
+        part,
+        lines,
+        source_file_id,
+        source_hash,
+        source_type,
+    )];
     let first_group = part
         .groups
         .iter()
@@ -158,11 +164,11 @@ pub(crate) fn build_listening_structure(
         if numbers.is_empty() {
             continue;
         }
-        match detected
-            .parts
-            .iter()
-            .position(|part| numbers.iter().all(|number| part.question_numbers.contains(number)))
-        {
+        match detected.parts.iter().position(|part| {
+            numbers
+                .iter()
+                .all(|number| part.question_numbers.contains(number))
+        }) {
             Some(index) => task_ids_by_part[index].push(task_id.to_string()),
             None => push_warning(&mut warnings, LISTENING_TASK_OUTSIDE_PARTS),
         }
@@ -319,13 +325,11 @@ mod tests {
             .contains(&LISTENING_TASK_OUTSIDE_PARTS.to_string()));
         let parts = draft.structure["parts"].as_array().unwrap();
         assert_eq!(parts[0]["taskIds"], json!(["task-1"]));
-        assert!(parts
+        assert!(parts.iter().all(|part| !part["taskIds"]
+            .as_array()
+            .unwrap()
             .iter()
-            .all(|part| !part["taskIds"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|id| id == "task-stray")));
+            .any(|id| id == "task-stray")));
     }
 
     #[test]
@@ -373,8 +377,14 @@ mod tests {
             .flat_map(|anchor| anchor["nodeIds"].as_array().into_iter().flatten())
             .filter_map(Value::as_str)
             .collect::<Vec<_>>();
-        assert!(node_ids.contains(&"line-0"), "段落标题的锚点仍要在：{node_ids:?}");
-        assert!(node_ids.contains(&"line-1"), "段落指令行必须收进来：{node_ids:?}");
+        assert!(
+            node_ids.contains(&"line-0"),
+            "段落标题的锚点仍要在：{node_ids:?}"
+        );
+        assert!(
+            node_ids.contains(&"line-1"),
+            "段落指令行必须收进来：{node_ids:?}"
+        );
         assert!(
             !node_ids.contains(&"line-3"),
             "`Choose the correct answer.` 属于题组指令区，不该在这里被吸收：{node_ids:?}"
@@ -407,7 +417,9 @@ mod tests {
             stored_name: "listening-vol7-t9.pdf".to_string(),
             file_type: "pdf".to_string(),
             sha256: "fixture".to_string(),
-            size_bytes: std::fs::metadata(&input).map(|meta| meta.len()).unwrap_or(0),
+            size_bytes: std::fs::metadata(&input)
+                .map(|meta| meta.len())
+                .unwrap_or(0),
             role: "MainQuestion".to_string(),
             imported_at: chrono::Utc::now(),
         };

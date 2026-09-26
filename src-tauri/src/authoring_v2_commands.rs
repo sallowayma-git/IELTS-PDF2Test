@@ -696,7 +696,10 @@ pub(crate) fn export_authoring_v2_core(root: &Path, input: Value) -> CommandResu
         let conn = crate::library::repository::open_library_connection(root)?;
         let (ds, version) = crate::library::repository::get_canonical_ds(&conn, &input.job_id)?
             .ok_or("ITEM_DS_NOT_SEEDED")?;
-        if input.edit_version.is_some_and(|expected| expected != version as u64) {
+        if input
+            .edit_version
+            .is_some_and(|expected| expected != version as u64)
+        {
             return Err(format!("EDIT_VERSION_CONFLICT:current={version}"));
         }
         input.authoring = Some(ds);
@@ -721,7 +724,10 @@ pub(crate) enum PublishMode {
     },
 }
 
-pub(crate) fn export_authoring_snapshot(root: &Path, input: ExportAuthoringV2Input) -> CommandResult<Value> {
+pub(crate) fn export_authoring_snapshot(
+    root: &Path,
+    input: ExportAuthoringV2Input,
+) -> CommandResult<Value> {
     export_authoring_snapshot_with_mode(root, input, &PublishMode::Strict)
 }
 
@@ -805,7 +811,8 @@ pub(crate) fn export_authoring_snapshot_with_mode(
     } else {
         load_current_authoring(root, &input.job_id)?
     };
-    if db_direct && authoring_value.get("jobId").and_then(Value::as_str) != Some(input.job_id.as_str())
+    if db_direct
+        && authoring_value.get("jobId").and_then(Value::as_str) != Some(input.job_id.as_str())
     {
         // DB 直通专属前置检查；legacy 路径维持原有检查顺序（readiness 内做同一检查）。
         return Err("authoring_v2_export_blocked:job_id_mismatch".to_string());
@@ -905,8 +912,9 @@ pub(crate) fn export_authoring_snapshot_with_mode(
     // 快照（不产出运行时、不进学生清单），绝不为了能加载而编造任何内容。
     let runtime = match compile_exam_source_v2(&authoring) {
         Ok(runtime) if publish_override.is_none() => Some(runtime),
-        Ok(runtime) => (!has_unresolved_answers(&authoring_value) && runtime.is_valid())
-            .then_some(runtime),
+        Ok(runtime) => {
+            (!has_unresolved_answers(&authoring_value) && runtime.is_valid()).then_some(runtime)
+        }
         Err(_) if publish_override.is_some() => None,
         Err(issues) => {
             return Err(format!(
@@ -983,7 +991,11 @@ pub(crate) fn export_authoring_snapshot_with_mode(
             &authoring.assets,
         )?;
         let files: Vec<&str> = if student_loadable {
-            vec!["authoring-ir-v2.json", runtime_file_name, "manifest-v2.json"]
+            vec![
+                "authoring-ir-v2.json",
+                runtime_file_name,
+                "manifest-v2.json",
+            ]
         } else {
             vec!["authoring-ir-v2.json", "manifest-v2.json"]
         };
@@ -1118,7 +1130,10 @@ fn resolve_authoring_asset_source(
             crate::listening_audio::store::managed_audio_path(root, job_id, &asset.sha256)?
         {
             return fs::canonicalize(&path).map_err(|error| {
-                format!("authoring_v2_asset_managed_missing:{}:{error}", asset.asset_id)
+                format!(
+                    "authoring_v2_asset_managed_missing:{}:{error}",
+                    asset.asset_id
+                )
             });
         }
     }
@@ -2205,7 +2220,9 @@ fn upsert_task_group_bundle(document: &mut Value, patch: &Map<String, Value>) ->
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| "AUTHORING_PATCH_BUNDLE_TASK_TYPE_REQUIRED".to_string())?;
     if !is_supported_task_type(task_type) {
-        return Err(format!("AUTHORING_PATCH_BUNDLE_TASK_TYPE_INVALID:{task_type}"));
+        return Err(format!(
+            "AUTHORING_PATCH_BUNDLE_TASK_TYPE_INVALID:{task_type}"
+        ));
     }
     let instructions = task_group
         .get("instructions")
@@ -2237,7 +2254,9 @@ fn upsert_task_group_bundle(document: &mut Value, patch: &Map<String, Value>) ->
             _ => format!("slot-{question_number}"),
         };
         if !seen_slot_ids.insert(slot_id.clone()) {
-            return Err(format!("AUTHORING_PATCH_BUNDLE_DUPLICATE_SLOT_ID:{slot_id}"));
+            return Err(format!(
+                "AUTHORING_PATCH_BUNDLE_DUPLICATE_SLOT_ID:{slot_id}"
+            ));
         }
         let mut slot_out = slot_object.clone();
         slot_out.insert("slotId".to_string(), json!(slot_id));
@@ -2441,7 +2460,9 @@ fn upsert_task_group_bundle(document: &mut Value, patch: &Map<String, Value>) ->
             if answer_slots_empty {
                 return Err("AUTHORING_PATCH_BUNDLE_ANSWER_SLOTS_EMPTY".to_string());
             }
-            return Err(format!("AUTHORING_PATCH_BUNDLE_SLOT_REFERENCE_MISSING:{slot_id}"));
+            return Err(format!(
+                "AUTHORING_PATCH_BUNDLE_SLOT_REFERENCE_MISSING:{slot_id}"
+            ));
         }
         if other_group_slots.contains(slot_id) {
             return Err(format!("AUTHORING_PATCH_BUNDLE_SLOT_CLAIMED:{slot_id}"));
@@ -2450,7 +2471,9 @@ fn upsert_task_group_bundle(document: &mut Value, patch: &Map<String, Value>) ->
         let key_in_bundle = answer_key_input.contains_key(slot_id);
         let key_in_document = doc_answer_key.contains_key(slot_id);
         if !key_in_bundle && !key_in_document {
-            return Err(format!("AUTHORING_PATCH_BUNDLE_ANSWER_KEY_MISSING:{slot_id}"));
+            return Err(format!(
+                "AUTHORING_PATCH_BUNDLE_ANSWER_KEY_MISSING:{slot_id}"
+            ));
         }
     }
 
@@ -2470,9 +2493,9 @@ fn upsert_task_group_bundle(document: &mut Value, patch: &Map<String, Value>) ->
                 // 插入：优先 `insertAfterTaskId` 之后，否则追加到末尾。
                 let insert_at = insert_after
                     .and_then(|after| {
-                        next_task_groups
-                            .iter()
-                            .position(|item| item.get("taskId").and_then(Value::as_str) == Some(after))
+                        next_task_groups.iter().position(|item| {
+                            item.get("taskId").and_then(Value::as_str) == Some(after)
+                        })
                     })
                     .map(|index| index + 1)
                     .unwrap_or(next_task_groups.len());
@@ -2515,13 +2538,15 @@ fn upsert_task_group_bundle(document: &mut Value, patch: &Map<String, Value>) ->
             .collect();
         // 同时清掉这些 stale 槽对应的答案键。
         if !stale.is_empty() {
-            if let Some(next_answer_slots) = next.get_mut("answerSlots").and_then(Value::as_object_mut)
+            if let Some(next_answer_slots) =
+                next.get_mut("answerSlots").and_then(Value::as_object_mut)
             {
                 for slot_id in &stale {
                     next_answer_slots.remove(slot_id);
                 }
             }
-            if let Some(next_answer_key) = next.get_mut("answerKey").and_then(Value::as_object_mut) {
+            if let Some(next_answer_key) = next.get_mut("answerKey").and_then(Value::as_object_mut)
+            {
                 for slot_id in &stale {
                     next_answer_key.remove(slot_id);
                 }
@@ -3038,7 +3063,7 @@ fn parse_number_array(value: Option<&Value>) -> CommandResult<Vec<u64>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_patch, explicitly_handled_issue_targets, expand_question_expression,
+        apply_patch, expand_question_expression, explicitly_handled_issue_targets,
         export_authoring_v2_core, materialize_authoring_assets, physical_shadow_matches_authoring,
         preserve_issue_resolutions, resolve_authoring_asset_preview_core,
         stamp_published_audit_revision, unresolved_blocking_issues,
@@ -3400,8 +3425,14 @@ mod tests {
             diagram_question_region: None,
         };
         // 图片资源仍按相对路径从 job 目录取（`root`/`job_id` 在这里没有受管音频可找）。
-        materialize_authoring_assets(&source_root, "job-assets", &source_root, &staging, &[descriptor.clone()])
-            .unwrap();
+        materialize_authoring_assets(
+            &source_root,
+            "job-assets",
+            &source_root,
+            &staging,
+            &[descriptor.clone()],
+        )
+        .unwrap();
         assert_eq!(fs::read(staging.join(relative_path)).unwrap(), bytes);
 
         let mut bad = descriptor;
@@ -3709,10 +3740,14 @@ mod tests {
         preserve_issue_resolutions(&mut quality, Some(&previous), &affected);
 
         // 受影响目标：重置（不继承 resolution，也不继承 note）。
-        assert!(quality["issues"][0]["details"].get("resolution").is_none(),
-            "受影响目标的旧 resolution 必须重置: {quality:#}");
-        assert!(quality["issues"][0]["details"].get("note").is_none(),
-            "受影响目标的旧 note 也必须一并重置: {quality:#}");
+        assert!(
+            quality["issues"][0]["details"].get("resolution").is_none(),
+            "受影响目标的旧 resolution 必须重置: {quality:#}"
+        );
+        assert!(
+            quality["issues"][0]["details"].get("note").is_none(),
+            "受影响目标的旧 note 也必须一并重置: {quality:#}"
+        );
         // 未受影响目标：有效的人工处理保留。
         assert_eq!(quality["issues"][1]["details"]["resolution"], "ignored");
         assert_eq!(quality["issues"][1]["details"]["note"], "有意保留");
@@ -3889,7 +3924,10 @@ mod tests {
         // 原地替换，数组位置不变：task-26 在前、task-27 在后。
         assert_eq!(document["taskGroups"][0]["taskId"], "task-26");
         assert_eq!(document["taskGroups"][1]["taskId"], "task-27");
-        assert_eq!(document["taskGroups"][1]["responseGroups"][0]["slotIds"], json!(["slot-27-new"]));
+        assert_eq!(
+            document["taskGroups"][1]["responseGroups"][0]["slotIds"],
+            json!(["slot-27-new"])
+        );
         // task-26 的槽不受影响。
         assert!(document["answerSlots"].get("slot-26").is_some());
         assert!(document["answerKey"].get("slot-26").is_some());
@@ -3898,7 +3936,10 @@ mod tests {
         assert!(document["answerKey"].get("slot-27-old").is_none());
         // 新槽已落地。
         assert!(document["answerSlots"].get("slot-27-new").is_some());
-        assert_eq!(document["answerKey"]["slot-27-new"], json!({"kind": "text", "values": ["fresh"]}));
+        assert_eq!(
+            document["answerKey"]["slot-27-new"],
+            json!({"kind": "text", "values": ["fresh"]})
+        );
     }
 
     #[test]
@@ -3978,7 +4019,10 @@ mod tests {
         let group = &document["taskGroups"][1];
         assert_eq!(group["taskId"], "task-custom");
         assert_eq!(group["responseGroups"][0]["responseGroupId"], "rg-custom");
-        assert_eq!(group["responseGroups"][0]["slotIds"], json!(["slot-custom"]));
+        assert_eq!(
+            group["responseGroups"][0]["slotIds"],
+            json!(["slot-custom"])
+        );
         assert!(document["answerSlots"].get("slot-custom").is_some());
         assert_eq!(document["answerSlots"]["slot-custom"]["questionNumber"], 99);
     }
@@ -4047,7 +4091,10 @@ mod tests {
         assert!(stamp_published_audit_revision(&mut document, Some(9), 0));
         assert_eq!(document.pointer("/audit/revision"), Some(&json!(9)));
         // `source` 保持如实：这份稿确实还是机器抽取的，不是用户改的。
-        assert_eq!(document.pointer("/audit/source"), Some(&json!("auto_extract")));
+        assert_eq!(
+            document.pointer("/audit/source"),
+            Some(&json!("auto_extract"))
+        );
     }
 
     /// 没有编辑版本时（legacy 文件链，revision 可能是 0）也要给出至少第一版：

@@ -404,7 +404,11 @@ fn product_chain_docx_import_materializes_the_physical_document_ir_v2() {
         dir.join("authoring-ir.json").is_file(),
         "DOCX import must produce the V1 editable draft"
     );
-    assert_shadow(&dir, DOCUMENT_V2_SHADOW_FILE, "docx stage 1 physical shadow");
+    assert_shadow(
+        &dir,
+        DOCUMENT_V2_SHADOW_FILE,
+        "docx stage 1 physical shadow",
+    );
     let physical: Value =
         serde_json::from_slice(&fs::read(dir.join(DOCUMENT_V2_SHADOW_FILE)).unwrap()).unwrap();
     assert_eq!(
@@ -433,7 +437,11 @@ fn product_chain_docx_import_materializes_the_physical_document_ir_v2() {
     // The point of the fix: without a physical layer the authoring V2 shadow is never produced, so a
     // DOCX job can never open an editable session and can never become ready/publishable. Assert the
     // session end to end, not just the physical artifact.
-    assert_shadow(&dir, AUTHORING_V2_SHADOW_FILE, "docx stage 1 authoring shadow");
+    assert_shadow(
+        &dir,
+        AUTHORING_V2_SHADOW_FILE,
+        "docx stage 1 authoring shadow",
+    );
     let session = get_authoring_v2_core(&root, &job.job_id)
         .expect("a DOCX import must be able to open the authoring V2 session");
     assert_eq!(
@@ -466,15 +474,18 @@ fn product_chain_docx_import_materializes_the_physical_document_ir_v2() {
     assert_eq!(responses.len(), 2, "complex DOCX response groups drifted");
     let mut prompt_texts = Vec::new();
     for response in responses {
-        let prompt = response
-            .get("prompt")
-            .cloned()
-            .unwrap_or(Value::Null);
+        let prompt = response.get("prompt").cloned().unwrap_or(Value::Null);
         let (_, text) = first_text_node(&prompt).unwrap_or_else(|| {
             panic!("DOCX response prompt must contain source-backed text: {response}")
         });
-        assert!(!text.contains("pending review"), "placeholder prompt leaked: {response}");
-        assert!(!text.trim().is_empty(), "DOCX response prompt is empty: {response}");
+        assert!(
+            !text.contains("pending review"),
+            "placeholder prompt leaked: {response}"
+        );
+        assert!(
+            !text.trim().is_empty(),
+            "DOCX response prompt is empty: {response}"
+        );
         prompt_texts.push(text);
     }
     assert!(
@@ -891,13 +902,15 @@ fn dump_v2_visual_package_for_part(nas_parent: &Path, exam_id: &str, category: &
     let existing_anchor = authoring
         .pointer("/passage/content/0/sourceAnchors/0")
         .cloned()
-        .unwrap_or_else(|| json!({
-            "sourceFileId": "source-pdf-1",
-            "pageIndex": 0,
-            "nodeIds": ["region-question-surface"],
-            "extractionMode": "pdf_native",
-            "sourceHash": "a".repeat(64)
-        }));
+        .unwrap_or_else(|| {
+            json!({
+                "sourceFileId": "source-pdf-1",
+                "pageIndex": 0,
+                "nodeIds": ["region-question-surface"],
+                "extractionMode": "pdf_native",
+                "sourceHash": "a".repeat(64)
+            })
+        });
     // 1x1 红色 PNG（CRC 已验证）：真实学生端 <img> 可解码的最小视觉资产。
     let png = build_e2e_png();
     let png_sha = {
@@ -922,8 +935,14 @@ fn dump_v2_visual_package_for_part(nas_parent: &Path, exam_id: &str, category: &
             "altText": "Task map with two labelled regions"
         }]);
         let anchor = existing_anchor;
-        let passage = object.get_mut("passage").and_then(Value::as_object_mut).unwrap();
-        let content = passage.get_mut("content").and_then(Value::as_array_mut).unwrap();
+        let passage = object
+            .get_mut("passage")
+            .and_then(Value::as_object_mut)
+            .unwrap();
+        let content = passage
+            .get_mut("content")
+            .and_then(Value::as_array_mut)
+            .unwrap();
         content.push(json!({
             "id": "passage-figure-map",
             "type": "figure",
@@ -980,13 +999,15 @@ fn dump_v2_visual_package_for_part(nas_parent: &Path, exam_id: &str, category: &
     write_json(&dir.join(DOCUMENT_V2_SHADOW_FILE), &shadow).unwrap();
 
     {
-        let shadow: Value = serde_json::from_slice(&fs::read(dir.join(DOCUMENT_V2_SHADOW_FILE)).unwrap()).unwrap();
+        let shadow: Value =
+            serde_json::from_slice(&fs::read(dir.join(DOCUMENT_V2_SHADOW_FILE)).unwrap()).unwrap();
         let recomputed = crate::ielts_grammar::evaluate_quality(&authoring, Some(&shadow));
         eprintln!(
             "visual dump quality: state={:?} hardFailures={:?} issues={}",
             recomputed.get("state"),
             recomputed.get("hardFailures"),
-            serde_json::to_string(recomputed.get("issues").unwrap_or(&Value::Null)).unwrap_or_default()
+            serde_json::to_string(recomputed.get("issues").unwrap_or(&Value::Null))
+                .unwrap_or_default()
         );
     }
 
@@ -1052,10 +1073,9 @@ fn dump_v2_visual_package_for_part(nas_parent: &Path, exam_id: &str, category: &
 /// 与 dump 测试共用的 1x1 红 PNG（CRC 已验证），足以驱动 <img> 真实解码。
 pub(crate) fn build_e2e_png() -> Vec<u8> {
     vec![
-        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8,
-        6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 218, 99, 252, 207, 192,
-        80, 15, 0, 4, 133, 1, 128, 132, 169, 140, 33, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96,
-        130,
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6,
+        0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 218, 99, 252, 207, 192, 80,
+        15, 0, 4, 133, 1, 128, 132, 169, 140, 33, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
     ]
 }
 
@@ -1486,7 +1506,10 @@ fn publish_items_is_all_or_nothing_across_a_batch() {
     );
     for index in 0..2 {
         assert!(
-            !reading_root.join("resources").join(format!("batch-{index}")).exists(),
+            !reading_root
+                .join("resources")
+                .join(format!("batch-{index}"))
+                .exists(),
             "清单替换前中断不得留下根级资源目录 batch-{index}"
         );
     }
@@ -1510,7 +1533,10 @@ fn publish_items_is_all_or_nothing_across_a_batch() {
         "整批通过时两题都应发布：{published}"
     );
     assert_eq!(
-        published.get("failed").and_then(Value::as_array).map(Vec::len),
+        published
+            .get("failed")
+            .and_then(Value::as_array)
+            .map(Vec::len),
         Some(0)
     );
     let manifest = fs::read_to_string(&manifest_path).expect("batch manifest must exist");
@@ -1527,7 +1553,9 @@ fn publish_items_is_all_or_nothing_across_a_batch() {
     // 学生端 resolver 固定从 reading 根解析 resources/<examId>，
     // 因此批量发布的资源与 asset-manifest 必须落在根级布局，且真实存在。
     for index in 0..2 {
-        let resource_dir = reading_root.join("resources").join(format!("batch-{index}"));
+        let resource_dir = reading_root
+            .join("resources")
+            .join(format!("batch-{index}"));
         assert!(
             resource_dir.join("asset-manifest.json").is_file(),
             "批量发布的资源必须位于根级 resources/<examId>/asset-manifest.json：{}",
@@ -1602,7 +1630,9 @@ fn legacy_authoring_session_reads_the_db_draft_not_the_stale_shadow() {
 
     let session = get_authoring_v2_core(&root, &job.job_id).expect("session must load");
     assert_eq!(
-        session.pointer("/authoring/exam/title").and_then(Value::as_str),
+        session
+            .pointer("/authoring/exam/title")
+            .and_then(Value::as_str),
         Some("权威稿标题"),
         "旧读取链必须返回 DB 权威稿，而不是过期 shadow"
     );

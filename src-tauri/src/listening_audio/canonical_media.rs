@@ -80,7 +80,10 @@ fn probe_field(binding: &ListeningAudioAssetV1, key: &str) -> Option<Value> {
 /// has to be able to offer "replace audio" for that exact part.
 pub(crate) fn media_value(binding: &ListeningAudioAssetV1) -> Value {
     let mut media = Map::new();
-    media.insert("assetId".to_string(), json!(audio_asset_id(&binding.sha256)));
+    media.insert(
+        "assetId".to_string(),
+        json!(audio_asset_id(&binding.sha256)),
+    );
     media.insert(
         "mime".to_string(),
         json!(binding
@@ -109,7 +112,10 @@ pub(crate) fn media_value(binding: &ListeningAudioAssetV1) -> Value {
 pub(crate) fn asset_value(binding: &ListeningAudioAssetV1) -> Value {
     let extension = extension_of(&binding.managed_path);
     let mut asset = Map::new();
-    asset.insert("assetId".to_string(), json!(audio_asset_id(&binding.sha256)));
+    asset.insert(
+        "assetId".to_string(),
+        json!(audio_asset_id(&binding.sha256)),
+    );
     asset.insert("kind".to_string(), json!("audio"));
     asset.insert(
         "mime".to_string(),
@@ -290,7 +296,9 @@ pub(crate) fn sync_item_audio_media(root: &Path, item_id: &str) -> CommandResult
     let mut last_conflict = None;
     for _ in 0..AUDIO_MEDIA_SYNC_ATTEMPTS {
         match sync_item_audio_media_once(root, item_id) {
-            Err(error) if error.starts_with("EDIT_VERSION_CONFLICT:") => last_conflict = Some(error),
+            Err(error) if error.starts_with("EDIT_VERSION_CONFLICT:") => {
+                last_conflict = Some(error)
+            }
             other => return other,
         }
     }
@@ -329,9 +337,11 @@ fn sync_item_audio_media_once(root: &Path, item_id: &str) -> CommandResult<Audio
     // A part whose media a human edited is dropped from the batch *before* it is
     // built. Leaving it in would make the all-or-nothing transaction reject the
     // whole batch, so one hand-edited part would freeze every other part's audio.
-    let protected = crate::library::repository::human_protected_targets(&conn, item_id, &canonical)?;
-    let (protected_parts, changed): (Vec<String>, Vec<String>) =
-        changed.into_iter().partition(|part_id| protected.contains(part_id));
+    let protected =
+        crate::library::repository::human_protected_targets(&conn, item_id, &canonical)?;
+    let (protected_parts, changed): (Vec<String>, Vec<String>) = changed
+        .into_iter()
+        .partition(|part_id| protected.contains(part_id));
     let assets_changed = assets_need_update(&canonical, &bindings);
     if changed.is_empty() && !assets_changed {
         return Ok(AudioMediaSyncV1 {
@@ -576,7 +586,10 @@ mod tests {
             json!(format!("audio/{}.wav", "a".repeat(64)))
         );
         assert_eq!(asset["extractionMode"], json!("user_upload"));
-        assert!(!assets_need_update(&value, &[binding(1, &"a".repeat(64), true)]));
+        assert!(!assets_need_update(
+            &value,
+            &[binding(1, &"a".repeat(64), true)]
+        ));
     }
 
     #[test]
@@ -604,7 +617,10 @@ mod tests {
         let patch = json!({"op": SET_LISTENING_PART_MEDIA_OP, "parts": [{"partId": "part-9", "media": null}]});
         let error =
             apply_set_listening_part_media(&mut value, patch.as_object().unwrap()).unwrap_err();
-        assert!(error.starts_with("AUTHORING_PATCH_PART_NOT_FOUND"), "{error}");
+        assert!(
+            error.starts_with("AUTHORING_PATCH_PART_NOT_FOUND"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -713,7 +729,10 @@ mod media_sync_tests {
         for sample in samples {
             bytes.extend_from_slice(&sample.to_le_bytes());
         }
-        std::fs::File::create(path).unwrap().write_all(&bytes).unwrap();
+        std::fs::File::create(path)
+            .unwrap()
+            .write_all(&bytes)
+            .unwrap();
     }
 
     fn canonical(root: &Path, item_id: &str) -> Value {
@@ -915,7 +934,14 @@ mod media_sync_tests {
         )
         .unwrap();
         let ds = canonical(&root, "item-stale");
-        assert!(changed_parts(&ds, &crate::listening_audio::store::list_bindings(&root, "item-stale").unwrap()).len() == 1);
+        assert!(
+            changed_parts(
+                &ds,
+                &crate::listening_audio::store::list_bindings(&root, "item-stale").unwrap()
+            )
+            .len()
+                == 1
+        );
         // The sync reads the current version itself, so it must succeed against 7
         // and land on 8 — never on a stale 2.
         let sync = sync_item_audio_media(&root, "item-stale").unwrap();
@@ -951,7 +977,10 @@ mod media_sync_tests {
         let assets: Vec<AssetDescriptorV2> =
             serde_json::from_value(ds["assets"].clone()).expect("asset list");
         assert_eq!(structure.parts.len(), 4);
-        assert!(structure.media.is_none(), "audio is per part, not exam-level");
+        assert!(
+            structure.media.is_none(),
+            "audio is per part, not exam-level"
+        );
         assert_eq!(assets.len(), 4);
         assert_eq!(
             validate_listening_structure_media_v2(&structure, &assets),
@@ -1046,7 +1075,11 @@ mod media_sync_tests {
                     .map(|media| !media.is_null())
                     .unwrap_or(false)
             })
-            .filter_map(|part| part.get("partId").and_then(Value::as_str).map(str::to_string))
+            .filter_map(|part| {
+                part.get("partId")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
             .collect()
     }
 
@@ -1084,9 +1117,13 @@ mod media_sync_tests {
                 for ordinal in 1..=4 {
                     let source = binder_root.join(format!("section-{ordinal}.wav"));
                     tone(&source, 300.0 + ordinal as f64 * 60.0);
-                    let bound =
-                        crate::listening_audio::store::bind_audio(&binder_root, item_id, ordinal, &source)
-                            .unwrap();
+                    let bound = crate::listening_audio::store::bind_audio(
+                        &binder_root,
+                        item_id,
+                        ordinal,
+                        &source,
+                    )
+                    .unwrap();
                     assert!(bound.playable, "part {ordinal}: {:?}", bound.issue_codes);
                     // 命令里紧接着就是这次镜像；它可能在「稿还不存在」时静默 no-op。
                     // 这里**不吞掉**结果：丢行时要能从失败信息里看出是哪一次、哪种结局。
@@ -1345,7 +1382,9 @@ mod media_sync_tests {
         seed_item_awaiting_seed(&no_draft, "item-nodraft");
         let source = no_draft.join("section-1.wav");
         tone(&source, 440.0);
-        let bound = crate::listening_audio::store::bind_audio(&no_draft, "item-nodraft", 1, &source).unwrap();
+        let bound =
+            crate::listening_audio::store::bind_audio(&no_draft, "item-nodraft", 1, &source)
+                .unwrap();
         ensure_part_media_matches(&no_draft, "item-nodraft", 1, &bound).unwrap();
         let _ = std::fs::remove_dir_all(&no_draft);
     }

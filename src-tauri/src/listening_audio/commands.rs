@@ -57,7 +57,10 @@ pub(crate) fn bind_audio_command_path(
     item_id: &str,
     part_ordinal: i64,
     path: &Path,
-) -> CommandResult<(store::ListeningAudioAssetV1, super::canonical_media::AudioMediaSyncV1)> {
+) -> CommandResult<(
+    store::ListeningAudioAssetV1,
+    super::canonical_media::AudioMediaSyncV1,
+)> {
     let bound = store::bind_audio(root, item_id, part_ordinal, path)?;
     // Mirror onto the canonical draft's part `media` through a real edit
     // transaction, so preview/export/student runtime read one document.
@@ -65,24 +68,41 @@ pub(crate) fn bind_audio_command_path(
     // 台账写成功 ≠ 绑定成功：预览/导出/学生端只读权威稿里的 part media。
     // 稿已存在而这一 part 的 media 没跟上（镜像被人工保护挡住、或写入没落盘）时
     // 必须如实报错——返回 Ok 会让界面说「已添加」，而音频根本读不到。
+    if super::canonical_media::ensure_part_media_matches(root, item_id, part_ordinal, &bound)
+        .is_ok()
+    {
+        return Ok((bound, sync));
+    }
+    // 识别首稿可能恰好落在上面两步之间：播种读台账时这一行还没写入，镜像时稿又还不存在
+    // （no-draft 分支空转），于是稿落盘后缺这一 part 的 media，之后也没有人再补。
+    // 此时稿已存在，再镜像一次即可补齐；人工保护挡住的 part 第二次仍然对不上，照实报错。
+    let sync = super::canonical_media::sync_item_audio_media(root, item_id)?;
     super::canonical_media::ensure_part_media_matches(root, item_id, part_ordinal, &bound)?;
     Ok((bound, sync))
 }
 
 #[tauri::command]
-pub(crate) async fn bind_listening_audio(input: BindListeningAudioInput, app: AppHandle) -> CommandResult<Value> {
+pub(crate) async fn bind_listening_audio(
+    input: BindListeningAudioInput,
+    app: AppHandle,
+) -> CommandResult<Value> {
     let root = crate::app_root(&app)?;
     allow_managed_audio(&app, &root);
     let item_id = input.item_id.clone();
     let part_ordinal = input.part_ordinal;
     let path = input.path.clone();
-    let bound = blocking(move || bind_audio_command_path(&root, &item_id, part_ordinal, Path::new(&path)))
-        .await?;
+    let bound =
+        blocking(move || bind_audio_command_path(&root, &item_id, part_ordinal, Path::new(&path)))
+            .await?;
     to_value(bound.0)
 }
 
 #[tauri::command]
-pub(crate) async fn bind_listening_audio_folder(item_id: String, folder: String, app: AppHandle) -> CommandResult<Value> {
+pub(crate) async fn bind_listening_audio_folder(
+    item_id: String,
+    folder: String,
+    app: AppHandle,
+) -> CommandResult<Value> {
     let root = crate::app_root(&app)?;
     allow_managed_audio(&app, &root);
     let bound = blocking(move || {
@@ -95,7 +115,11 @@ pub(crate) async fn bind_listening_audio_folder(item_id: String, folder: String,
 }
 
 #[tauri::command]
-pub(crate) async fn unbind_listening_audio(item_id: String, part_ordinal: i64, app: AppHandle) -> CommandResult<Value> {
+pub(crate) async fn unbind_listening_audio(
+    item_id: String,
+    part_ordinal: i64,
+    app: AppHandle,
+) -> CommandResult<Value> {
     let root = crate::app_root(&app)?;
     let removed = blocking(move || {
         let removed = store::unbind_audio(&root, &item_id, part_ordinal)?;
@@ -108,7 +132,11 @@ pub(crate) async fn unbind_listening_audio(item_id: String, part_ordinal: i64, a
 
 /// Bindings + readiness. `verify: true` re-probes each managed file against its hash.
 #[tauri::command]
-pub(crate) async fn get_listening_audio(item_id: String, verify: Option<bool>, app: AppHandle) -> CommandResult<Value> {
+pub(crate) async fn get_listening_audio(
+    item_id: String,
+    verify: Option<bool>,
+    app: AppHandle,
+) -> CommandResult<Value> {
     let root = crate::app_root(&app)?;
     allow_managed_audio(&app, &root);
     let status = blocking(move || {

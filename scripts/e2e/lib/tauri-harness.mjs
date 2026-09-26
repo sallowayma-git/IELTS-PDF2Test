@@ -23,6 +23,8 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { Builder, By, until } from "selenium-webdriver";
 
+import { sanitizedAppEnv } from "./tauri-cdp-harness.mjs";
+
 export const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 export const DEFAULT_EXE = path.join(repoRoot, "src-tauri", "target", "debug", "ielts-author-studio.exe");
 export const DEFAULT_PDF = path.join(repoRoot, "fixtures", "golden", "synthetic", "pdf", "pdf-two-column.pdf");
@@ -85,44 +87,192 @@ function webview2Version() {
   return probe.stdout.match(/REG_SZ\s+([\d.]+)/)?.[1] ?? null;
 }
 
-function findMsedgedriver() {
+function driverOnPath() {
   const probe = runCapture("where", ["msedgedriver"]);
-  if (probe.status === 0) {
-    const first = probe.stdout.split(/\r?\n/).find((line) => line.trim().endsWith(".exe"));
-    if (first) return path.dirname(path.resolve(first.trim()));
-  }
-  const cached = path.join(DRIVER_CACHE_DIR, "msedgedriver.exe");
-  if (fs.existsSync(cached)) return DRIVER_CACHE_DIR;
-  return null;
+  if (probe.status !== 0) return null;
+  const first = probe.stdout.split(/\r?\n/).find((line) => line.trim().endsWith(".exe"));
+  return first ? path.dirname(path.resolve(first.trim())) : null;
 }
 
-async function ensureMsedgedriver() {
-  const existing = findMsedgedriver();
-  if (existing) return existing;
+function msedgedriverVersion(dir) {
+  const probe = runCapture(path.join(dir, "msedgedriver.exe"), ["--version"]);
+  if (probe.status !== 0) return null;
+  return probe.stdout.match(/(\d+\.\d+\.\d+\.\d+)/)?.[1] ?? null;
+}
 
-  const version = webview2Version();
-  if (!version) {
+// msedgedriver 必须与被测 exe 实际加载的 WebView2 运行时同版本。版本不一致时驱动能启动 exe，
+// 却连不上 WebView2 的调试端点，会话以 "DevToolsActivePort file doesn't exist" 失败。
+// PATH 上的驱动（例如 GitHub windows 镜像预装的、跟随 Edge 浏览器版本的那个）与旧缓存都可能过期，
+// 所以只接受版本一致的驱动，否则按运行时版本下载到独立的版本目录。
+async function ensureMsedgedriver() {
+  const runtime = webview2Version();
+  if (!runtime) {
+    const fallback = driverOnPath()
+      ?? (fs.existsSync(path.join(DRIVER_CACHE_DIR, "msedgedriver.exe")) ? DRIVER_CACHE_DIR : null);
+    if (fallback) {
+      console.log(`[e2e:tauri] WebView2 runtime version unknown; using msedgedriver ${msedgedriverVersion(fallback)} from ${fallback}`);
+      return fallback;
+    }
     throw new CannotRunError("未找到 msedgedriver，也无法从注册表读取 WebView2 运行时版本（无法自动下载匹配驱动）。");
   }
-  console.log(`[e2e:tauri] WebView2 runtime ${version}; downloading matching msedgedriver...`);
-  fs.mkdirSync(DRIVER_CACHE_DIR, { recursive: true });
-  const zipPath = path.join(DRIVER_CACHE_DIR, `edgedriver-${version}.zip`);
+
+  const versionDir = path.join(DRIVER_CACHE_DIR, runtime);
+  for (const candidate of [versionDir, driverOnPath(), DRIVER_CACHE_DIR]) {
+    if (!candidate || !fs.existsSync(path.join(candidate, "msedgedriver.exe"))) continue;
+    const driverVersion = msedgedriverVersion(candidate);
+    if (driverVersion === runtime) {
+      console.log(`[e2e:tauri] msedgedriver ${driverVersion} matches WebView2 runtime (${candidate})`);
+      return candidate;
+    }
+    console.log(`[e2e:tauri] skipping msedgedriver ${driverVersion ?? "(unknown)"} at ${candidate}: WebView2 runtime is ${runtime}`);
+  }
+
+  console.log(`[e2e:tauri] WebView2 runtime ${runtime}; downloading matching msedgedriver...`);
+  fs.mkdirSync(versionDir, { recursive: true });
+  const zipPath = path.join(versionDir, `edgedriver-${runtime}.zip`);
   const zipResult = runCapture("powershell", [
     "-NoProfile", "-Command",
-    `Invoke-WebRequest -Uri '${MSEDGEDRIVER_CDN}/${version}/edgedriver_win64.zip' -OutFile '${zipPath}'`
+    `Invoke-WebRequest -Uri '${MSEDGEDRIVER_CDN}/${runtime}/edgedriver_win64.zip' -OutFile '${zipPath}'`
   ]);
   if (zipResult.status !== 0 || !fs.existsSync(zipPath)) {
-    throw new CannotRunError(`下载 msedgedriver ${version} 失败：${zipResult.stdout.slice(0, 400)}`);
+    throw new CannotRunError(`下载 msedgedriver ${runtime} 失败：${zipResult.stdout.slice(0, 400)}`);
   }
   const unzip = runCapture("powershell", [
     "-NoProfile", "-Command",
-    `Expand-Archive -Force -Path '${zipPath}' -DestinationPath '${DRIVER_CACHE_DIR}'`
+    `Expand-Archive -Force -Path '${zipPath}' -DestinationPath '${versionDir}'`
   ]);
-  const driverExe = path.join(DRIVER_CACHE_DIR, "msedgedriver.exe");
-  if (unzip.status !== 0 || !fs.existsSync(driverExe)) {
+  if (unzip.status !== 0 || !fs.existsSync(path.join(versionDir, "msedgedriver.exe"))) {
     throw new CannotRunError(`解压 msedgedriver 失败：${unzip.stdout.slice(0, 400)}`);
   }
-  return DRIVER_CACHE_DIR;
+  return versionDir;
+}
+
+/**
+ * 会话建不起来时，把能解释「DevToolsActivePort file doesn't exist」的证据打出来：
+ * 启动前被清掉的环境残留，以及 msedgedriver 给 WebView2 分配的 %TEMP%\scoped_dir*
+ * （它会覆盖 WEBVIEW2_USER_DATA_FOLDER）里有没有生成 EBWebView 配置、chrome_debug.log 写了什么。
+ */
+function logLaunchDiagnostics(sinceMs, runDir) {
+  try {
+    // WebView2 的配置目录可能落在：我们指定的 WEBVIEW2_USER_DATA_FOLDER、msedgedriver 的
+    // scoped_dir、或应用默认的 %LOCALAPPDATA%\<identifier>\EBWebView。哪个都没有 = WebView2 根本没起来。
+    const localAppData = process.env.LOCALAPPDATA;
+    for (const dir of [
+      path.join(runDir, "appdata", "webview"),
+      localAppData ? path.join(localAppData, "com.ielts.author.studio") : null,
+    ].filter(Boolean)) {
+      const profile = path.join(dir, "EBWebView");
+      console.log(`[e2e:tauri] ${dir}: EBWebView=${fs.existsSync(profile)}${fs.existsSync(profile) ? ` DevToolsActivePort=${fs.existsSync(path.join(profile, "DevToolsActivePort"))}` : ""}`);
+    }
+    const env = process.env;
+    const proxies = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]
+      .filter((key) => env[key]);
+    const badPath = (env.PATH ?? "").split(path.delimiter).filter((entry) => !entry || !fs.existsSync(entry)).length;
+    console.log(`[e2e:tauri] launch env: proxies=[${proxies.join(",")}] __COMPAT_LAYER=${env.__COMPAT_LAYER ?? "(unset)"} badPathEntries=${badPath} (all removed before launch)`);
+    const temp = env.TEMP ?? env.TMP;
+    if (!temp || !fs.existsSync(temp)) return;
+    const scoped = fs.readdirSync(temp)
+      .filter((name) => name.startsWith("scoped_dir"))
+      .map((name) => path.join(temp, name))
+      .filter((dir) => fs.statSync(dir).mtimeMs >= sinceMs - 5000);
+    if (!scoped.length) {
+      console.log(`[e2e:tauri] no msedgedriver scoped_dir created under ${temp} since launch`);
+      return;
+    }
+    for (const dir of scoped) {
+      const profile = path.join(dir, "EBWebView");
+      const debugLog = path.join(profile, "chrome_debug.log");
+      console.log(`[e2e:tauri] ${dir}: EBWebView=${fs.existsSync(profile)} DevToolsActivePort=${fs.existsSync(path.join(profile, "DevToolsActivePort"))}`);
+      if (fs.existsSync(debugLog)) {
+        console.log(`[e2e:tauri] chrome_debug.log (tail):\n${fs.readFileSync(debugLog, "utf8").slice(-3000)}`);
+      }
+    }
+  } catch (error) {
+    console.log(`[e2e:tauri] launch diagnostics failed: ${error.message}`);
+  }
+}
+
+/** 打印当前 msedgewebview2.exe 浏览器进程的命令行，以及可能覆盖 WebView2 参数的策略注册表项。 */
+function logWebViewCommandLines() {
+  const processes = runCapture("powershell", [
+    "-NoProfile", "-Command",
+    "Get-CimInstance Win32_Process -Filter \"name='msedgewebview2.exe'\" | "
+      + "Where-Object { $_.CommandLine -notmatch '--type=' -and $_.CommandLine -match 'ielts-author-studio' } | ForEach-Object { $_.CommandLine }",
+  ]);
+  console.log(`[e2e:tauri] msedgewebview2 browser process command lines:\n${processes.stdout.trim().slice(0, 4000) || "(none)"}`);
+  for (const key of [
+    "HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge",
+    "HKCU\\SOFTWARE\\Policies\\Microsoft\\Edge",
+    "HKLM\\SOFTWARE\\WOW6432Node\\Policies\\Microsoft\\Edge",
+  ]) {
+    const query = runCapture("reg", ["query", key, "/s"]);
+    console.log(`[e2e:tauri] ${key}: ${query.status === 0 ? `\n${query.stdout.trim().slice(0, 2000)}` : "(absent)"}`);
+  }
+}
+
+/**
+ * 绕开 tauri-driver / msedgedriver，直接用 WebView2 官方变量打开调试端点启动被测 exe，
+ * 判断「这台机器上 WebView2 调试端点能不能起来」：能起来 → 问题在驱动链；起不来 → 问题在
+ * WebView2 本身（打印 chrome_debug.log）。只在会话建立失败时运行，只做诊断。
+ */
+async function probeWebView2Directly(exePath, runDir) {
+  let child = null;
+  try {
+    const port = await freePort();
+    const profileRoot = path.join(runDir, "appdata", "probe-webview");
+    fs.mkdirSync(profileRoot, { recursive: true });
+    const env = {
+      ...sanitizedAppEnv(process.env),
+      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --remote-allow-origins=* --enable-logging --v=0`,
+      WEBVIEW2_USER_DATA_FOLDER: profileRoot,
+      PDF2TEST_AUTOMATION_DATA_DIR: path.join(runDir, "appdata", "probe-data"),
+    };
+    let output = "";
+    let exitCode = null;
+    child = spawn(exePath, [], { stdio: ["ignore", "pipe", "pipe"], env, windowsHide: true });
+    child.stdout.on("data", (chunk) => { output += String(chunk); });
+    child.stderr.on("data", (chunk) => { output += String(chunk); });
+    child.on("exit", (code) => { exitCode = code; });
+    const probeStartedAt = Date.now();
+    const deadline = probeStartedAt + 90000;
+    const profile = path.join(profileRoot, "EBWebView");
+    let version = null;
+    let profileAppearedMs = null;
+    let commandLinesLogged = false;
+    while (Date.now() < deadline && exitCode === null && !version) {
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/json/version`);
+        if (response.ok) version = await response.json();
+      } catch {}
+      if (profileAppearedMs === null && fs.existsSync(profile)) profileAppearedMs = Date.now() - probeStartedAt;
+      // 浏览器进程起来后读一次它的真实命令行：参数有没有真正传到 msedgewebview2.exe，一眼可见。
+      if (!commandLinesLogged && profileAppearedMs !== null && Date.now() - probeStartedAt - profileAppearedMs > 5000) {
+        commandLinesLogged = true;
+        logWebViewCommandLines();
+      }
+      if (!version) await sleep(500);
+    }
+    if (!commandLinesLogged) logWebViewCommandLines();
+    console.log(`[e2e:tauri] direct probe: EBWebView appeared after ${profileAppearedMs ?? "never"} ms`);
+    if (fs.existsSync(profile)) {
+      console.log(`[e2e:tauri] direct probe EBWebView entries: ${fs.readdirSync(profile).join(", ")}`);
+    }
+    console.log(
+      `[e2e:tauri] direct WebView2 probe: endpoint=${version ? `up (${version.Browser ?? "?"})` : "down"} ` +
+      `exit=${exitCode ?? "running"} EBWebView=${fs.existsSync(profile)} ` +
+      `DevToolsActivePort=${fs.existsSync(path.join(profile, "DevToolsActivePort"))}`
+    );
+    if (output.trim()) console.log(`[e2e:tauri] direct probe app output (tail):\n${output.slice(-2000)}`);
+    const debugLog = path.join(profile, "chrome_debug.log");
+    if (fs.existsSync(debugLog)) {
+      console.log(`[e2e:tauri] direct probe chrome_debug.log (tail):\n${fs.readFileSync(debugLog, "utf8").slice(-3000)}`);
+    }
+  } catch (error) {
+    console.log(`[e2e:tauri] direct WebView2 probe failed: ${error.message}`);
+  } finally {
+    try { child?.kill(); } catch {}
+    await sleep(1000);
+  }
 }
 
 /** 被测 exe 内嵌构建时的前端产物；若 src 比 exe 新，本次结果不能证明当前源码（A11-F01 根因之一）。 */
@@ -335,12 +485,17 @@ export async function launchTauriApp({ exePath, pdfPath, keep = false, runPrefix
 
   console.log(`[e2e:tauri] run dir: ${runDir}`);
   console.log(`[e2e:tauri] starting tauri-driver on :${port}`);
+  const launchEnv = sanitizedAppEnv(process.env);
+  const launchStartedAt = Date.now();
   const driverProcess = spawn("tauri-driver", ["--port", String(port)], {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
-      ...process.env,
+      // tauri-driver 的环境会一路传给 msedgedriver 和被测 exe：先清掉已知会让 WebView2
+      // 调试端点起不来的宿主残留（代理 / __COMPAT_LAYER / 坏掉的 PATH 项，见
+      // findings.md F-WEBVIEW2-CDP-UNAVAILABLE-2026-09-22），与 CDP 通道一致。
+      ...launchEnv,
       ...appEnv,
-      PATH: `${driverDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      PATH: `${driverDir}${path.delimiter}${launchEnv.PATH ?? ""}`,
       // Windows 上 Tauri 的 app_data_dir 走 known-folder API、WebView2 配置同理，
       // 都不读 APPDATA/LOCALAPPDATA 环境变量，因此必须用产品侧测试钩子
       // （PDF2TEST_AUTOMATION_DATA_DIR，见 lib.rs app_root）+ WebView2 官方变量做隔离。
@@ -383,6 +538,9 @@ export async function launchTauriApp({ exePath, pdfPath, keep = false, runPrefix
   } catch (error) {
     try { await driver?.quit(); } catch {}
     try { driverProcess.kill(); } catch {}
+    if (driverStderr.trim()) console.log(`[e2e:tauri] tauri-driver stderr (tail):\n${driverStderr.slice(-3000)}`);
+    logLaunchDiagnostics(launchStartedAt, runDir);
+    await probeWebView2Directly(exePath, runDir);
     if (!keep) {
       await sleep(1500);
       try { fs.rmSync(runDir, { recursive: true, force: true }); } catch {}
@@ -454,10 +612,12 @@ export async function waitForRowStage(driver, itemId, timeoutMs) {
     const rows = await driver.findElements(By.css(selector));
     if (rows.length) {
       const text = (await rows[0].getText()).replace(/\s+/g, " ").trim();
+      const stageClass = await rows[0].getAttribute("class");
       lastText = text;
-      // 待检查/可发布/失败/已发布 都意味着 job 不再处于 Working（见 libraryTypes deriveStage）。
-      if (/待检查|可发布|失败|已发布/.test(text)) {
-        return { stageClass: await rows[0].getAttribute("class"), rowText: text };
+      // 按行的 stage-* class 判断，不按文案：action_required/ready 现在都显示「识别完成」，
+      // 文案会随产品措辞变化（见 libraryTypes STAGE_LABEL / LibraryItemRow）。
+      if (/\bstage-(action_required|ready|published|failed)\b/.test(stageClass ?? "")) {
+        return { stageClass, rowText: text };
       }
     }
     await sleep(1000);

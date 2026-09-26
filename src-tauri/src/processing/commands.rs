@@ -9,8 +9,10 @@ use serde_json::{json, Value};
 use tauri::AppHandle;
 
 use crate::job_store::{make_job, save_job};
-use crate::library::repository::{open_library_connection, set_item_status, upsert_item_shell, UpsertItemInput};
-use crate::{app_root, CreateJobInput, CommandResult};
+use crate::library::repository::{
+    open_library_connection, set_item_status, upsert_item_shell, UpsertItemInput,
+};
+use crate::{app_root, CommandResult, CreateJobInput};
 
 const MAX_IMPORT_FILE_BYTES: u64 = 128 * 1024 * 1024;
 
@@ -59,14 +61,20 @@ pub(crate) struct ImportFilesResult {
     pub rejected: Vec<ImportRejectedFile>,
 }
 
-pub(crate) async fn import_files_core(app: &AppHandle, input: ImportFilesInput) -> CommandResult<ImportFilesResult> {
+pub(crate) async fn import_files_core(
+    app: &AppHandle,
+    input: ImportFilesInput,
+) -> CommandResult<ImportFilesResult> {
     let root = app_root(app)?;
     tauri::async_runtime::spawn_blocking(move || import_files_at_root(&root, input))
         .await
         .map_err(|error| error.to_string())?
 }
 
-pub(crate) fn import_files_at_root(root: &std::path::Path, input: ImportFilesInput) -> CommandResult<ImportFilesResult> {
+pub(crate) fn import_files_at_root(
+    root: &std::path::Path,
+    input: ImportFilesInput,
+) -> CommandResult<ImportFilesResult> {
     let cloud_enabled = input.cloud_enabled.unwrap_or(false);
     let modality = normalize_import_modality(input.modality.as_deref())?;
     let mut created = Vec::new();
@@ -79,8 +87,16 @@ pub(crate) fn import_files_at_root(root: &std::path::Path, input: ImportFilesInp
             .filter(|hint| !hint.trim().is_empty())
             .unwrap_or_else(|| file.name.trim_end_matches(['.', ' ']).to_string());
         let title = {
-            let stem = file.name.rsplit_once('.').map(|(stem, _)| stem).unwrap_or(&file.name);
-            if title.trim().is_empty() { stem.to_string() } else { title }
+            let stem = file
+                .name
+                .rsplit_once('.')
+                .map(|(stem, _)| stem)
+                .unwrap_or(&file.name);
+            if title.trim().is_empty() {
+                stem.to_string()
+            } else {
+                title
+            }
         };
 
         if file.size_bytes > MAX_IMPORT_FILE_BYTES {
@@ -108,7 +124,10 @@ pub(crate) fn import_files_at_root(root: &std::path::Path, input: ImportFilesInp
         if let Err(error) = staged {
             // G1 边界：save_job/staging 失败同样会留下 job 壳（目录 + job.json），
             // 与 queue 失败同口径补偿清理，不留磁盘孤儿。
-            rejected.push(ImportRejectedFile { name: file.name.clone(), reason: error });
+            rejected.push(ImportRejectedFile {
+                name: file.name.clone(),
+                reason: error,
+            });
             compensate_failed_import(root, &job_id);
             continue;
         }
@@ -127,11 +146,17 @@ pub(crate) fn import_files_at_root(root: &std::path::Path, input: ImportFilesInp
             // G1/A4-F01：queue 失败必须补偿——磁盘 job 目录（含 staged 文件）
             // 与可能残留的 DB 行一并清除，不留「磁盘有 job、DB 无可见行」的孤儿；
             // 以 rejected 明确告知用户（原始文件未被移动或修改）。
-            rejected.push(ImportRejectedFile { name: file.name.clone(), reason: error });
+            rejected.push(ImportRejectedFile {
+                name: file.name.clone(),
+                reason: error,
+            });
             compensate_failed_import(root, &job_id);
             continue;
         }
-        created.push(ImportCreatedItem { item_id: job_id, title });
+        created.push(ImportCreatedItem {
+            item_id: job_id,
+            title,
+        });
     }
 
     Ok(ImportFilesResult { created, rejected })
@@ -181,8 +206,9 @@ fn queue_import(
     modality: &str,
 ) -> CommandResult<()> {
     let conn = open_library_connection(root)?;
-    let transaction = rusqlite::Transaction::new_unchecked(&conn, rusqlite::TransactionBehavior::Immediate)
-        .map_err(|error| error.to_string())?;
+    let transaction =
+        rusqlite::Transaction::new_unchecked(&conn, rusqlite::TransactionBehavior::Immediate)
+            .map_err(|error| error.to_string())?;
     upsert_item_shell(
         &transaction,
         &UpsertItemInput {
@@ -269,7 +295,10 @@ mod tests {
             modality: None,
         };
         let result = import_files_at_root(&root, input).unwrap();
-        assert!(result.created.is_empty(), "queue 失败的文件不得计入 created");
+        assert!(
+            result.created.is_empty(),
+            "queue 失败的文件不得计入 created"
+        );
         assert_eq!(result.rejected.len(), 1, "失败必须以 rejected 明确告知");
         let jobs_dir = root.join("jobs");
         let leftover = fs::read_dir(&jobs_dir)
@@ -295,7 +324,16 @@ mod tests {
             modality: modality.map(str::to_string),
         };
         let result = import_files_at_root(root, input).unwrap();
-        assert_eq!(result.created.len(), 1, "rejected: {:?}", result.rejected.iter().map(|r| &r.reason).collect::<Vec<_>>());
+        assert_eq!(
+            result.created.len(),
+            1,
+            "rejected: {:?}",
+            result
+                .rejected
+                .iter()
+                .map(|r| &r.reason)
+                .collect::<Vec<_>>()
+        );
         result.created[0].item_id.clone()
     }
 
@@ -309,18 +347,24 @@ mod tests {
             "taskGroups": []
         });
         fs::write(
-            crate::util::job_dir(root, item_id).join(crate::authoring_v2_commands::AUTHORING_V2_SHADOW_FILE),
+            crate::util::job_dir(root, item_id)
+                .join(crate::authoring_v2_commands::AUTHORING_V2_SHADOW_FILE),
             serde_json::to_vec(&authoring).unwrap(),
         )
         .unwrap();
         assert!(crate::library::migration::ensure_initial_canonical(root, item_id).unwrap());
         let conn = open_library_connection(root).unwrap();
-        crate::library::repository::get_canonical_ds(&conn, item_id).unwrap().unwrap().0
+        crate::library::repository::get_canonical_ds(&conn, item_id)
+            .unwrap()
+            .unwrap()
+            .0
     }
 
     fn item_rows(root: &std::path::Path) -> Vec<(String, String)> {
         let conn = open_library_connection(root).unwrap();
-        let mut stmt = conn.prepare("SELECT id, modality FROM library_items_v2").unwrap();
+        let mut stmt = conn
+            .prepare("SELECT id, modality FROM library_items_v2")
+            .unwrap();
         stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .unwrap()
             .map(Result::unwrap)
@@ -335,13 +379,24 @@ mod tests {
         assert_eq!(rows, vec![(item_id.clone(), "listening".to_string())]);
         let conn = open_library_connection(&root).unwrap();
         let payload: String = conn
-            .query_row("SELECT progress_json FROM processing_jobs_v2 WHERE id = ?1", [&item_id], |row| row.get(0))
+            .query_row(
+                "SELECT progress_json FROM processing_jobs_v2 WHERE id = ?1",
+                [&item_id],
+                |row| row.get(0),
+            )
             .unwrap();
         drop(conn);
-        assert_eq!(serde_json::from_str::<Value>(&payload).unwrap()["modality"], "listening");
+        assert_eq!(
+            serde_json::from_str::<Value>(&payload).unwrap()["modality"],
+            "listening"
+        );
         let canonical = seed_pipeline_draft(&root, &item_id);
         assert_eq!(canonical["modality"], "listening");
-        assert_eq!(item_rows(&root).len(), 1, "seeding must not create a second item");
+        assert_eq!(
+            item_rows(&root).len(),
+            1,
+            "seeding must not create a second item"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -349,7 +404,10 @@ mod tests {
     fn reading_import_stays_reading_by_default() {
         let root = temp_root();
         let item_id = import_one(&root, None);
-        assert_eq!(item_rows(&root), vec![(item_id.clone(), "reading".to_string())]);
+        assert_eq!(
+            item_rows(&root),
+            vec![(item_id.clone(), "reading".to_string())]
+        );
         let canonical = seed_pipeline_draft(&root, &item_id);
         assert_eq!(canonical["modality"], "reading");
         let _ = fs::remove_dir_all(&root);
@@ -385,7 +443,10 @@ mod tests {
 
         let input = ImportFilesInput {
             files: vec![ImportFileInput {
-                path: root.join("missing-source.pdf").to_string_lossy().to_string(),
+                path: root
+                    .join("missing-source.pdf")
+                    .to_string_lossy()
+                    .to_string(),
                 name: "missing-source.pdf".to_string(),
                 size_bytes: 0,
                 title_hint: None,
@@ -396,7 +457,11 @@ mod tests {
         };
         let result = import_files_at_root(&root, input).unwrap();
         assert!(result.created.is_empty());
-        assert_eq!(result.rejected.len(), 1, "staging 失败必须以 rejected 明确告知");
+        assert_eq!(
+            result.rejected.len(),
+            1,
+            "staging 失败必须以 rejected 明确告知"
+        );
         let jobs_dir = root.join("jobs");
         let leftover = fs::read_dir(&jobs_dir)
             .map(|entries| entries.count())

@@ -56,7 +56,9 @@ impl CompiledExamSourceV2 {
     /// Re-check the compiled document against **its own** contract.
     pub(crate) fn is_valid(&self) -> bool {
         match self {
-            Self::Reading(source) => crate::reading_source_v2::validate_reading_source_v2(source).is_empty(),
+            Self::Reading(source) => {
+                crate::reading_source_v2::validate_reading_source_v2(source).is_empty()
+            }
             Self::Listening(source) => validate_listening_exam_source_v1(source).is_empty(),
         }
     }
@@ -176,7 +178,9 @@ impl CompiledExamSourceV2 {
     /// half of that closure.
     pub(crate) fn referenced_asset_ids(&self) -> Vec<String> {
         match self {
-            Self::Reading(source) => crate::reading_runtime_v2::reading_referenced_asset_ids(source),
+            Self::Reading(source) => {
+                crate::reading_runtime_v2::reading_referenced_asset_ids(source)
+            }
             Self::Listening(source) => {
                 let mut ids = std::collections::BTreeSet::new();
                 if let Some(media) = &source.media {
@@ -213,9 +217,8 @@ pub(crate) fn compile_exam_source_v2(
     source: &IeltsAuthoringIRV2,
 ) -> Result<CompiledExamSourceV2, Vec<CompilerIssueV2>> {
     match source.modality {
-        ExamModalityV2::Listening => {
-            compile_listening_source_v1(source).map(|source| CompiledExamSourceV2::Listening(Box::new(source)))
-        }
+        ExamModalityV2::Listening => compile_listening_source_v1(source)
+            .map(|source| CompiledExamSourceV2::Listening(Box::new(source))),
         ExamModalityV2::Reading => {
             compile_reading_source_v2(source).map(CompiledExamSourceV2::Reading)
         }
@@ -402,17 +405,24 @@ mod tests {
         let mut source = complete_exam();
         source.listening.as_mut().unwrap().parts[2].media = None;
         let issues = compile_listening_source_v1(&source).expect_err("must not compile");
-        assert!(issues.iter().any(|issue| issue.code == "LISTENING_MEDIA_MISSING"));
+        assert!(issues
+            .iter()
+            .any(|issue| issue.code == "LISTENING_MEDIA_MISSING"));
         assert!(issues.iter().any(|issue| issue.target_id == "part-3"));
     }
 
     #[test]
     fn a_blocked_probe_is_rejected_so_unusable_audio_cannot_publish() {
         let mut source = complete_exam();
-        let media = source.listening.as_mut().unwrap().parts[1].media.as_mut().unwrap();
+        let media = source.listening.as_mut().unwrap().parts[1]
+            .media
+            .as_mut()
+            .unwrap();
         media.probe.as_mut().unwrap().status = ListeningAudioProbeStatusV1::Blocked;
         let issues = compile_listening_source_v1(&source).expect_err("must not compile");
-        assert!(issues.iter().any(|issue| issue.code == "AUDIO_DECODE_FAILED"));
+        assert!(issues
+            .iter()
+            .any(|issue| issue.code == "AUDIO_DECODE_FAILED"));
     }
 
     #[test]
@@ -420,7 +430,9 @@ mod tests {
         let mut source = complete_exam();
         source.assets[0].sha256 = "b".repeat(64);
         let issues = compile_listening_source_v1(&source).expect_err("must not compile");
-        assert!(issues.iter().any(|issue| issue.code == "AUDIO_HASH_MISMATCH"));
+        assert!(issues
+            .iter()
+            .any(|issue| issue.code == "AUDIO_HASH_MISMATCH"));
     }
 
     #[test]
@@ -463,7 +475,10 @@ mod tests {
         let document = listening.document().unwrap();
         assert_eq!(document["schemaVersion"], "ListeningExamSourceV1");
         assert_eq!(document["parts"].as_array().unwrap().len(), 4);
-        assert!(document.get("passage").is_none(), "a listening source has no passage");
+        assert!(
+            document.get("passage").is_none(),
+            "a listening source has no passage"
+        );
     }
 
     /// The shared slot ordering must not drift between the two contracts: a
@@ -497,6 +512,9 @@ mod tests {
     fn the_fixture_display_range_matches_the_schema() {
         let expression: QuestionNumberExpressionV2 =
             serde_json::from_value(json!({"kind": "range", "start": 1, "end": 10})).unwrap();
-        assert_eq!(expression, QuestionNumberExpressionV2::Range { start: 1, end: 10 });
+        assert_eq!(
+            expression,
+            QuestionNumberExpressionV2::Range { start: 1, end: 10 }
+        );
     }
 }

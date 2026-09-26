@@ -12,18 +12,24 @@ use super::candidate::normalize_text;
 use super::source::{SourceVerdictV1, SourceVerificationV1};
 use crate::schema::recognition_v1::{
     reason, CandidateSlotV1, ChainKindV1, ChainStatusV1, DecisionEvidenceV1, DecisionFieldV1,
-    DecisionItemV1, DecisionResolutionV1, DecisionSeverityV1, DecisionStatusV1, DecisionTargetTypeV1,
-    DecisionTargetV1, RecognitionCandidateV1,
+    DecisionItemV1, DecisionResolutionV1, DecisionSeverityV1, DecisionStatusV1,
+    DecisionTargetTypeV1, DecisionTargetV1, RecognitionCandidateV1,
 };
 
 // ── 权威稿读取 helper（只读）────────────────────────────────────────────
 
 pub(crate) fn canonical_slot<'a>(canonical: &'a Value, slot_id: &str) -> Option<&'a Value> {
-    canonical.get("answerSlots").and_then(Value::as_object)?.get(slot_id)
+    canonical
+        .get("answerSlots")
+        .and_then(Value::as_object)?
+        .get(slot_id)
 }
 
 pub(crate) fn canonical_answer<'a>(canonical: &'a Value, slot_id: &str) -> Option<&'a Value> {
-    canonical.get("answerKey").and_then(Value::as_object)?.get(slot_id)
+    canonical
+        .get("answerKey")
+        .and_then(Value::as_object)?
+        .get(slot_id)
 }
 
 pub(crate) fn canonical_slot_has_anchors(canonical: &Value, slot_id: &str) -> bool {
@@ -83,7 +89,9 @@ pub(crate) fn answer_is_empty(answer: Option<&Value>) -> bool {
 
 /// 答案的规范化比较键。`unresolved` 与缺失等价（都返回空串）。
 pub(crate) fn answer_compare_key(answer: Option<&Value>) -> String {
-    let Some(answer) = answer else { return String::new() };
+    let Some(answer) = answer else {
+        return String::new();
+    };
     match answer.get("kind").and_then(Value::as_str) {
         Some("text") => {
             let mut values: Vec<String> = answer
@@ -118,14 +126,21 @@ pub(crate) fn answer_compare_key(answer: Option<&Value>) -> String {
             format!(
                 "opt:{}:{}",
                 labels.join(","),
-                answer.get("assignment").and_then(Value::as_str).unwrap_or("per_slot")
+                answer
+                    .get("assignment")
+                    .and_then(Value::as_str)
+                    .unwrap_or("per_slot")
             )
         }
         _ => String::new(),
     }
 }
 
-fn evidence_for(chain: ChainKindV1, anchor_kind: &str, quote: Option<String>) -> DecisionEvidenceV1 {
+fn evidence_for(
+    chain: ChainKindV1,
+    anchor_kind: &str,
+    quote: Option<String>,
+) -> DecisionEvidenceV1 {
     DecisionEvidenceV1 {
         chain,
         anchor_kind: anchor_kind.to_string(),
@@ -135,10 +150,17 @@ fn evidence_for(chain: ChainKindV1, anchor_kind: &str, quote: Option<String>) ->
     }
 }
 
-fn source_evidence(target_type: DecisionTargetTypeV1, target_id: &str, field: DecisionFieldV1) -> Vec<DecisionEvidenceV1> {
+fn source_evidence(
+    target_type: DecisionTargetTypeV1,
+    target_id: &str,
+    field: DecisionFieldV1,
+) -> Vec<DecisionEvidenceV1> {
     vec![DecisionEvidenceV1 {
         chain: ChainKindV1::Source,
-        anchor_kind: format!("source_finding:{target_type:?}:{target_id}:{}", field.as_str()),
+        anchor_kind: format!(
+            "source_finding:{target_type:?}:{target_id}:{}",
+            field.as_str()
+        ),
         page_index: None,
         quote: None,
         anchor: None,
@@ -157,7 +179,10 @@ pub(crate) struct CompareInput<'a> {
 
 impl<'a> CompareInput<'a> {
     fn cloud_usable(&self) -> bool {
-        matches!(self.cloud.status, ChainStatusV1::Succeeded | ChainStatusV1::Partial)
+        matches!(
+            self.cloud.status,
+            ChainStatusV1::Succeeded | ChainStatusV1::Partial
+        )
     }
 }
 
@@ -177,10 +202,22 @@ fn compare_slot_coverage(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV
     if !input.cloud_usable() {
         return;
     }
-    let local_numbers: BTreeSet<u32> = input.local.slots.iter().map(|slot| slot.question_number).collect();
-    let cloud_numbers: BTreeSet<u32> = input.cloud.slots.iter().map(|slot| slot.question_number).collect();
+    let local_numbers: BTreeSet<u32> = input
+        .local
+        .slots
+        .iter()
+        .map(|slot| slot.question_number)
+        .collect();
+    let cloud_numbers: BTreeSet<u32> = input
+        .cloud
+        .slots
+        .iter()
+        .map(|slot| slot.question_number)
+        .collect();
     for number in local_numbers.difference(&cloud_numbers) {
-        let Some(slot) = input.local.slot_by_question(*number) else { continue };
+        let Some(slot) = input.local.slot_by_question(*number) else {
+            continue;
+        };
         items.push(DecisionItemV1 {
             decision_id: DecisionItemV1::decision_id_for(
                 DecisionTargetTypeV1::Slot,
@@ -214,7 +251,9 @@ fn compare_slot_coverage(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV
         });
     }
     for number in cloud_numbers.difference(&local_numbers) {
-        let Some(slot) = input.cloud.slot_by_question(*number) else { continue };
+        let Some(slot) = input.cloud.slot_by_question(*number) else {
+            continue;
+        };
         items.push(DecisionItemV1 {
             decision_id: DecisionItemV1::decision_id_for(
                 DecisionTargetTypeV1::Slot,
@@ -258,26 +297,40 @@ fn compare_slots(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
     for slot in &input.local.slots {
         let canonical_answer = canonical_answer(input.canonical, &slot.slot_id);
         let cloud_slot = input.cloud.slot_by_question(slot.question_number);
-        let source_confirmed = input
-            .source
-            .is_confirmed(DecisionTargetTypeV1::Slot, &slot.slot_id, DecisionFieldV1::Answer);
+        let source_confirmed = input.source.is_confirmed(
+            DecisionTargetTypeV1::Slot,
+            &slot.slot_id,
+            DecisionFieldV1::Answer,
+        );
         let source_suggested = input
             .source
-            .suggested(DecisionTargetTypeV1::Slot, &slot.slot_id, DecisionFieldV1::Answer)
+            .suggested(
+                DecisionTargetTypeV1::Slot,
+                &slot.slot_id,
+                DecisionFieldV1::Answer,
+            )
             .cloned();
-        let source_verdict = input
-            .source
-            .verdict(DecisionTargetTypeV1::Slot, &slot.slot_id, DecisionFieldV1::Answer);
+        let source_verdict = input.source.verdict(
+            DecisionTargetTypeV1::Slot,
+            &slot.slot_id,
+            DecisionFieldV1::Answer,
+        );
 
         let local_key = answer_compare_key(slot.answer.as_ref());
-        let cloud_key = cloud_slot.and_then(|cloud| answer_compare_key(cloud.answer.as_ref()).into());
+        let cloud_key =
+            cloud_slot.and_then(|cloud| answer_compare_key(cloud.answer.as_ref()).into());
         let cloud_key = cloud_key.unwrap_or_default();
         let cloud_answer = cloud_slot.and_then(|cloud| cloud.answer.clone());
         let cloud_usable = input.cloud_usable();
 
         // 用户已经改过这一槽位：迟到结果一律 proposal-only，不做自动修正。
         let user_edited = canonical_slot(input.canonical, &slot.slot_id)
-            .map(|value| is_user_edited(input.canonical, value.get("slotId").and_then(Value::as_str).unwrap_or("")))
+            .map(|value| {
+                is_user_edited(
+                    input.canonical,
+                    value.get("slotId").and_then(Value::as_str).unwrap_or(""),
+                )
+            })
             .unwrap_or(false)
             || !matches!(
                 answer_compare_key(canonical_answer),
@@ -288,7 +341,10 @@ fn compare_slots(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
         if slot.has_source_evidence {
             evidence.push(evidence_for(ChainKindV1::Local, "slot_anchor", None));
         }
-        if cloud_slot.map(|value| value.has_source_evidence).unwrap_or(false) {
+        if cloud_slot
+            .map(|value| value.has_source_evidence)
+            .unwrap_or(false)
+        {
             evidence.push(evidence_for(ChainKindV1::Cloud, "group_quote", None));
         }
 
@@ -333,7 +389,10 @@ fn compare_slots(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
                     "ANSWER_AGREED",
                     DecisionSeverityV1::Info,
                     format!("第 {} 题三路一致", slot.question_number),
-                    format!("第 {} 题的答案已由本地、云端与原文一致确认。", slot.question_number),
+                    format!(
+                        "第 {} 题的答案已由本地、云端与原文一致确认。",
+                        slot.question_number
+                    ),
                     slot.answer.clone(),
                     cloud_answer.clone(),
                     None,
@@ -369,26 +428,29 @@ fn compare_slots(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
         }
 
         // ── 分歧 / 缺失分支 ─────────────────────────────────────────
-        let (resolution, code, severity, title, message, proposed, reason_code) =
-            if let Some(suggested) = source_suggested.clone() {
-                // 原文件给出了不同答案：这是可以落到具体 patch 的实质分歧。
-                let suggested_key = answer_compare_key(Some(&suggested));
-                if source_verdict == Some(SourceVerdictV1::Suggested) {
-                    (
-                        DecisionResolutionV1::NeedsReview,
-                        "ANSWER_FILL_FROM_SOURCE",
-                        DecisionSeverityV1::Warning,
-                        format!("第 {} 题可以按原文补全答案", slot.question_number),
-                        format!(
-                            "第 {} 题本地没有答案，原文件中是「{}」，可以按原文补上。",
-                            slot.question_number,
-                            answer_display(&suggested)
-                        ),
-                        Some(answer_patch(&slot.slot_id, &suggested)),
-                        reason::RULES_MATCH,
-                    )
-                } else if !suggested_key.is_empty() && suggested_key != local_key {
-                    (
+        let (resolution, code, severity, title, message, proposed, reason_code) = if let Some(
+            suggested,
+        ) =
+            source_suggested.clone()
+        {
+            // 原文件给出了不同答案：这是可以落到具体 patch 的实质分歧。
+            let suggested_key = answer_compare_key(Some(&suggested));
+            if source_verdict == Some(SourceVerdictV1::Suggested) {
+                (
+                    DecisionResolutionV1::NeedsReview,
+                    "ANSWER_FILL_FROM_SOURCE",
+                    DecisionSeverityV1::Warning,
+                    format!("第 {} 题可以按原文补全答案", slot.question_number),
+                    format!(
+                        "第 {} 题本地没有答案，原文件中是「{}」，可以按原文补上。",
+                        slot.question_number,
+                        answer_display(&suggested)
+                    ),
+                    Some(answer_patch(&slot.slot_id, &suggested)),
+                    reason::RULES_MATCH,
+                )
+            } else if !suggested_key.is_empty() && suggested_key != local_key {
+                (
                         DecisionResolutionV1::NeedsReview,
                         "ANSWER_SOURCE_CONFLICT",
                         DecisionSeverityV1::Blocker,
@@ -402,86 +464,92 @@ fn compare_slots(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
                         Some(answer_patch(&slot.slot_id, &suggested)),
                         reason::SUBSTANTIVE_DIVERGENCE,
                     )
-                } else {
-                    (
-                        DecisionResolutionV1::NeedsReview,
-                        "ANSWER_CONFLICT",
-                        DecisionSeverityV1::Blocker,
-                        format!("第 {} 题两路答案不一致", slot.question_number),
-                        format!("第 {} 题的本地与云端答案不同，请确认。", slot.question_number),
-                        None,
-                        reason::SUBSTANTIVE_DIVERGENCE,
-                    )
-                }
-            } else if !cloud_usable {
-                if source_confirmed {
-                    items.push(build_item(
-                        &slot.slot_id,
-                        slot,
-                        DecisionFieldV1::Answer,
-                        DecisionResolutionV1::Agreed,
-                        "ANSWER_SOURCE_CONFIRMED",
-                        DecisionSeverityV1::Info,
-                        format!("第 {} 题已由原文确认", slot.question_number),
-                        format!("第 {} 题的答案已由原文件确认。", slot.question_number),
-                        slot.answer.clone(),
-                        cloud_answer.clone(),
-                        None,
-                        None,
-                        evidence,
-                        reason::RULES_MATCH,
-                        user_edited,
-                    ));
-                } else {
-                    items.push(build_item(
-                        &slot.slot_id,
-                        slot,
-                        DecisionFieldV1::Answer,
-                        DecisionResolutionV1::Unverifiable,
-                        "ANSWER_EVIDENCE_MISSING",
-                        DecisionSeverityV1::Info,
-                        format!("第 {} 题无法验证", slot.question_number),
-                        format!(
-                            "第 {} 题缺少云端结果与原文证据，无法判断答案是否正确。",
-                            slot.question_number
-                        ),
-                        slot.answer.clone(),
-                        None,
-                        None,
-                        None,
-                        evidence,
-                        reason::EVIDENCE_MISSING,
-                        user_edited,
-                    ));
-                }
-                continue;
-            } else if answer_is_empty(slot.answer.as_ref()) && !cloud_key.is_empty() {
-                // 本地缺答案、云端有答案：只有原文确认时才允许自动补全。
-                (
-                    DecisionResolutionV1::NeedsReview,
-                    "ANSWER_MISSING_LOCAL",
-                    DecisionSeverityV1::Blocker,
-                    format!("第 {} 题缺少答案", slot.question_number),
-                    format!("第 {} 题本地识别没有答案，云端识别给出了答案，请确认。", slot.question_number),
-                    cloud_answer
-                        .as_ref()
-                        .map(|value| answer_patch(&slot.slot_id, value)),
-                    reason::SUBSTANTIVE_DIVERGENCE,
-                )
             } else {
                 (
-                    DecisionResolutionV1::Unverifiable,
-                    "ANSWER_CONFLICT_UNVERIFIED",
-                    DecisionSeverityV1::Warning,
-                    format!("第 {} 题答案无法判断", slot.question_number),
+                    DecisionResolutionV1::NeedsReview,
+                    "ANSWER_CONFLICT",
+                    DecisionSeverityV1::Blocker,
+                    format!("第 {} 题两路答案不一致", slot.question_number),
                     format!(
-                        "第 {} 题的本地与云端答案不同，且缺少原文证据，无法判断哪一个正确。",
+                        "第 {} 题的本地与云端答案不同，请确认。",
                         slot.question_number
                     ),
                     None,
-                    reason::EVIDENCE_MISSING,
+                    reason::SUBSTANTIVE_DIVERGENCE,
                 )
-            };
+            }
+        } else if !cloud_usable {
+            if source_confirmed {
+                items.push(build_item(
+                    &slot.slot_id,
+                    slot,
+                    DecisionFieldV1::Answer,
+                    DecisionResolutionV1::Agreed,
+                    "ANSWER_SOURCE_CONFIRMED",
+                    DecisionSeverityV1::Info,
+                    format!("第 {} 题已由原文确认", slot.question_number),
+                    format!("第 {} 题的答案已由原文件确认。", slot.question_number),
+                    slot.answer.clone(),
+                    cloud_answer.clone(),
+                    None,
+                    None,
+                    evidence,
+                    reason::RULES_MATCH,
+                    user_edited,
+                ));
+            } else {
+                items.push(build_item(
+                    &slot.slot_id,
+                    slot,
+                    DecisionFieldV1::Answer,
+                    DecisionResolutionV1::Unverifiable,
+                    "ANSWER_EVIDENCE_MISSING",
+                    DecisionSeverityV1::Info,
+                    format!("第 {} 题无法验证", slot.question_number),
+                    format!(
+                        "第 {} 题缺少云端结果与原文证据，无法判断答案是否正确。",
+                        slot.question_number
+                    ),
+                    slot.answer.clone(),
+                    None,
+                    None,
+                    None,
+                    evidence,
+                    reason::EVIDENCE_MISSING,
+                    user_edited,
+                ));
+            }
+            continue;
+        } else if answer_is_empty(slot.answer.as_ref()) && !cloud_key.is_empty() {
+            // 本地缺答案、云端有答案：只有原文确认时才允许自动补全。
+            (
+                DecisionResolutionV1::NeedsReview,
+                "ANSWER_MISSING_LOCAL",
+                DecisionSeverityV1::Blocker,
+                format!("第 {} 题缺少答案", slot.question_number),
+                format!(
+                    "第 {} 题本地识别没有答案，云端识别给出了答案，请确认。",
+                    slot.question_number
+                ),
+                cloud_answer
+                    .as_ref()
+                    .map(|value| answer_patch(&slot.slot_id, value)),
+                reason::SUBSTANTIVE_DIVERGENCE,
+            )
+        } else {
+            (
+                DecisionResolutionV1::Unverifiable,
+                "ANSWER_CONFLICT_UNVERIFIED",
+                DecisionSeverityV1::Warning,
+                format!("第 {} 题答案无法判断", slot.question_number),
+                format!(
+                    "第 {} 题的本地与云端答案不同，且缺少原文证据，无法判断哪一个正确。",
+                    slot.question_number
+                ),
+                None,
+                reason::EVIDENCE_MISSING,
+            )
+        };
 
         let mut item = build_item(
             &slot.slot_id,
@@ -511,7 +579,8 @@ fn compare_groups(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
         let cloud_group = input.cloud.group(&group.task_id).or_else(|| {
             // 云端 taskId 可能与本地不同：退化为按题号集合匹配。
             input.cloud.task_groups.iter().find(|candidate| {
-                let mut left: Vec<u32> = super::candidate::expand_question_numbers(&candidate.display_range);
+                let mut left: Vec<u32> =
+                    super::candidate::expand_question_numbers(&candidate.display_range);
                 let mut right: Vec<u32> =
                     super::candidate::expand_question_numbers(&group.display_range);
                 left.sort_unstable();
@@ -519,7 +588,9 @@ fn compare_groups(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
                 !left.is_empty() && left == right
             })
         });
-        let Some(cloud_group) = cloud_group else { continue };
+        let Some(cloud_group) = cloud_group else {
+            continue;
+        };
 
         // 题型
         if group.task_type != cloud_group.task_type {
@@ -542,7 +613,9 @@ fn compare_groups(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
                     target_id: group.task_id.clone(),
                     task_id: Some(group.task_id.clone()),
                     node_id: None,
-                    question_numbers: super::candidate::expand_question_numbers(&group.display_range),
+                    question_numbers: super::candidate::expand_question_numbers(
+                        &group.display_range,
+                    ),
                 },
                 field: DecisionFieldV1::GroupKind,
                 evidence: vec![evidence_for(ChainKindV1::Cloud, "group_kind", None)],
@@ -590,12 +663,22 @@ fn compare_groups(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
                     target_id: group.task_id.clone(),
                     task_id: Some(group.task_id.clone()),
                     node_id: None,
-                    question_numbers: super::candidate::expand_question_numbers(&group.display_range),
+                    question_numbers: super::candidate::expand_question_numbers(
+                        &group.display_range,
+                    ),
                 },
                 field: DecisionFieldV1::Prompt,
                 evidence: vec![
-                    evidence_for(ChainKindV1::Local, "instructions", Some(group.instructions_text.clone())),
-                    evidence_for(ChainKindV1::Cloud, "instructions", Some(cloud_group.instructions_text.clone())),
+                    evidence_for(
+                        ChainKindV1::Local,
+                        "instructions",
+                        Some(group.instructions_text.clone()),
+                    ),
+                    evidence_for(
+                        ChainKindV1::Cloud,
+                        "instructions",
+                        Some(cloud_group.instructions_text.clone()),
+                    ),
                 ],
                 local_value: Some(Value::String(group.instructions_text.clone())),
                 cloud_value: Some(Value::String(cloud_group.instructions_text.clone())),
@@ -631,18 +714,25 @@ fn compare_groups(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
                         code: "OPTION_BANK_CONFLICT".to_string(),
                         severity: DecisionSeverityV1::Warning,
                         title: format!("选项不一致：{}", group.task_id),
-                        user_message: "该题组的选项内容在本地与云端识别中不同，请确认。".to_string(),
+                        user_message: "该题组的选项内容在本地与云端识别中不同，请确认。"
+                            .to_string(),
                         target: DecisionTargetV1 {
                             target_type: DecisionTargetTypeV1::Task,
                             target_id: group.task_id.clone(),
                             task_id: Some(group.task_id.clone()),
                             node_id: None,
-                            question_numbers: super::candidate::expand_question_numbers(&group.display_range),
+                            question_numbers: super::candidate::expand_question_numbers(
+                                &group.display_range,
+                            ),
                         },
                         field: DecisionFieldV1::OptionBank,
                         evidence: vec![evidence_for(ChainKindV1::Cloud, "option_bank", None)],
-                        local_value: Some(serde_json::to_value(&local_bank.options).unwrap_or(Value::Null)),
-                        cloud_value: Some(serde_json::to_value(&cloud_bank.options).unwrap_or(Value::Null)),
+                        local_value: Some(
+                            serde_json::to_value(&local_bank.options).unwrap_or(Value::Null),
+                        ),
+                        cloud_value: Some(
+                            serde_json::to_value(&cloud_bank.options).unwrap_or(Value::Null),
+                        ),
                         source_value: None,
                         proposed_patch: Some(json!({
                             "op": "setOptionBank",
@@ -686,12 +776,16 @@ fn compare_groups(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
                         target_id: group.task_id.clone(),
                         task_id: Some(group.task_id.clone()),
                         node_id: None,
-                        question_numbers: super::candidate::expand_question_numbers(&group.display_range),
+                        question_numbers: super::candidate::expand_question_numbers(
+                            &group.display_range,
+                        ),
                     },
                     field: DecisionFieldV1::OptionBank,
                     evidence: vec![evidence_for(ChainKindV1::Cloud, "option_bank", None)],
                     local_value: None,
-                    cloud_value: Some(serde_json::to_value(&cloud_bank.options).unwrap_or(Value::Null)),
+                    cloud_value: Some(
+                        serde_json::to_value(&cloud_bank.options).unwrap_or(Value::Null),
+                    ),
                     source_value: None,
                     proposed_patch: None,
                     undo: None,
@@ -709,20 +803,31 @@ fn compare_groups(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
     // 答案位交互语义（本地稿本身的一致性）：与编译规则同源，避免「能编辑但发不出去」。
     for slot in &input.local.slots {
         let canonical_slot_value = canonical_slot(input.canonical, &slot.slot_id);
-        let Some(canonical_slot_value) = canonical_slot_value else { continue };
+        let Some(canonical_slot_value) = canonical_slot_value else {
+            continue;
+        };
         let interaction = canonical_slot_value
             .get("interaction")
             .and_then(Value::as_str)
             .unwrap_or("");
         let answer = canonical_answer(input.canonical, &slot.slot_id);
-        if interaction.is_empty() || answer.map(|value| value.get("kind").and_then(Value::as_str).is_none()).unwrap_or(true) {
+        if interaction.is_empty()
+            || answer
+                .map(|value| value.get("kind").and_then(Value::as_str).is_none())
+                .unwrap_or(true)
+        {
             continue;
         }
-        let answer_kind = answer.and_then(|value| value.get("kind")).and_then(Value::as_str).unwrap_or("");
+        let answer_kind = answer
+            .and_then(|value| value.get("kind"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let mismatch = matches!(interaction, "text")
             && !matches!(answer_kind, "text" | "unresolved")
-            || matches!(interaction, "radio" | "checkbox" | "select" | "dragdrop" | "hotspot")
-                && !matches!(answer_kind, "option" | "unresolved");
+            || matches!(
+                interaction,
+                "radio" | "checkbox" | "select" | "dragdrop" | "hotspot"
+            ) && !matches!(answer_kind, "option" | "unresolved");
         if mismatch {
             items.push(DecisionItemV1 {
                 decision_id: DecisionItemV1::decision_id_for(
@@ -774,7 +879,11 @@ fn compare_assets(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
                 .filter_map(|asset| {
                     Some((
                         asset.get("assetId").and_then(Value::as_str)?.to_string(),
-                        asset.get("sha256").and_then(Value::as_str).unwrap_or("").to_string(),
+                        asset
+                            .get("sha256")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
                     ))
                 })
                 .collect()
@@ -793,7 +902,8 @@ fn compare_assets(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
                 code: "ASSET_INTEGRITY_MISMATCH".to_string(),
                 severity: DecisionSeverityV1::Blocker,
                 title: "资源与权威稿不一致".to_string(),
-                user_message: "有一个图片/资源在识别结果与权威稿之间不一致，发布前需要确认。".to_string(),
+                user_message: "有一个图片/资源在识别结果与权威稿之间不一致，发布前需要确认。"
+                    .to_string(),
                 target: DecisionTargetV1 {
                     target_type: DecisionTargetTypeV1::Asset,
                     target_id: asset.asset_id.clone(),
@@ -867,10 +977,17 @@ fn compare_source_coverage(input: &CompareInput<'_>, items: &mut Vec<DecisionIte
 
 // ── 小工具 ─────────────────────────────────────────────────────────────
 
-pub(crate) fn option_label_text_map(options: &[crate::schema::recognition_v1::CandidateOptionV1]) -> BTreeMap<String, String> {
+pub(crate) fn option_label_text_map(
+    options: &[crate::schema::recognition_v1::CandidateOptionV1],
+) -> BTreeMap<String, String> {
     options
         .iter()
-        .map(|option| (option.label.trim().to_uppercase(), normalize_text(&option.text)))
+        .map(|option| {
+            (
+                option.label.trim().to_uppercase(),
+                normalize_text(&option.text),
+            )
+        })
         .collect()
 }
 

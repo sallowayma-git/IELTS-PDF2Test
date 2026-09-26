@@ -25,9 +25,8 @@ use export_pack::{
 };
 use export_writing_library::export_writing_library_core;
 use llm_commands::{
-    apply_llm_suggestion_core_with_version,
-    apply_vision_answer_candidates_core, delete_llm_profile_core,
-    llm_run_group_core, save_llm_profile_core, test_llm_profile_core,
+    apply_llm_suggestion_core_with_version, apply_vision_answer_candidates_core,
+    delete_llm_profile_core, llm_run_group_core, save_llm_profile_core, test_llm_profile_core,
 };
 use pdf_facts_shadow::debug_document_ir_v2_overlay_core;
 use preview_commands::{
@@ -67,10 +66,9 @@ mod ielts_grammar;
 mod job_commands;
 mod job_store;
 mod library;
+mod library_commands;
 mod listening_audio;
 mod listening_source_v1;
-mod processing;
-mod library_commands;
 mod llm_commands;
 mod llm_gateway;
 mod llm_profiles;
@@ -81,6 +79,7 @@ mod pdf_facts_shadow;
 mod pdf_geometry;
 mod pdf_ingest;
 mod preview_commands;
+mod processing;
 #[cfg(test)]
 mod product_chain;
 #[cfg(test)]
@@ -950,8 +949,9 @@ async fn apply_editor_commands(input: Value, app: AppHandle) -> CommandResult<Va
     let result = tauri::async_runtime::spawn_blocking({
         let root = root.clone();
         move || {
-            let input: library::repository::ApplyEditorCommandsInput = serde_json::from_value(input)
-                .map_err(|error| format!("library_v2_invalid_input:{error}"))?;
+            let input: library::repository::ApplyEditorCommandsInput =
+                serde_json::from_value(input)
+                    .map_err(|error| format!("library_v2_invalid_input:{error}"))?;
             library::commands::apply_editor_commands_core(&root, input)
         }
     })
@@ -1086,16 +1086,27 @@ async fn apply_recognition_decisions(input: Value, app: AppHandle) -> CommandRes
 async fn open_source_file(item_id: String, file_id: String, app: AppHandle) -> CommandResult<()> {
     let root = app_root(&app)?;
     let job = job_store::load_job(&root, &item_id)?;
-    let source = job.source_files.iter().find(|file| file.file_id == file_id).ok_or("SOURCE_NOT_FOUND")?;
-    let path = util::job_dir(&root, &item_id).join("uploads").join(&source.stored_name);
-    tauri_plugin_opener::open_path(path.to_string_lossy().to_string(), None::<String>).map_err(|error| error.to_string())
+    let source = job
+        .source_files
+        .iter()
+        .find(|file| file.file_id == file_id)
+        .ok_or("SOURCE_NOT_FOUND")?;
+    let path = util::job_dir(&root, &item_id)
+        .join("uploads")
+        .join(&source.stored_name);
+    tauri_plugin_opener::open_path(path.to_string_lossy().to_string(), None::<String>)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-async fn publish_items(input: nas_package_v2::PublishItemsInput, app: AppHandle) -> CommandResult<Value> {
+async fn publish_items(
+    input: nas_package_v2::PublishItemsInput,
+    app: AppHandle,
+) -> CommandResult<Value> {
     let root = app_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || nas_package_v2::publish_items_core(&root, input))
-        .await.map_err(|error| error.to_string())?
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1140,9 +1151,13 @@ async fn retry_answer_page_recognition(item_id: String, app: AppHandle) -> Comma
         let root = root.clone();
         let item_id = item_id.clone();
         move || {
-            processing::answer_page::retry_answer_page_at_root(&root, &item_id, &mut |root, job_id, profile| {
-                auto_pipeline::recognize_and_apply_pdf_answers(root, job_id, profile)
-            })
+            processing::answer_page::retry_answer_page_at_root(
+                &root,
+                &item_id,
+                &mut |root, job_id, profile| {
+                    auto_pipeline::recognize_and_apply_pdf_answers(root, job_id, profile)
+                },
+            )
         }
     })
     .await
@@ -1818,11 +1833,11 @@ mod tests {
         nas_reading_exams_dir, publish_nas_library_from_source_tree, write_source_payload_file,
     };
     use crate::job_store::{load_job, make_job, save_job, update_job};
+    use crate::llm_commands::apply_llm_suggestion_core;
     use crate::llm_profiles::{
         file_load_secret, file_save_secret, load_profile_secret, plaintext_secret_fallback_allowed,
         redact_profile_for_ui,
     };
-    use crate::llm_commands::apply_llm_suggestion_core;
     use crate::llm_suggestions::{
         apply_suggestion_to_authoring, deterministic_llm_output, llm_suggestion_auto_apply_issues,
         make_llm_input,
@@ -3724,9 +3739,8 @@ Answers
         write_json(&output, &seeded).unwrap();
         let seeded_bytes = fs::read(&output).unwrap();
 
-        let extraction =
-            extract_pdf_images_for_vision(&job.job_id, &fake_pdf, &output, &asset_dir)
-                .expect("抽取链应当返回良构结果（渲染失败也是结果，不是崩溃）");
+        let extraction = extract_pdf_images_for_vision(&job.job_id, &fake_pdf, &output, &asset_dir)
+            .expect("抽取链应当返回良构结果（渲染失败也是结果，不是崩溃）");
 
         // ① 缓存一个字节都不许变（改动前这里被覆盖成 `pages: []` 的失败结果）。
         assert_eq!(
@@ -5560,10 +5574,7 @@ Answers
             diagnostics.get("binding").and_then(Value::as_bool),
             Some(false)
         );
-        assert!(diagnostics
-            .get("passed")
-            .and_then(Value::as_bool)
-            .is_some());
+        assert!(diagnostics.get("passed").and_then(Value::as_bool).is_some());
 
         // (5) 既有消费者读的字段位置没变（`issues` / `layers` / `runtime`）。
         assert!(saved_report

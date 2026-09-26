@@ -1,3 +1,4 @@
+use crate::artifact_store::write_canonical_json_atomic;
 use crate::{
     authoring_pipeline::{
         dynamic_block_text, dynamic_document_blocks, make_dynamic_authoring_ir,
@@ -48,8 +49,9 @@ use crate::{
     AutoPipelineInput, CommandResult, ImportJob, JobStatus, RunCloudReviewInput, SourceFile,
     WorkflowStep,
 };
-use crate::artifact_store::write_canonical_json_atomic;
 use chrono::Utc;
+use quick_xml::escape::unescape;
+use quick_xml::events::Event;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -59,8 +61,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Mutex};
 use std::thread;
 use uuid::Uuid;
-use quick_xml::escape::unescape;
-use quick_xml::events::Event;
 use zip::ZipArchive;
 
 const LOCAL_PLACEHOLDER_PROFILE_ID: &str = "profile-local-placeholder";
@@ -131,7 +131,9 @@ fn insert_vision_answer_state(candidate: &mut Value, state: &str, reason: &str) 
 /// falls back to the legacy IR when V2 construction itself is unavailable.
 fn answer_page_validation_document(root: &Path, job_id: &str, fallback: &Value) -> Value {
     if let Ok(conn) = crate::library::repository::open_library_connection(root) {
-        if let Ok(Some((canonical, _))) = crate::library::repository::get_canonical_ds(&conn, job_id) {
+        if let Ok(Some((canonical, _))) =
+            crate::library::repository::get_canonical_ds(&conn, job_id)
+        {
             return canonical;
         }
     }
@@ -449,8 +451,12 @@ fn write_pipeline_authoring_v2_shadow(
         if physical_shadow.is_none() {
             eprintln!("[direct-canonical] physical shadow missing; falling back to V1 chain");
         }
-        if let (Some(physical), Ok(graph_value)) = (physical_shadow, fs::read_to_string(&graph_path)) {
-            let asset_resolver = |asset_id: &str| -> Option<crate::recognition::direct_canonical::ResolvedVisualAsset> {
+        if let (Some(physical), Ok(graph_value)) =
+            (physical_shadow, fs::read_to_string(&graph_path))
+        {
+            let asset_resolver = |asset_id: &str| -> Option<
+                crate::recognition::direct_canonical::ResolvedVisualAsset,
+            > {
                 let candidate = dir.join("assets").join(format!("{asset_id}.png"));
                 let bytes = fs::read(&candidate).ok()?;
                 Some(crate::recognition::direct_canonical::ResolvedVisualAsset {
@@ -463,17 +469,19 @@ fn write_pipeline_authoring_v2_shadow(
                         .to_string(),
                 })
             };
-            match serde_json::from_str::<crate::recognition::local::QuestionLayoutGraphV1>(&graph_value)
-                .map_err(|error| format!("direct_canonical_graph_deserialize:{error}"))
-                .and_then(|graph| {
-                    crate::recognition::direct_canonical::build_direct_canonical(
-                        job,
-                        &graph,
-                        physical,
-                        split,
-                        &asset_resolver,
-                    )
-                }) {
+            match serde_json::from_str::<crate::recognition::local::QuestionLayoutGraphV1>(
+                &graph_value,
+            )
+            .map_err(|error| format!("direct_canonical_graph_deserialize:{error}"))
+            .and_then(|graph| {
+                crate::recognition::direct_canonical::build_direct_canonical(
+                    job,
+                    &graph,
+                    physical,
+                    split,
+                    &asset_resolver,
+                )
+            }) {
                 Ok(direct) => {
                     // 与 V1 链同纪律：原子写 + 清理陈旧 compare（轮 2 verifier V4）。
                     write_canonical_json_atomic(&shadow_path, &direct)?;
@@ -594,7 +602,12 @@ fn document_ir_source_text(root: &Path, job_id: &str) -> Option<String> {
         .ok()
         .flatten()?;
     let mut out = String::new();
-    for page in ir.get("pages").and_then(Value::as_array).into_iter().flatten() {
+    for page in ir
+        .get("pages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         let lines = page.get("lines").and_then(Value::as_array);
         let spans = page.get("spans").and_then(Value::as_array);
         if let Some(lines) = lines {
@@ -648,7 +661,9 @@ fn prepare_cloud_source_evidence(root: &Path, job: &ImportJob) -> Option<String>
         "pdf" => None,
         "txt" | "md" => {
             // `sourceText` 网关路径（`llm_gateway.rs`）仍按此文本工作。
-            fs::read_to_string(&upload_path).ok().filter(|text| !text.trim().is_empty())
+            fs::read_to_string(&upload_path)
+                .ok()
+                .filter(|text| !text.trim().is_empty())
         }
         "docx" => extract_docx_plain_text(&upload_path),
         _ => None,
@@ -912,12 +927,8 @@ where
             }),
         ));
     }
-    let input = make_vision_answer_extraction_input(
-        &profile,
-        job,
-        profile_id,
-        &answer_page_extraction,
-    );
+    let input =
+        make_vision_answer_extraction_input(&profile, job, profile_id, &answer_page_extraction);
     let api_key = load_llm_api_key(root, profile_id);
     let output = match llm_gateway(
         root,
@@ -996,16 +1007,10 @@ where
 /// When an old/unit-test artifact has no physical shadow, retain the supplied
 /// extraction as a compatibility fallback; the production import path always
 /// materializes the shadow before this function is called.
-fn answer_page_extraction(
-    root: &Path,
-    job: &ImportJob,
-    extraction: &Value,
-) -> (Value, Vec<u64>) {
-    let shadow = read_json_opt(
-        &job_dir(root, &job.job_id).join(DOCUMENT_V2_SHADOW_ARTIFACT_FILE),
-    )
-    .ok()
-    .flatten();
+fn answer_page_extraction(root: &Path, job: &ImportJob, extraction: &Value) -> (Value, Vec<u64>) {
+    let shadow = read_json_opt(&job_dir(root, &job.job_id).join(DOCUMENT_V2_SHADOW_ARTIFACT_FILE))
+        .ok()
+        .flatten();
     let Some(shadow) = shadow else {
         let indexes = extraction
             .get("pages")
@@ -1064,12 +1069,18 @@ fn normalized_answer_page_question_number(value: &Value) -> Option<String> {
         Value::Number(number) => number.to_string(),
         _ => return None,
     };
-    raw.parse::<u32>().ok().filter(|number| *number > 0).map(|number| number.to_string())
+    raw.parse::<u32>()
+        .ok()
+        .filter(|number| *number > 0)
+        .map(|number| number.to_string())
 }
 
 fn answer_values_from_candidate(value: &Value) -> Vec<String> {
     let values = match value {
-        Value::Array(items) => items.iter().flat_map(answer_values_from_candidate).collect(),
+        Value::Array(items) => items
+            .iter()
+            .flat_map(answer_values_from_candidate)
+            .collect(),
         Value::String(text) => vec![text.trim().to_string()],
         Value::Number(number) => vec![number.to_string()],
         Value::Bool(value) => vec![value.to_string()],
@@ -1181,7 +1192,10 @@ fn option_labels_from_alphabet(alphabet: &str) -> BTreeSet<String> {
     let Some((start, end)) = normalized.split_once('-') else {
         return BTreeSet::new();
     };
-    let (Some(start), Some(end)) = (start.trim().as_bytes().first(), end.trim().as_bytes().first()) else {
+    let (Some(start), Some(end)) = (
+        start.trim().as_bytes().first(),
+        end.trim().as_bytes().first(),
+    ) else {
         return BTreeSet::new();
     };
     if !start.is_ascii_alphabetic() || !end.is_ascii_alphabetic() || start > end {
@@ -1200,7 +1214,10 @@ fn declared_option_labels_for_slot(canonical: &Value, slot_id: &str) -> BTreeSet
     let Some((group, _response)) = task_group_and_response_for_slot(canonical, slot_id) else {
         return BTreeSet::new();
     };
-    let task_type = group.get("taskType").and_then(Value::as_str).unwrap_or_default();
+    let task_type = group
+        .get("taskType")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     if task_type == "true_false_not_given" {
         return ["TRUE", "FALSE", "NOT GIVEN"]
             .into_iter()
@@ -1221,15 +1238,17 @@ fn declared_option_labels_for_slot(canonical: &Value, slot_id: &str) -> BTreeSet
 }
 
 fn answer_word_limit(canonical: &Value, slot_id: &str) -> Option<(usize, Option<usize>, bool)> {
-    let slot_limit = canonical
-        .pointer(&format!("/answerSlots/{slot_id}/constraints"));
+    let slot_limit = canonical.pointer(&format!("/answerSlots/{slot_id}/constraints"));
     let group_limit = task_group_and_response_for_slot(canonical, slot_id)
         .and_then(|(group, _)| group.pointer("/instructionSignature/wordLimit"));
     for limit in [slot_limit, group_limit].into_iter().flatten() {
         let Some(max_words) = limit.get("maxWords").and_then(Value::as_u64) else {
             continue;
         };
-        let max_numbers = limit.get("maxNumbers").and_then(Value::as_u64).map(|value| value as usize);
+        let max_numbers = limit
+            .get("maxNumbers")
+            .and_then(Value::as_u64)
+            .map(|value| value as usize);
         let words_and_or_number = limit
             .get("wordsAndOrNumber")
             .and_then(Value::as_bool)
@@ -1247,11 +1266,15 @@ fn is_number_token(token: &str) -> bool {
 }
 
 fn answer_exceeds_word_limit(canonical: &Value, slot_id: &str, values: &[String]) -> bool {
-    let Some((max_words, max_numbers, words_and_or_number)) = answer_word_limit(canonical, slot_id) else {
+    let Some((max_words, max_numbers, words_and_or_number)) = answer_word_limit(canonical, slot_id)
+    else {
         return false;
     };
     values.iter().any(|value| {
-        let tokens = value.split_whitespace().filter(|token| !token.is_empty()).collect::<Vec<_>>();
+        let tokens = value
+            .split_whitespace()
+            .filter(|token| !token.is_empty())
+            .collect::<Vec<_>>();
         let numbers = tokens.iter().filter(|token| is_number_token(token)).count();
         let words = tokens.len().saturating_sub(numbers);
         // "N WORDS AND/OR A NUMBER" gives the number its own allowance;
@@ -1293,7 +1316,10 @@ fn validate_answer_page_candidate(canonical: &Value, candidate: &Value) -> Value
         .into_iter()
         .flatten()
     {
-        let task_id = group.get("taskId").and_then(Value::as_str).unwrap_or("document");
+        let task_id = group
+            .get("taskId")
+            .and_then(Value::as_str)
+            .unwrap_or("document");
         for response in group
             .get("responseGroups")
             .and_then(Value::as_array)
@@ -1321,7 +1347,10 @@ fn validate_answer_page_candidate(canonical: &Value, candidate: &Value) -> Value
             continue;
         };
         let number = number.to_string();
-        if slot_by_number.insert(number.clone(), slot_id.clone()).is_some() {
+        if slot_by_number
+            .insert(number.clone(), slot_id.clone())
+            .is_some()
+        {
             violations.push(violation(
                 "ANSWER_QUESTION_NUMBER_DUPLICATE",
                 Some(&number),
@@ -1332,7 +1361,9 @@ fn validate_answer_page_candidate(canonical: &Value, candidate: &Value) -> Value
 
     if let Some(answers) = candidate.get("answers").and_then(Value::as_object) {
         for (raw_number, raw_answer) in answers {
-            let Some(number) = normalized_answer_page_question_number(&Value::String(raw_number.clone())) else {
+            let Some(number) =
+                normalized_answer_page_question_number(&Value::String(raw_number.clone()))
+            else {
                 violations.push(violation(
                     "ANSWER_QUESTION_NUMBER_INVALID",
                     None,
@@ -1365,14 +1396,21 @@ fn validate_answer_page_candidate(canonical: &Value, candidate: &Value) -> Value
                 .and_then(|slot| slot.get("interaction"))
                 .and_then(Value::as_str)
                 .unwrap_or("text");
-            let option_slot = matches!(interaction, "radio" | "checkbox" | "select" | "dragdrop" | "hotspot");
+            let option_slot = matches!(
+                interaction,
+                "radio" | "checkbox" | "select" | "dragdrop" | "hotspot"
+            );
             if option_slot {
                 let allowed = declared_option_labels_for_slot(canonical, slot_id);
                 let normalized_values = values
                     .iter()
                     .map(|value| value.to_ascii_uppercase())
                     .collect::<Vec<_>>();
-                if allowed.is_empty() || normalized_values.iter().any(|value| !allowed.contains(value)) {
+                if allowed.is_empty()
+                    || normalized_values
+                        .iter()
+                        .any(|value| !allowed.contains(value))
+                {
                     violations.push(violation(
                         "ANSWER_OPTION_NOT_ALLOWED",
                         Some(&number),
@@ -1401,7 +1439,10 @@ fn validate_answer_page_candidate(canonical: &Value, candidate: &Value) -> Value
         .into_iter()
         .flatten()
     {
-        let task_id = group.get("taskId").and_then(Value::as_str).unwrap_or("document");
+        let task_id = group
+            .get("taskId")
+            .and_then(Value::as_str)
+            .unwrap_or("document");
         let mut group_numbers = BTreeSet::new();
         for response in group
             .get("responseGroups")
@@ -1457,7 +1498,10 @@ fn validate_answer_page_candidate(canonical: &Value, candidate: &Value) -> Value
         .into_iter()
         .flatten()
     {
-        let task_id = group.get("taskId").and_then(Value::as_str).unwrap_or("document");
+        let task_id = group
+            .get("taskId")
+            .and_then(Value::as_str)
+            .unwrap_or("document");
         let mut values = Vec::new();
         for (number, slot_id) in &slot_by_number {
             if group_by_slot.get(slot_id).map(String::as_str) != Some(task_id) {
@@ -1474,8 +1518,15 @@ fn validate_answer_page_candidate(canonical: &Value, candidate: &Value) -> Value
                 .pointer(&format!("/answerSlots/{slot_id}/interaction"))
                 .and_then(Value::as_str)
                 .unwrap_or("text");
-            if matches!(interaction, "radio" | "checkbox" | "select" | "dragdrop" | "hotspot") {
-                values.push(answer_values_from_candidate(value).join("|").to_ascii_uppercase());
+            if matches!(
+                interaction,
+                "radio" | "checkbox" | "select" | "dragdrop" | "hotspot"
+            ) {
+                values.push(
+                    answer_values_from_candidate(value)
+                        .join("|")
+                        .to_ascii_uppercase(),
+                );
             }
         }
         if values.len() >= 3 && values.iter().all(|value| value == &values[0]) {
@@ -1550,7 +1601,11 @@ fn answer_is_empty_for_page_write(value: Option<&Value>) -> bool {
         Some("text") => value
             .get("values")
             .and_then(Value::as_array)
-            .map(|values| values.iter().all(|item| item.as_str().is_none_or(|text| text.trim().is_empty())))
+            .map(|values| {
+                values
+                    .iter()
+                    .all(|item| item.as_str().is_none_or(|text| text.trim().is_empty()))
+            })
             .unwrap_or(true),
         Some("option") => value
             .get("labels")
@@ -1585,8 +1640,15 @@ fn answer_page_evidence_by_number(candidate: &Value) -> BTreeMap<String, Value> 
         let Some(page_index) = item.get("pageIndex").and_then(Value::as_u64) else {
             continue;
         };
-        let quote = item.get("quote").and_then(Value::as_str).unwrap_or("").trim();
-        if page_index == 0 || quote.is_empty() || (!allowed_pages.is_empty() && !allowed_pages.contains(&page_index)) {
+        let quote = item
+            .get("quote")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if page_index == 0
+            || quote.is_empty()
+            || (!allowed_pages.is_empty() && !allowed_pages.contains(&page_index))
+        {
             continue;
         }
         evidence.insert(number, item.clone());
@@ -1627,7 +1689,9 @@ fn build_answer_page_commands(
     if confidence >= 0.85 {
         if let Some(answers) = answers {
             for (raw_number, raw_answer) in answers {
-                let Some(number) = normalized_answer_page_question_number(&Value::String(raw_number.clone())) else {
+                let Some(number) =
+                    normalized_answer_page_question_number(&Value::String(raw_number.clone()))
+                else {
                     continue;
                 };
                 let Some(slot_id) = slot_by_number.get(&number) else {
@@ -1699,7 +1763,8 @@ fn latest_answer_page_slots(
     let mut seen = BTreeSet::new();
     let mut page_slots = BTreeSet::new();
     for row in rows {
-        let (origin, command_json) = row.map_err(|error| format!("answer_page_journal_row:{error}"))?;
+        let (origin, command_json) =
+            row.map_err(|error| format!("answer_page_journal_row:{error}"))?;
         let payload: Value = serde_json::from_str(&command_json)
             .map_err(|error| format!("answer_page_journal_json:{error}"))?;
         for command in payload
@@ -1880,7 +1945,12 @@ pub(crate) fn recognize_and_apply_pdf_answers(
     let dir = job_dir(root, job_id);
     let canonical_modality = crate::library::repository::open_library_connection(root)
         .and_then(|conn| crate::library::repository::get_canonical_ds(&conn, job_id))?
-        .and_then(|(document, _)| document.get("modality").and_then(Value::as_str).map(str::to_string));
+        .and_then(|(document, _)| {
+            document
+                .get("modality")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        });
     if canonical_modality.as_deref() != Some("reading") {
         return Ok(json!({
             "source": "answer_page_recognition",
@@ -1897,7 +1967,8 @@ pub(crate) fn recognize_and_apply_pdf_answers(
             return Ok(vision_answer_failure_report(&error, None, &[]));
         }
     };
-    let (answer_page_extraction, answer_page_indexes) = answer_page_extraction(root, &job, &extraction);
+    let (answer_page_extraction, answer_page_indexes) =
+        answer_page_extraction(root, &job, &extraction);
     let answer_page_image_count = image_count_from_extraction(&answer_page_extraction);
     let (candidate, output) = match vision_answer_candidate_for_job(
         root,
@@ -1933,7 +2004,10 @@ pub(crate) fn recognize_and_apply_pdf_answers(
         );
         object.insert(
             "warnings".to_string(),
-            candidate.get("warnings").cloned().unwrap_or_else(|| json!([])),
+            candidate
+                .get("warnings")
+                .cloned()
+                .unwrap_or_else(|| json!([])),
         );
     }
     write_json(&dir.join("vision-answer-application.json"), &report)?;
@@ -2730,8 +2804,14 @@ fn candidate_request_with_one_repair(
             if let Some(object) = retry.as_object_mut() {
                 object.insert("repairNote".to_string(), json!(first_error));
             }
-            run_llm_gateway(root, job_id, "generate_authoring_candidate", &retry, api_key)
-                .map_err(|second_error| format!("cloud_authoring_candidate_rejected:{second_error}"))
+            run_llm_gateway(
+                root,
+                job_id,
+                "generate_authoring_candidate",
+                &retry,
+                api_key,
+            )
+            .map_err(|second_error| format!("cloud_authoring_candidate_rejected:{second_error}"))
         }
     }
 }
@@ -2818,10 +2898,15 @@ pub(crate) fn finalize_cloud_authoring_candidate(
     if normalized.document.is_object() {
         // 用**同一套**质量管线评估候选，覆盖占位块。物理影子对不上时 `evaluate_quality`
         // 自己会如实标 `physicalShadow: missing`，这里不做任何粉饰。
-        crate::authoring_v2_commands::refresh_quality_report(root, job_id, &mut normalized.document)?;
+        crate::authoring_v2_commands::refresh_quality_report(
+            root,
+            job_id,
+            &mut normalized.document,
+        )?;
     }
-    let candidate =
-        crate::reconcile::candidate::cloud_authoring_candidate_from_normalized(&identity, normalized)?;
+    let candidate = crate::reconcile::candidate::cloud_authoring_candidate_from_normalized(
+        &identity, normalized,
+    )?;
     crate::reconcile::store::write_cloud_authoring_candidate(root, batch_id, &candidate)?;
     Ok(candidate)
 }
@@ -3393,9 +3478,7 @@ where
     let job = load_job(root, &job_id)?;
     let dir = job_dir(root, &job_id);
     ensure_job_dirs(&dir)?;
-    if dir.join("authoring-ir.json").exists()
-        && !allow_overwrite
-        && !allow_existing_draft_for_retry
+    if dir.join("authoring-ir.json").exists() && !allow_overwrite && !allow_existing_draft_for_retry
     {
         return Err(
             "editable_draft_exists; pass allowOverwrite=true before regenerating draft".to_string(),
@@ -3900,20 +3983,15 @@ where
         } else {
             None
         };
-        let answer_constraint_document = build_authoring_v2_shadow(
-            &job,
-            &ir,
-            &split,
-            doc.as_ref(),
-            physical_shadow.as_ref(),
-        )
-        .ok()
-        .or_else(|| {
-            read_json_opt(&dir.join(AUTHORING_V2_SHADOW_ARTIFACT_FILE))
+        let answer_constraint_document =
+            build_authoring_v2_shadow(&job, &ir, &split, doc.as_ref(), physical_shadow.as_ref())
                 .ok()
-                .flatten()
-        })
-        .unwrap_or_else(|| ir.clone());
+                .or_else(|| {
+                    read_json_opt(&dir.join(AUTHORING_V2_SHADOW_ARTIFACT_FILE))
+                        .ok()
+                        .flatten()
+                })
+                .unwrap_or_else(|| ir.clone());
         if let Some(outcome) = worker_outcome.as_ref() {
             match &outcome.vision_answer {
                 Ok((candidate, output)) => {
@@ -3934,20 +4012,32 @@ where
                         obj.insert("stateReason".to_string(), json!(state_reason));
                         obj.insert(
                             "answerPageImageCount".to_string(),
-                            candidate.get("answerPageImageCount").cloned().unwrap_or(Value::Null),
+                            candidate
+                                .get("answerPageImageCount")
+                                .cloned()
+                                .unwrap_or(Value::Null),
                         );
                         obj.insert(
                             "answerPageIndexes".to_string(),
-                            candidate.get("answerPageIndexes").cloned().unwrap_or_else(|| json!([])),
+                            candidate
+                                .get("answerPageIndexes")
+                                .cloned()
+                                .unwrap_or_else(|| json!([])),
                         );
                         obj.insert("answerCount".to_string(), json!(answer_count));
                         obj.insert(
                             "constraintViolations".to_string(),
-                            constraint_report.get("violations").cloned().unwrap_or_else(|| json!([])),
+                            constraint_report
+                                .get("violations")
+                                .cloned()
+                                .unwrap_or_else(|| json!([])),
                         );
                         obj.insert(
                             "reviewWarnings".to_string(),
-                            constraint_report.get("reviewWarnings").cloned().unwrap_or_else(|| json!([])),
+                            constraint_report
+                                .get("reviewWarnings")
+                                .cloned()
+                                .unwrap_or_else(|| json!([])),
                         );
                         obj.insert(
                             "confidence".to_string(),
@@ -4394,18 +4484,19 @@ where
                             let _ = write_json(&dir.join("vision-answer-output.json"), &output);
                             let candidates_written =
                                 write_vision_answer_candidates_file(&dir, job_id, &candidate);
-                            let application = match apply_vision_answer_candidate(root, job_id, &candidate) {
-                                Ok(report) => report,
-                                Err(error) => json!({
-                                    "source": "answer_page_recognition",
-                                    "attempted": true,
-                                    "applied": false,
-                                    "state": VISION_ANSWER_STATE_FAILED,
-                                    "stateReason": "invalid_response",
-                                    "failure": error,
-                                    "appliedCount": 0
-                                }),
-                            };
+                            let application =
+                                match apply_vision_answer_candidate(root, job_id, &candidate) {
+                                    Ok(report) => report,
+                                    Err(error) => json!({
+                                        "source": "answer_page_recognition",
+                                        "attempted": true,
+                                        "applied": false,
+                                        "state": VISION_ANSWER_STATE_FAILED,
+                                        "stateReason": "invalid_response",
+                                        "failure": error,
+                                        "appliedCount": 0
+                                    }),
+                                };
                             let applied = application
                                 .get("applied")
                                 .and_then(Value::as_bool)
@@ -4422,29 +4513,55 @@ where
                                 obj.insert("stateReason".to_string(), json!(state_reason));
                                 obj.insert(
                                     "answerPageImageCount".to_string(),
-                                    candidate.get("answerPageImageCount").cloned().unwrap_or(Value::Null),
+                                    candidate
+                                        .get("answerPageImageCount")
+                                        .cloned()
+                                        .unwrap_or(Value::Null),
                                 );
                                 obj.insert(
                                     "answerPageIndexes".to_string(),
-                                    candidate.get("answerPageIndexes").cloned().unwrap_or_else(|| json!([])),
+                                    candidate
+                                        .get("answerPageIndexes")
+                                        .cloned()
+                                        .unwrap_or_else(|| json!([])),
                                 );
                                 obj.insert("answerCount".to_string(), json!(answer_count));
                                 obj.insert(
                                     "constraintViolations".to_string(),
-                                    application.get("constraintViolations")
+                                    application
+                                        .get("constraintViolations")
                                         .cloned()
-                                        .unwrap_or_else(|| constraint_report.get("violations").cloned().unwrap_or_else(|| json!([]))),
+                                        .unwrap_or_else(|| {
+                                            constraint_report
+                                                .get("violations")
+                                                .cloned()
+                                                .unwrap_or_else(|| json!([]))
+                                        }),
                                 );
                                 obj.insert(
                                     "reviewWarnings".to_string(),
-                                    application.get("reviewWarnings")
-                                        .cloned()
-                                        .unwrap_or_else(|| constraint_report.get("reviewWarnings").cloned().unwrap_or_else(|| json!([]))),
+                                    application.get("reviewWarnings").cloned().unwrap_or_else(
+                                        || {
+                                            constraint_report
+                                                .get("reviewWarnings")
+                                                .cloned()
+                                                .unwrap_or_else(|| json!([]))
+                                        },
+                                    ),
                                 );
-                                obj.insert("confidence".to_string(), output.get("confidence").cloned().unwrap_or(Value::Null));
-                                obj.insert("warnings".to_string(), output.get("warnings").cloned().unwrap_or_else(|| json!([])));
+                                obj.insert(
+                                    "confidence".to_string(),
+                                    output.get("confidence").cloned().unwrap_or(Value::Null),
+                                );
+                                obj.insert(
+                                    "warnings".to_string(),
+                                    output.get("warnings").cloned().unwrap_or_else(|| json!([])),
+                                );
                             }
-                            let _ = write_json(&dir.join("vision-answer-application.json"), &application);
+                            let _ = write_json(
+                                &dir.join("vision-answer-application.json"),
+                                &application,
+                            );
                             let filled = answer_question_ids_from_authoring(&ir);
                             let missing = empty_answer_question_ids_from_authoring(&ir);
                             append_authoring_audit_issue(
@@ -4897,7 +5014,10 @@ mod tests {
     fn candidate_generation_runs_one_request_per_chunk_and_survives_a_failed_chunk() {
         use crate::reconcile::candidate::CandidateChunk;
         let base = serde_json::json!({"mode": "generate_authoring_candidate"});
-        let plan = vec![CandidateChunk::new(vec![1, 2]), CandidateChunk::new(vec![3, 4])];
+        let plan = vec![
+            CandidateChunk::new(vec![1, 2]),
+            CandidateChunk::new(vec![3, 4]),
+        ];
         let mut seen = Vec::new();
         let merged = generate_candidate_by_chunks(&base, &plan, |input| {
             let label = input["chunk"]["label"].as_str().unwrap_or("").to_string();
@@ -4913,8 +5033,14 @@ mod tests {
         })
         .expect("一块成功就不是整份失败");
         assert_eq!(seen, vec!["Questions 1-2", "Questions 3-4"]);
-        assert_eq!(merged["uncoveredQuestionNumbers"], serde_json::json!([3, 4]));
-        assert_eq!(merged["taskGroups"][0]["taskId"], serde_json::json!("c1-cloud-tg-1"));
+        assert_eq!(
+            merged["uncoveredQuestionNumbers"],
+            serde_json::json!([3, 4])
+        );
+        assert_eq!(
+            merged["taskGroups"][0]["taskId"],
+            serde_json::json!("c1-cloud-tg-1")
+        );
 
         let mut calls = 0;
         let whole = generate_candidate_by_chunks(&base, &[], |input| {
@@ -4962,14 +5088,18 @@ mod tests {
 
     #[test]
     fn retry_recognition_refreshes_an_existing_draft_without_an_overwrite_option() {
-        let root = std::env::temp_dir().join(format!("pdf2test-retry-pipeline-{}", Uuid::new_v4().simple()));
+        let root = std::env::temp_dir().join(format!(
+            "pdf2test-retry-pipeline-{}",
+            Uuid::new_v4().simple()
+        ));
         ensure_app_dirs(&root).unwrap();
         let job = sample_job();
         save_job(&root, &job).unwrap();
         let dir = job_dir(&root, &job.job_id);
         ensure_job_dirs(&dir).unwrap();
         fs::copy(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/parser/complex-reading.pdf"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../fixtures/parser/complex-reading.pdf"),
             dir.join("uploads/fixture.pdf"),
         )
         .unwrap();
@@ -4998,12 +5128,18 @@ mod tests {
         )
         .expect("重新识别必须能在已有稿子上产出新候选");
         assert!(report.get("status").and_then(Value::as_str).is_some());
-        let refreshed: Value = serde_json::from_str(
-            &fs::read_to_string(dir.join("authoring-ir.json")).unwrap(),
-        )
-        .unwrap();
-        assert_ne!(refreshed, json!({"sentinel": true}), "识别必须真的重跑并刷新候选 artifact");
-        assert_eq!(refreshed.get("schemaVersion").and_then(Value::as_str), Some("ReadingAuthoringIRV1"));
+        let refreshed: Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("authoring-ir.json")).unwrap())
+                .unwrap();
+        assert_ne!(
+            refreshed,
+            json!({"sentinel": true}),
+            "识别必须真的重跑并刷新候选 artifact"
+        );
+        assert_eq!(
+            refreshed.get("schemaVersion").and_then(Value::as_str),
+            Some("ReadingAuthoringIRV1")
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -5027,7 +5163,9 @@ mod tests {
         }];
         save_job(&root, &job).unwrap();
         ensure_job_dirs(&job_dir(&root, &job.job_id)).unwrap();
-        let upload = job_dir(&root, &job.job_id).join("uploads").join("source.docx");
+        let upload = job_dir(&root, &job.job_id)
+            .join("uploads")
+            .join("source.docx");
         fs::write(&upload, b"PK\x03\x04 dummy docx payload").unwrap();
         let (source, _path) = main_source_for_cloud(&root, &job)
             .expect("DOCX 主源应被云端链接受（旧实现会返回 main_source_is_not_pdf）");
@@ -5038,7 +5176,8 @@ mod tests {
     /// 目标 3(a) 的反向对照：DOCX 缺上传文件时，报错应是「文件缺失」而非「类型非 PDF」。
     #[test]
     fn main_source_for_cloud_rejects_missing_file_not_wrong_type() {
-        let root = std::env::temp_dir().join(format!("pdf2test-docx-missing-{}", Uuid::new_v4().simple()));
+        let root =
+            std::env::temp_dir().join(format!("pdf2test-docx-missing-{}", Uuid::new_v4().simple()));
         ensure_app_dirs(&root).unwrap();
         let mut job = sample_job();
         job.job_id = "docx-missing".to_string();
@@ -5148,7 +5287,8 @@ mod tests {
 
     #[test]
     fn answer_page_extraction_joins_zero_based_physical_pages_to_one_based_images() {
-        let root = std::env::temp_dir().join(format!("pdf2test-answer-pages-{}", Uuid::new_v4().simple()));
+        let root =
+            std::env::temp_dir().join(format!("pdf2test-answer-pages-{}", Uuid::new_v4().simple()));
         ensure_app_dirs(&root).unwrap();
         let job = sample_job();
         save_job(&root, &job).unwrap();
@@ -5173,7 +5313,11 @@ mod tests {
         });
 
         let (selected, indexes) = answer_page_extraction(&root, &job, &extraction);
-        assert_eq!(indexes, vec![5], "physical p5 (index 4) must select rendered p5");
+        assert_eq!(
+            indexes,
+            vec![5],
+            "physical p5 (index 4) must select rendered p5"
+        );
         assert_eq!(selected.pointer("/pages/0/pageIndex"), Some(&json!(5)));
         assert_eq!(selected.pointer("/pages/1"), None);
         let _ = fs::remove_dir_all(root);
@@ -5181,14 +5325,16 @@ mod tests {
 
     #[test]
     fn answer_page_write_uses_canonical_journal_provenance_and_clears_on_blank_rerun() {
-        let root = std::env::temp_dir().join(format!("pdf2test-answer-write-{}", Uuid::new_v4().simple()));
+        let root =
+            std::env::temp_dir().join(format!("pdf2test-answer-write-{}", Uuid::new_v4().simple()));
         ensure_app_dirs(&root).unwrap();
         let job = sample_job();
         save_job(&root, &job).unwrap();
         let dir = job_dir(&root, &job.job_id);
         ensure_job_dirs(&dir).unwrap();
         fs::copy(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/parser/complex-reading.pdf"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../fixtures/parser/complex-reading.pdf"),
             dir.join("uploads/fixture.pdf"),
         )
         .unwrap();
@@ -5214,12 +5360,7 @@ mod tests {
             .unwrap()
             .iter()
             .find(|(_, slot)| slot.get("interaction").and_then(Value::as_str) == Some("text"))
-            .map(|(slot_id, slot)| {
-                (
-                    slot_id.clone(),
-                    slot["questionNumber"].as_u64().unwrap(),
-                )
-            })
+            .map(|(slot_id, slot)| (slot_id.clone(), slot["questionNumber"].as_u64().unwrap()))
             .expect("fixture should contain a text answer slot");
         // Make the write target explicitly unresolved so this test exercises
         // the fill path rather than the intentional no-overwrite guard for a
@@ -5239,13 +5380,19 @@ mod tests {
         });
         let applied = apply_vision_answer_candidate(&root, &job.job_id, &candidate).unwrap();
         assert_eq!(applied["source"], "answer_page_recognition");
-        assert_eq!(applied["applied"], true, "answer-page application report: {applied}");
+        assert_eq!(
+            applied["applied"], true,
+            "answer-page application report: {applied}"
+        );
 
         let conn = crate::library::repository::open_library_connection(&root).unwrap();
         let (canonical, _) = crate::library::repository::get_canonical_ds(&conn, &job.job_id)
             .unwrap()
             .unwrap();
-        assert_eq!(canonical["answerKey"][slot_id.as_str()]["values"][0], "answer-page-value");
+        assert_eq!(
+            canonical["answerKey"][slot_id.as_str()]["values"][0],
+            "answer-page-value"
+        );
         let origin: String = conn
             .query_row(
                 "SELECT edit_origin FROM editor_journal_v1 WHERE library_item_id = ?1 ORDER BY id DESC LIMIT 1",
@@ -5269,20 +5416,27 @@ mod tests {
         let (canonical, _) = crate::library::repository::get_canonical_ds(&conn, &job.job_id)
             .unwrap()
             .unwrap();
-        assert_eq!(canonical["answerKey"][slot_id.as_str()]["kind"], "unresolved");
+        assert_eq!(
+            canonical["answerKey"][slot_id.as_str()]["kind"],
+            "unresolved"
+        );
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn failed_answer_page_candidate_cannot_write_a_forged_answer() {
-        let root = std::env::temp_dir().join(format!("pdf2test-answer-failed-write-{}", Uuid::new_v4().simple()));
+        let root = std::env::temp_dir().join(format!(
+            "pdf2test-answer-failed-write-{}",
+            Uuid::new_v4().simple()
+        ));
         ensure_app_dirs(&root).unwrap();
         let job = sample_job();
         save_job(&root, &job).unwrap();
         let dir = job_dir(&root, &job.job_id);
         ensure_job_dirs(&dir).unwrap();
         fs::copy(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/parser/complex-reading.pdf"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../fixtures/parser/complex-reading.pdf"),
             dir.join("uploads/fixture.pdf"),
         )
         .unwrap();
@@ -5325,7 +5479,10 @@ mod tests {
         let (after, _) = crate::library::repository::get_canonical_ds(&conn, &job.job_id)
             .unwrap()
             .expect("canonical should remain available");
-        assert_eq!(after, before, "failed visual recognition must not mutate canonical answers");
+        assert_eq!(
+            after, before,
+            "failed visual recognition must not mutate canonical answers"
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -5438,7 +5595,11 @@ mod tests {
             for number in slot_numbers {
                 let number = number.as_u64().unwrap();
                 let slot_id = format!("q{number}");
-                let interaction = if option_labels.is_empty() { "text" } else { "select" };
+                let interaction = if option_labels.is_empty() {
+                    "text"
+                } else {
+                    "select"
+                };
                 answer_slots.insert(
                     slot_id.clone(),
                     json!({
@@ -5526,10 +5687,8 @@ mod tests {
         let mut total = 0usize;
         for case in fixture["cases"].as_array().unwrap() {
             let canonical = answer_constraint_regression_canonical(case);
-            let report = validate_answer_page_candidate(
-                &canonical,
-                &json!({"answers": case["answers"]}),
-            );
+            let report =
+                validate_answer_page_candidate(&canonical, &json!({"answers": case["answers"]}));
             assert_eq!(
                 report["violations"],
                 json!([]),
@@ -5558,22 +5717,21 @@ mod tests {
     fn answer_page_constraint_checker_rejects_injected_tfng_option_and_word_limit_errors() {
         let canonical = answer_constraint_test_canonical();
 
-        let tfng = validate_answer_page_candidate(
-            &canonical,
-            &json!({"answers":{"1":"Yes please"}}),
-        );
+        let tfng =
+            validate_answer_page_candidate(&canonical, &json!({"answers":{"1":"Yes please"}}));
         assert!(tfng["violations"].as_array().unwrap().iter().any(|item| {
             item.get("code").and_then(Value::as_str) == Some("ANSWER_OPTION_NOT_ALLOWED")
         }));
         assert!(tfng["acceptedAnswers"].get("1").is_none());
 
-        let matching = validate_answer_page_candidate(
-            &canonical,
-            &json!({"answers":{"4":"K"}}),
-        );
-        assert!(matching["violations"].as_array().unwrap().iter().any(|item| {
-            item.get("code").and_then(Value::as_str) == Some("ANSWER_OPTION_NOT_ALLOWED")
-        }));
+        let matching = validate_answer_page_candidate(&canonical, &json!({"answers":{"4":"K"}}));
+        assert!(matching["violations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| {
+                item.get("code").and_then(Value::as_str) == Some("ANSWER_OPTION_NOT_ALLOWED")
+            }));
         assert!(matching["acceptedAnswers"].get("4").is_none());
 
         let words = validate_answer_page_candidate(
@@ -5589,10 +5747,8 @@ mod tests {
     #[test]
     fn answer_page_constraint_checker_allows_words_plus_the_declared_number() {
         let canonical = answer_constraint_test_canonical();
-        let report = validate_answer_page_candidate(
-            &canonical,
-            &json!({"answers":{"7":"room seven 12"}}),
-        );
+        let report =
+            validate_answer_page_candidate(&canonical, &json!({"answers":{"7":"room seven 12"}}));
 
         assert!(
             report["violations"].as_array().unwrap().is_empty(),
@@ -5619,12 +5775,8 @@ mod tests {
             ],
             "answerPageIndexes": [1]
         });
-        let commands = build_answer_page_commands(
-            &canonical,
-            &candidate,
-            &BTreeSet::new(),
-            &BTreeSet::new(),
-        );
+        let commands =
+            build_answer_page_commands(&canonical, &candidate, &BTreeSet::new(), &BTreeSet::new());
         assert!(
             commands.is_empty(),
             "semantically invalid visual answers must remain unresolved, got commands: {commands:?}"
@@ -5641,16 +5793,24 @@ mod tests {
         assert!(report["violations"].as_array().unwrap().iter().any(|item| {
             item.get("code").and_then(Value::as_str) == Some("ANSWER_QUESTION_NUMBER_OUT_OF_RANGE")
         }));
-        assert!(report["reviewWarnings"].as_array().unwrap().iter().any(|item| {
-            item.get("code").and_then(Value::as_str) == Some("ANSWER_DISTRIBUTION_REVIEW")
-        }));
+        assert!(report["reviewWarnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| {
+                item.get("code").and_then(Value::as_str) == Some("ANSWER_DISTRIBUTION_REVIEW")
+            }));
 
         let mut malformed_range = canonical.clone();
         malformed_range["taskGroups"][0]["displayRange"]["end"] = json!(2);
         let range_report = validate_answer_page_candidate(&malformed_range, &json!({"answers":{}}));
-        assert!(range_report["violations"].as_array().unwrap().iter().any(|item| {
-            item.get("code").and_then(Value::as_str) == Some("ANSWER_TASK_GROUP_RANGE_MISMATCH")
-        }));
+        assert!(range_report["violations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| {
+                item.get("code").and_then(Value::as_str) == Some("ANSWER_TASK_GROUP_RANGE_MISMATCH")
+            }));
         assert!(option_labels_from_alphabet("A-G").contains("G"));
         assert_eq!(option_labels_from_alphabet("A-G").len(), 7);
         assert!(option_labels_from_alphabet("I-X").contains("X"));
@@ -5685,7 +5845,10 @@ mod tests {
                 "invalid_response",
             ),
         ] {
-            assert_eq!(vision_answer_failure_state(error), (expected_state, expected_reason));
+            assert_eq!(
+                vision_answer_failure_state(error),
+                (expected_state, expected_reason)
+            );
             let report = vision_answer_failure_report(error, Some(1), &[5]);
             assert_eq!(report["state"], expected_state);
             assert_eq!(report["stateReason"], expected_reason);
@@ -5704,7 +5867,10 @@ mod tests {
 
     #[test]
     fn answer_page_exists_but_503_is_not_the_same_as_no_answer_page() {
-        let root = std::env::temp_dir().join(format!("pdf2test-answer-failure-state-{}", Uuid::new_v4().simple()));
+        let root = std::env::temp_dir().join(format!(
+            "pdf2test-answer-failure-state-{}",
+            Uuid::new_v4().simple()
+        ));
         ensure_app_dirs(&root).unwrap();
         let job = sample_job();
         save_job(&root, &job).unwrap();
@@ -5761,14 +5927,20 @@ mod tests {
             ),
             ("not_executed", "service_unavailable")
         );
-        assert_ne!(no_page_state.1, unavailable_report["stateReason"].as_str().unwrap());
+        assert_ne!(
+            no_page_state.1,
+            unavailable_report["stateReason"].as_str().unwrap()
+        );
         assert_eq!(unavailable_report["appliedCount"], 0);
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn answer_page_503_keeps_local_draft_available_and_answers_unresolved() {
-        let root = std::env::temp_dir().join(format!("pdf2test-answer-503-pipeline-{}", Uuid::new_v4().simple()));
+        let root = std::env::temp_dir().join(format!(
+            "pdf2test-answer-503-pipeline-{}",
+            Uuid::new_v4().simple()
+        ));
         ensure_app_dirs(&root).unwrap();
         crate::llm_profiles::save_profiles(
             &root,
@@ -5790,7 +5962,8 @@ mod tests {
         let dir = job_dir(&root, &job.job_id);
         ensure_job_dirs(&dir).unwrap();
         fs::copy(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/parser/image-only-reading.pdf"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../fixtures/parser/image-only-reading.pdf"),
             dir.join("uploads/fixture.pdf"),
         )
         .unwrap();
@@ -5810,16 +5983,28 @@ mod tests {
         .expect("a visual gateway outage must not fail local draft generation");
 
         assert_eq!(
-            report.pointer("/parser/visionAnswerExtraction/state").and_then(Value::as_str),
+            report
+                .pointer("/parser/visionAnswerExtraction/state")
+                .and_then(Value::as_str),
             Some("not_executed")
         );
         assert_eq!(
-            report.pointer("/parser/visionAnswerExtraction/stateReason").and_then(Value::as_str),
+            report
+                .pointer("/parser/visionAnswerExtraction/stateReason")
+                .and_then(Value::as_str),
             Some("service_unavailable")
         );
-        assert_ne!(report.get("status").and_then(Value::as_str), Some("Working"));
-        assert!(dir.join("authoring-ir.json").exists(), "local structure must remain editable");
-        let ir: Value = serde_json::from_str(&fs::read_to_string(dir.join("authoring-ir.json")).unwrap()).unwrap();
+        assert_ne!(
+            report.get("status").and_then(Value::as_str),
+            Some("Working")
+        );
+        assert!(
+            dir.join("authoring-ir.json").exists(),
+            "local structure must remain editable"
+        );
+        let ir: Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("authoring-ir.json")).unwrap())
+                .unwrap();
         let resolved = ir
             .get("answerKey")
             .and_then(Value::as_object)
@@ -5833,7 +6018,8 @@ mod tests {
 
     #[test]
     fn answer_page_retry_runs_the_visual_gateway_again_instead_of_reusing_cache() {
-        let root = std::env::temp_dir().join(format!("pdf2test-answer-retry-{}", Uuid::new_v4().simple()));
+        let root =
+            std::env::temp_dir().join(format!("pdf2test-answer-retry-{}", Uuid::new_v4().simple()));
         ensure_app_dirs(&root).unwrap();
         crate::llm_profiles::save_profiles(
             &root,
@@ -5855,7 +6041,8 @@ mod tests {
         let dir = job_dir(&root, &job.job_id);
         ensure_job_dirs(&dir).unwrap();
         fs::copy(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/parser/image-only-reading.pdf"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../fixtures/parser/image-only-reading.pdf"),
             dir.join("uploads/fixture.pdf"),
         )
         .unwrap();
@@ -5880,10 +6067,16 @@ mod tests {
             true,
         )
         .expect("first controlled retry run should complete locally");
-        let first_count = calls.lock().unwrap().iter().filter(|command| {
-            command.as_str() == "extract_pdf_image_answers"
-        }).count();
-        assert_eq!(first_count, 1, "first run should make one uncached answer-page request");
+        let first_count = calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|command| command.as_str() == "extract_pdf_image_answers")
+            .count();
+        assert_eq!(
+            first_count, 1,
+            "first run should make one uncached answer-page request"
+        );
 
         let retry_calls = Arc::clone(&calls);
         run_auto_pipeline_core_with_gateway_mode(
@@ -5894,17 +6087,27 @@ mod tests {
                 target: Some("editableDraft".to_string()),
                 ..Default::default()
             }),
-            move |_root: &Path, _job_id: &str, command: &str, _input: &Value, _key: Option<&str>| {
+            move |_root: &Path,
+                  _job_id: &str,
+                  command: &str,
+                  _input: &Value,
+                  _key: Option<&str>| {
                 retry_calls.lock().unwrap().push(command.to_string());
                 Err("llm_http_503:{\"error\":\"unavailable\"}".to_string())
             },
             true,
         )
         .expect("retry run should complete locally");
-        let total_count = calls.lock().unwrap().iter().filter(|command| {
-            command.as_str() == "extract_pdf_image_answers"
-        }).count();
-        assert_eq!(total_count, 2, "retry must call the visual gateway again, not reuse the previous failure");
+        let total_count = calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|command| command.as_str() == "extract_pdf_image_answers")
+            .count();
+        assert_eq!(
+            total_count, 2,
+            "retry must call the visual gateway again, not reuse the previous failure"
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -5949,8 +6152,10 @@ mod tests {
     /// 原文件文本——证明 DOCX 云端输入不再等待/依赖本地语义识别落盘。
     #[test]
     fn cloud_source_evidence_independent_of_local_artifact() {
-        let root = std::env::temp_dir()
-            .join(format!("pdf2test-cloud-evidence-{}", Uuid::new_v4().simple()));
+        let root = std::env::temp_dir().join(format!(
+            "pdf2test-cloud-evidence-{}",
+            Uuid::new_v4().simple()
+        ));
         ensure_app_dirs(&root).unwrap();
         let mut job = sample_job();
         job.job_id = "cloud-evidence-docx".to_string();
@@ -5974,7 +6179,9 @@ mod tests {
             "READING PASSAGE 1\nQuestions 1-2 Choose TWO letters.\nAnswers one two",
         );
         // 故意不写 document-ir.json —— 旧实现会在此处 race/失败。
-        assert!(!job_dir(&root, &job.job_id).join("document-ir.json").exists());
+        assert!(!job_dir(&root, &job.job_id)
+            .join("document-ir.json")
+            .exists());
         let evidence = prepare_cloud_source_evidence(&root, &job)
             .expect("云端证据面应从原文件独立抽取，不依赖 document-ir.json");
         assert!(
@@ -6005,8 +6212,8 @@ mod tests {
             .join("uploads")
             .join("source.txt");
         fs::write(&txt_upload, "Plain text passage for the cloud.").unwrap();
-        let txt_evidence = prepare_cloud_source_evidence(&root, &txt_job)
-            .expect("纯文本源也应独立抽取");
+        let txt_evidence =
+            prepare_cloud_source_evidence(&root, &txt_job).expect("纯文本源也应独立抽取");
         assert!(
             txt_evidence.contains("Plain text passage"),
             "实际: {txt_evidence}"
@@ -6020,8 +6227,8 @@ mod tests {
         use zip::write::SimpleFileOptions;
         let file = fs::File::create(path).unwrap();
         let mut zip = zip::ZipWriter::new(file);
-        let options = SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Stored);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
         zip.start_file("[Content_Types].xml", options).unwrap();
         zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#).unwrap();
         zip.add_directory("word/", options).unwrap();

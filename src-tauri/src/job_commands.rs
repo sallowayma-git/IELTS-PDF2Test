@@ -145,7 +145,9 @@ fn picked_source_path(path: PathBuf) -> CommandResult<PickedSourcePath> {
         .unwrap_or_default()
         .to_ascii_lowercase();
     if !matches!(extension.as_str(), "pdf" | "docx" | "txt" | "md") {
-        return Err(format!("automation_source_file_type_unsupported:{extension}"));
+        return Err(format!(
+            "automation_source_file_type_unsupported:{extension}"
+        ));
     }
     let size_bytes = fs::metadata(&path)
         .map_err(|error| error.to_string())?
@@ -266,7 +268,10 @@ pub(crate) fn delete_job_artifacts(root: &std::path::Path, job_id: &str) -> Comm
     }
     // 同步删除题库 DB 中的记录（失败记日志但不阻断文件删除——文件已删，DB 孤儿可被迁移/重试清理）。
     if let Err(error) = crate::db::delete_exam_by_id(root, job_id) {
-        eprintln!("[library] delete_exam_by_id failed for {}: {}", job_id, error);
+        eprintln!(
+            "[library] delete_exam_by_id failed for {}: {}",
+            job_id, error
+        );
     }
     Ok(())
 }
@@ -467,7 +472,10 @@ mod tests {
         let kept = uploads.join("abcd1234-final.pdf");
         fs::write(&kept, b"final").unwrap();
         // 非 uploads 目录下的同名文件不受影响。
-        let stray = root.join("jobs").join("job-1").join(".staging-elsewhere.pdf");
+        let stray = root
+            .join("jobs")
+            .join("job-1")
+            .join(".staging-elsewhere.pdf");
         fs::write(&stray, b"stray").unwrap();
 
         // 把 stale 的 mtime 拨回 2 天前（std FileTimes，无需额外依赖）。
@@ -478,7 +486,8 @@ mod tests {
         let stale_time = std::time::SystemTime::UNIX_EPOCH
             + std::time::Duration::from_secs(now_secs - 2 * 24 * 60 * 60);
         let file = fs::OpenOptions::new().write(true).open(&stale).unwrap();
-        file.set_times(fs::FileTimes::new().set_modified(stale_time)).unwrap();
+        file.set_times(fs::FileTimes::new().set_modified(stale_time))
+            .unwrap();
 
         let removed = cleanup_orphaned_staged_files(&root).unwrap();
         assert_eq!(removed, 1, "只清理超过 24h 的 .staging- 文件");
@@ -496,7 +505,9 @@ mod tests {
     /// 用户既看不到也删不掉。而「顺手多删一点」的代价更大——删掉别人的音频是不可逆的。
     #[test]
     fn permanent_delete_takes_the_managed_audio_with_it_and_nothing_else() {
-        use crate::library::repository::{open_library_connection, upsert_item_shell, UpsertItemInput};
+        use crate::library::repository::{
+            open_library_connection, upsert_item_shell, UpsertItemInput,
+        };
         use crate::listening_audio::store::{audio_status, bind_audio};
 
         let root = temp_root();
@@ -577,12 +588,16 @@ mod tests {
     /// **真的没有去落地/解析另外两份**，而不是「钩子少返回了两份」。
     #[test]
     fn choosing_one_file_imports_only_that_file_even_though_the_directory_holds_three() {
-        use crate::processing::commands::{import_files_at_root, ImportFileInput, ImportFilesInput};
+        use crate::processing::commands::{
+            import_files_at_root, ImportFileInput, ImportFilesInput,
+        };
 
         // 环境变量是进程级的，而测试默认并行。本文件里目前只有这一条测试碰这对钩子变量，
         // 但仍加锁：将来有人给「目录入口」也写测试时会用同一个进程的同一片环境。
         static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         let root = temp_root();
         crate::util::ensure_app_dirs(&root).unwrap();
@@ -606,7 +621,10 @@ mod tests {
             .unwrap()
             .expect("设置了钩子就必须返回清单，而不是回落到原生对话框");
         assert_eq!(
-            picked.iter().map(|file| file.name.as_str()).collect::<Vec<_>>(),
+            picked
+                .iter()
+                .map(|file| file.name.as_str())
+                .collect::<Vec<_>>(),
             vec!["bravo.pdf"],
             "「选择文件」只能带进被选中的那一份"
         );
@@ -616,7 +634,10 @@ mod tests {
         // 这一条不是「顺手多验一个功能」——它是上面「恰好 1 份」的反平凡证据。
         let via_folder = list_pdf_files_in_dir(source_dir.clone()).unwrap();
         assert_eq!(
-            via_folder.iter().map(|file| file.name.as_str()).collect::<Vec<_>>(),
+            via_folder
+                .iter()
+                .map(|file| file.name.as_str())
+                .collect::<Vec<_>>(),
             names.to_vec(),
             "目录入口本来就该把三份都列出来；列不出来说明这次对照不成立"
         );
@@ -646,7 +667,11 @@ mod tests {
         assert!(
             result.rejected.is_empty(),
             "不该有被拒的文件：{:?}",
-            result.rejected.iter().map(|r| &r.reason).collect::<Vec<_>>()
+            result
+                .rejected
+                .iter()
+                .map(|r| &r.reason)
+                .collect::<Vec<_>>()
         );
         assert_eq!(result.created.len(), 1, "选 1 份就只能建立 1 个条目");
         assert_eq!(result.created[0].title, "bravo");

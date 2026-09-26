@@ -15,8 +15,9 @@ use crate::CommandResult;
 pub(crate) const LIBRARY_V2_SCHEMA_VERSION: i64 = 9;
 
 pub(crate) fn ensure_v2_schema(conn: &Connection) -> CommandResult<()> {
-    let transaction = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
-        .map_err(|error| format!("library_v2_migrate_begin:{error}"))?;
+    let transaction =
+        rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
+            .map_err(|error| format!("library_v2_migrate_begin:{error}"))?;
     let current: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|error| format!("library_v2_user_version:{error}"))?;
@@ -32,7 +33,9 @@ pub(crate) fn ensure_v2_schema(conn: &Connection) -> CommandResult<()> {
         conn.execute_batch(&format!("PRAGMA user_version = {applied};"))
             .map_err(|error| format!("library_v2_set_user_version:{error}"))?;
     }
-    transaction.commit().map_err(|error| format!("library_v2_migrate_commit:{error}"))
+    transaction
+        .commit()
+        .map_err(|error| format!("library_v2_migrate_commit:{error}"))
 }
 
 /// 版本化迁移步骤：`(target_version, DDL)`。只追加，不修改历史步骤。
@@ -41,7 +44,10 @@ fn migrations() -> Vec<(i64, &'static str)> {
         (1, LIBRARY_V2_SCHEMA_SQL),
         // v2：事件序号（M2）。`processing://item-updated` 携带可比较的状态版本，
         // 前端据此丢弃重复/乱序事件（计划 §3 接口契约）。
-        (2, "ALTER TABLE processing_jobs_v2 ADD COLUMN event_seq INTEGER NOT NULL DEFAULT 0;"),
+        (
+            2,
+            "ALTER TABLE processing_jobs_v2 ADD COLUMN event_seq INTEGER NOT NULL DEFAULT 0;",
+        ),
         // v3：durable 取消标记（G1/A4-F02 + P0-2）。运行中任务的取消此前只存在
         // 内存 HashSet，重启即丢并被恢复逻辑重新入队；现在落库，启动恢复时兑现。
         // 同时修正旧版存量数据：旧恢复逻辑对"重试耗尽"路径也写 interrupted，
@@ -347,7 +353,8 @@ mod tests {
     }
 
     #[test]
-    fn canonical_ds_rejects_missing_modality() {        let conn = Connection::open_in_memory().unwrap();
+    fn canonical_ds_rejects_missing_modality() {
+        let conn = Connection::open_in_memory().unwrap();
         ensure_v2_schema(&conn).unwrap();
         let insert = conn.execute(
             "INSERT INTO library_items_v2 (id, modality, title, status, created_at, updated_at)

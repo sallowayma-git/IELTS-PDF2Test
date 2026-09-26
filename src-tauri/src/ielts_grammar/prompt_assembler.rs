@@ -182,7 +182,14 @@ mod tests {
             line("r17", "18th-century paintings17"),
             line("r18", "Farnley collection 18"),
         ];
-        let seventeen = assemble_prompt(None, 17, Some(&anchor("r17", 0, 17)), Some(&anchor("r18", 1, 18)), &lines, None);
+        let seventeen = assemble_prompt(
+            None,
+            17,
+            Some(&anchor("r17", 0, 17)),
+            Some(&anchor("r18", 1, 18)),
+            &lines,
+            None,
+        );
         assert_eq!(seventeen.text, "18th-century paintings");
         let eighteen = assemble_prompt(None, 18, Some(&anchor("r18", 1, 18)), None, &lines, None);
         assert_eq!(eighteen.text, "Farnley collection");
@@ -192,10 +199,7 @@ mod tests {
     /// channel reads that as "the row below carries my text".
     #[test]
     fn a_bare_number_anchor_keeps_an_empty_prompt() {
-        let lines = vec![
-            line("n8", "8"),
-            line("row", "Some kitchen appliance"),
-        ];
+        let lines = vec![line("n8", "8"), line("row", "Some kitchen appliance")];
         let result = assemble_prompt(None, 8, Some(&anchor("n8", 0, 8)), None, &lines, None);
         assert_eq!(result.text, "Some kitchen appliance");
     }

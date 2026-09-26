@@ -166,7 +166,9 @@ impl RecognitionCandidateV1 {
     }
 
     pub fn group(&self, task_id: &str) -> Option<&CandidateTaskGroupV1> {
-        self.task_groups.iter().find(|group| group.task_id == task_id)
+        self.task_groups
+            .iter()
+            .find(|group| group.task_id == task_id)
     }
 
     pub fn slot(&self, slot_id: &str) -> Option<&CandidateSlotV1> {
@@ -489,8 +491,17 @@ pub struct DecisionItemV1 {
 }
 
 impl DecisionItemV1 {
-    pub fn decision_id_for(target_type: DecisionTargetTypeV1, target_id: &str, field: DecisionFieldV1) -> String {
-        format!("d:{}:{}:{}", target_type.as_str(), target_id, field.as_str())
+    pub fn decision_id_for(
+        target_type: DecisionTargetTypeV1,
+        target_id: &str,
+        field: DecisionFieldV1,
+    ) -> String {
+        format!(
+            "d:{}:{}:{}",
+            target_type.as_str(),
+            target_id,
+            field.as_str()
+        )
     }
 
     /// 这条裁决是否构成「**必须由用户处理**」的待办。**待办语义的唯一判据**。
@@ -513,7 +524,10 @@ impl DecisionItemV1 {
     /// 且必须计数**，那由本判据（可见性）与 `summary`（计数）共同保证。
     pub fn is_actionable(&self) -> bool {
         self.resolution != DecisionResolutionV1::AutoFixed
-            && matches!(self.status, DecisionStatusV1::Open | DecisionStatusV1::Failed)
+            && matches!(
+                self.status,
+                DecisionStatusV1::Open | DecisionStatusV1::Failed
+            )
     }
 }
 
@@ -554,7 +568,9 @@ impl RecognitionDecisionV1 {
     }
 
     pub fn item(&self, decision_id: &str) -> Option<&DecisionItemV1> {
-        self.items.iter().find(|item| item.decision_id == decision_id)
+        self.items
+            .iter()
+            .find(|item| item.decision_id == decision_id)
     }
 }
 
@@ -607,7 +623,12 @@ impl StageStateV1 {
     pub fn is_terminal(self) -> bool {
         matches!(
             self,
-            Self::Succeeded | Self::Partial | Self::Unusable | Self::NotRun | Self::Failed | Self::Canceled
+            Self::Succeeded
+                | Self::Partial
+                | Self::Unusable
+                | Self::NotRun
+                | Self::Failed
+                | Self::Canceled
         )
     }
 }
@@ -636,7 +657,11 @@ impl StageStatusV1 {
         }
     }
 
-    pub fn with_reason(state: StageStateV1, reason_code: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn with_reason(
+        state: StageStateV1,
+        reason_code: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
             state,
             reason_code: Some(reason_code.into()),
@@ -771,7 +796,10 @@ impl ApplyRecognitionDecisionsRequestV1 {
             .collect();
         if !conflicts.is_empty() {
             // 同一条既接受又拒绝/撤销没有确定语义，必须整体拒绝而不是二选一。
-            return Err(format!("RECOGNITION_DECISION_CONFLICT:{}", conflicts.join(",")));
+            return Err(format!(
+                "RECOGNITION_DECISION_CONFLICT:{}",
+                conflicts.join(",")
+            ));
         }
         if self
             .accept
@@ -928,7 +956,10 @@ mod tests {
         assert!(encoded.get("repair").is_none(), "{encoded}");
         assert!(!view.has_actionable_items());
         let encoded = serde_json::to_value(&view).unwrap();
-        assert_eq!(encoded["chains"]["cloud"]["reasonCode"], json!(reason::SALVAGE_PARTIAL));
+        assert_eq!(
+            encoded["chains"]["cloud"]["reasonCode"],
+            json!(reason::SALVAGE_PARTIAL)
+        );
         assert_eq!(encoded["chains"]["source"]["state"], json!("not_run"));
     }
 
@@ -1044,7 +1075,9 @@ mod tests {
         assert_eq!(decoded, candidate);
         assert!(decoded.is_supported_schema_version());
         assert_eq!(
-            decoded.slot_by_question(14).map(|slot| slot.slot_id.as_str()),
+            decoded
+                .slot_by_question(14)
+                .map(|slot| slot.slot_id.as_str()),
             Some("slot-14")
         );
         assert!(decoded.slot_by_question(15).is_none());
@@ -1052,8 +1085,16 @@ mod tests {
 
     #[test]
     fn decision_id_is_stable_and_collision_free_across_fields() {
-        let answer = DecisionItemV1::decision_id_for(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Answer);
-        let prompt = DecisionItemV1::decision_id_for(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Prompt);
+        let answer = DecisionItemV1::decision_id_for(
+            DecisionTargetTypeV1::Slot,
+            "slot-14",
+            DecisionFieldV1::Answer,
+        );
+        let prompt = DecisionItemV1::decision_id_for(
+            DecisionTargetTypeV1::Slot,
+            "slot-14",
+            DecisionFieldV1::Prompt,
+        );
         assert_eq!(answer, "d:slot:slot-14:answer");
         assert_ne!(answer, prompt);
     }
@@ -1093,7 +1134,11 @@ mod tests {
             let decision_id =
                 DecisionItemV1::decision_id_for(DecisionTargetTypeV1::Slot, "slot-1", field);
             let tail = decision_id.rsplit(':').next().expect("decisionId 必有末段");
-            assert_eq!(tail, field.as_str(), "decisionId 末段与 field 不一致：{decision_id}");
+            assert_eq!(
+                tail,
+                field.as_str(),
+                "decisionId 末段与 field 不一致：{decision_id}"
+            );
             assert!(
                 tail.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
                 "decisionId 末段含非 [a-z_] 字符，违反契约 schema 的 pattern：{decision_id}"
@@ -1115,7 +1160,11 @@ mod tests {
             DecisionResolutionV1::NeedsReview,
             DecisionResolutionV1::Unverifiable,
         ] {
-            assert_eq!(resolution.as_str(), wire(&resolution), "DecisionResolutionV1 漂移");
+            assert_eq!(
+                resolution.as_str(),
+                wire(&resolution),
+                "DecisionResolutionV1 漂移"
+            );
         }
         for status in [
             DecisionStatusV1::Open,

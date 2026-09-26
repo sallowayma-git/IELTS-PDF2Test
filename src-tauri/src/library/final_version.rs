@@ -49,7 +49,9 @@ pub(crate) fn freeze_final_version(
     let shadow = crate::util::read_json_opt(&job_dir(root, item_id).join(DOCUMENT_V2_SHADOW_FILE))
         .ok()
         .flatten()
-        .filter(|shadow| crate::authoring_v2_commands::physical_shadow_matches_authoring(shadow, ds));
+        .filter(|shadow| {
+            crate::authoring_v2_commands::physical_shadow_matches_authoring(shadow, ds)
+        });
     let previous: Option<Value> = conn
         .query_row(
             "SELECT evidence_json FROM library_final_versions_v2 WHERE library_item_id = ?1",
@@ -60,12 +62,17 @@ pub(crate) fn freeze_final_version(
         .map_err(|error| format!("final_version_read:{error}"))?
         .and_then(|text| serde_json::from_str(&text).ok());
     let mut evidence = match (shadow.as_ref(), previous.as_ref()) {
-        (Some(shadow), _) => crate::ielts_grammar::quality::publish_evidence_summary(ds, Some(shadow)),
+        (Some(shadow), _) => {
+            crate::ielts_grammar::quality::publish_evidence_summary(ds, Some(shadow))
+        }
         (None, Some(previous))
-            if crate::ielts_grammar::quality::FrozenSourceEvidence::from_value(previous).is_some() =>
+            if crate::ielts_grammar::quality::FrozenSourceEvidence::from_value(previous)
+                .is_some() =>
         {
             let mut carried = previous.clone();
-            if let Some(frozen) = crate::ielts_grammar::quality::FrozenSourceEvidence::from_value(previous) {
+            if let Some(frozen) =
+                crate::ielts_grammar::quality::FrozenSourceEvidence::from_value(previous)
+            {
                 carried["questionCoverage"] =
                     crate::ielts_grammar::source_coverage::assess_against_frozen_declaration(
                         ds,
@@ -99,7 +106,13 @@ pub(crate) fn freeze_final_version(
              publish_record_id = excluded.publish_record_id,
              evidence_json = excluded.evidence_json,
              updated_at = excluded.updated_at",
-        params![item_id, edit_version, now, publish_record_id, evidence.to_string()],
+        params![
+            item_id,
+            edit_version,
+            now,
+            publish_record_id,
+            evidence.to_string()
+        ],
     )
     .map_err(|error| format!("final_version_write:{error}"))?;
     Ok(evidence)
@@ -134,7 +147,14 @@ pub(crate) fn purge_source_artifacts(root: &Path, item_id: &str, ds: &Value) -> 
     let mut removed_files = 0usize;
     let mut removed_dirs = 0usize;
     let mut failed = Vec::new();
-    purge_dir(&dir, Path::new(""), &kept, &mut removed_files, &mut removed_dirs, &mut failed);
+    purge_dir(
+        &dir,
+        Path::new(""),
+        &kept,
+        &mut removed_files,
+        &mut removed_dirs,
+        &mut failed,
+    );
     // 解析缓存（`<appData>/cache/parser/`）在 job 目录之外，但同样是**本条目**的源产物：
     // 它是原文抽取的结果，发布后不该留在磁盘上。修前这一步漏了，于是发布后这道题的
     // 解析产物仍躺在缓存里，与「发布后只保留可编辑最终版」相违。
@@ -158,7 +178,12 @@ pub(crate) fn purge_source_artifacts(root: &Path, item_id: &str, ds: &Value) -> 
 fn kept_relative_paths(ds: &Value) -> BTreeSet<PathBuf> {
     let mut kept = BTreeSet::new();
     kept.insert(PathBuf::from(KEPT_JOB_METADATA));
-    for asset in ds.get("assets").and_then(Value::as_array).into_iter().flatten() {
+    for asset in ds
+        .get("assets")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         let Some(relative) = asset.get("relativePath").and_then(Value::as_str) else {
             continue;
         };
@@ -195,7 +220,8 @@ fn purge_dir(
         let entry = match entry {
             Ok(entry) => entry,
             Err(error) => {
-                failed.push(json!({"path": relative.to_string_lossy(), "error": error.to_string()}));
+                failed
+                    .push(json!({"path": relative.to_string_lossy(), "error": error.to_string()}));
                 keeps_anything = true;
                 continue;
             }
@@ -205,17 +231,28 @@ fn purge_dir(
         let metadata = match fs::symlink_metadata(&child_absolute) {
             Ok(metadata) => metadata,
             Err(error) => {
-                failed.push(json!({"path": child_relative.to_string_lossy(), "error": error.to_string()}));
+                failed.push(
+                    json!({"path": child_relative.to_string_lossy(), "error": error.to_string()}),
+                );
                 keeps_anything = true;
                 continue;
             }
         };
         if metadata.is_dir() && !metadata.file_type().is_symlink() {
-            let child_keeps = purge_dir(&child_absolute, &child_relative, kept, removed_files, removed_dirs, failed);
+            let child_keeps = purge_dir(
+                &child_absolute,
+                &child_relative,
+                kept,
+                removed_files,
+                removed_dirs,
+                failed,
+            );
             if child_keeps {
                 keeps_anything = true;
             } else if let Err(error) = fs::remove_dir(&child_absolute) {
-                failed.push(json!({"path": child_relative.to_string_lossy(), "error": error.to_string()}));
+                failed.push(
+                    json!({"path": child_relative.to_string_lossy(), "error": error.to_string()}),
+                );
                 keeps_anything = true;
             } else {
                 *removed_dirs += 1;
@@ -237,7 +274,9 @@ fn purge_dir(
         match removal {
             Ok(()) => *removed_files += 1,
             Err(error) => {
-                failed.push(json!({"path": child_relative.to_string_lossy(), "error": error.to_string()}));
+                failed.push(
+                    json!({"path": child_relative.to_string_lossy(), "error": error.to_string()}),
+                );
                 keeps_anything = true;
             }
         }
@@ -245,7 +284,11 @@ fn purge_dir(
     keeps_anything
 }
 
-pub(crate) fn mark_source_purged(conn: &Connection, item_id: &str, report: &Value) -> CommandResult<()> {
+pub(crate) fn mark_source_purged(
+    conn: &Connection,
+    item_id: &str,
+    report: &Value,
+) -> CommandResult<()> {
     let now = Utc::now().to_rfc3339();
     conn.execute(
         "UPDATE library_final_versions_v2
@@ -258,7 +301,10 @@ pub(crate) fn mark_source_purged(conn: &Connection, item_id: &str, report: &Valu
 }
 
 /// 已清理条目的最终版状态（给工作区/题库展示用）；未发布或未清理返回 `None`。
-pub(crate) fn final_version_status(conn: &Connection, item_id: &str) -> CommandResult<Option<Value>> {
+pub(crate) fn final_version_status(
+    conn: &Connection,
+    item_id: &str,
+) -> CommandResult<Option<Value>> {
     conn.query_row(
         "SELECT edit_version, published_at, source_purged_at FROM library_final_versions_v2
          WHERE library_item_id = ?1",

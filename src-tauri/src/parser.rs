@@ -2231,7 +2231,9 @@ pub(crate) fn render_pdf_pages_with_adapter(
                     prior_warnings,
                 )
             }
-            #[cfg(target_os = "windows")]
+            // pdfium is bundled per platform (`lib/pdfium-<platform>/`); when the library is
+            // missing the fallback still returns a manual-review extraction.
+            #[cfg(not(target_os = "macos"))]
             {
                 render_pdf_pages_with_pdfium_or_fallback(
                     job_id,
@@ -2239,17 +2241,6 @@ pub(crate) fn render_pdf_pages_with_adapter(
                     output_path,
                     asset_dir,
                     prior_warnings,
-                )
-            }
-            #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-            {
-                render_pdf_pages_unsupported(
-                    job_id,
-                    input_path,
-                    output_path,
-                    prior_warnings,
-                    "renderer_unsupported_platform",
-                    "PDF page rendering is unsupported on this platform; use cloud PDF vision if available or manual transcription/review.",
                 )
             }
         }
@@ -2481,7 +2472,10 @@ pub(crate) fn extract_pdf_images_for_vision(
         Ok(failed) => {
             let _ = fs::remove_file(&staging_path);
             match reusable_cached_extraction(output_path) {
-                Some(cached) => Ok(reuse_cached_page_images(cached, cached_reuse_warnings(&failed))),
+                Some(cached) => Ok(reuse_cached_page_images(
+                    cached,
+                    cached_reuse_warnings(&failed),
+                )),
                 None => Ok(failed),
             }
         }

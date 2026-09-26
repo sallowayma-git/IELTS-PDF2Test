@@ -1,5 +1,5 @@
-pub mod common;
 pub mod cloud_repair_v1;
+pub mod common;
 pub mod content_doc_v2;
 pub mod document_ir_v2;
 pub mod ielts_authoring_v2;
@@ -322,7 +322,10 @@ mod tests {
         fixture["unresolvedReferences"] = json!(["cloud-q27"]);
         let candidate: CloudAuthoringCandidateV1 = round_trip(fixture);
         assert!(candidate.has_unresolved_references());
-        assert_eq!(candidate.unresolved_references, vec!["cloud-q27".to_string()]);
+        assert_eq!(
+            candidate.unresolved_references,
+            vec!["cloud-q27".to_string()]
+        );
     }
 
     #[test]

@@ -1,14 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { chooseAudioFiles } from "../api/desktopDialogs";
-import {
-  bindListeningAudio,
-  getListeningAudio,
-  managedAudioUrl,
-  type ListeningAudioStatus
-} from "../api/listeningAudioClient";
-import type { IeltsAuthoringIRV2 } from "../types";
+import { bindListeningAudio, managedAudioUrl } from "../api/listeningAudioClient";
 import { addAudioEntries, describeIssues, formatDuration } from "../features/import/listeningAudioPlan";
-import { listeningParts, type ListeningPartView } from "./listeningWorkspace";
+import type { ListeningPartView } from "./listeningWorkspace";
 
 function AudioPlayer({ part }: { part: ListeningPartView }) {
   const [src, setSrc] = useState<string>();
@@ -33,32 +27,28 @@ function AudioPlayer({ part }: { part: ListeningPartView }) {
   </span>;
 }
 
-// 听力工作区头部：Part 导航 + 当前 Part 的音频播放器 + 唯一的「添加音频」入口。
+// 听力工作区头部：当前 Part 的音频播放器 + 唯一的「添加音频」入口。
+// Part 切换已交给底部题号导航（QuestionNavBar），这里只按 selectedPart 展示对应音频。
+// Part 视图（含音频绑定）由 ExamCanvas 上提并传入——与底部导航共用同一份数据，
+// 添加/替换音频后通过 onAudioChanged 通知画布重新拉取绑定。
 export function ListeningHeader({
   itemId,
-  authoring,
   mode,
   selectedPart,
-  onSelectPart
+  parts,
+  onAudioChanged
 }: {
   itemId: string;
-  authoring: IeltsAuthoringIRV2;
   mode: "author" | "student";
   selectedPart?: number;
-  onSelectPart: (ordinal: number) => void;
+  parts: ListeningPartView[];
+  onAudioChanged: () => void;
 }) {
-  const [status, setStatus] = useState<ListeningAudioStatus>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
 
-  const reload = useCallback((verify: boolean) => {
-    getListeningAudio(itemId, verify).then(setStatus).catch(() => setStatus(undefined));
-  }, [itemId]);
-  useEffect(() => reload(true), [reload]);
-
-  const parts = listeningParts(authoring, status?.bindings ?? []);
   const current = parts.find((part) => part.ordinal === selectedPart) ?? parts[0];
-  const noAudio = !status?.bindings.length;
+  const noAudio = !parts.some((part) => part.audio);
 
   // 没有任何音频：选中的文件按自然顺序落到 Part 1..n；否则替换/补齐当前 Part。
   const addAudio = async () => {
@@ -77,22 +67,13 @@ export function ListeningHeader({
       setError("音频没有保存成功，请换一个文件再试。");
     } finally {
       setBusy(false);
-      reload(false);
+      onAudioChanged();
     }
   };
 
   const actionLabel = noAudio ? "添加音频" : current.audio ? `替换 ${current.label} 音频` : `为 ${current.label} 添加音频`;
 
   return <header className="listening-header" data-testid="listening-header">
-    <nav className="listening-part-nav" aria-label="听力 Part">
-      {parts.map((part) => <button
-        key={part.ordinal}
-        type="button"
-        className={`listening-part-tab${part.ordinal === current.ordinal ? " active" : ""}${part.audio && !part.audio.playable ? " is-blocked" : ""}`}
-        aria-pressed={part.ordinal === current.ordinal}
-        onClick={() => onSelectPart(part.ordinal)}
-      >{part.label}{part.audio ? "" : " ·"}</button>)}
-    </nav>
     <div className="listening-audio-row">
       <AudioPlayer part={current} />
       {mode === "author" ? (

@@ -44,7 +44,8 @@ pub(crate) struct ProcessingJobRow {
     pub event_seq: i64,
 }
 
-const JOB_COLUMNS: &str = "id, library_item_id, source_asset_id, stage, local_status, cloud_status, \
+const JOB_COLUMNS: &str =
+    "id, library_item_id, source_asset_id, stage, local_status, cloud_status, \
      reconcile_status, progress_json, actionable_count, last_error_code, retry_count, \
      lease_owner, lease_expires_at, cancel_requested_at, event_seq";
 
@@ -409,7 +410,10 @@ pub(crate) fn finalize_cancelled_without_lease(
 /// retry_count < 上限则重新入队，否则转入 action_required 等用户重试。
 /// G1/A4-F03：恢复上限路径的文案必须是"已达重试上限"，不得谎称已自动重试。
 /// G1/P0-2：用户已取消（durable 标记）的任务直接落 cancelled，不复活。
-pub(crate) fn recover_on_startup(conn: &Connection, max_auto_recovery: i64) -> CommandResult<usize> {
+pub(crate) fn recover_on_startup(
+    conn: &Connection,
+    max_auto_recovery: i64,
+) -> CommandResult<usize> {
     let now = Utc::now().to_rfc3339();
     conn.execute(
         "UPDATE processing_jobs_v2
@@ -487,7 +491,11 @@ pub(crate) fn retry_with_cloud(
             params![
                 job_id,
                 now,
-                if cloud_profile_id.is_some() { "true" } else { "false" },
+                if cloud_profile_id.is_some() {
+                    "true"
+                } else {
+                    "false"
+                },
                 cloud_profile_id
             ],
         )
@@ -548,11 +556,23 @@ mod tests {
     fn enqueue_claim_and_stale_worker_cannot_commit() {
         let conn = memory_queue();
         seed_item(&conn, "it-1");
-        assert!(enqueue(&conn, "job-1", "it-1", "asset-1", &serde_json::json!({"cloudEnabled": false})).unwrap());
-        assert!(!enqueue(&conn, "job-1", "it-1", "asset-1", &Value::Null).unwrap(), "重复入队幂等");
+        assert!(enqueue(
+            &conn,
+            "job-1",
+            "it-1",
+            "asset-1",
+            &serde_json::json!({"cloudEnabled": false})
+        )
+        .unwrap());
+        assert!(
+            !enqueue(&conn, "job-1", "it-1", "asset-1", &Value::Null).unwrap(),
+            "重复入队幂等"
+        );
 
         let worker_a = "worker-a";
-        let claimed = claim_next(&conn, worker_a).unwrap().expect("job must be claimable");
+        let claimed = claim_next(&conn, worker_a)
+            .unwrap()
+            .expect("job must be claimable");
         assert_eq!(claimed.id, "job-1");
         assert_eq!(claimed.stage, "running");
 
@@ -560,15 +580,38 @@ mod tests {
         assert!(claim_next(&conn, "worker-b").unwrap().is_none());
 
         // 阶段推进：只有持有者可以。
-        let (seq, effective) = advance_stage(&conn, "job-1", worker_a, STAGE_LOCAL_RECOGNITION, Some("succeeded"), None, None, None, None)
-            .unwrap()
-            .expect("holder must advance");
+        let (seq, effective) = advance_stage(
+            &conn,
+            "job-1",
+            worker_a,
+            STAGE_LOCAL_RECOGNITION,
+            Some("succeeded"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap()
+        .expect("holder must advance");
         assert_eq!(seq, 2);
-        assert_eq!(effective, STAGE_LOCAL_RECOGNITION, "无取消标记时有效阶段即目标阶段");
+        assert_eq!(
+            effective, STAGE_LOCAL_RECOGNITION,
+            "无取消标记时有效阶段即目标阶段"
+        );
         // 他人推进被拒。
-        assert!(advance_stage(&conn, "job-1", "worker-b", STAGE_FAILED, Some("failed"), None, None, None, None)
-            .unwrap()
-            .is_none());
+        assert!(advance_stage(
+            &conn,
+            "job-1",
+            "worker-b",
+            STAGE_FAILED,
+            Some("failed"),
+            None,
+            None,
+            None,
+            None
+        )
+        .unwrap()
+        .is_none());
     }
 
     #[test]
@@ -585,12 +628,37 @@ mod tests {
         )
         .unwrap();
         assert!(!renew_lease(&conn, "job-1", "worker-a").unwrap());
-        let reclaimed = claim_next(&conn, "worker-b").unwrap().expect("expired lease must be reclaimable");
+        let reclaimed = claim_next(&conn, "worker-b")
+            .unwrap()
+            .expect("expired lease must be reclaimable");
         assert_eq!(reclaimed.lease_owner.as_deref(), Some("worker-b"));
 
         // 启动恢复：running 任务按 retry_count 重新入队或转 action_required。
-        assert!(advance_stage(&conn, "job-1", "worker-a", STAGE_FAILED, None, None, None, None, None).unwrap().is_none());
-        advance_stage(&conn, "job-1", "worker-b", STAGE_CLOUD_RECOGNITION, None, None, None, None, None).unwrap();
+        assert!(advance_stage(
+            &conn,
+            "job-1",
+            "worker-a",
+            STAGE_FAILED,
+            None,
+            None,
+            None,
+            None,
+            None
+        )
+        .unwrap()
+        .is_none());
+        advance_stage(
+            &conn,
+            "job-1",
+            "worker-b",
+            STAGE_CLOUD_RECOGNITION,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let requeued = recover_on_startup(&conn, 3).unwrap();
         assert_eq!(requeued, 1);
         let row = get_job(&conn, "job-1").unwrap().unwrap();
@@ -613,7 +681,10 @@ mod tests {
         assert!(retry(&conn, "job-1").unwrap());
         let row = get_job(&conn, "job-1").unwrap().unwrap();
         assert_eq!(row.stage, STAGE_QUEUED);
-        assert!(row.cancel_requested_at.is_none(), "retry 必须清除 durable 取消标记");
+        assert!(
+            row.cancel_requested_at.is_none(),
+            "retry 必须清除 durable 取消标记"
+        );
     }
 
     /// 重新识别要用**此刻**的云端设置，而不是导入那一刻冻结下来的：用户导入之后才
@@ -622,13 +693,27 @@ mod tests {
     fn retry_rereads_the_current_cloud_profile() {
         let conn = memory_queue();
         seed_item(&conn, "it-1");
-        enqueue(&conn, "job-1", "it-1", "asset-1", &serde_json::json!({"cloudEnabled": false, "fileName": "a.pdf"})).unwrap();
+        enqueue(
+            &conn,
+            "job-1",
+            "it-1",
+            "asset-1",
+            &serde_json::json!({"cloudEnabled": false, "fileName": "a.pdf"}),
+        )
+        .unwrap();
         request_cancel(&conn, "job-1").unwrap();
         assert!(retry_with_cloud(&conn, "job-1", Some("profile-now")).unwrap());
         let row = get_job(&conn, "job-1").unwrap().unwrap();
         assert_eq!(row.progress["cloudEnabled"], serde_json::json!(true));
-        assert_eq!(row.progress["cloudProfileId"], serde_json::json!("profile-now"));
-        assert_eq!(row.progress["fileName"], serde_json::json!("a.pdf"), "其余进度字段必须保留");
+        assert_eq!(
+            row.progress["cloudProfileId"],
+            serde_json::json!("profile-now")
+        );
+        assert_eq!(
+            row.progress["fileName"],
+            serde_json::json!("a.pdf"),
+            "其余进度字段必须保留"
+        );
 
         // 云端被关掉之后重试 → 本地重跑，如实记下不启用云端。
         request_cancel(&conn, "job-1").unwrap();
@@ -651,7 +736,18 @@ mod tests {
         enqueue(&conn, "job-1", "it-1", "asset-1", &Value::Null).unwrap();
         claim_next(&conn, "worker-a").unwrap();
         // 本地已成功、推进到云端阶段后 worker 死亡、lease 过期。
-        advance_stage(&conn, "job-1", "worker-a", STAGE_CLOUD_RECOGNITION, Some("succeeded"), Some("running"), None, None, None).unwrap();
+        advance_stage(
+            &conn,
+            "job-1",
+            "worker-a",
+            STAGE_CLOUD_RECOGNITION,
+            Some("succeeded"),
+            Some("running"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         conn.execute(
             "UPDATE processing_jobs_v2 SET lease_expires_at = '2020-01-01T00:00:00Z' WHERE id = 'job-1'",
             [],
@@ -667,13 +763,35 @@ mod tests {
             [],
         )
         .unwrap();
-        advance_stage(&conn, "job-1", "worker-a", STAGE_READY_FOR_REVIEW, None, Some("succeeded"), Some("succeeded"), None, None).unwrap();
+        advance_stage(
+            &conn,
+            "job-1",
+            "worker-a",
+            STAGE_READY_FOR_REVIEW,
+            None,
+            Some("succeeded"),
+            Some("succeeded"),
+            None,
+            None,
+        )
+        .unwrap();
         let row = get_job(&conn, "job-1").unwrap().unwrap();
         assert_eq!(row.lease_owner, None, "G1/P0-1：终态必须释放 lease");
         // 对照：两个阶段都未成功的过期任务仍可 reclaim（恢复路径不受影响）。
         enqueue(&conn, "job-2", "it-1", "asset-1", &Value::Null).unwrap();
         claim_next(&conn, "worker-c").unwrap();
-        advance_stage(&conn, "job-2", "worker-c", STAGE_LOCAL_RECOGNITION, Some("running"), None, None, None, None).unwrap();
+        advance_stage(
+            &conn,
+            "job-2",
+            "worker-c",
+            STAGE_LOCAL_RECOGNITION,
+            Some("running"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         conn.execute(
             "UPDATE processing_jobs_v2 SET lease_expires_at = '2020-01-01T00:00:00Z' WHERE id = 'job-2'",
             [],
@@ -715,7 +833,18 @@ mod tests {
         seed_item(&conn, "it-1");
         enqueue(&conn, "job-1", "it-1", "asset-1", &Value::Null).unwrap();
         claim_next(&conn, "worker-a").unwrap();
-        advance_stage(&conn, "job-1", "worker-a", STAGE_CLOUD_RECOGNITION, Some("succeeded"), Some("running"), None, None, None).unwrap();
+        advance_stage(
+            &conn,
+            "job-1",
+            "worker-a",
+            STAGE_CLOUD_RECOGNITION,
+            Some("succeeded"),
+            Some("running"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         // 用户在检查之后、提交之前取消（落 durable 标记，不动 stage）。
         conn.execute(
@@ -725,9 +854,19 @@ mod tests {
         .unwrap();
 
         // worker 按原计划推进 ready：必须被强制落 cancelled。
-        let (seq, effective) = advance_stage(&conn, "job-1", "worker-a", STAGE_READY_FOR_REVIEW, Some("succeeded"), Some("succeeded"), Some("succeeded"), None, None)
-            .unwrap()
-            .expect("lease 仍有效时推进必须成功（但落 cancelled）");
+        let (seq, effective) = advance_stage(
+            &conn,
+            "job-1",
+            "worker-a",
+            STAGE_READY_FOR_REVIEW,
+            Some("succeeded"),
+            Some("succeeded"),
+            Some("succeeded"),
+            None,
+            None,
+        )
+        .unwrap()
+        .expect("lease 仍有效时推进必须成功（但落 cancelled）");
         assert!(seq > 0);
         assert_eq!(effective, STAGE_CANCELLED, "调用方拿到的必须是有效阶段");
         let row = get_job(&conn, "job-1").unwrap().unwrap();
@@ -787,9 +926,19 @@ mod tests {
             [],
         )
         .unwrap();
-        let (_, effective) = advance_stage(&conn, "job-1", "worker-a", STAGE_CLOUD_RECOGNITION, Some("succeeded"), Some("running"), None, None, None)
-            .unwrap()
-            .expect("lease 仍有效");
+        let (_, effective) = advance_stage(
+            &conn,
+            "job-1",
+            "worker-a",
+            STAGE_CLOUD_RECOGNITION,
+            Some("succeeded"),
+            Some("running"),
+            None,
+            None,
+            None,
+        )
+        .unwrap()
+        .expect("lease 仍有效");
         assert_eq!(effective, STAGE_CANCELLED);
         let row = get_job(&conn, "job-1").unwrap().unwrap();
         assert_eq!(row.stage, STAGE_CANCELLED);
@@ -804,7 +953,18 @@ mod tests {
         seed_item(&conn, "it-1");
         enqueue(&conn, "job-1", "it-1", "asset-1", &Value::Null).unwrap();
         claim_next(&conn, "worker-a").unwrap();
-        advance_stage(&conn, "job-1", "worker-a", STAGE_LOCAL_RECOGNITION, Some("running"), None, None, None, None).unwrap();
+        advance_stage(
+            &conn,
+            "job-1",
+            "worker-a",
+            STAGE_LOCAL_RECOGNITION,
+            Some("running"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         // 无 durable 标记：拒绝收尾（内存标记丢失时不得凭空取消）。
         assert!(!finalize_cancelled_without_lease(&conn, "job-1").unwrap());
@@ -817,9 +977,19 @@ mod tests {
             [],
         )
         .unwrap();
-        assert!(advance_stage(&conn, "job-1", "worker-a", STAGE_CANCELLED, None, None, None, None, None)
-            .unwrap()
-            .is_none());
+        assert!(advance_stage(
+            &conn,
+            "job-1",
+            "worker-a",
+            STAGE_CANCELLED,
+            None,
+            None,
+            None,
+            None,
+            None
+        )
+        .unwrap()
+        .is_none());
         assert!(finalize_cancelled_without_lease(&conn, "job-1").unwrap());
         let row = get_job(&conn, "job-1").unwrap().unwrap();
         assert_eq!(row.stage, STAGE_CANCELLED);
@@ -835,14 +1005,33 @@ mod tests {
         seed_item(&conn, "it-1");
         enqueue(&conn, "job-1", "it-1", "asset-1", &Value::Null).unwrap();
         claim_next(&conn, "worker-a").unwrap();
-        advance_stage(&conn, "job-1", "worker-a", STAGE_CLOUD_RECOGNITION, Some("succeeded"), Some("running"), None, None, None).unwrap();
+        advance_stage(
+            &conn,
+            "job-1",
+            "worker-a",
+            STAGE_CLOUD_RECOGNITION,
+            Some("succeeded"),
+            Some("running"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         // local 未成功时拒绝收尾。
-        conn.execute("UPDATE processing_jobs_v2 SET local_status = 'running' WHERE id = 'job-1'", []).unwrap();
+        conn.execute(
+            "UPDATE processing_jobs_v2 SET local_status = 'running' WHERE id = 'job-1'",
+            [],
+        )
+        .unwrap();
         assert!(!finalize_ready_without_lease(&conn, "job-1", "succeeded", "succeeded").unwrap());
 
         // local 成功后允许收尾（模拟 lease 已丢、advance 返回 None 的场景）。
-        conn.execute("UPDATE processing_jobs_v2 SET local_status = 'succeeded' WHERE id = 'job-1'", []).unwrap();
+        conn.execute(
+            "UPDATE processing_jobs_v2 SET local_status = 'succeeded' WHERE id = 'job-1'",
+            [],
+        )
+        .unwrap();
         assert!(finalize_ready_without_lease(&conn, "job-1", "succeeded", "succeeded").unwrap());
         let row = get_job(&conn, "job-1").unwrap().unwrap();
         assert_eq!(row.stage, STAGE_READY_FOR_REVIEW);
@@ -852,7 +1041,18 @@ mod tests {
         // 带 durable 取消标记的行拒绝收尾（取消优先于迟到结果）。
         enqueue(&conn, "job-2", "it-1", "asset-1", &Value::Null).unwrap();
         claim_next(&conn, "worker-b").unwrap();
-        advance_stage(&conn, "job-2", "worker-b", STAGE_CLOUD_RECOGNITION, Some("succeeded"), Some("running"), None, None, None).unwrap();
+        advance_stage(
+            &conn,
+            "job-2",
+            "worker-b",
+            STAGE_CLOUD_RECOGNITION,
+            Some("succeeded"),
+            Some("running"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         conn.execute(
             "UPDATE processing_jobs_v2 SET cancel_requested_at = '2026-09-12T00:00:00Z' WHERE id = 'job-2'",
             [],
@@ -869,7 +1069,18 @@ mod tests {
         seed_item(&conn, "it-1");
         enqueue(&conn, "job-1", "it-1", "asset-1", &Value::Null).unwrap();
         claim_next(&conn, "worker-a").unwrap();
-        advance_stage(&conn, "job-1", "worker-a", STAGE_LOCAL_RECOGNITION, Some("running"), None, None, None, None).unwrap();
+        advance_stage(
+            &conn,
+            "job-1",
+            "worker-a",
+            STAGE_LOCAL_RECOGNITION,
+            Some("running"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         // 用户取消运行中任务：stage 不变（worker 收尾），但标记落库。
         assert!(request_cancel(&conn, "job-1").unwrap());
@@ -906,7 +1117,9 @@ mod tests {
 
         // 前端按 event_seq 单调去重（`processingClient.ts`）。内容提交后若不推高序号，
         // 这次通知会被**静默丢弃**——症状是「改了内容，面板不刷新」。
-        let after = bump_event_seq(&conn, "job-1").unwrap().expect("row must exist");
+        let after = bump_event_seq(&conn, "job-1")
+            .unwrap()
+            .expect("row must exist");
         assert_eq!(after, before + 1, "序号必须严格变大，否则会被前端去重丢掉");
 
         // 连续提交两次必须继续变大（不能只从别处读回同一个值）。

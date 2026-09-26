@@ -356,7 +356,9 @@ pub(crate) fn read_source(
         "note": "These are the extracted text-layer lines. Cite them verbatim with their line id and page number.",
         "pages": pages,
     });
-    let bytes = serde_json::to_string(&payload).map(|text| text.len()).unwrap_or(0);
+    let bytes = serde_json::to_string(&payload)
+        .map(|text| text.len())
+        .unwrap_or(0);
     budget.charge(to - from + 1, bytes)?;
     Ok(payload)
 }
@@ -417,7 +419,9 @@ pub(crate) fn search_source(
             "Copy the line text verbatim into your evidence, with its lineId and pageIndex."
         },
     });
-    let bytes = serde_json::to_string(&payload).map(|text| text.len()).unwrap_or(0);
+    let bytes = serde_json::to_string(&payload)
+        .map(|text| text.len())
+        .unwrap_or(0);
     budget.charge(0, bytes)?;
     Ok(payload)
 }
@@ -444,7 +448,10 @@ pub(crate) fn read_page_region(
             "CLOUD_GRAB_PAGE_IMAGE_UNAVAILABLE:page={page}:pages_with_images={available:?}"
         ));
     };
-    let bbox = arguments.get("bbox").filter(|bbox| !bbox.is_null()).cloned();
+    let bbox = arguments
+        .get("bbox")
+        .filter(|bbox| !bbox.is_null())
+        .cloned();
     let cropped = crop_page_image(root, job_id, "grab", page, image, bbox.as_ref())?;
     let payload = json!({
         "pageIndex": page,
@@ -456,7 +463,9 @@ pub(crate) fn read_page_region(
             "pageHeight": image.height,
         },
     });
-    let bytes = serde_json::to_string(&payload).map(|text| text.len()).unwrap_or(0);
+    let bytes = serde_json::to_string(&payload)
+        .map(|text| text.len())
+        .unwrap_or(0);
     budget.charge(0, bytes)?;
     Ok(payload)
 }
@@ -480,10 +489,7 @@ pub(crate) fn materialize_regions(
         };
         let page = page as u32;
         let bbox = region.get("bbox").filter(|bbox| !bbox.is_null()).cloned();
-        let key = (
-            page,
-            serde_json::to_string(&bbox).unwrap_or_default(),
-        );
+        let key = (page, serde_json::to_string(&bbox).unwrap_or_default());
         if let Some(existing) = seen.get(&key) {
             let mut merged = out[*existing].clone();
             if let Some(task_id) = region.get("taskId") {
@@ -498,18 +504,22 @@ pub(crate) fn materialize_regions(
         let mut cropped = None;
         let mut note = Value::Null;
         match source.page_images.get(&page) {
-            Some(image) => match crop_page_image(root, job_id, packet_id, page, image, bbox.as_ref()) {
-                Ok(path) => {
-                    if let Some(path) = path {
-                        cropped = Some(path);
-                    } else {
-                        note = json!("full page image (this page has no crop, or the crop failed)");
+            Some(image) => {
+                match crop_page_image(root, job_id, packet_id, page, image, bbox.as_ref()) {
+                    Ok(path) => {
+                        if let Some(path) = path {
+                            cropped = Some(path);
+                        } else {
+                            note = json!(
+                                "full page image (this page has no crop, or the crop failed)"
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        note = json!(error);
                     }
                 }
-                Err(error) => {
-                    note = json!(error);
-                }
-            },
+            }
             None => {
                 note = json!("no page image available for this page");
             }
@@ -581,7 +591,9 @@ fn crop_page_image(
     let pixel_height = info.height;
     let scale_x = pixel_width as f64 / image.width;
     let scale_y = pixel_height as f64 / image.height;
-    let left = ((x - margin_x) * scale_x).max(0.0).min(pixel_width as f64 - 1.0);
+    let left = ((x - margin_x) * scale_x)
+        .max(0.0)
+        .min(pixel_width as f64 - 1.0);
     let right = ((x + width + margin_x) * scale_x)
         .max(left + 1.0)
         .min(pixel_width as f64);
@@ -619,9 +631,7 @@ fn crop_page_image(
         .join("repair-packets");
     std::fs::create_dir_all(&directory)
         .map_err(|error| format!("CLOUD_GRAB_REGION_DIR_FAILED:{error}"))?;
-    let file_name = format!(
-        "{packet_id}-p{page}-{left}-{top}-{crop_width}x{crop_height}.png"
-    );
+    let file_name = format!("{packet_id}-p{page}-{left}-{top}-{crop_width}x{crop_height}.png");
     let out_path: PathBuf = directory.join(file_name);
     let file = std::fs::File::create(&out_path)
         .map_err(|error| format!("CLOUD_GRAB_REGION_WRITE_FAILED:{error}"))?;
@@ -684,12 +694,18 @@ pub(crate) fn read_passage(
             let matches_label = labels.iter().any(|label| {
                 // 段落标号形如 `C` / `C.` / `Paragraph C`，行首且后面跟内容。
                 let upper = trimmed.to_ascii_uppercase();
-                let head: String = upper.chars().take_while(|ch| ch.is_ascii_alphanumeric()).collect();
+                let head: String = upper
+                    .chars()
+                    .take_while(|ch| ch.is_ascii_alphanumeric())
+                    .collect();
                 head == *label || head == format!("{label}.")
             });
             let matches_number = numbers.iter().any(|number| {
                 let digits: String = trimmed.chars().take_while(char::is_ascii_digit).collect();
-                digits.parse::<u32>().map(|value| value == *number).unwrap_or(false)
+                digits
+                    .parse::<u32>()
+                    .map(|value| value == *number)
+                    .unwrap_or(false)
             });
             if !matches_label && !matches_number {
                 continue;
@@ -721,7 +737,9 @@ pub(crate) fn read_passage(
             "The window around each match is the passage text you may cite."
         },
     });
-    let bytes = serde_json::to_string(&payload).map(|text| text.len()).unwrap_or(0);
+    let bytes = serde_json::to_string(&payload)
+        .map(|text| text.len())
+        .unwrap_or(0);
     budget.charge(anchors.len() as u64, bytes)?;
     Ok(payload)
 }
@@ -743,7 +761,11 @@ fn find_line(source: &SourcePageIndex, needle: &str) -> Option<(u32, String)> {
 }
 
 fn normalize(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 /// 把一次 `report_insufficient_context` 的需求清单翻译成**具体**的抓取动作。
@@ -875,7 +897,8 @@ mod tests {
         std::fs::create_dir_all(&directory).expect("建页图目录");
         let path = directory.join(format!("page-{page}.png"));
         let file = std::fs::File::create(&path).expect("建页图文件");
-        let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), pixel_width, pixel_height);
+        let mut encoder =
+            png::Encoder::new(std::io::BufWriter::new(file), pixel_width, pixel_height);
         encoder.set_color(png::ColorType::Rgb);
         encoder.set_depth(png::BitDepth::Eight);
         let mut writer = encoder.write_header().expect("写 PNG 头");
@@ -977,11 +1000,22 @@ mod tests {
     #[test]
     fn read_source_beyond_the_page_limit_is_rejected() {
         let mut budget = GrabBudget::new();
-        let error = read_source(&source(), &json!({"pageIndex": 1, "pageTo": 4}), &mut budget)
-            .expect_err("必须被拒");
-        assert!(error.starts_with("CLOUD_GRAB_PAGE_LIMIT_EXCEEDED"), "{error}");
-        let ok = read_source(&source(), &json!({"pageIndex": 1, "pageTo": 3}), &mut budget)
-            .expect("三页以内允许");
+        let error = read_source(
+            &source(),
+            &json!({"pageIndex": 1, "pageTo": 4}),
+            &mut budget,
+        )
+        .expect_err("必须被拒");
+        assert!(
+            error.starts_with("CLOUD_GRAB_PAGE_LIMIT_EXCEEDED"),
+            "{error}"
+        );
+        let ok = read_source(
+            &source(),
+            &json!({"pageIndex": 1, "pageTo": 3}),
+            &mut budget,
+        )
+        .expect("三页以内允许");
         assert_eq!(ok["pages"].as_array().unwrap().len(), 3);
     }
 
@@ -989,8 +1023,8 @@ mod tests {
     #[test]
     fn read_source_beyond_the_document_is_rejected() {
         let mut budget = GrabBudget::new();
-        let error = read_source(&source(), &json!({"pageIndex": 99}), &mut budget)
-            .expect_err("必须被拒");
+        let error =
+            read_source(&source(), &json!({"pageIndex": 99}), &mut budget).expect_err("必须被拒");
         assert!(error.starts_with("CLOUD_GRAB_PAGE_OUT_OF_RANGE"), "{error}");
         assert!(error.contains("1-3"), "要告诉模型可用的页范围：{error}");
     }
@@ -1024,8 +1058,12 @@ mod tests {
     #[test]
     fn search_source_reports_no_hits_instead_of_failing() {
         let mut budget = GrabBudget::new();
-        let result = search_source(&source(), &json!({"query": "nothing like this"}), &mut budget)
-            .expect("搜不到不是错误");
+        let result = search_source(
+            &source(),
+            &json!({"query": "nothing like this"}),
+            &mut budget,
+        )
+        .expect("搜不到不是错误");
         assert_eq!(result["hits"], json!([]));
         assert!(result["note"].as_str().unwrap().contains("No line"));
     }
@@ -1034,8 +1072,12 @@ mod tests {
     #[test]
     fn read_source_with_only_a_quote_locates_the_page() {
         let mut budget = GrabBudget::new();
-        let result = read_source(&source(), &json!({"quote": "14 First question"}), &mut budget)
-            .expect("引文能定位");
+        let result = read_source(
+            &source(),
+            &json!({"quote": "14 First question"}),
+            &mut budget,
+        )
+        .expect("引文能定位");
         assert_eq!(result["pages"][0]["pageIndex"], json!(2));
     }
 
@@ -1046,7 +1088,11 @@ mod tests {
         let by_number = read_passage(&source(), &json!({"questionNumbers": [14]}), &mut budget)
             .expect("按题号取段落");
         let paragraphs = by_number["paragraphs"].as_array().unwrap();
-        assert_eq!(paragraphs.len(), 2, "题面与答案页上的 14 都要能找到：{paragraphs:#?}");
+        assert_eq!(
+            paragraphs.len(),
+            2,
+            "题面与答案页上的 14 都要能找到：{paragraphs:#?}"
+        );
         assert!(paragraphs
             .iter()
             .any(|entry| entry["pageIndex"] == json!(3)));
@@ -1061,13 +1107,17 @@ mod tests {
     fn read_passage_without_a_selector_is_rejected() {
         let mut budget = GrabBudget::new();
         let error = read_passage(&source(), &json!({}), &mut budget).expect_err("必须被拒");
-        assert!(error.starts_with("CLOUD_GRAB_PASSAGE_SELECTOR_REQUIRED"), "{error}");
+        assert!(
+            error.starts_with("CLOUD_GRAB_PASSAGE_SELECTOR_REQUIRED"),
+            "{error}"
+        );
     }
 
     /// `report_insufficient_context` 的 pages 需求要能被真的满足，且超预算时如实报不满足。
     #[test]
     fn satisfy_needs_fetches_pages_and_reports_what_it_could_not_get() {
-        let root = std::env::temp_dir().join(format!("grab-needs-{}", uuid::Uuid::new_v4().simple()));
+        let root =
+            std::env::temp_dir().join(format!("grab-needs-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&root).unwrap();
         let mut budget = GrabBudget::new();
         let (satisfied, unsatisfied, deferred) = satisfy_needs(
@@ -1092,7 +1142,8 @@ mod tests {
     /// 「没取到」——报成没取到会让模型以为后端也拿不到候选切片。
     #[test]
     fn satisfy_needs_defers_candidate_and_draft_to_the_orchestrator() {
-        let root = std::env::temp_dir().join(format!("grab-defer-{}", uuid::Uuid::new_v4().simple()));
+        let root =
+            std::env::temp_dir().join(format!("grab-defer-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&root).unwrap();
         let mut budget = GrabBudget::new();
         let (satisfied, unsatisfied, deferred) = satisfy_needs(
@@ -1115,7 +1166,8 @@ mod tests {
     /// 裁剪失败（这里用不存在的图）必须退回整页图并如实说明，而不是让整包失败。
     #[test]
     fn materialize_regions_falls_back_to_the_full_page_image() {
-        let root = std::env::temp_dir().join(format!("grab-region-{}", uuid::Uuid::new_v4().simple()));
+        let root =
+            std::env::temp_dir().join(format!("grab-region-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&root).unwrap();
         let regions = vec![json!({
             "pageIndex": 2,

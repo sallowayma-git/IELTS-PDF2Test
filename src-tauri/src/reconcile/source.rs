@@ -18,8 +18,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::Value;
 
 use super::candidate::{answer_strings, expand_question_numbers, normalize_text};
-use super::rules::answer_compare_key;
 use super::engine::{classify_cloud_error, ModelCallFailure, SourceVerifyRunner};
+use super::rules::answer_compare_key;
 use crate::schema::recognition_v1::{
     reason, ChainKindV1, ChainStatusV1, DecisionEvidenceV1, DecisionFieldV1, DecisionTargetTypeV1,
 };
@@ -41,7 +41,12 @@ fn value_is_empty(answer: &Value) -> bool {
         Some("text") => answer
             .get("values")
             .and_then(Value::as_array)
-            .map(|values| values.iter().filter_map(Value::as_str).all(|v| v.trim().is_empty()))
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .all(|v| v.trim().is_empty())
+            })
             .unwrap_or(true),
         Some("option") => answer
             .get("labels")
@@ -131,7 +136,8 @@ impl SourceVerificationV1 {
         target_id: &str,
         field: DecisionFieldV1,
     ) -> Option<SourceVerdictV1> {
-        self.finding(target_type, target_id, field).map(|finding| finding.verdict)
+        self.finding(target_type, target_id, field)
+            .map(|finding| finding.verdict)
     }
 
     /// 原文件给出的建议值（`Contradicted` 或 `Suggested`）。**含模型结论**，用于展示与
@@ -234,12 +240,20 @@ fn push_finding(
 /// 就是文本形状。若在此返回 `None`，「本地空值 + 原文有可读答案行 ⇒ 建议补全」这条既有
 /// 路径会在**未接入模型**的场景下直接失效（自动补空候选清零、依赖组降级用例跟着变红）。
 /// 形状对齐的目的是避免与本地既有值比对时制造假分歧；本地没有值时没有这个风险。
-fn suggested_in_local_shape(answer_kind: &str, answer_text: &str, assignment: &str) -> Option<Value> {
+fn suggested_in_local_shape(
+    answer_kind: &str,
+    answer_text: &str,
+    assignment: &str,
+) -> Option<Value> {
     match answer_kind {
         "option" => {
             let labels = answer_text
                 .split_whitespace()
-                .map(|token| token.trim_matches(|c: char| !c.is_alphanumeric()).to_uppercase())
+                .map(|token| {
+                    token
+                        .trim_matches(|c: char| !c.is_alphanumeric())
+                        .to_uppercase()
+                })
                 .filter(|token| token.len() == 1 && token.chars().all(|c| c.is_ascii_alphabetic()))
                 .collect::<Vec<String>>();
             if labels.is_empty() {
@@ -364,7 +378,10 @@ fn collect_answer_rows(texts: &[String]) -> BTreeMap<u32, String> {
                 c == '.' || c == ')' || c == ':' || c == ']' || c == '-' || c.is_whitespace()
             });
             // 答案行必须有内容且不是另一个长句（限制长度，避免误把正文当成答案）。
-            if value.is_empty() || value.chars().count() > 40 || value.split_whitespace().count() > 6 {
+            if value.is_empty()
+                || value.chars().count() > 40
+                || value.split_whitespace().count() > 6
+            {
                 continue;
             }
             if value.contains("http") {
@@ -425,7 +442,12 @@ pub(crate) fn verify_against_source(
         let question_present = verification.question_tokens.contains(question_number);
         let evidence = vec![DecisionEvidenceV1 {
             chain: ChainKindV1::Source,
-            anchor_kind: if question_present { "question_token" } else { "none" }.to_string(),
+            anchor_kind: if question_present {
+                "question_token"
+            } else {
+                "none"
+            }
+            .to_string(),
             page_index: None,
             quote: None,
             anchor: None,
@@ -511,7 +533,11 @@ pub(crate) fn verify_against_source(
         }
         let matched = match answer_kind {
             "text" => {
-                let values = answer.get("values").and_then(Value::as_array).cloned().unwrap_or_default();
+                let values = answer
+                    .get("values")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
                 let expected = verification.answer_rows.get(question_number);
                 // 仅当值直接出现在「该题号对应的答案行」里才确认——这是把答案绑定到
                 // 本题的确定性证据（答案行由 `collect_answer_rows` 从原文件的可读答案表
@@ -532,7 +558,11 @@ pub(crate) fn verify_against_source(
                 }
             }
             "option" => {
-                let labels = answer.get("labels").and_then(Value::as_array).cloned().unwrap_or_default();
+                let labels = answer
+                    .get("labels")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
                 let row = verification.answer_rows.get(question_number);
                 match row {
                     Some(row) => {
@@ -553,7 +583,9 @@ pub(crate) fn verify_against_source(
                             // 仅当标签足够长（≥3 字符，通常是选项文本而非字母标签）
                             // 时，才放宽到「整行相等或子串包含」：长文本区分度高，
                             // 子串误命中风险低，且保留对选项文本答案行的兼容。
-                            if label.chars().count() <= 2 && label.chars().all(|c| c.is_ascii_alphabetic()) {
+                            if label.chars().count() <= 2
+                                && label.chars().all(|c| c.is_ascii_alphabetic())
+                            {
                                 row_tokens.iter().any(|token| *token == label)
                             } else {
                                 row_normalized == label || row_normalized.contains(&label)
@@ -585,7 +617,11 @@ pub(crate) fn verify_against_source(
                 );
             }
             Some(SourceVerdictV1::Contradicted) => {
-                let row = verification.answer_rows.get(question_number).cloned().unwrap_or_default();
+                let row = verification
+                    .answer_rows
+                    .get(question_number)
+                    .cloned()
+                    .unwrap_or_default();
                 let assignment = answer
                     .get("assignment")
                     .and_then(Value::as_str)
@@ -636,7 +672,11 @@ pub(crate) fn verify_against_source(
             } else {
                 SourceVerdictV1::NotVerifiable
             },
-            if prompt_present { reason::RULES_MATCH } else { reason::NO_SOURCE_EVIDENCE },
+            if prompt_present {
+                reason::RULES_MATCH
+            } else {
+                reason::NO_SOURCE_EVIDENCE
+            },
             Vec::new(),
             None,
             true,
@@ -697,8 +737,11 @@ fn merge_model_verification(
     let pending: Vec<(String, u32, Value)> = local_slots
         .iter()
         .filter_map(|(slot_id, question_number, answer, _, _)| {
-            let finding =
-                verification.finding(DecisionTargetTypeV1::Slot, slot_id, DecisionFieldV1::Answer)?;
+            let finding = verification.finding(
+                DecisionTargetTypeV1::Slot,
+                slot_id,
+                DecisionFieldV1::Answer,
+            )?;
             if finding.verdict != SourceVerdictV1::NotVerifiable {
                 return None;
             }
@@ -790,7 +833,10 @@ fn merge_model_verification(
                 if observed_text.trim().is_empty() {
                     continue;
                 }
-                let local_kind = local_answer.get("kind").and_then(Value::as_str).unwrap_or("");
+                let local_kind = local_answer
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
                 let assignment = local_answer
                     .get("assignment")
                     .and_then(Value::as_str)
@@ -890,8 +936,15 @@ mod tests {
         )];
         let verification = verify_against_source(None, &slots, &[], None);
         assert_eq!(verification.status, ChainStatusV1::NotRun);
-        assert_eq!(verification.reason_code.as_deref(), Some(reason::EVIDENCE_MISSING));
-        assert!(!verification.is_confirmed(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Answer));
+        assert_eq!(
+            verification.reason_code.as_deref(),
+            Some(reason::EVIDENCE_MISSING)
+        );
+        assert!(!verification.is_confirmed(
+            DecisionTargetTypeV1::Slot,
+            "slot-14",
+            DecisionFieldV1::Answer
+        ));
     }
 
     /// 验收项 4：各路结果一致但缺乏原文证据，不得被误判为已验证。
@@ -899,17 +952,41 @@ mod tests {
     fn answer_without_source_anchors_is_not_confirmed_even_when_text_is_readable() {
         let document = document_with_pages(&["14 stencilling\n15 books"]);
         let slots = vec![
-            ("slot-14".to_string(), 14, Some(json!({"kind":"text","values":["stencilling"]})), true, String::new()),
-            ("slot-15".to_string(), 15, Some(json!({"kind":"text","values":["books"]})), false, String::new()),
+            (
+                "slot-14".to_string(),
+                14,
+                Some(json!({"kind":"text","values":["stencilling"]})),
+                true,
+                String::new(),
+            ),
+            (
+                "slot-15".to_string(),
+                15,
+                Some(json!({"kind":"text","values":["books"]})),
+                false,
+                String::new(),
+            ),
         ];
         let verification = verify_against_source(Some(&document), &slots, &[], None);
-        assert!(verification.is_confirmed(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Answer));
+        assert!(verification.is_confirmed(
+            DecisionTargetTypeV1::Slot,
+            "slot-14",
+            DecisionFieldV1::Answer
+        ));
         assert!(
-            !verification.is_confirmed(DecisionTargetTypeV1::Slot, "slot-15", DecisionFieldV1::Answer),
+            !verification.is_confirmed(
+                DecisionTargetTypeV1::Slot,
+                "slot-15",
+                DecisionFieldV1::Answer
+            ),
             "没有 source anchors 的答案必须保持未验证"
         );
         let finding = verification
-            .finding(DecisionTargetTypeV1::Slot, "slot-15", DecisionFieldV1::Answer)
+            .finding(
+                DecisionTargetTypeV1::Slot,
+                "slot-15",
+                DecisionFieldV1::Answer,
+            )
             .expect("finding required");
         assert_eq!(finding.reason_code, reason::NO_SOURCE_EVIDENCE);
     }
@@ -926,7 +1003,11 @@ mod tests {
         )];
         let verification = verify_against_source(Some(&document), &slots, &[], None);
         let suggested = verification
-            .suggested(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Answer)
+            .suggested(
+                DecisionTargetTypeV1::Slot,
+                "slot-14",
+                DecisionFieldV1::Answer,
+            )
             .expect("contradiction must carry a suggestion");
         assert_eq!(suggested["values"][0], json!("stencilling"));
     }
@@ -944,7 +1025,10 @@ mod tests {
         )];
         let verification = verify_against_source(Some(&document), &slots, &[], None);
         assert_eq!(verification.status, ChainStatusV1::NotRun);
-        assert_eq!(verification.reason_code.as_deref(), Some(reason::SOURCE_FILE_UNREADABLE));
+        assert_eq!(
+            verification.reason_code.as_deref(),
+            Some(reason::SOURCE_FILE_UNREADABLE)
+        );
     }
 
     /// Fix 1(a)：值仅出现在页面正文中（无该题答案行）不得判 Confirmed。
@@ -952,9 +1036,8 @@ mod tests {
     fn page_level_substring_match_is_not_confirmed() {
         // "stencilling" 出现在文章正文里，但原文件没有「14 答案行」，
         // 且题号 14 仍作为裸数字出现（通过 question_token 闸门）。
-        let document = document_with_pages(&[
-            "On page 14 we read that the artist was stencilling the wall.",
-        ]);
+        let document =
+            document_with_pages(&["On page 14 we read that the artist was stencilling the wall."]);
         let slots = vec![(
             "slot-14".to_string(),
             14,
@@ -964,11 +1047,19 @@ mod tests {
         )];
         let verification = verify_against_source(Some(&document), &slots, &[], None);
         assert!(
-            !verification.is_confirmed(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Answer),
+            !verification.is_confirmed(
+                DecisionTargetTypeV1::Slot,
+                "slot-14",
+                DecisionFieldV1::Answer
+            ),
             "页面级子串命中不得判为 Confirmed"
         );
         let finding = verification
-            .finding(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Answer)
+            .finding(
+                DecisionTargetTypeV1::Slot,
+                "slot-14",
+                DecisionFieldV1::Answer,
+            )
             .expect("应有 finding");
         assert_eq!(finding.verdict, SourceVerdictV1::NotVerifiable);
     }
@@ -986,7 +1077,11 @@ mod tests {
         )];
         let verification = verify_against_source(Some(&document), &slots, &[], None);
         assert!(
-            verification.is_confirmed(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Answer),
+            verification.is_confirmed(
+                DecisionTargetTypeV1::Slot,
+                "slot-14",
+                DecisionFieldV1::Answer
+            ),
             "出现在本题答案行里的答案必须 Confirmed"
         );
     }
@@ -1005,7 +1100,11 @@ mod tests {
         )];
         let verification = verify_against_source(Some(&document), &slots, &[], None);
         let finding = verification
-            .finding(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Answer)
+            .finding(
+                DecisionTargetTypeV1::Slot,
+                "slot-14",
+                DecisionFieldV1::Answer,
+            )
             .expect("应有 finding");
         assert_eq!(
             finding.verdict,
@@ -1013,7 +1112,11 @@ mod tests {
             "短标签子串命中（B ∈ babbage）不得 Confirmed，应判定为与原文答案行不符"
         );
         assert!(
-            !verification.is_confirmed(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Answer),
+            !verification.is_confirmed(
+                DecisionTargetTypeV1::Slot,
+                "slot-14",
+                DecisionFieldV1::Answer
+            ),
             "B 不得因命中 babbage 而被假确认"
         );
     }
@@ -1031,7 +1134,11 @@ mod tests {
         )];
         let verification = verify_against_source(Some(&document), &slots, &[], None);
         assert!(
-            verification.is_confirmed(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Answer),
+            verification.is_confirmed(
+                DecisionTargetTypeV1::Slot,
+                "slot-14",
+                DecisionFieldV1::Answer
+            ),
             "答案行词元 B 与标签 B 相等必须 Confirmed"
         );
     }
@@ -1063,17 +1170,24 @@ mod tests {
 
         let baseline = verify_against_source(Some(&document), &slots, &[], None);
         assert_eq!(
-            baseline.verdict(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Answer),
+            baseline.verdict(
+                DecisionTargetTypeV1::Slot,
+                "slot-14",
+                DecisionFieldV1::Answer
+            ),
             Some(SourceVerdictV1::NotVerifiable),
             "前提：确定性核验必须先是「无法判断」，否则本用例测的不是模型通道"
         );
 
-        let verifier = |_payload: &[Value]| -> Result<Value, ModelCallFailure> {
-            Ok(confirmed_finding())
-        };
+        let verifier =
+            |_payload: &[Value]| -> Result<Value, ModelCallFailure> { Ok(confirmed_finding()) };
         let verification = verify_against_source(Some(&document), &slots, &[], Some(&verifier));
         assert!(
-            verification.is_confirmed(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Answer),
+            verification.is_confirmed(
+                DecisionTargetTypeV1::Slot,
+                "slot-14",
+                DecisionFieldV1::Answer
+            ),
             "有原文出处的模型确认必须升级为 Confirmed：{verification:?}"
         );
         // 状态按合并后的 findings 重算，不能还停在「没有证据」。
@@ -1081,7 +1195,11 @@ mod tests {
         assert_eq!(verification.reason_code, None);
         assert_eq!(verification.model_status, SourceModelStatusV1::Succeeded);
         let finding = verification
-            .finding(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Answer)
+            .finding(
+                DecisionTargetTypeV1::Slot,
+                "slot-14",
+                DecisionFieldV1::Answer,
+            )
             .expect("应有 finding");
         assert_eq!(
             finding.evidence[0].quote.as_deref(),
@@ -1113,11 +1231,22 @@ mod tests {
         };
         let verification = verify_against_source(Some(&document), &slots, &[], Some(&verifier));
         assert_eq!(calls.get(), 0, "没有待核验槽位时不得调用模型（白花配额）");
-        assert!(verification.is_confirmed(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Answer));
+        assert!(verification.is_confirmed(
+            DecisionTargetTypeV1::Slot,
+            "slot-14",
+            DecisionFieldV1::Answer
+        ));
         let finding = verification
-            .finding(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Answer)
+            .finding(
+                DecisionTargetTypeV1::Slot,
+                "slot-14",
+                DecisionFieldV1::Answer,
+            )
             .expect("应有 finding");
-        assert!(finding.deterministic, "确定性结论必须保持 deterministic=true");
+        assert!(
+            finding.deterministic,
+            "确定性结论必须保持 deterministic=true"
+        );
     }
 
     /// A3 安全边界：模型给出的分歧值可供展示与一键接受，但**不构成自动写入的可靠证据**。
@@ -1138,17 +1267,29 @@ mod tests {
         };
         let verification = verify_against_source(Some(&document), &slots, &[], Some(&verifier));
         let suggested = verification
-            .suggested(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Answer)
+            .suggested(
+                DecisionTargetTypeV1::Slot,
+                "slot-14",
+                DecisionFieldV1::Answer,
+            )
             .expect("模型分歧必须带建议值，用户才能一键接受");
         assert_eq!(suggested["values"][0], json!("stencilling"));
         assert!(
             verification
-                .deterministic_suggested(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Answer)
+                .deterministic_suggested(
+                    DecisionTargetTypeV1::Slot,
+                    "slot-14",
+                    DecisionFieldV1::Answer
+                )
                 .is_none(),
             "模型结论不得被自动写入守卫当作可靠证据"
         );
         let finding = verification
-            .finding(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Answer)
+            .finding(
+                DecisionTargetTypeV1::Slot,
+                "slot-14",
+                DecisionFieldV1::Answer,
+            )
             .expect("应有 finding");
         assert_eq!(finding.verdict, SourceVerdictV1::Contradicted);
         assert!(!finding.deterministic);
@@ -1171,7 +1312,11 @@ mod tests {
         };
         let verification = verify_against_source(Some(&document), &slots, &[], Some(&verifier));
         assert_eq!(
-            verification.verdict(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Answer),
+            verification.verdict(
+                DecisionTargetTypeV1::Slot,
+                "slot-14",
+                DecisionFieldV1::Answer
+            ),
             Some(SourceVerdictV1::NotVerifiable),
             "值与本地相同就不构成分歧"
         );
@@ -1193,9 +1338,16 @@ mod tests {
             }]}))
         };
         let verification = verify_against_source(Some(&document), &slots, &[], Some(&verifier));
-        assert!(verification.is_confirmed(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Answer));
+        assert!(verification.is_confirmed(
+            DecisionTargetTypeV1::Slot,
+            "slot-14",
+            DecisionFieldV1::Answer
+        ));
         assert_eq!(verification.status, ChainStatusV1::Succeeded);
-        assert_eq!(verification.reason_code, None, "证据已由模型补上，不得再报「原文不可读」");
+        assert_eq!(
+            verification.reason_code, None,
+            "证据已由模型补上，不得再报「原文不可读」"
+        );
     }
 
     /// A3：没有原文出处的断言不采纳（网关侧是第一道闸，这里是第二道）。
@@ -1219,7 +1371,11 @@ mod tests {
             };
             let verification = verify_against_source(Some(&document), &slots, &[], Some(&verifier));
             assert_eq!(
-                verification.verdict(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Answer),
+                verification.verdict(
+                    DecisionTargetTypeV1::Slot,
+                    "slot-14",
+                    DecisionFieldV1::Answer
+                ),
                 Some(SourceVerdictV1::NotVerifiable),
                 "无出处的断言不得升级结论：{case}"
             );
@@ -1232,7 +1388,9 @@ mod tests {
         let document = document_with_pages(&["Question 14 asks about stencilling."]);
         let slots = slot_14_with(json!({"kind":"text","values":["stencilling"]}));
         let verifier = |_payload: &[Value]| -> Result<Value, ModelCallFailure> {
-            Err(ModelCallFailure::Model("request timeout after 30s".to_string()))
+            Err(ModelCallFailure::Model(
+                "request timeout after 30s".to_string(),
+            ))
         };
         let verification = verify_against_source(Some(&document), &slots, &[], Some(&verifier));
         assert_eq!(verification.model_status, SourceModelStatusV1::Unusable);
@@ -1242,10 +1400,17 @@ mod tests {
             "失败分类必须复用 classify_cloud_error，不另造一套"
         );
         assert_eq!(
-            verification.verdict(DecisionTargetTypeV1::Slot, "slot-14", DecisionFieldV1::Answer),
+            verification.verdict(
+                DecisionTargetTypeV1::Slot,
+                "slot-14",
+                DecisionFieldV1::Answer
+            ),
             Some(SourceVerdictV1::NotVerifiable)
         );
-        assert_eq!(verification.reason_code.as_deref(), Some(reason::NO_SOURCE_EVIDENCE));
+        assert_eq!(
+            verification.reason_code.as_deref(),
+            Some(reason::NO_SOURCE_EVIDENCE)
+        );
     }
 
     /// A3：预算耗尽 ≠ 模型失败。两者原因码必须分清，且预算耗尽不该改写链状态原因码。
@@ -1257,7 +1422,10 @@ mod tests {
             Err(ModelCallFailure::BudgetExhausted)
         };
         let verification = verify_against_source(Some(&document), &slots, &[], Some(&verifier));
-        assert_eq!(verification.model_status, SourceModelStatusV1::BudgetExhausted);
+        assert_eq!(
+            verification.model_status,
+            SourceModelStatusV1::BudgetExhausted
+        );
         assert_eq!(
             verification.model_reason_code.as_deref(),
             Some(reason::SOURCE_VERIFY_BUDGET_EXHAUSTED)
@@ -1274,8 +1442,20 @@ mod tests {
     fn only_unresolved_slots_are_sent_to_the_model() {
         let document = document_with_pages(&["14 stencilling"]);
         let slots = vec![
-            ("slot-14".to_string(), 14, Some(json!({"kind":"text","values":["stencilling"]})), true, String::new()),
-            ("slot-15".to_string(), 15, Some(json!({"kind":"text","values":["books"]})), true, String::new()),
+            (
+                "slot-14".to_string(),
+                14,
+                Some(json!({"kind":"text","values":["stencilling"]})),
+                true,
+                String::new(),
+            ),
+            (
+                "slot-15".to_string(),
+                15,
+                Some(json!({"kind":"text","values":["books"]})),
+                true,
+                String::new(),
+            ),
         ];
         let seen = std::cell::RefCell::new(Vec::<Value>::new());
         let verifier = |payload: &[Value]| -> Result<Value, ModelCallFailure> {
@@ -1300,6 +1480,9 @@ mod tests {
         assert_eq!(verification.model_reason_code, None);
         assert_eq!(verification.unusable_reason(), None);
         assert_eq!(verification.status, ChainStatusV1::Partial);
-        assert_eq!(verification.reason_code.as_deref(), Some(reason::NO_SOURCE_EVIDENCE));
+        assert_eq!(
+            verification.reason_code.as_deref(),
+            Some(reason::NO_SOURCE_EVIDENCE)
+        );
     }
 }

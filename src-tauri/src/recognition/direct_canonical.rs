@@ -33,7 +33,7 @@ use crate::authoring_pipeline::dynamic_answer_map_from_split;
 use crate::ielts_grammar::answer_key::answer_value_for_slot;
 use crate::ielts_grammar::issue_codes;
 use crate::schema::ielts_authoring_v2::TaskTypeV2;
-use crate::{ImportJob, CommandResult};
+use crate::{CommandResult, ImportJob};
 
 /// §6.11：单页未分配正文的聚合字符数阈值。
 const SIGNIFICANT_UNASSIGNED_PAGE_CHARS: usize = 200;
@@ -110,7 +110,9 @@ fn task_type_name(task_type: TaskTypeV2) -> &'static str {
 
 fn interaction_for(task_type: &TaskTypeV2, bank_bound: bool) -> &'static str {
     match task_type {
-        TaskTypeV2::SingleChoice | TaskTypeV2::TrueFalseNotGiven | TaskTypeV2::YesNoNotGiven => "radio",
+        TaskTypeV2::SingleChoice | TaskTypeV2::TrueFalseNotGiven | TaskTypeV2::YesNoNotGiven => {
+            "radio"
+        }
         TaskTypeV2::MultipleChoice => "checkbox",
         TaskTypeV2::MatchingHeadings
         | TaskTypeV2::MatchingInformation
@@ -147,7 +149,9 @@ fn response_kind(task_type: &TaskTypeV2, bank_bound: bool) -> &'static str {
         | TaskTypeV2::MatchingFeatures
         | TaskTypeV2::MatchingSentenceEndings
         | TaskTypeV2::Classification => "matching",
-        TaskTypeV2::DiagramLabelCompletion | TaskTypeV2::PlanMapLabelCompletion => "diagram_hotspot",
+        TaskTypeV2::DiagramLabelCompletion | TaskTypeV2::PlanMapLabelCompletion => {
+            "diagram_hotspot"
+        }
         _ => "text_entry",
     }
 }
@@ -159,7 +163,13 @@ pub(crate) fn parse_choose_cardinality(instruction_text: &str) -> Option<u32> {
     // 字符边界安全窗口（P1-B：字节切片在多字节字符上会 panic）。
     let tail: String = normalized[marker..].chars().take(40).collect();
     let words = [
-        ("TWO", 2), ("THREE", 3), ("FOUR", 4), ("FIVE", 5), ("SIX", 6), ("SEVEN", 7), ("EIGHT", 8),
+        ("TWO", 2),
+        ("THREE", 3),
+        ("FOUR", 4),
+        ("FIVE", 5),
+        ("SIX", 6),
+        ("SEVEN", 7),
+        ("EIGHT", 8),
     ];
     for (word, value) in words {
         if tail.contains(word) {
@@ -181,7 +191,11 @@ fn statement_options(task_type: TaskTypeV2, scope: &str) -> Vec<Value> {
     labels
         .iter()
         .map(|label| {
-            let option_id = format!("opt-{}-{}", scope, label.to_ascii_lowercase().replace(' ', "-"));
+            let option_id = format!(
+                "opt-{}-{}",
+                scope,
+                label.to_ascii_lowercase().replace(' ', "-")
+            );
             json!({
                 "optionId": option_id,
                 "label": label,
@@ -218,11 +232,7 @@ fn option_value(
     })
 }
 
-fn option_bank_value(
-    ctx: &AnchorContext,
-    scope: &str,
-    bank: &OptionBankCandidateV1,
-) -> Value {
+fn option_bank_value(ctx: &AnchorContext, scope: &str, bank: &OptionBankCandidateV1) -> Value {
     json!({
         "optionBankId": bank.bank_id.clone(),
         "scope": "task_group",
@@ -237,10 +247,7 @@ fn option_bank_value(
 }
 
 /// QLG 表格刺激 → 语义表格节点（保留物理行/列/跨行拓扑，§6.10）。
-fn table_stimulus_node(
-    ctx: &AnchorContext,
-    stimulus: &TableStimulusCandidateV1,
-) -> Value {
+fn table_stimulus_node(ctx: &AnchorContext, stimulus: &TableStimulusCandidateV1) -> Value {
     let rows: Vec<Value> = stimulus
         .rows
         .iter()
@@ -278,10 +285,7 @@ fn table_stimulus_node(
 }
 
 /// 视觉刺激 → figure 节点（crop 已物化时）。
-fn figure_stimulus_node(
-    ctx: &AnchorContext,
-    stimulus: &VisualStimulusCandidateV1,
-) -> Value {
+fn figure_stimulus_node(ctx: &AnchorContext, stimulus: &VisualStimulusCandidateV1) -> Value {
     let hotspots: Vec<Value> = stimulus
         .hotspots
         .iter()
@@ -440,7 +444,11 @@ fn build_task_group(
             }));
             continue;
         };
-        let stem_anchors = vec![anchor(ctx, block.stem_node_ids.clone(), block.page_index as i32)];
+        let stem_anchors = vec![anchor(
+            ctx,
+            block.stem_node_ids.clone(),
+            block.page_index as i32,
+        )];
         let is_bank_bound = bank_bound
             || matches!(
                 task_type,
@@ -588,10 +596,15 @@ fn walk_collection_ids(value: &Value, ids: &mut BTreeSet<String>) {
 }
 
 /// 输出中所有锚点 nodeIds 必须指向真实物理节点（组 1-5 语义校验）。
-fn validate_anchor_targets(authoring: &Value, physical_ids: &BTreeSet<String>) -> Result<(), String> {
+fn validate_anchor_targets(
+    authoring: &Value,
+    physical_ids: &BTreeSet<String>,
+) -> Result<(), String> {
     fn walk(value: &Value, physical_ids: &BTreeSet<String>, errors: &mut Vec<String>) {
         match value {
-            Value::Array(items) => items.iter().for_each(|item| walk(item, physical_ids, errors)),
+            Value::Array(items) => items
+                .iter()
+                .for_each(|item| walk(item, physical_ids, errors)),
             Value::Object(map) => {
                 if map.get("nodeIds").and_then(Value::as_array).is_some() {
                     for node_id in map["nodeIds"].as_array().into_iter().flatten() {
@@ -751,7 +764,10 @@ pub(crate) fn build_direct_canonical(
         let Some(slot_id) = slot.get("slotId").and_then(Value::as_str) else {
             continue;
         };
-        let number = slot.get("questionNumber").and_then(Value::as_u64).unwrap_or(0) as u32;
+        let number = slot
+            .get("questionNumber")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32;
         answer_key.insert(
             slot_id.to_string(),
             answer_value_for_slot(&answer_map, slot_id, number),
@@ -759,11 +775,11 @@ pub(crate) fn build_direct_canonical(
     }
 
     // 组 1-7：未分配证据按页聚合判定，不依赖单条 ≥ 阈值。
-    let mut recognition_blockers = crate::recognition::blocking_issues_from_physical(Some(physical));
+    let mut recognition_blockers =
+        crate::recognition::blocking_issues_from_physical(Some(physical));
     let mut unassigned_by_page: BTreeMap<u32, usize> = BTreeMap::new();
     for evidence in &graph.unassigned_evidence {
-        *unassigned_by_page.entry(evidence.page_index).or_insert(0) +=
-            evidence.text_char_count;
+        *unassigned_by_page.entry(evidence.page_index).or_insert(0) += evidence.text_char_count;
     }
     if unassigned_by_page
         .values()
@@ -893,11 +909,17 @@ pub(crate) fn build_direct_canonical(
     if !recognition_blockers.is_empty() {
         authoring["recognitionBlockers"] = json!(recognition_blockers);
     }
-    if let Some(groups) = authoring.get_mut("taskGroups").and_then(Value::as_array_mut) {
+    if let Some(groups) = authoring
+        .get_mut("taskGroups")
+        .and_then(Value::as_array_mut)
+    {
         for group in groups.iter_mut() {
-            if let Some(figures) =
-                figure_stimuli.get(group.get("taskId").and_then(Value::as_str).unwrap_or_default())
-            {
+            if let Some(figures) = figure_stimuli.get(
+                group
+                    .get("taskId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            ) {
                 let stimulus = group
                     .as_object_mut()
                     .expect("group must be an object")
@@ -1048,8 +1070,14 @@ mod tests {
         let job = sample_job();
         let mut graph = sample_graph();
         graph.task_groups[0].task_type = Some(TaskTypeV2::YesNoNotGiven);
-        let built = build_direct_canonical(&job, &graph, &sample_physical(), &sample_split(), &no_assets)
-            .expect("must build");
+        let built = build_direct_canonical(
+            &job,
+            &graph,
+            &sample_physical(),
+            &sample_split(),
+            &no_assets,
+        )
+        .expect("must build");
         let labels: Vec<String> = built["taskGroups"][0]["responseGroups"][0]["options"]
             .as_array()
             .unwrap()
@@ -1066,16 +1094,35 @@ mod tests {
         let mut graph = sample_graph();
         graph.task_groups[0].task_type = Some(TaskTypeV2::MultipleChoice);
         graph.instruction_zones[0].text = "Questions 1-3 Choose TWO letters, A-E.".to_string();
-        let built = build_direct_canonical(&job, &graph, &sample_physical(), &sample_split(), &no_assets)
-            .expect("must build");
+        let built = build_direct_canonical(
+            &job,
+            &graph,
+            &sample_physical(),
+            &sample_split(),
+            &no_assets,
+        )
+        .expect("must build");
         let signature = &built["taskGroups"][0]["instructionSignature"];
-        assert_eq!(signature.pointer("/selectionCardinality/exact").cloned(), Some(json!(2)));
-        assert!(!blockers_of(&built).iter().any(|code| code == MULTIPLE_CHOICE_CARDINALITY_UNRESOLVED));
+        assert_eq!(
+            signature.pointer("/selectionCardinality/exact").cloned(),
+            Some(json!(2))
+        );
+        assert!(!blockers_of(&built)
+            .iter()
+            .any(|code| code == MULTIPLE_CHOICE_CARDINALITY_UNRESOLVED));
 
         graph.instruction_zones[0].text = "Questions 1-3 Pick letters.".to_string();
-        let built = build_direct_canonical(&job, &graph, &sample_physical(), &sample_split(), &no_assets)
-            .expect("must build");
-        assert!(blockers_of(&built).iter().any(|code| code == MULTIPLE_CHOICE_CARDINALITY_UNRESOLVED));
+        let built = build_direct_canonical(
+            &job,
+            &graph,
+            &sample_physical(),
+            &sample_split(),
+            &no_assets,
+        )
+        .expect("must build");
+        assert!(blockers_of(&built)
+            .iter()
+            .any(|code| code == MULTIPLE_CHOICE_CARDINALITY_UNRESOLVED));
         assert!(
             built["taskGroups"][0]["instructionSignature"]
                 .get("selectionCardinality")
@@ -1090,13 +1137,23 @@ mod tests {
         let job = sample_job();
         let mut graph = sample_graph();
         graph.task_groups[0].question_numbers = vec![1, 2];
-        graph.question_blocks.retain(|block| block.question_number != 2);
-        let built = build_direct_canonical(&job, &graph, &sample_physical(), &sample_split(), &no_assets)
-            .expect("must build");
+        graph
+            .question_blocks
+            .retain(|block| block.question_number != 2);
+        let built = build_direct_canonical(
+            &job,
+            &graph,
+            &sample_physical(),
+            &sample_split(),
+            &no_assets,
+        )
+        .expect("must build");
         let slots = built.get("answerSlots").and_then(Value::as_object).unwrap();
         assert_eq!(slots.len(), 2, "声明题号必须保留");
         assert!(slots.contains_key("q2"), "缺失题块对应的题号不得消失");
-        assert!(blockers_of(&built).iter().any(|code| code == QUESTION_BLOCK_MISSING));
+        assert!(blockers_of(&built)
+            .iter()
+            .any(|code| code == QUESTION_BLOCK_MISSING));
         let key = built.get("answerKey").and_then(Value::as_object).unwrap();
         assert_eq!(key.len(), 2, "answerKey 分母同步保留");
     }
@@ -1117,18 +1174,36 @@ mod tests {
             "issues": []
         })).unwrap()];
 
-        let built = build_direct_canonical(&job, &graph, &sample_physical(), &sample_split(), &no_assets)
-            .expect("must build");
-        assert!(blockers_of(&built).iter().any(|code| code == VISUAL_FALLBACK_ASSET_NOT_MATERIALIZED));
-        assert!(built.get("assets").and_then(Value::as_array).unwrap().is_empty());
+        let built = build_direct_canonical(
+            &job,
+            &graph,
+            &sample_physical(),
+            &sample_split(),
+            &no_assets,
+        )
+        .expect("must build");
+        assert!(blockers_of(&built)
+            .iter()
+            .any(|code| code == VISUAL_FALLBACK_ASSET_NOT_MATERIALIZED));
+        assert!(built
+            .get("assets")
+            .and_then(Value::as_array)
+            .unwrap()
+            .is_empty());
 
-        let built = build_direct_canonical(&job, &graph, &sample_physical(), &sample_split(), &|asset_id| {
-            Some(ResolvedVisualAsset {
-                sha256: "b".repeat(64),
-                byte_length: 42,
-                relative_path: format!("assets/{asset_id}.png"),
-            })
-        })
+        let built = build_direct_canonical(
+            &job,
+            &graph,
+            &sample_physical(),
+            &sample_split(),
+            &|asset_id| {
+                Some(ResolvedVisualAsset {
+                    sha256: "b".repeat(64),
+                    byte_length: 42,
+                    relative_path: format!("assets/{asset_id}.png"),
+                })
+            },
+        )
         .expect("must build");
         let assets = built.get("assets").and_then(Value::as_array).unwrap();
         assert_eq!(assets.len(), 1);
@@ -1144,27 +1219,51 @@ mod tests {
     fn anchors_use_real_source_file_and_physical_nodes() {
         let job = sample_job();
         let graph = sample_graph();
-        let built = build_direct_canonical(&job, &graph, &sample_physical(), &sample_split(), &no_assets)
-            .expect("must build");
+        let built = build_direct_canonical(
+            &job,
+            &graph,
+            &sample_physical(),
+            &sample_split(),
+            &no_assets,
+        )
+        .expect("must build");
         let file_id = job.source_files[0].file_id.as_str();
         assert_eq!(
-            built.pointer("/taskGroups/0/instructions/0/sourceAnchors/0/sourceFileId").cloned(),
+            built
+                .pointer("/taskGroups/0/instructions/0/sourceAnchors/0/sourceFileId")
+                .cloned(),
             Some(json!(file_id)),
             "sourceFileId 必须来自真实 job source file"
         );
         for response in built["taskGroups"][0]["responseGroups"].as_array().unwrap() {
-            for option in response.get("options").and_then(Value::as_array).unwrap_or(&Vec::new()) {
+            for option in response
+                .get("options")
+                .and_then(Value::as_array)
+                .unwrap_or(&Vec::new())
+            {
                 assert!(
-                    option.get("sourceAnchors").and_then(Value::as_array).is_some_and(|anchors| anchors.is_empty()),
+                    option
+                        .get("sourceAnchors")
+                        .and_then(Value::as_array)
+                        .is_some_and(|anchors| anchors.is_empty()),
                     "合成语句选项不得伪造 source node"
                 );
-                assert!(!option["content"][0]["text"].as_str().unwrap_or_default().is_empty());
+                assert!(!option["content"][0]["text"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .is_empty());
             }
         }
         let mut bad_graph = sample_graph();
         bad_graph.question_blocks[0].stem_node_ids = vec!["fabricated-node".to_string()];
-        let error = build_direct_canonical(&job, &bad_graph, &sample_physical(), &sample_split(), &no_assets)
-            .expect_err("伪造锚点必须构建失败");
+        let error = build_direct_canonical(
+            &job,
+            &bad_graph,
+            &sample_physical(),
+            &sample_split(),
+            &no_assets,
+        )
+        .expect_err("伪造锚点必须构建失败");
         assert!(error.contains(ANCHOR_TARGET_INVALID), "{error}");
     }
 
@@ -1173,12 +1272,15 @@ mod tests {
     fn option_ids_are_scope_unique() {
         let job = sample_job();
         let mut graph = sample_graph();
-        graph.task_groups.push(serde_json::from_value(json!({
-            "groupId": "group-2", "pageIndices": [0], "displayRange": [4, 5],
-            "questionNumbers": [4, 5], "taskType": "single_choice",
-            "taskHint": "choose", "blockIds": ["block-4", "block-5"],
-            "optionBankRef": null, "stimulusRefs": [], "issues": [], "confidence": 0.9
-        })).unwrap());
+        graph.task_groups.push(
+            serde_json::from_value(json!({
+                "groupId": "group-2", "pageIndices": [0], "displayRange": [4, 5],
+                "questionNumbers": [4, 5], "taskType": "single_choice",
+                "taskHint": "choose", "blockIds": ["block-4", "block-5"],
+                "optionBankRef": null, "stimulusRefs": [], "issues": [], "confidence": 0.9
+            }))
+            .unwrap(),
+        );
         for number in [4u32, 5u32] {
             graph.question_blocks.push(serde_json::from_value(json!({
                 "candidateId": format!("block-{number}"), "questionNumber": number, "pageIndex": 0,
@@ -1195,12 +1297,22 @@ mod tests {
                 "sourceCoverage": 1.0, "boundaryConfidence": 0.9, "ambiguities": []
             })).unwrap());
         }
-        let built = build_direct_canonical(&job, &graph, &sample_physical(), &sample_split(), &no_assets)
-            .expect("must build");
+        let built = build_direct_canonical(
+            &job,
+            &graph,
+            &sample_physical(),
+            &sample_split(),
+            &no_assets,
+        )
+        .expect("must build");
         let mut ids = Vec::new();
         for group in built["taskGroups"].as_array().unwrap() {
             for response in group["responseGroups"].as_array().unwrap_or(&Vec::new()) {
-                for option in response.get("options").and_then(Value::as_array).unwrap_or(&Vec::new()) {
+                for option in response
+                    .get("options")
+                    .and_then(Value::as_array)
+                    .unwrap_or(&Vec::new())
+                {
                     ids.push(option["optionId"].as_str().unwrap_or_default().to_string());
                 }
             }
@@ -1224,9 +1336,17 @@ mod tests {
                 })).unwrap()
             })
             .collect();
-        let built = build_direct_canonical(&job, &graph, &sample_physical(), &sample_split(), &no_assets)
-            .expect("must build");
-        assert!(blockers_of(&built).iter().any(|code| code == issue_codes::SIGNIFICANT_REGION_UNASSIGNED));
+        let built = build_direct_canonical(
+            &job,
+            &graph,
+            &sample_physical(),
+            &sample_split(),
+            &no_assets,
+        )
+        .expect("must build");
+        assert!(blockers_of(&built)
+            .iter()
+            .any(|code| code == issue_codes::SIGNIFICANT_REGION_UNASSIGNED));
     }
 
     /// 契约主干：TFNG 正常路径 + schema 门。
@@ -1234,13 +1354,21 @@ mod tests {
     fn direct_canonical_contract_on_synthetic_graph() {
         let job = sample_job();
         let graph = sample_graph();
-        let built = build_direct_canonical(&job, &graph, &sample_physical(), &sample_split(), &no_assets)
-            .expect("must build");
+        let built = build_direct_canonical(
+            &job,
+            &graph,
+            &sample_physical(),
+            &sample_split(),
+            &no_assets,
+        )
+        .expect("must build");
         assert_eq!(built["schemaVersion"], "IeltsAuthoringIRV2");
         let groups = built.get("taskGroups").and_then(Value::as_array).unwrap();
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0]["taskType"], "true_false_not_given");
-        let options = groups[0]["responseGroups"][0]["options"].as_array().unwrap();
+        let options = groups[0]["responseGroups"][0]["options"]
+            .as_array()
+            .unwrap();
         assert_eq!(options.len(), 3);
         assert_eq!(options[0]["label"], "TRUE");
         let slots = built.get("answerSlots").and_then(Value::as_object).unwrap();
@@ -1249,7 +1377,11 @@ mod tests {
         assert_eq!(key.len(), slots.len());
         let typed: Result<crate::schema::ielts_authoring_v2::IeltsAuthoringIRV2, _> =
             serde_json::from_value(built.clone());
-        assert!(typed.is_ok(), "direct 产物必须通过 schema：{:?}", typed.err());
+        assert!(
+            typed.is_ok(),
+            "direct 产物必须通过 schema：{:?}",
+            typed.err()
+        );
     }
 
     /// verifier P1-a 复审：passage 分段含尾块，行数非 4 倍数不丢行。
@@ -1268,14 +1400,20 @@ mod tests {
         });
         let built = build_direct_canonical(&job, &graph, &physical, &sample_split(), &no_assets)
             .expect("must build");
-        let content = built.pointer("/passage/content").and_then(Value::as_array).unwrap();
+        let content = built
+            .pointer("/passage/content")
+            .and_then(Value::as_array)
+            .unwrap();
         let text = content
             .iter()
             .map(|node| node["text"].as_str().unwrap_or(""))
             .collect::<Vec<_>>()
             .join(" ");
         for index in 0..7 {
-            assert!(text.contains(&format!("passage line {index}")), "丢行 {index}");
+            assert!(
+                text.contains(&format!("passage line {index}")),
+                "丢行 {index}"
+            );
         }
         assert_eq!(content.len(), 2, "7 行按 4 行分段应为 2 段（含尾块）");
     }

@@ -31,6 +31,7 @@ import { getPublishPreflight, listLibraryItems, type PublishCheckResultV1 } from
 import type { ProcessingState } from "../../api/processingClient";
 import { processingNoteOf } from "./workspaceStatus";
 import { answerPageStatusOf, describeAnswerPageRetry } from "./answerPageStatus";
+import { findTargetElement } from "./locate";
 
 // 题目工作区（计划 §16.6 / §9.10）。
 // 打开就是最终 IELTS 题面；左侧 passage、右侧 questions 由 ExamCanvas 渲染。
@@ -183,6 +184,13 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
     }),
     [editor.pendingCount, preview]
   );
+  // 学生预览概要文案（P5：与修订提示一起从题面上方挪进子栏说明区，元素与 data-testid 不变，
+  // 只是渲染位置变了；编译失败时没有概要可显示）。
+  const previewSummary = preview?.ok
+    ? preview.summary.modality === "listening"
+      ? `听力 · ${preview.summary.listeningParts} 个 Section · ${preview.summary.slots} 个答案位 · ${preview.summary.assets} 段音频`
+      : `${preview.summary.taskGroups} 个题组 · ${preview.summary.slots} 个答案位 · ${preview.summary.assets} 个资源`
+    : undefined;
   // 发布前检查的读取状态只作为验收脚本可等待的锚点（`data-preflight-state`），不进用户文案。
   const preflightState: "loading" | "loaded" | "error" = preflightError ? "error" : preflight ? "loaded" : "loading";
   const answerPageStatus = useMemo(
@@ -204,29 +212,10 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   /** 点击问题定位到题面上对应的位置。返回是否真的找到了可定位的元素。 */
   function locateTarget(targetId: string): boolean {
     setSelectedId(targetId);
-    // 答案位的 id（如 `q27`）**不一定**出现在 DOM 上：completion 的答案位是**行内**渲染在
-    // stimulus 里的，宿主元素带的是**内容节点 id**（`data-editor-id`），不是 slotId；
-    // 只有非行内列表版式才给元素加 `data-question-id={slotId}`。
-    // 因此除了 slotId，还要按 `answerSlots[slotId].hostNodeId` 再找一次 ——
-    // 否则「第 27 题还没有答案」这条阻断项点了没有任何反应（实测确实如此）。
-    const hostNodeId = editor.draft?.answerSlots?.[targetId]?.hostNodeId;
-    // **第三跳：内容节点 id**。实测 `demanding-reading-passage-3.pdf` 上，
-    // `answerSlots["q27"].hostNodeId` 是 **stimulus 节点**（`group-1-stimulus-b032`），
-    // 而真正渲染答案输入框的那个节点是 `taskGroups[0].stimulus[1].children[3]`
-    // （id = `slot-node-q27`，`type = answer_slot`，带 `slotId`）。前两跳都落空，
-    // 于是「去填写」只给出「找不到」——按钮没坏，但它没能把用户送到该填的地方。
-    // 这里直接在草稿的题组里按 `slotId` 找回承载该答案位的内容节点 id。
-    const contentNodeIds = contentNodeIdsForSlot(editor.draft, targetId);
-    const candidates = [targetId, hostNodeId, ...contentNodeIds]
-      .filter((value): value is string => typeof value === "string" && value.length > 0)
-      .filter((value, index, all) => all.indexOf(value) === index);
-    const target = Array.from(document.querySelectorAll<HTMLElement>(
-      "[data-editor-id], [data-question-id], [data-response-group-id]"
-    )).find((element) => [
-      element.dataset.editorId,
-      element.dataset.questionId,
-      element.dataset.responseGroupId
-    ].some((value) => value !== undefined && candidates.includes(value)));
+    // 三跳查找（slotId → hostNodeId → 内容节点 id）抽到 locate.ts：
+    // 底部题号导航（QuestionNavBar）点击后要走同一套规则，两边不允许漂移。
+    // 历史背景见 locate.ts 顶注——前两跳在内联填空上都会落空，实测确有第三跳。
+    const target = findTargetElement(targetId, editor.draft);
     target?.scrollIntoView({ block: "center", behavior: "smooth" });
     // 文档级问题（`SIGNIFICANT_REGION_UNASSIGNED` / `RUNTIME_COMPILER_FAILED` 的 targetId 是
     // "document"）在题面上没有对应元素。以前这里静默什么都不做，用户会以为按钮坏了；
@@ -418,7 +407,6 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
           >
             <ArrowLeft size={16} />
           </button>
-          <span className="workspace-brand">IELTS</span>
           <div className="workspace-title">
             <EditableTitle
               title={editor.title ?? title}
@@ -473,7 +461,9 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             <button data-testid="workspace-save" disabled={Boolean(busyAction)} onClick={save}>
               {busyAction === "save" ? "正在保存…" : "保存"}
             </button>
-            <button data-testid="workspace-publish" disabled={Boolean(busyAction)} onClick={publish}>
+            {/* 顶栏唯一的主操作：底色/悬停对齐基准的提交类按钮（见 workspace.css 的
+                .workspace-publish-btn）。data-testid 与点击行为不变。 */}
+            <button className="workspace-publish-btn" data-testid="workspace-publish" disabled={Boolean(busyAction)} onClick={publish}>
               {busyAction === "publish" ? "正在发布…" : "发布"}
             </button>
             <button aria-label="更多操作" title="更多操作" onClick={() => setMenuOpen((open) => !open)}><MoreHorizontal size={16} /></button>
@@ -505,8 +495,14 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
         </div>
       </header>
 
+      {/* 子栏对应基准 .sub-header-bar：左侧粗体 Part 名，中间说明，右侧模式切换。
+          Part 名：阅读稿显示 READING · Part 1（题稿 IR 里没有 passage 编号字段，
+          单题工作区一份稿就是一个 Part，固定 Part 1）；听力稿显示 LISTENING，
+          Part 切换信息在底部题号导航，子栏不再追加。 */}
       <div className="workspace-sub-header">
-        <span className="workspace-sub-header-label">READING</span>
+        <span className="workspace-sub-header-label">
+          {editor.draft?.modality === "listening" ? "LISTENING" : "READING · Part 1"}
+        </span>
         <div className="workspace-mode-toggle" role="tablist" aria-label="编辑与学生预览">
           <button
             role="tab"
@@ -523,9 +519,41 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             onClick={() => setMode("student")}
           >学生预览</button>
         </div>
-        <span className="workspace-sub-header-meta">
-          {mode === "edit" ? "编辑模式 · 保存后点击「发布」输出到 NAS" : "学生预览 · 与学生端同一套交互语义，这里的作答不会写回题目"}
+        {/* 学生预览时说明区放修订提示与概要（原来在题面上方的通知带，data-testid 不变）；
+            与已保存内容有差异时（level === "warning"）在行尾追加红色小标记，原因见 title。 */}
+        <span className={`workspace-sub-header-meta${mode === "student" ? " is-preview" : ""}`}>
+          {mode === "student" ? (
+            <>
+              <span
+                className="workspace-preview-revision"
+                role="status"
+                data-testid="workspace-preview-revision"
+                title={previewLimitation.message}
+              >
+                {previewLimitation.message}
+              </span>
+              {previewSummary ? (
+                <span
+                  className="workspace-preview-summary"
+                  data-testid="workspace-preview-summary"
+                  title={previewSummary}
+                >
+                  {previewSummary}
+                </span>
+              ) : null}
+            </>
+          ) : (
+            "编辑模式 · 保存后点击「发布」输出到 NAS"
+          )}
         </span>
+        {mode === "student" && previewLimitation.level === "warning" ? (
+          <span
+            className="workspace-preview-warning-flag"
+            role="img"
+            aria-label="预览与已保存的内容存在差异"
+            title={previewLimitation.message}
+          />
+        ) : null}
       </div>
 
       {notice ? (
@@ -761,13 +789,8 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
 
         {editor.draft && mode === "student" ? (
           <div className="workspace-student-preview" data-testid="workspace-student-preview">
-            <p
-              className={`workspace-notice ${previewLimitation.level === "warning" ? "warning" : ""}`}
-              role="status"
-              data-testid="workspace-preview-revision"
-            >
-              {previewLimitation.message}
-            </p>
+            {/* 修订提示（workspace-preview-revision）与概要（workspace-preview-summary）已挪进
+                子栏说明区；这里只剩编译失败面板与预览画布本身。 */}
             {preview && !preview.ok ? (
               // 编译失败：不显示任何题面，只给出可定位的问题。
               <div className="workspace-preview-error" role="alert" data-testid="workspace-preview-error">
@@ -803,16 +826,8 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               </div>
             ) : null}
             {preview?.ok ? (
-              <>
-                <p className="workspace-preview-summary" data-testid="workspace-preview-summary">
-                  {preview.summary.modality === "listening"
-                    ? `听力 · ${preview.summary.listeningParts} 个 Section · ${preview.summary.slots} 个答案位 · ${preview.summary.assets} 段音频`
-                    : `${preview.summary.taskGroups} 个题组 · ${preview.summary.slots} 个答案位 · ${preview.summary.assets} 个资源`}
-                </p>
-                {/* 答案形式不匹配的题已经并进「待补充」清单，这里不再另列一份。 */}
-                {/* key 绑草稿版本令牌：草稿一变，预览的作答状态整体重置。 */}
-                <ExamCanvas key={`student-preview-${previewToken}`} authoring={editor.draft} mode="student" />
-              </>
+              // key 绑草稿版本令牌：草稿一变，预览的作答状态整体重置。
+              <ExamCanvas key={`student-preview-${previewToken}`} authoring={editor.draft} mode="student" />
             ) : null}
           </div>
         ) : null}
@@ -859,36 +874,6 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
       ) : null}
     </section>
   );
-}
-
-/**
- * 草稿里承载某个答案位的**内容节点 id**。
- *
- * 内联填空（completion）的答案输入框渲染在 stimulus 内部，宿主元素带的是**内容节点 id**
- * （`data-editor-id = "slot-node-q27"`），既不是 slotId（`q27`），也不是
- * `answerSlots["q27"].hostNodeId`（那是 **stimulus 节点** id）。只按前两者找会全部落空，
- * 「去填写」就只剩一句「找不到」。
- *
- * 只遍历 `taskGroups`：内联答案位一定在题组的 prompt / stimulus 里（passage 里不会有
- * 可作答的答案位），这样既够用又不用深走整份草稿（草稿里的 sourceAnchors 很大）。
- */
-function contentNodeIdsForSlot(draft: IeltsAuthoringIRV2 | undefined, slotId: string): string[] {
-  if (!draft || !slotId) return [];
-  const found: string[] = [];
-  const seen = new Set<unknown>();
-  const walk = (node: unknown): void => {
-    if (!node || typeof node !== "object" || seen.has(node)) return;
-    seen.add(node);
-    if (Array.isArray(node)) {
-      for (const item of node) walk(item);
-      return;
-    }
-    const record = node as Record<string, unknown>;
-    if (record.slotId === slotId && typeof record.id === "string" && record.id) found.push(record.id);
-    for (const value of Object.values(record)) walk(value);
-  };
-  walk(draft.taskGroups);
-  return found;
 }
 
 /** 工作区标题原位编辑（计划 §9.10「标题（可编辑）」，M1 落地）。

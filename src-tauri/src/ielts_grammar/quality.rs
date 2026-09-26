@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::environment::recognition_blockers_gate_enabled;
 use crate::reading_source::ReadingExamSourceV1;
 use crate::reading_source_v2::CompilerIssueV2;
-use crate::schema::IeltsAuthoringIRV2;
 use crate::schema::ielts_authoring_v2::QuestionNumberExpressionV2;
+use crate::schema::IeltsAuthoringIRV2;
 use crate::validator::validate_reading_source_contract;
 
 use super::instruction_signature::infer_instruction_signature;
@@ -54,7 +54,11 @@ impl FrozenSourceEvidence {
             .get("declaredQuestionNumbers")?
             .as_array()?
             .iter()
-            .map(|number| number.as_u64().and_then(|number| u32::try_from(number).ok()))
+            .map(|number| {
+                number
+                    .as_u64()
+                    .and_then(|number| u32::try_from(number).ok())
+            })
             .collect::<Option<Vec<_>>>()?;
         let declarations = value
             .get("declarations")
@@ -86,7 +90,10 @@ impl FrozenSourceEvidence {
 ///
 /// 题号声明只有在发布时能可靠解析（非 Undetermined）才冻结；否则冻结空集合，
 /// 之后仍报 Undetermined，而不是被原文件删除「洗」成完整。
-pub(crate) fn publish_evidence_summary(authoring: &Value, physical_shadow: Option<&Value>) -> Value {
+pub(crate) fn publish_evidence_summary(
+    authoring: &Value,
+    physical_shadow: Option<&Value>,
+) -> Value {
     let assessment = assess_source_question_coverage(authoring, physical_shadow);
     let summary = source_coverage_summary(authoring, physical_shadow);
     let reliable = assessment.status != QuestionCoverageStatus::Undetermined;
@@ -812,7 +819,10 @@ fn validate_listening_parts(
     if lines.is_empty() {
         return;
     }
-    let texts = lines.iter().map(|line| line.text.as_str()).collect::<Vec<_>>();
+    let texts = lines
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>();
     let detected = detect_listening_parts(&texts);
     if detected.parts.is_empty() {
         return;
@@ -949,7 +959,8 @@ fn validate_listening_media(
     }
 }
 
-fn validate_passage(authoring: &Value, issues: &mut Vec<Value>, hard_failures: &mut Vec<String>) {    if authoring.get("modality").and_then(Value::as_str) == Some("listening") {
+fn validate_passage(authoring: &Value, issues: &mut Vec<Value>, hard_failures: &mut Vec<String>) {
+    if authoring.get("modality").and_then(Value::as_str) == Some("listening") {
         return;
     }
     let content = authoring.pointer("/passage/content");
@@ -1383,7 +1394,8 @@ fn evaluate_compiler_probes(authoring: &Value) -> Value {
     let typed = typed_authoring_for_probe(authoring);
     let (v2_probe, v1_probe) = match typed {
         Ok(typed) => {
-            let schema_version = crate::listening_source_v1::runtime_schema_version(&typed.modality);
+            let schema_version =
+                crate::listening_source_v1::runtime_schema_version(&typed.modality);
             let v2 = match crate::listening_source_v1::compile_exam_source_v2(&typed) {
                 Ok(runtime) => {
                     let round_trip = runtime
@@ -3163,12 +3175,8 @@ fn user_upload_part_media_hash_conflict(
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter(|part| {
-            part.pointer("/media/assetId").and_then(Value::as_str) == Some(asset_id)
-        })
-        .find(|part| {
-            part.pointer("/media/sha256").and_then(Value::as_str) != Some(declared_hash)
-        })
+        .filter(|part| part.pointer("/media/assetId").and_then(Value::as_str) == Some(asset_id))
+        .find(|part| part.pointer("/media/sha256").and_then(Value::as_str) != Some(declared_hash))
         .and_then(|part| part.get("partId").and_then(Value::as_str))
         .map(ToString::to_string)
 }
@@ -4103,7 +4111,8 @@ fn physical_ignored_reasons(
         //
         // 反向例子：一张「正文里恰好印着 Questions 1-5」的封面不满足 1)，保持
         // unassigned；阅读卷封面同样适用本规则（同一套用语、同样没有锚点）。
-        let page_text_key = source_text_key(&line_texts.values().cloned().collect::<Vec<_>>().join(" "));
+        let page_text_key =
+            source_text_key(&line_texts.values().cloned().collect::<Vec<_>>().join(" "));
         let front_matter_page = !declares_question_numbers(&page_text_key)
             && !anchored_pages.contains(&page_index)
             && EXAM_FRONT_MATTER_MARKERS
@@ -4847,9 +4856,7 @@ fn slot_id_for_question_number(authoring: &Value, number: u32) -> Option<String>
         .get("answerSlots")
         .and_then(Value::as_object)?
         .iter()
-        .find(|(_, slot)| {
-            slot.get("questionNumber").and_then(Value::as_u64) == Some(number as u64)
-        })
+        .find(|(_, slot)| slot.get("questionNumber").and_then(Value::as_u64) == Some(number as u64))
         .map(|(slot_id, _)| slot_id.clone())
 }
 
@@ -4916,7 +4923,9 @@ fn node_text_present(value: &Value, node_id: &str) -> bool {
                     .and_then(Value::as_str)
                     .is_some_and(|text| !text.trim().is_empty());
             }
-            object.values().any(|child| node_text_present(child, node_id))
+            object
+                .values()
+                .any(|child| node_text_present(child, node_id))
         }
         Value::Array(items) => items.iter().any(|item| node_text_present(item, node_id)),
         _ => false,
@@ -5117,7 +5126,10 @@ mod tests {
                 "ignored_with_reason",
                 "{id} 应被有理由地忽略"
             );
-            assert_eq!(reason_of(&summary, &id).as_deref(), Some("exam_front_matter"));
+            assert_eq!(
+                reason_of(&summary, &id).as_deref(),
+                Some("exam_front_matter")
+            );
         }
     }
 
@@ -5165,7 +5177,13 @@ mod tests {
                 }]
             }
         });
-        let cover = text_page(0, &["Candidate N u m b e r", "INSTRUCTIONS T O C A N D I D A T E S"]);
+        let cover = text_page(
+            0,
+            &[
+                "Candidate N u m b e r",
+                "INSTRUCTIONS T O C A N D I D A T E S",
+            ],
+        );
         let shadow = shadow_with_pages(vec![cover]);
         let summary = source_coverage_summary(&authoring, Some(&shadow));
 
@@ -5182,15 +5200,33 @@ mod tests {
     /// 卷标：`【VOL7-T9】` 印在正文页上，不受封面那三道闸约束。
     #[test]
     fn a_volume_label_on_a_content_page_is_explained_as_a_paper_label() {
-        let page = text_page(1, &["【VOL7-T9】", "SECTION1", "Questions1-4", "Completetheformbelow"]);
+        let page = text_page(
+            1,
+            &[
+                "【VOL7-T9】",
+                "SECTION1",
+                "Questions1-4",
+                "Completetheformbelow",
+            ],
+        );
         let shadow = shadow_with_pages(vec![page]);
         let summary = source_coverage_summary(&unanchored_authoring(), Some(&shadow));
 
-        assert_eq!(disposition_of(&summary, "p002-r0001"), "ignored_with_reason");
-        assert_eq!(reason_of(&summary, "p002-r0001").as_deref(), Some("paper_label"));
+        assert_eq!(
+            disposition_of(&summary, "p002-r0001"),
+            "ignored_with_reason"
+        );
+        assert_eq!(
+            reason_of(&summary, "p002-r0001").as_deref(),
+            Some("paper_label")
+        );
         // 同一页的正文不能跟着被忽略：这一页有题号声明，压根不是封面。
         for id in ["p002-r0002", "p002-r0003", "p002-r0004"] {
-            assert_ne!(reason_of(&summary, &id).as_deref(), Some("paper_label"), "{id}");
+            assert_ne!(
+                reason_of(&summary, &id).as_deref(),
+                Some("paper_label"),
+                "{id}"
+            );
             assert_ne!(
                 reason_of(&summary, &id).as_deref(),
                 Some("exam_front_matter"),
@@ -5215,7 +5251,11 @@ mod tests {
         let shadow = shadow_with_pages(vec![page]);
         let summary = source_coverage_summary(&unanchored_authoring(), Some(&shadow));
 
-        assert_eq!(reason_of(&summary, "p002-r0002"), None, "段落指令必须保持可分配");
+        assert_eq!(
+            reason_of(&summary, "p002-r0002"),
+            None,
+            "段落指令必须保持可分配"
+        );
         assert_eq!(disposition_of(&summary, "p002-r0002"), "unassigned");
     }
 
@@ -5550,8 +5590,11 @@ mod tests {
     #[test]
     fn a_user_upload_asset_without_ledger_facts_fails_closed() {
         let (authoring, asset_id) = listening_authoring_with_bound_audio();
-        let report =
-            evaluate_quality_with_managed_audio(&authoring, Some(&shadow_without_the_audio()), None);
+        let report = evaluate_quality_with_managed_audio(
+            &authoring,
+            Some(&shadow_without_the_audio()),
+            None,
+        );
         assert!(
             hard_failures_of(&report).contains(&ASSET_REFERENCE_MISSING.to_string()),
             "{report:#}"
@@ -5630,8 +5673,14 @@ mod tests {
             "slotIds":["q14"],
             "prompt":[{"id":"q14-stem","text":"Which approach?"}]
         }]);
-        authoring["answerSlots"].as_object_mut().unwrap().remove("q15");
-        authoring["answerKey"].as_object_mut().unwrap().remove("q15");
+        authoring["answerSlots"]
+            .as_object_mut()
+            .unwrap()
+            .remove("q15");
+        authoring["answerKey"]
+            .as_object_mut()
+            .unwrap()
+            .remove("q15");
 
         let mut physical = valid_physical_shadow(&authoring);
         physical["pages"][0]["lines"] = json!([
@@ -5640,8 +5689,14 @@ mod tests {
         ]);
 
         let report = evaluate_quality(&authoring, Some(&physical));
-        assert_eq!(report["questionCoverage"]["status"], "missing", "{report:#}");
-        assert_eq!(report["questionCoverage"]["missingQuestionNumbers"], json!([15]));
+        assert_eq!(
+            report["questionCoverage"]["status"], "missing",
+            "{report:#}"
+        );
+        assert_eq!(
+            report["questionCoverage"]["missingQuestionNumbers"],
+            json!([15])
+        );
         assert_eq!(report["state"], "blocked", "{report:#}");
         assert!(report["hardFailures"]
             .as_array()
@@ -5659,7 +5714,10 @@ mod tests {
         ]);
 
         let report = evaluate_quality(&authoring, Some(&physical));
-        assert_eq!(report["questionCoverage"]["status"], "undetermined", "{report:#}");
+        assert_eq!(
+            report["questionCoverage"]["status"], "undetermined",
+            "{report:#}"
+        );
         assert!(!report["hardFailures"]
             .as_array()
             .unwrap()
@@ -6385,7 +6443,10 @@ mod tests {
         // An absent verdict must never be read as "clean": the gate is a
         // publication decision, not a substitute for the recognition result.
         let mut silent = early_approaches();
-        silent.as_object_mut().unwrap().remove("recognitionBlockers");
+        silent
+            .as_object_mut()
+            .unwrap()
+            .remove("recognitionBlockers");
         let report = evaluate_quality_with_gate(&silent, Some(&physical), true);
         assert_eq!(report["state"], "ready", "{report:#}");
     }
@@ -6490,7 +6551,8 @@ mod tests {
     fn recognition_blocker_keeps_source_coverage_and_unknown_codes() {
         let mut authoring = early_approaches();
         let physical = valid_physical_shadow(&authoring);
-        authoring["recognitionBlockers"] = json!([SIGNIFICANT_REGION_UNASSIGNED, "SOME_NEW_BLOCKER"]);
+        authoring["recognitionBlockers"] =
+            json!([SIGNIFICANT_REGION_UNASSIGNED, "SOME_NEW_BLOCKER"]);
 
         let report = evaluate_quality_with_gate(&authoring, Some(&physical), true);
         assert!(
@@ -6705,7 +6767,11 @@ mod tests {
             report["coverageStatus"]["physicalShadow"],
             "verified_at_publish_source_purged"
         );
-        assert_ne!(report["sourceCoverage"], json!(0.0), "不得因原文件被删而报 0.0");
+        assert_ne!(
+            report["sourceCoverage"],
+            json!(0.0),
+            "不得因原文件被删而报 0.0"
+        );
         assert!(report["issues"]
             .as_array()
             .unwrap()
@@ -6714,7 +6780,10 @@ mod tests {
         assert_eq!(report["questionCoverage"]["status"], "complete");
         let mut with_quality = authoring.clone();
         with_quality["quality"] = report;
-        assert_eq!(quality_readiness(&with_quality), Ok(QualityReadiness::Ready));
+        assert_eq!(
+            quality_readiness(&with_quality),
+            Ok(QualityReadiness::Ready)
+        );
     }
 
     #[test]
@@ -6723,12 +6792,21 @@ mod tests {
         let physical = valid_physical_shadow(&authoring);
         // 删掉一题：冻结声明 {14,15}，当前稿只剩 14。
         let mut removed = authoring.clone();
-        removed["answerSlots"].as_object_mut().unwrap().remove("q15");
+        removed["answerSlots"]
+            .as_object_mut()
+            .unwrap()
+            .remove("q15");
         removed["answerKey"].as_object_mut().unwrap().remove("q15");
         let frozen = frozen_from(&authoring, &physical, &[14, 15]);
         let report = evaluate_quality_with_frozen_evidence(&removed, &frozen);
-        assert_eq!(report["questionCoverage"]["status"], "missing", "{report:#}");
-        assert_eq!(report["questionCoverage"]["missingQuestionNumbers"], json!([15]));
+        assert_eq!(
+            report["questionCoverage"]["status"], "missing",
+            "{report:#}"
+        );
+        assert_eq!(
+            report["questionCoverage"]["missingQuestionNumbers"],
+            json!([15])
+        );
         assert!(report["hardFailures"]
             .as_array()
             .unwrap()
@@ -6739,7 +6817,10 @@ mod tests {
         // 加一题同样被判为不一致。
         let frozen_one = frozen_from(&authoring, &physical, &[14]);
         let report = evaluate_quality_with_frozen_evidence(&authoring, &frozen_one);
-        assert_eq!(report["questionCoverage"]["extraQuestionNumbers"], json!([15]));
+        assert_eq!(
+            report["questionCoverage"]["extraQuestionNumbers"],
+            json!([15])
+        );
         assert_ne!(report["state"], "ready");
     }
 
