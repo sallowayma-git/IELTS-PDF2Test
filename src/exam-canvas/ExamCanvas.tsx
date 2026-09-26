@@ -145,12 +145,15 @@ interface OptionDragSession {
   beforeOptionId?: string | null;
   row: HTMLElement | null;
   list: HTMLElement | null;
+  /** 按下时的指针坐标：松手时判断“是否真的拖动过”。 */
+  startX?: number;
+  startY?: number;
 }
 
 /** 拖动会话由 ExamCanvas 持有并通过 context 下发：手柄中途被刷新卸载不再取消会话
  *  （那正是验收缺陷的静默丢弃点），只有 ExamCanvas 本身卸载（离开工作区/切预览）才取消。 */
 interface OptionDragController {
-  begin: (init: { taskId: string; responseGroupId: string; optionId: string; row: HTMLElement; list: HTMLElement }) => void;
+  begin: (init: { taskId: string; responseGroupId: string; optionId: string; row: HTMLElement; list: HTMLElement; startX?: number; startY?: number }) => void;
 }
 
 const OptionDragContext = createContext<OptionDragController | null>(null);
@@ -191,7 +194,7 @@ function OptionDragHandle({ canvas, taskId, responseGroupId, options, index }: {
       if (!row || !list) return;
       event.preventDefault();
       event.stopPropagation();
-      beginDrag.begin({ taskId, responseGroupId, optionId: option.optionId, row, list });
+      beginDrag.begin({ taskId, responseGroupId, optionId: option.optionId, row, list, startX: event.clientX, startY: event.clientY });
     }}
     onKeyDown={(event) => {
       if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
@@ -630,6 +633,11 @@ export function ExamCanvas(props: ExamCanvasProps) {
         session.beforeOptionId = undefined;
       }
     };
+    const movedEnough = (session: OptionDragSession, release: { x: number; y: number }) => {
+      const { startX, startY } = session;
+      if (![startX, startY, release.x, release.y].every((value) => Number.isFinite(value))) return false;
+      return Math.hypot(release.x - startX!, release.y - startY!) >= 4;
+    };
     const detach = () => {
       const session = dragRef.current;
       if (!session) return;
@@ -638,9 +646,16 @@ export function ExamCanvas(props: ExamCanvasProps) {
       session.row?.classList.remove("is-dragging");
       session.list?.classList.remove("is-reordering");
     };
-    const finish = (commit: boolean) => {
+    const finish = (commit: boolean, release?: { x: number; y: number }) => {
       const session = dragRef.current;
       if (!session) return;
+      // 整个手势里一次落点都没算出来（按下瞬间恰好赶上后台刷新、没收到 pointermove），
+      // 但指针确实移动过：用松手坐标补算一次落点，不能把这次拖动静默丢掉。
+      // 原地按下松开（移动不超过几个像素）仍然不算拖动。
+      if (commit && session.beforeOptionId === null && release && movedEnough(session, release)) {
+        resolveLive(session);
+        track(session, release.x, release.y);
+      }
       detach();
       if (!commit || session.beforeOptionId === null) return;
       resolveLive(session);
@@ -663,7 +678,7 @@ export function ExamCanvas(props: ExamCanvasProps) {
       resolveLive(session);
       track(session, moveEvent.clientX, moveEvent.clientY);
     };
-    const onUp = () => finish(true);
+    const onUp = (upEvent: PointerEvent) => finish(true, { x: upEvent.clientX, y: upEvent.clientY });
     const onCancel = () => finish(false);
     const onKey = (keyEvent: KeyboardEvent) => { if (keyEvent.key === "Escape") finish(false); };
     window.addEventListener("pointermove", onMove);

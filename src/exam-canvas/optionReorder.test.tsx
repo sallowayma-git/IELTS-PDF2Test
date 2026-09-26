@@ -187,6 +187,21 @@ describe("编辑模式选项编排", () => {
     expect(onStructureAction).toHaveBeenCalledTimes(1);
   });
 
+  it("拖动途中一次落点都没算出来（按下瞬间赶上刷新、没收到 pointermove）：松手坐标补算落点并提交", () => {
+    const onStructureAction = vi.fn();
+    const { container } = render(<ExamCanvas authoring={makeDraft()} mode="author" onStructureAction={onStructureAction} />);
+    layOutRows(container);
+    fireEvent.pointerDown(screen.getByLabelText(/拖动调整选项 C/), { button: 0, clientX: 5, clientY: 100 });
+    fireEvent.pointerUp(document.body, { clientX: 5, clientY: 5 });
+    expect(onStructureAction.mock.calls.map(([action]) => orderAfter(action))).toEqual([["C:o-c", "A:o-a", "B:o-b"]]);
+
+    // 原地按下松开（没有真正拖动）仍然不算移动。
+    layOutRows(container);
+    fireEvent.pointerDown(screen.getByLabelText(/拖动调整选项 A/), { button: 0, clientX: 5, clientY: 10 });
+    fireEvent.pointerUp(document.body, { clientX: 6, clientY: 11 });
+    expect(onStructureAction).toHaveBeenCalledTimes(1);
+  });
+
   it("Esc 取消拖动", () => {
     const onStructureAction = vi.fn();
     const { container } = render(<ExamCanvas authoring={makeDraft()} mode="author" onStructureAction={onStructureAction} />);
