@@ -131,8 +131,8 @@
       "fixtureId": "parser-complex-reading",
       "status": "available",
       "sourcePath": "fixtures/parser/complex-reading.pdf",
-      "sha256": "9e0bc61e9f1cdb741675446c26a2240306e1456dba0c909e005efea7d26515aa",
-      "sizeBytes": 1458,
+      "sha256": "036307eb978bb0e3d4a0a5129b59eea43cbd71e3e66743db4ca1a18e4907eb66",
+      "sizeBytes": 1398,
       "metadataPath": "fixtures/golden/metadata/parser-complex-reading.json",
       "baselinePath": "fixtures/golden/baseline/v1/parser-complex-reading.json"
     },
@@ -149,8 +149,8 @@
       "fixtureId": "parser-no-text",
       "status": "available",
       "sourcePath": "fixtures/parser/no-text.pdf",
-      "sha256": "b7afea3367ddb3fb338936b1da34755309a0999d05c97219164f10a3cf006d0c",
-      "sizeBytes": 476,
+      "sha256": "b3e44df802e407df3d586bb3d4b3a7db17bc868565f04a061077f7d8de3e44bd",
+      "sizeBytes": 431,
       "metadataPath": "fixtures/golden/metadata/parser-no-text.json",
       "baselinePath": "fixtures/golden/baseline/v1/parser-no-text.json"
     },

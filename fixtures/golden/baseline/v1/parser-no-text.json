@@ -3,8 +3,8 @@
   "fixtureId": "parser-no-text",
   "source": {
     "path": "fixtures/parser/no-text.pdf",
-    "sha256": "b7afea3367ddb3fb338936b1da34755309a0999d05c97219164f10a3cf006d0c",
-    "sizeBytes": 476
+    "sha256": "b3e44df802e407df3d586bb3d4b3a7db17bc868565f04a061077f7d8de3e44bd",
+    "sizeBytes": 431
   },
   "capturedAt": "2026-08-09",
   "observed": {
@@ -40,8 +40,8 @@
             "fileType": "pdf",
             "originalName": "no-text.pdf",
             "role": "MainQuestion",
-            "sha256": "b7afea3367ddb3fb338936b1da34755309a0999d05c97219164f10a3cf006d0c",
-            "sizeBytes": 476,
+            "sha256": "b3e44df802e407df3d586bb3d4b3a7db17bc868565f04a061077f7d8de3e44bd",
+            "sizeBytes": 431,
             "storedName": "no-text.pdf"
           }
         ],
@@ -111,7 +111,7 @@
       "audit": {
         "matchConfidence": 0,
         "matchStatus": "needs_review",
-        "notes": "provider:author_tauri;sourceFileId:file-cli-main;sourceSha256:b7afea3367ddb3fb338936b1da34755309a0999d05c97219164f10a3cf006d0c;signature:radio,text,table",
+        "notes": "provider:author_tauri;sourceFileId:file-cli-main;sourceSha256:b3e44df802e407df3d586bb3d4b3a7db17bc868565f04a061077f7d8de3e44bd;signature:radio,text,table",
         "verifiedAt": null
       },
       "meta": {
