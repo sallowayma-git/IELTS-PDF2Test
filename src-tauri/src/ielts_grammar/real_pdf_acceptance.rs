@@ -1625,8 +1625,15 @@ fn run_phase5_real_pdf_edit_export(
     }
     fs::copy(&phase4_physical, job_dir.join("document-ir-v2.shadow.json"))
         .map_err(|error| format!("{fixture_id}: phase4 physical shadow handoff failed: {error}"))?;
-    write_json(&job_dir.join("authoring-ir-v2.shadow.json"), authoring)?;
-    let answer_patches = phase5_answer_resolution_patches(authoring);
+    // 草稿落入本测试自己的 job 目录时必须带上与之一致的 jobId：直接复用 phase4 产物
+    // 时里面的 jobId 还是 phase4-real-<fixture>，导出门禁的 jobId 一致性检查必然拒绝
+    // （phase5 此前 JOB_ID_MISMATCH 失败的根因是测试自身不一致，不是产品缺陷）。
+    let mut authoring = authoring.clone();
+    if let Some(authoring_object) = authoring.as_object_mut() {
+        authoring_object.insert("jobId".to_string(), json!(job_id));
+    }
+    write_json(&job_dir.join("authoring-ir-v2.shadow.json"), &authoring)?;
+    let answer_patches = phase5_answer_resolution_patches(&authoring);
     if answer_patches.is_empty() {
         return Err(format!("{fixture_id}: no answer patches generated"));
     }
@@ -2538,13 +2545,11 @@ fn node_child_text(node: &Value) -> String {
 }
 
 #[test]
-// 两个已知问题，都在下一轮处理：
-// 1) 测试自身缺陷：直接复用 phase4 产物目录里的 authoring（jobId=phase4-real-chili-peppers），
-//    却以 phase5-real-<fixture>-<ts> 作为请求 job，导出门禁必然报 JOB_ID_MISMATCH——
-//    修法是把草稿落入本测试自己的 job 目录或让请求 id 与 authoring jobId 一致；
-// 2) 与 phase4 相同的存量缺口：答案页无 OCR → 答案未解析 → 导出另被
-//    HUMAN_VERIFICATION_REQUIRED 拦截。两者都修完后再移除本 ignore。
-#[ignore = "test bug: reuses the phase4 draft with a mismatched requested jobId; plus the same image-only answer gap as phase4"]
+// 存量缺口（与 phase4 相同）：答案页无 OCR → 答案未解析，patch 只能填占位答案，
+// 导出门禁按设计要求人工核验（HUMAN_VERIFICATION_REQUIRED），此用例无法到达
+// "干净导出通过"。答案解析落地（识别轮）后移除本 ignore。job-ID 一致性缺陷已在
+// 本测试内修复（草稿落自己的 job 目录并携带一致 jobId）。
+#[ignore = "image-only answer pages have no OCR yet; the export gate correctly requires human verification — un-ignore once answer resolution lands (recognition round)"]
 fn phase5_real_pdf_edit_and_v2_export_round_trip() {
     if !crate::test_support::golden_private_corpus_ready(
         "phase5_real_pdf_edit_and_v2_export_round_trip",
