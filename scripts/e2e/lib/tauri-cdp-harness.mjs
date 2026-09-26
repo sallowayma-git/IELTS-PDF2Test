@@ -365,10 +365,16 @@ export function sanitizedAppEnv(base = process.env) {
     delete env[key];
   }
   delete env.__COMPAT_LAYER;
-  if (typeof env.PATH === "string") {
+  // Windows 的环境变量名不区分大小写，但展开成普通对象后是区分的：PowerShell 下键名是
+  // `Path`，只看 `env.PATH` 会整段漏掉清理，调用方再写 `PATH` 还会与 `Path` 并存。
+  // 统一收成一个 `PATH` 键。
+  const pathKeys = Object.keys(env).filter((key) => key.toUpperCase() === "PATH");
+  const rawPath = pathKeys.map((key) => env[key]).find((value) => typeof value === "string");
+  for (const key of pathKeys) delete env[key];
+  if (typeof rawPath === "string") {
     // 保留原顺序（不重排），只丢掉空项与不存在的目录。
-    const kept = env.PATH.split(path.delimiter).filter((entry) => entry && fs.existsSync(entry));
-    if (kept.length) env.PATH = kept.join(path.delimiter);
+    const kept = rawPath.split(path.delimiter).filter((entry) => entry && fs.existsSync(entry));
+    env.PATH = kept.length ? kept.join(path.delimiter) : rawPath;
   }
   return env;
 }
