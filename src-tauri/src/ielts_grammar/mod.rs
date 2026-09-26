@@ -1484,17 +1484,25 @@ fn fixed_response_option_bank(
                 json!({
                     "optionId": format!("{task_id}-fixed-option-{}", index + 1),
                     "label": label,
-                    "content": [text_node(
-                        &format!("{task_id}-fixed-option-text-{}", index + 1),
-                        label,
-                        Some(anchor.clone()),
-                    )],
+                    // 判断题固定选项的语义完全由 label 承载，content 恒为空数组：
+                    // 说明区解释文字（“TRUE if the statement agrees…”）属于 instructions，
+                    // 塞进选项 content 会让渲染器出现 “TRUE TRUE”。
+                    "content": [],
                     "sourceAnchors": [anchor.clone()]
                 })
             })
             .collect();
     }
-    enrich_fixed_options_from_source_lines(task_id, &mut options, lines);
+    if canonical_labels.is_some() {
+        // TrueFalseNotGiven / YesNoNotGiven：无论 label 来自 v1 还是 canonical，content
+        // 一律清空，且不做 enrich。判断题的解释文字是 instructions 的一部分，不是选项
+        // 内容；其他题型（matching 等）的 enrich 行为保持不变。
+        for option in options.iter_mut() {
+            option["content"] = json!([]);
+        }
+    } else {
+        enrich_fixed_options_from_source_lines(task_id, &mut options, lines);
+    }
     let title = lines
         .iter()
         .map(|line| {
@@ -2648,6 +2656,126 @@ mod tests {
         assert_eq!(
             v1.get("schemaVersion").and_then(Value::as_str),
             Some("ReadingAuthoringIRV1")
+        );
+    }
+
+    /// 判断题固定选项的语义完全由 label 承载；说明区解释文字属于 instructions。
+    /// content 为空数组是识别契约（渲染器只显示 label），否则会出现 “TRUE TRUE”。
+    fn flatten_ir_text(nodes: &Value) -> String {
+        let mut out = Vec::new();
+        fn walk(node: &Value, out: &mut Vec<String>) {
+            if let Some(text) = node.get("text").and_then(Value::as_str) {
+                out.push(text.to_string());
+            }
+            for key in ["children", "items", "rows", "cells"] {
+                if let Some(children) = node.get(key).and_then(Value::as_array) {
+                    for child in children {
+                        walk(child, out);
+                    }
+                }
+            }
+        }
+        if let Some(list) = nodes.as_array() {
+            for node in list {
+                walk(node, &mut out);
+            }
+        }
+        out.join(" ")
+    }
+
+    fn tfng_shadow(instruction_text: &str, kind_hint: &str, option_labels: [&str; 3]) -> Value {
+        let v1 = json!({
+            "schemaVersion":"ReadingAuthoringIRV1",
+            "groups":[{
+                "groupId":"group-1",
+                "questionRange":[1,3],
+                "questions":[
+                    {"id":"q1","displayNumber":"1","prompt":"First statement","interaction":{"options":option_labels},"answer":"TRUE"},
+                    {"id":"q2","displayNumber":"2","prompt":"Second statement","interaction":{"options":option_labels},"answer":"FALSE"},
+                    {"id":"q3","displayNumber":"3","prompt":"Third statement","interaction":{"options":option_labels},"answer":"NOT GIVEN"}
+                ]
+            }],
+            "answerKey":{"q1":"TRUE","q2":"FALSE","q3":"NOT GIVEN"},
+            "passage":{"htmlBlocks":[]}
+        });
+        let split = json!({
+            "questionGroupCandidates":[{
+                "groupId":"group-1",
+                "heading":"Questions 1-3",
+                "instructionText":instruction_text,
+                "questionRange":[1,3],
+                "kindHint":kind_hint,
+                "sectionEvidence":[
+                    {"blockId":"h","textPreview":instruction_text,"pageIndex":1},
+                    {"blockId":"q1","textPreview":"1. First statement","pageIndex":1},
+                    {"blockId":"q2","textPreview":"2. Second statement","pageIndex":1},
+                    {"blockId":"q3","textPreview":"3. Third statement","pageIndex":1}
+                ]
+            }],
+            "passageCandidates":[]
+        });
+        build_authoring_v2_shadow(&job(), &v1, &split, None, None).unwrap()
+    }
+
+    #[test]
+    fn tfng_fixed_options_carry_no_content_and_instructions_keep_explanation() {
+        let instruction_text = "Questions 1-3 Do the following statements agree with the information given in the passage? TRUE if the statement agrees with the information FALSE if the statement contradicts the information NOT GIVEN if there is no information on this";
+        let value = tfng_shadow(instruction_text, "true_false_not_given", ["TRUE", "FALSE", "NOT GIVEN"]);
+        let group = &value["taskGroups"][0];
+        let options = group["optionBank"]["options"]
+            .as_array()
+            .expect("TFNG 需要固定选项 bank");
+        let labels: Vec<_> = options
+            .iter()
+            .filter_map(|option| option.get("label").and_then(Value::as_str))
+            .collect();
+        assert_eq!(labels, vec!["TRUE", "FALSE", "NOT GIVEN"]);
+        for option in options {
+            assert_eq!(
+                option["content"],
+                json!([]),
+                "判断题固定选项 content 必须为空数组（说明文字归 instructions，不归选项）"
+            );
+        }
+        let instructions = flatten_ir_text(group.get("instructions").unwrap_or(&Value::Null));
+        assert!(
+            instructions.contains("TRUE if the statement agrees with the information"),
+            "说明区必须保留 TRUE 的解释文字，实际：{instructions}"
+        );
+        assert!(
+            instructions.contains("NOT GIVEN if there is no information on this"),
+            "说明区必须保留 NOT GIVEN 的解释文字，实际：{instructions}"
+        );
+    }
+
+    #[test]
+    fn ynng_fixed_options_carry_no_content_and_instructions_keep_explanation() {
+        let instruction_text = "Questions 1-3 Do the following statements agree with the views of the writer? YES if the statement agrees with the views of the writer NO if the statement contradicts the views of the writer NOT GIVEN if it is impossible to say what the writer thinks about this";
+        let value = tfng_shadow(instruction_text, "yes_no_not_given", ["YES", "NO", "NOT GIVEN"]);
+        let group = &value["taskGroups"][0];
+        let options = group["optionBank"]["options"]
+            .as_array()
+            .expect("YNNG 需要固定选项 bank");
+        let labels: Vec<_> = options
+            .iter()
+            .filter_map(|option| option.get("label").and_then(Value::as_str))
+            .collect();
+        assert_eq!(labels, vec!["YES", "NO", "NOT GIVEN"]);
+        for option in options {
+            assert_eq!(
+                option["content"],
+                json!([]),
+                "判断题固定选项 content 必须为空数组（说明文字归 instructions，不归选项）"
+            );
+        }
+        let instructions = flatten_ir_text(group.get("instructions").unwrap_or(&Value::Null));
+        assert!(
+            instructions.contains("YES if the statement agrees with the views of the writer"),
+            "说明区必须保留 YES 的解释文字，实际：{instructions}"
+        );
+        assert!(
+            instructions.contains("NOT GIVEN if it is impossible to say what the writer thinks about this"),
+            "说明区必须保留 NOT GIVEN 的解释文字，实际：{instructions}"
         );
     }
 

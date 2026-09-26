@@ -2315,7 +2315,9 @@ fn validate_options(
                 .flatten()
         });
         let bank_complete = bank_options.is_some_and(|items| {
-            items.len() >= 2 && items.iter().all(option_has_renderable_content)
+            items.len() >= 2
+                && (tfng_fixed_labels_allow_empty_content(task_type, items)
+                    || items.iter().all(option_has_renderable_content))
         });
         if options.is_empty() && !bank_complete {
             push_issue(
@@ -2343,7 +2345,8 @@ fn validate_options(
         }
         total += 1;
         if !options.is_empty() {
-            let nonempty = options.iter().all(option_has_renderable_content);
+            let nonempty = tfng_fixed_labels_allow_empty_content(task_type, &options)
+                || options.iter().all(option_has_renderable_content);
             let labels_match = expected_labels
                 .as_ref()
                 .is_none_or(|expected| option_labels(&options) == *expected);
@@ -3531,6 +3534,31 @@ fn group_has_ambiguous_prompt(group: &Value) -> bool {
         .filter_map(|response| response.get("prompt"))
         .flat_map(|prompt| prompt.as_array().into_iter().flatten())
         .any(node_contains_prompt_placeholder)
+}
+
+/// 判断题固定选项的空 content **精确豁免**。
+///
+/// 理由：TrueFalseNotGiven / YesNoNotGiven 的固定判断选项语义完全由 label（TRUE / FALSE /
+/// YES / NO / NOT GIVEN）承载，识别契约要求 content 恒为空数组——说明区解释文字
+/// （“TRUE if the statement agrees…”）属于 instructions，不属于选项。若没有这条豁免，
+/// 识别正确的判断题会被 `option_has_renderable_content` 误判为不完整并堵死发布门禁。
+///
+/// 豁免条件刻意收紧为**全称**：题型必须是判断题，且每一个选项的 label（trim + 大小写
+/// 不敏感）都属于标准判断标签集合。普通 A/B/C 选择题、matching 选项库缺 content 仍然
+/// 按不完整处理，不放宽。
+fn tfng_fixed_labels_allow_empty_content(task_type: &str, options: &[Value]) -> bool {
+    const TFNG_FIXED_LABELS: [&str; 5] = ["TRUE", "FALSE", "YES", "NO", "NOT GIVEN"];
+    let is_tfng = task_type == "true_false_not_given" || task_type == "yes_no_not_given";
+    is_tfng
+        && !options.is_empty()
+        && options.iter().all(|option| {
+            option
+                .get("label")
+                .and_then(Value::as_str)
+                .is_some_and(|label| {
+                    TFNG_FIXED_LABELS.contains(&label.trim().to_ascii_uppercase().as_str())
+                })
+        })
 }
 
 fn option_has_renderable_content(option: &Value) -> bool {
@@ -6831,5 +6859,137 @@ mod tests {
         let frozen = frozen_from(&authoring, &physical, &[]);
         let report = evaluate_quality_with_frozen_evidence(&authoring, &frozen);
         assert_eq!(report["questionCoverage"]["status"], "undetermined");
+    }
+
+    /// 判断题固定选项的空 content 精确豁免：TRUE/FALSE/NOT GIVEN（或 YES/NO/NOT GIVEN）
+    /// 的语义完全由 label 承载，识别契约要求 content 恒为空数组（说明文字归 instructions）。
+    /// 豁免条件必须同时满足：题型是判断题，且每个 label 都属于标准判断标签集合。
+    #[test]
+    fn tfng_fixed_options_with_empty_content_pass_option_gate() {
+        let group = json!({
+            "taskGroupId": "group-1",
+            "responseGroups": [{
+                "responseGroupId": "group-1-responses",
+                "slotIds": ["q1", "q2", "q3"],
+                "optionBankRef": "group-1-option-bank"
+            }],
+            "optionBank": {
+                "optionBankId": "group-1-option-bank",
+                "options": [
+                    {"optionId": "o1", "label": "TRUE", "content": []},
+                    {"optionId": "o2", "label": "FALSE", "content": []},
+                    {"optionId": "o3", "label": "NOT GIVEN", "content": []}
+                ]
+            }
+        });
+        let mut issues = Vec::new();
+        let mut hard_failures = Vec::new();
+        let score = validate_options(
+            &group,
+            "true_false_not_given",
+            "group-1",
+            Vec::new(),
+            &mut issues,
+            &mut hard_failures,
+        );
+        assert!(hard_failures.is_empty(), "{hard_failures:?}");
+        assert!(issues.is_empty(), "{issues:#?}");
+        assert_eq!(score, 1.0);
+
+        // YES/NO/NOT GIVEN 同一豁免（大小写不敏感、trim 后比较）。
+        let ynng = json!({
+            "taskGroupId": "group-2",
+            "responseGroups": [{
+                "responseGroupId": "group-2-responses",
+                "slotIds": ["q4", "q5", "q6"],
+                "optionBankRef": "group-2-option-bank"
+            }],
+            "optionBank": {
+                "optionBankId": "group-2-option-bank",
+                "options": [
+                    {"optionId": "o1", "label": " yes ", "content": []},
+                    {"optionId": "o2", "label": "no", "content": []},
+                    {"optionId": "o3", "label": "Not Given", "content": []}
+                ]
+            }
+        });
+        let mut issues = Vec::new();
+        let mut hard_failures = Vec::new();
+        let score = validate_options(
+            &ynng,
+            "yes_no_not_given",
+            "group-2",
+            Vec::new(),
+            &mut issues,
+            &mut hard_failures,
+        );
+        assert!(hard_failures.is_empty(), "{hard_failures:?}");
+        assert!(issues.is_empty(), "{issues:#?}");
+        assert_eq!(score, 1.0);
+    }
+
+    #[test]
+    fn plain_choice_options_with_empty_content_still_fail_option_gate() {
+        // 反例钉住豁免边界：普通 A/B/C 选项缺 content 仍然按不完整处理，不许放宽。
+        let group = json!({
+            "taskGroupId": "group-1",
+            "responseGroups": [{
+                "responseGroupId": "group-1-responses",
+                "slotIds": ["q1", "q2"],
+                "options": [
+                    {"optionId": "o1", "label": "A", "content": []},
+                    {"optionId": "o2", "label": "B", "content": []},
+                    {"optionId": "o3", "label": "C", "content": []}
+                ]
+            }]
+        });
+        let mut issues = Vec::new();
+        let mut hard_failures = Vec::new();
+        let score = validate_options(
+            &group,
+            "single_choice",
+            "group-1",
+            Vec::new(),
+            &mut issues,
+            &mut hard_failures,
+        );
+        // blocking 级 issue 会同时写进 hard_failures，正好说明普通选项缺 content 堵发布。
+        assert!(hard_failures.contains(&OPTION_RUN_INCOMPLETE.to_string()), "{hard_failures:?}");
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue["code"] == OPTION_RUN_INCOMPLETE),
+            "普通 A/B/C 选项空 content 必须仍判不完整：{issues:#?}"
+        );
+        assert_eq!(score, 0.0);
+
+        // 同样空 content，但题型不是判断题时，即便 label 恰好是 TRUE/FALSE 也不豁免。
+        let wrong_type = json!({
+            "taskGroupId": "group-3",
+            "responseGroups": [{
+                "responseGroupId": "group-3-responses",
+                "slotIds": ["q7", "q8"],
+                "options": [
+                    {"optionId": "o1", "label": "TRUE", "content": []},
+                    {"optionId": "o2", "label": "FALSE", "content": []}
+                ]
+            }]
+        });
+        let mut issues = Vec::new();
+        let mut hard_failures = Vec::new();
+        validate_options(
+            &wrong_type,
+            "single_choice",
+            "group-3",
+            Vec::new(),
+            &mut issues,
+            &mut hard_failures,
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue["code"] == OPTION_RUN_INCOMPLETE),
+            "非判断题型的 TRUE/FALSE label 不享受豁免：{issues:#?}"
+        );
     }
 }
