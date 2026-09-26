@@ -99,6 +99,23 @@ pub(crate) fn set_item_part(
     Ok(affected > 0)
 }
 
+/// 惰性回填 Part（**仅当尚未判定过**：`part_source IS NULL`）——绝不覆盖手动设置或已判定值，
+/// 避免与并发的手动设置竞争（C4 审查 #4）。返回是否写入。
+pub(crate) fn backfill_item_part(
+    conn: &Connection,
+    item_id: &str,
+    part_label: Option<&str>,
+    part_source: &str,
+) -> CommandResult<bool> {
+    let affected = conn
+        .execute(
+            "UPDATE library_items_v2 SET part_label = ?2, part_source = ?3 WHERE id = ?1 AND part_source IS NULL",
+            params![item_id, part_label, part_source],
+        )
+        .map_err(|error| format!("library_v2_backfill_part:{error}"))?;
+    Ok(affected > 0)
+}
+
 pub(crate) fn get_item(
     conn: &Connection,
     item_id: &str,

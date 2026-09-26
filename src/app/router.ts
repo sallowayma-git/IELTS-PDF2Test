@@ -43,7 +43,10 @@ export interface RouteState {
 /** 已退休的路由 -> 新路由。返回 undefined 表示这个 hash 不是旧链接。 */
 export function legacyRedirect(hash: string): string | undefined {
   const value = hash.replace(/^#\/?/, "");
-  const parts = value.split(/[/?]/).filter(Boolean);
+  // 只按**路径**分段判断，query（?modality= / ?import= / ?publish=）不参与——否则
+  // "library?modality=writing" 会被拆出 second="modality=writing" 而误重定向到
+  // "/items/modality=writing"，把 C3 的写作子标签落地页打回死链（ultracode 审查 #6）。
+  const parts = value.split("?")[0].split("/").filter(Boolean);
   if (!parts.length) return "/library";
   const [head, second, third] = parts;
   if (head === "legacy") {
@@ -121,7 +124,8 @@ export function jobResumePath(job: { jobId: string }): string {
 /** 在 hashchange 之前把旧链接换成新链接。返回 true 表示已触发一次重定向。 */
 export function applyLegacyRedirect(hash = window.location.hash): boolean {
   const raw = hash.replace(/^#\/?/, "");
-  const parts = raw.split(/[/?]/).filter(Boolean);
+  // 同 legacyRedirect：只看路径段，query 不参与分段判断。
+  const parts = raw.split("?")[0].split("/").filter(Boolean);
   // 新路由不重定向。#/legacy/writing 不再豁免——它要被重定向到题库写作子标签（C3）。
   if (parts[0] === "items" || parts[0] === "settings") return false;
   if (parts[0] === "library" && !parts[1]) return false;

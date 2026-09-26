@@ -324,6 +324,12 @@ pub(crate) fn permanently_delete_library_exam_core(root: &Path, id: &str) -> Com
         // job 目录删除失败：DB 已删干净、条目已不可见；残留文件记日志，交由后续孤儿清理/重试。
         eprintln!("[library] permanent delete {id}: file cleanup failed (db already purged): {error}");
     }
+    // 写作条目的权威内容在 writing-jobs/<id>/，不在 job 目录里，delete_job_artifacts 删不到。
+    // 复用 writing_store::delete_writing_job 的目录清理（对非写作条目该目录不存在，无副作用），
+    // 否则永久删除写作题会残留 writing-job.json（用户已要求彻底删除的内容仍可读——孤儿+隐私）。
+    if let Err(error) = crate::writing_store::delete_writing_job(root, id) {
+        eprintln!("[library] permanent delete {id}: writing dir cleanup failed: {error}");
+    }
     Ok(true)
 }
 
@@ -789,6 +795,10 @@ mod tests {
             let ds: serde_json::Value = serde_json::from_slice(&ds).unwrap();
             seed_canonical_ds(&conn, "import-test-1", &ds.to_string(), "ready").unwrap();
         }
+        // 额外放一个 writing-jobs/<id> 目录（模拟写作条目的权威内容），断言永久删除会一并删掉。
+        let writing_dir = crate::util::writing_job_dir(&root, "import-test-1");
+        fs::create_dir_all(&writing_dir).unwrap();
+        fs::write(writing_dir.join("writing-job.json"), b"{}").unwrap();
         crate::library::commands::apply_editor_commands_core(
             &root,
             ApplyEditorCommandsInput {
@@ -821,6 +831,10 @@ mod tests {
         assert!(
             !crate::util::job_dir(&root, "import-test-1").exists(),
             "永久删除必须删掉 job 目录"
+        );
+        assert!(
+            !writing_dir.exists(),
+            "永久删除必须删掉 writing-jobs 目录（写作条目权威内容不留孤儿）"
         );
         // 已不在回收站，恢复应失败。
         assert!(!restore_library_exam_core(&root, "import-test-1").unwrap());

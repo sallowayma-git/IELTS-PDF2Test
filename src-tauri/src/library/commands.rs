@@ -141,13 +141,30 @@ pub(crate) fn apply_editor_commands_core(
 
 pub(crate) fn list_library_items_core(root: &Path, include_deleted: bool) -> CommandResult<Value> {
     let conn = open_library_connection(root)?;
-    let rows = list_items(&conn, include_deleted)?;
-    let mut result = Vec::new();
-    for mut row in rows {
-        // C4：首次列表加载时惰性回填 Part 标签（判不出记 sentinel，避免每次重算；手动来源不动）。
-        if row.part_source.is_none() && row.has_canonical_ds {
-            backfill_part_label(&conn, &mut row);
+    let mut rows = list_items(&conn, include_deleted)?;
+    // C4：首次加载惰性判定 Part。判定（读 DS）先做，写入**合并到一个事务**里，
+    // 且带 `part_source IS NULL` 守卫——既不在读命令路径上做 N 次串行写（性能，审查 #5），
+    // 也不会覆盖同时发生的手动设置（并发正确性，审查 #4）。判不出记 sentinel，之后不再重算。
+    let mut pending: Vec<(String, Option<String>, String)> = Vec::new();
+    for row in rows.iter_mut() {
+        if row.part_source.is_some() || !row.has_canonical_ds {
+            continue;
         }
+        if let Some((label, source)) = compute_part_for_row(&conn, row) {
+            row.part_label = label.clone();
+            row.part_source = Some(source.clone());
+            pending.push((row.id.clone(), label, source));
+        }
+    }
+    if !pending.is_empty() {
+        if let Err(error) = persist_part_backfill(&conn, &pending) {
+            // 回填失败不影响列表返回：下次加载会再试（part_source 仍为 NULL）。
+            eprintln!("[library] part backfill batch failed: {error}");
+        }
+    }
+
+    let mut result = Vec::new();
+    for row in rows {
         let processing = crate::processing::queue::get_job(&conn, &row.id)?;
         let mut value = serde_json::to_value(row).map_err(|error| error.to_string())?;
         value["processing"] =
@@ -175,11 +192,13 @@ pub(crate) fn set_library_item_part_core(
 /// 判不出 Part 时写入的 sentinel：区分「算过但没有」与「还没算过（NULL）」，避免每次列表都重算。
 const PART_SOURCE_NONE: &str = "none";
 
-/// 从权威稿 + 标题推断 Part 标签并回填。手动来源不覆盖。
-fn backfill_part_label(conn: &rusqlite::Connection, row: &mut super::repository::LibraryItemRowV2) {
-    let Ok(Some((ds, _))) = super::repository::get_canonical_ds(conn, &row.id) else {
-        return;
-    };
+/// 从权威稿 + 标题判定该行的 Part（只读、不写库）。返回 `(标签, 来源)`；判不出时标签为
+/// None、来源为 sentinel。DS 读不到则返回 None（本行不参与回填）。
+fn compute_part_for_row(
+    conn: &rusqlite::Connection,
+    row: &super::repository::LibraryItemRowV2,
+) -> Option<(Option<String>, String)> {
+    let (ds, _) = super::repository::get_canonical_ds(conn, &row.id).ok()??;
     let (lines, numbers) = part_inputs_from_ds(&ds);
     let detected = crate::library::part_detection::detect_part(
         &crate::library::part_detection::PartDetectionInput {
@@ -191,18 +210,24 @@ fn backfill_part_label(conn: &rusqlite::Connection, row: &mut super::repository:
             filename: &row.title,
         },
     );
-    let (label, source) = match detected {
+    Some(match detected {
         Some(part) => (Some(part.label), part.source.as_str().to_string()),
         None => (None, PART_SOURCE_NONE.to_string()),
-    };
-    if let Err(error) =
-        super::repository::set_item_part(conn, &row.id, label.as_deref(), Some(&source))
-    {
-        eprintln!("[library] part backfill failed for {}: {error}", row.id);
-        return;
+    })
+}
+
+/// 把一批 Part 回填写入同一个 IMMEDIATE 事务，每条都带 `part_source IS NULL` 守卫。
+fn persist_part_backfill(
+    conn: &rusqlite::Connection,
+    pending: &[(String, Option<String>, String)],
+) -> CommandResult<()> {
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
+        .map_err(|error| format!("part_backfill_begin:{error}"))?;
+    for (id, label, source) in pending {
+        super::repository::backfill_item_part(&tx, id, label.as_deref(), source)?;
     }
-    row.part_label = label;
-    row.part_source = Some(source);
+    tx.commit()
+        .map_err(|error| format!("part_backfill_commit:{error}"))
 }
 
 /// 从权威稿抽取 Part 判定输入：题号（answerKey 的 `q<n>` 键）+ 可能含标题行的文本

@@ -90,6 +90,13 @@ describe("legacyRedirect — 旧链接一次性重定向", () => {
     expect(legacyRedirect("#/settings")).toBeUndefined();
     expect(legacyRedirect("#/library")).toBeUndefined();
   });
+
+  it("writing 落地页 /library?modality=writing 不被二次重定向（否则写作子标签死链）", () => {
+    expect(legacyRedirect("#/legacy/writing")).toBe("/library?modality=writing");
+    // 落地页是新路由：query 不能被当成路径段而误判成 /items/modality=writing。
+    expect(legacyRedirect("#/library?modality=writing")).toBeUndefined();
+    expect(legacyRedirect("#/library?import=1")).toBeUndefined();
+  });
 });
 
 describe("路径构造", () => {

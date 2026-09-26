@@ -130,16 +130,22 @@ fn detect_from_filename(modality: &str, filename: &str) -> Option<String> {
     let digit_after = |needle: &str| -> Option<u32> {
         let mut from = 0usize;
         while let Some(pos) = lower[from..].find(needle) {
-            let rest = lower[from + pos + needle.len()..].trim_start();
-            if let Some(digit) = rest.chars().next().and_then(|ch| ch.to_digit(10)) {
-                // 防止把 "P12"/"part 10" 里的多位数误判成单段。
-                let mut chars = rest.chars();
-                chars.next();
-                if !chars.next().is_some_and(|ch| ch.is_ascii_digit()) {
-                    return Some(digit);
+            let abs = from + pos;
+            // 词边界：needle 必须是一个 token 的开头，否则 "group 3"→'p'、"deep 2"、
+            // "step 1"、"department 3" 这类词内子串会被误判成 Part（裸 "p" 尤其危险）。
+            let boundary = abs == 0 || !lower.as_bytes()[abs - 1].is_ascii_alphanumeric();
+            if boundary {
+                let rest = lower[abs + needle.len()..].trim_start();
+                if let Some(digit) = rest.chars().next().and_then(|ch| ch.to_digit(10)) {
+                    // 防止把 "P12"/"part 10" 里的多位数误判成单段。
+                    let mut chars = rest.chars();
+                    chars.next();
+                    if !chars.next().is_some_and(|ch| ch.is_ascii_digit()) {
+                        return Some(digit);
+                    }
                 }
             }
-            from += pos + needle.len();
+            from = abs + needle.len();
         }
         None
     };
@@ -335,6 +341,20 @@ mod tests {
             filename: "Passage 1",
         };
         assert_eq!(detect(&i), Some(("P3".to_string(), PartSource::Manual)));
+    }
+
+    #[test]
+    fn filename_does_not_false_positive_on_word_internal_letters() {
+        // 词内 p / part 不得触发 Part（ultracode 审查 #3）。
+        assert_eq!(detect(&input("reading", "Group 3 elements", &[], &[])), None);
+        assert_eq!(detect(&input("reading", "Deep 2 dive", &[], &[])), None);
+        assert_eq!(detect(&input("reading", "Step 1 guide", &[], &[])), None);
+        assert_eq!(detect(&input("listening", "Department 3 memo", &[], &[])), None);
+        // 但真正的 token 仍然识别。
+        assert_eq!(
+            detect(&input("reading", "notes p 2 draft", &[], &[])),
+            Some(("P2".to_string(), PartSource::Filename))
+        );
     }
 
     #[test]

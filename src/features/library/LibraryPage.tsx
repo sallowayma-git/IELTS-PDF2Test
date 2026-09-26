@@ -14,6 +14,7 @@ import { toUserFacingError } from "../../utils/userFacingError";
 import { useLibraryStore } from "./libraryStore";
 import {
   isModalityTab,
+  isProcessingStage,
   matchesModality,
   matchesPart,
   matchesSearch,
@@ -79,6 +80,17 @@ export function LibraryPage({ intent, initialModality }: { intent?: LibraryInten
   const tabRows = useMemo(
     () => store.rows.filter((row) => matchesModality(row, modalityTab) && matchesTab(row, tab) && matchesSearch(row, search)),
     [store.rows, modalityTab, tab, search]
+  );
+
+  // 跨题型的总计：后台识别横幅与「清空回收站」按钮都作用于全部题型，计数不能被题型子标签收敛，
+  // 否则横幅会漏报/消失（审查 #8），清空按钮的数字会与它实际删除的范围不符（审查 #7）。
+  const totalProcessingCount = useMemo(
+    () => store.rows.filter((row) => !row.inTrash && isProcessingStage(row.stage)).length,
+    [store.rows]
+  );
+  const totalTrashedCount = useMemo(
+    () => store.rows.filter((row) => row.inTrash).length,
+    [store.rows]
   );
 
   // C4：当前题面里实际出现的 Part（P1/P2/P3 / Part 1–4 / Task 1/2），用于渲染筛选按钮。
@@ -219,17 +231,21 @@ export function LibraryPage({ intent, initialModality }: { intent?: LibraryInten
     if (!window.confirm("清空回收站会永久删除其中所有题目，无法恢复。确定继续吗？")) return;
     try {
       const result = await store.emptyTrash();
-      setNotice(
-        result.skipped.length
-          ? `已永久删除 ${result.deleted} 项；${result.skipped.length} 项仍在识别/排队中被跳过，请先取消或等待完成。`
-          : `已清空回收站，永久删除 ${result.deleted} 项。`
-      );
+      if (!result.skipped.length) {
+        setNotice(`已清空回收站，永久删除 ${result.deleted} 项。`);
+        return;
+      }
+      // 区分「仍在处理中」与「真的删除失败」——不要把后者也说成「请取消或等待」（审查 #2）。
+      const stillProcessing = result.skipped.filter((s) => s.reason.includes("ITEM_STILL_PROCESSING")).length;
+      const otherFailed = result.skipped.length - stillProcessing;
+      const parts = [`已永久删除 ${result.deleted} 项`];
+      if (stillProcessing) parts.push(`${stillProcessing} 项仍在识别/排队中被跳过（请先取消或等待完成）`);
+      if (otherFailed) parts.push(`${otherFailed} 项删除失败（请稍后重试）`);
+      setNotice(parts.join("；") + "。");
     } catch (error) {
       setNotice(describeLibraryActionError(error, "清空回收站失败，请稍后重试。"));
     }
   }
-
-  const trashedCount = counts.trash;
 
   /** C4：手动设置/清除某条目的 Part 标签。 */
   async function setPart(id: string, label: string | null) {
@@ -248,7 +264,7 @@ export function LibraryPage({ intent, initialModality }: { intent?: LibraryInten
         modalityTab={modalityTab}
         modalityCounts={modalityCounts}
         search={search}
-        backgroundCount={counts.processing}
+        backgroundCount={totalProcessingCount}
         onTabChange={setTab}
         onModalityChange={setModalityTab}
         onSearchChange={setSearch}
@@ -299,10 +315,12 @@ export function LibraryPage({ intent, initialModality }: { intent?: LibraryInten
             </div>
           ) : null}
 
-          {tab === "trash" && trashedCount > 0 ? (
+          {/* 清空回收站作用于**全部**题型的回收站，只在「全部」子标签下出现，避免计数与
+              实际删除范围不符（审查 #7）。其它题型子标签下想清空可切到「全部」。 */}
+          {tab === "trash" && modalityTab === "all" && totalTrashedCount > 0 ? (
             <div className="library-trash-toolbar" data-testid="library-trash-toolbar">
               <button className="danger small" data-testid="library-empty-trash" onClick={emptyTrash}>
-                清空回收站（{trashedCount}）
+                清空回收站（{totalTrashedCount}）
               </button>
             </div>
           ) : null}
