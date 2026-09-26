@@ -23,6 +23,8 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { Builder, By, until } from "selenium-webdriver";
 
+import { sanitizedAppEnv } from "./tauri-cdp-harness.mjs";
+
 export const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 export const DEFAULT_EXE = path.join(repoRoot, "src-tauri", "target", "debug", "ielts-author-studio.exe");
 export const DEFAULT_PDF = path.join(repoRoot, "fixtures", "golden", "synthetic", "pdf", "pdf-two-column.pdf");
@@ -143,6 +145,41 @@ async function ensureMsedgedriver() {
     throw new CannotRunError(`解压 msedgedriver 失败：${unzip.stdout.slice(0, 400)}`);
   }
   return versionDir;
+}
+
+/**
+ * 会话建不起来时，把能解释「DevToolsActivePort file doesn't exist」的证据打出来：
+ * 启动前被清掉的环境残留，以及 msedgedriver 给 WebView2 分配的 %TEMP%\scoped_dir*
+ * （它会覆盖 WEBVIEW2_USER_DATA_FOLDER）里有没有生成 EBWebView 配置、chrome_debug.log 写了什么。
+ */
+function logLaunchDiagnostics(sinceMs) {
+  try {
+    const env = process.env;
+    const proxies = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]
+      .filter((key) => env[key]);
+    const badPath = (env.PATH ?? "").split(path.delimiter).filter((entry) => !entry || !fs.existsSync(entry)).length;
+    console.log(`[e2e:tauri] launch env: proxies=[${proxies.join(",")}] __COMPAT_LAYER=${env.__COMPAT_LAYER ?? "(unset)"} badPathEntries=${badPath} (all removed before launch)`);
+    const temp = env.TEMP ?? env.TMP;
+    if (!temp || !fs.existsSync(temp)) return;
+    const scoped = fs.readdirSync(temp)
+      .filter((name) => name.startsWith("scoped_dir"))
+      .map((name) => path.join(temp, name))
+      .filter((dir) => fs.statSync(dir).mtimeMs >= sinceMs - 5000);
+    if (!scoped.length) {
+      console.log(`[e2e:tauri] no msedgedriver scoped_dir created under ${temp} since launch`);
+      return;
+    }
+    for (const dir of scoped) {
+      const profile = path.join(dir, "EBWebView");
+      const debugLog = path.join(profile, "chrome_debug.log");
+      console.log(`[e2e:tauri] ${dir}: EBWebView=${fs.existsSync(profile)} DevToolsActivePort=${fs.existsSync(path.join(profile, "DevToolsActivePort"))}`);
+      if (fs.existsSync(debugLog)) {
+        console.log(`[e2e:tauri] chrome_debug.log (tail):\n${fs.readFileSync(debugLog, "utf8").slice(-3000)}`);
+      }
+    }
+  } catch (error) {
+    console.log(`[e2e:tauri] launch diagnostics failed: ${error.message}`);
+  }
 }
 
 /** 被测 exe 内嵌构建时的前端产物；若 src 比 exe 新，本次结果不能证明当前源码（A11-F01 根因之一）。 */
@@ -355,12 +392,17 @@ export async function launchTauriApp({ exePath, pdfPath, keep = false, runPrefix
 
   console.log(`[e2e:tauri] run dir: ${runDir}`);
   console.log(`[e2e:tauri] starting tauri-driver on :${port}`);
+  const launchEnv = sanitizedAppEnv(process.env);
+  const launchStartedAt = Date.now();
   const driverProcess = spawn("tauri-driver", ["--port", String(port)], {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
-      ...process.env,
+      // tauri-driver 的环境会一路传给 msedgedriver 和被测 exe：先清掉已知会让 WebView2
+      // 调试端点起不来的宿主残留（代理 / __COMPAT_LAYER / 坏掉的 PATH 项，见
+      // findings.md F-WEBVIEW2-CDP-UNAVAILABLE-2026-09-22），与 CDP 通道一致。
+      ...launchEnv,
       ...appEnv,
-      PATH: `${driverDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      PATH: `${driverDir}${path.delimiter}${launchEnv.PATH ?? ""}`,
       // Windows 上 Tauri 的 app_data_dir 走 known-folder API、WebView2 配置同理，
       // 都不读 APPDATA/LOCALAPPDATA 环境变量，因此必须用产品侧测试钩子
       // （PDF2TEST_AUTOMATION_DATA_DIR，见 lib.rs app_root）+ WebView2 官方变量做隔离。
@@ -404,6 +446,7 @@ export async function launchTauriApp({ exePath, pdfPath, keep = false, runPrefix
     try { await driver?.quit(); } catch {}
     try { driverProcess.kill(); } catch {}
     if (driverStderr.trim()) console.log(`[e2e:tauri] tauri-driver stderr (tail):\n${driverStderr.slice(-3000)}`);
+    logLaunchDiagnostics(launchStartedAt);
     if (!keep) {
       await sleep(1500);
       try { fs.rmSync(runDir, { recursive: true, force: true }); } catch {}
