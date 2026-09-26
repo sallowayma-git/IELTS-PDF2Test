@@ -85,44 +85,64 @@ function webview2Version() {
   return probe.stdout.match(/REG_SZ\s+([\d.]+)/)?.[1] ?? null;
 }
 
-function findMsedgedriver() {
+function driverOnPath() {
   const probe = runCapture("where", ["msedgedriver"]);
-  if (probe.status === 0) {
-    const first = probe.stdout.split(/\r?\n/).find((line) => line.trim().endsWith(".exe"));
-    if (first) return path.dirname(path.resolve(first.trim()));
-  }
-  const cached = path.join(DRIVER_CACHE_DIR, "msedgedriver.exe");
-  if (fs.existsSync(cached)) return DRIVER_CACHE_DIR;
-  return null;
+  if (probe.status !== 0) return null;
+  const first = probe.stdout.split(/\r?\n/).find((line) => line.trim().endsWith(".exe"));
+  return first ? path.dirname(path.resolve(first.trim())) : null;
 }
 
-async function ensureMsedgedriver() {
-  const existing = findMsedgedriver();
-  if (existing) return existing;
+function msedgedriverVersion(dir) {
+  const probe = runCapture(path.join(dir, "msedgedriver.exe"), ["--version"]);
+  if (probe.status !== 0) return null;
+  return probe.stdout.match(/(\d+\.\d+\.\d+\.\d+)/)?.[1] ?? null;
+}
 
-  const version = webview2Version();
-  if (!version) {
+// msedgedriver 必须与被测 exe 实际加载的 WebView2 运行时同版本。版本不一致时驱动能启动 exe，
+// 却连不上 WebView2 的调试端点，会话以 "DevToolsActivePort file doesn't exist" 失败。
+// PATH 上的驱动（例如 GitHub windows 镜像预装的、跟随 Edge 浏览器版本的那个）与旧缓存都可能过期，
+// 所以只接受版本一致的驱动，否则按运行时版本下载到独立的版本目录。
+async function ensureMsedgedriver() {
+  const runtime = webview2Version();
+  if (!runtime) {
+    const fallback = driverOnPath()
+      ?? (fs.existsSync(path.join(DRIVER_CACHE_DIR, "msedgedriver.exe")) ? DRIVER_CACHE_DIR : null);
+    if (fallback) {
+      console.log(`[e2e:tauri] WebView2 runtime version unknown; using msedgedriver ${msedgedriverVersion(fallback)} from ${fallback}`);
+      return fallback;
+    }
     throw new CannotRunError("未找到 msedgedriver，也无法从注册表读取 WebView2 运行时版本（无法自动下载匹配驱动）。");
   }
-  console.log(`[e2e:tauri] WebView2 runtime ${version}; downloading matching msedgedriver...`);
-  fs.mkdirSync(DRIVER_CACHE_DIR, { recursive: true });
-  const zipPath = path.join(DRIVER_CACHE_DIR, `edgedriver-${version}.zip`);
+
+  const versionDir = path.join(DRIVER_CACHE_DIR, runtime);
+  for (const candidate of [versionDir, driverOnPath(), DRIVER_CACHE_DIR]) {
+    if (!candidate || !fs.existsSync(path.join(candidate, "msedgedriver.exe"))) continue;
+    const driverVersion = msedgedriverVersion(candidate);
+    if (driverVersion === runtime) {
+      console.log(`[e2e:tauri] msedgedriver ${driverVersion} matches WebView2 runtime (${candidate})`);
+      return candidate;
+    }
+    console.log(`[e2e:tauri] skipping msedgedriver ${driverVersion ?? "(unknown)"} at ${candidate}: WebView2 runtime is ${runtime}`);
+  }
+
+  console.log(`[e2e:tauri] WebView2 runtime ${runtime}; downloading matching msedgedriver...`);
+  fs.mkdirSync(versionDir, { recursive: true });
+  const zipPath = path.join(versionDir, `edgedriver-${runtime}.zip`);
   const zipResult = runCapture("powershell", [
     "-NoProfile", "-Command",
-    `Invoke-WebRequest -Uri '${MSEDGEDRIVER_CDN}/${version}/edgedriver_win64.zip' -OutFile '${zipPath}'`
+    `Invoke-WebRequest -Uri '${MSEDGEDRIVER_CDN}/${runtime}/edgedriver_win64.zip' -OutFile '${zipPath}'`
   ]);
   if (zipResult.status !== 0 || !fs.existsSync(zipPath)) {
-    throw new CannotRunError(`下载 msedgedriver ${version} 失败：${zipResult.stdout.slice(0, 400)}`);
+    throw new CannotRunError(`下载 msedgedriver ${runtime} 失败：${zipResult.stdout.slice(0, 400)}`);
   }
   const unzip = runCapture("powershell", [
     "-NoProfile", "-Command",
-    `Expand-Archive -Force -Path '${zipPath}' -DestinationPath '${DRIVER_CACHE_DIR}'`
+    `Expand-Archive -Force -Path '${zipPath}' -DestinationPath '${versionDir}'`
   ]);
-  const driverExe = path.join(DRIVER_CACHE_DIR, "msedgedriver.exe");
-  if (unzip.status !== 0 || !fs.existsSync(driverExe)) {
+  if (unzip.status !== 0 || !fs.existsSync(path.join(versionDir, "msedgedriver.exe"))) {
     throw new CannotRunError(`解压 msedgedriver 失败：${unzip.stdout.slice(0, 400)}`);
   }
-  return DRIVER_CACHE_DIR;
+  return versionDir;
 }
 
 /** 被测 exe 内嵌构建时的前端产物；若 src 比 exe 新，本次结果不能证明当前源码（A11-F01 根因之一）。 */
@@ -383,6 +403,7 @@ export async function launchTauriApp({ exePath, pdfPath, keep = false, runPrefix
   } catch (error) {
     try { await driver?.quit(); } catch {}
     try { driverProcess.kill(); } catch {}
+    if (driverStderr.trim()) console.log(`[e2e:tauri] tauri-driver stderr (tail):\n${driverStderr.slice(-3000)}`);
     if (!keep) {
       await sleep(1500);
       try { fs.rmSync(runDir, { recursive: true, force: true }); } catch {}
@@ -454,10 +475,12 @@ export async function waitForRowStage(driver, itemId, timeoutMs) {
     const rows = await driver.findElements(By.css(selector));
     if (rows.length) {
       const text = (await rows[0].getText()).replace(/\s+/g, " ").trim();
+      const stageClass = await rows[0].getAttribute("class");
       lastText = text;
-      // 待检查/可发布/失败/已发布 都意味着 job 不再处于 Working（见 libraryTypes deriveStage）。
-      if (/待检查|可发布|失败|已发布/.test(text)) {
-        return { stageClass: await rows[0].getAttribute("class"), rowText: text };
+      // 按行的 stage-* class 判断，不按文案：action_required/ready 现在都显示「识别完成」，
+      // 文案会随产品措辞变化（见 libraryTypes STAGE_LABEL / LibraryItemRow）。
+      if (/\bstage-(action_required|ready|published|failed)\b/.test(stageClass ?? "")) {
+        return { stageClass, rowText: text };
       }
     }
     await sleep(1000);
