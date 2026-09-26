@@ -1891,6 +1891,27 @@ fn quality_acceptance_policy_limits_runtime_exception_to_organisational_unresolv
     );
 }
 
+fn task_group_instruction_text(shadow: &Value, task_id: &str) -> Option<String> {
+    let groups = shadow.get("taskGroups").and_then(Value::as_array)?;
+    let group = groups
+        .iter()
+        .find(|group| group.get("taskId").and_then(Value::as_str) == Some(task_id))?;
+    let paragraphs = group.get("instructions").and_then(Value::as_array)?;
+    let text = paragraphs
+        .iter()
+        .flat_map(|paragraph| {
+            paragraph
+                .get("children")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .filter_map(|child| child.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join(" ");
+    Some(text)
+}
+
 #[test]
 #[ignore = "real private-PDF probe; run explicitly while repairing Chili acceptance"]
 fn chili_real_pdf_reaches_all_declared_acceptance_truth() {
@@ -1907,6 +1928,32 @@ fn chili_real_pdf_reaches_all_declared_acceptance_truth() {
         .expect("Chili fixture must exist");
     let result =
         process_fixture(&root, "chili-peppers", fixture).expect("Chili chain must execute");
+
+    // The instruction-zone truth is independent of the quality gate, so it
+    // is asserted first: a concurrent in-flight change elsewhere must not
+    // hide an instruction regression.
+    let shadow_path =
+        root.join("tmp/phase4-real-pdf-acceptance/chili-peppers/authoring-ir-v2.shadow.json");
+    let shadow = read_json(&shadow_path).expect("Chili V2 shadow must be readable");
+    let group_1_instructions = task_group_instruction_text(&shadow, "group-1")
+        .expect("group-1 instructions node");
+    assert!(
+        group_1_instructions.contains("NOT GIVEN if there is no information on this"),
+        "group-1 instructions must keep the full NOT GIVEN clause, got: {group_1_instructions:?}"
+    );
+    let group_2_instructions = task_group_instruction_text(&shadow, "group-2")
+        .expect("group-2 instructions node");
+    assert!(
+        group_2_instructions
+            .trim_end()
+            .ends_with("Write your answers in boxes 7-13 on your answer sheet."),
+        "group-2 instructions must end at the answer-sheet sentence, got: {group_2_instructions:?}"
+    );
+    assert!(
+        !group_2_instructions.contains("capsaicin"),
+        "group-2 instructions must not swallow the notes body, got: {group_2_instructions:?}"
+    );
+
     let failed = result
         .get("checks")
         .and_then(Value::as_array)
@@ -1916,6 +1963,104 @@ fn chili_real_pdf_reaches_all_declared_acceptance_truth() {
         .filter_map(|check| check.get("code").and_then(Value::as_str))
         .collect::<Vec<_>>();
     assert!(failed.is_empty(), "Chili acceptance failures: {failed:?}");
+}
+
+// Diagnostic probe for the chili group-1 instruction truncation.  It prints,
+// for every sectionEvidence row of the TFNG group, the split-candidate text
+// preview next to the full parsed v1 block text, so the step that loses the
+// closing clause is visible.  Run with:
+//   cargo test ... chili_group1_instruction_zone_truncation_diagnostic -- --include-ignored --nocapture
+#[test]
+#[ignore = "diagnostic probe; prints chili group-1 evidence previews vs full v1 block text"]
+fn chili_group1_instruction_zone_truncation_diagnostic() {
+    let root = repo_root();
+    let manifest = read_json(&root.join(MANIFEST)).expect("golden manifest must load");
+    let fixture = manifest
+        .get("fixtures")
+        .and_then(Value::as_array)
+        .and_then(|fixtures| {
+            fixtures.iter().find(|fixture| {
+                fixture.get("fixtureId").and_then(Value::as_str) == Some("chili-peppers")
+            })
+        })
+        .expect("Chili fixture must exist");
+    let metadata_path = root.join(
+        fixture
+            .get("metadataPath")
+            .and_then(Value::as_str)
+            .expect("metadataPath"),
+    );
+    let metadata = read_json(&metadata_path).expect("metadata");
+    let source_path = root.join(
+        fixture
+            .get("sourcePath")
+            .and_then(Value::as_str)
+            .expect("sourcePath"),
+    );
+    let (source, job) = source_and_job("chili-peppers", fixture, &metadata);
+    let output_dir = root.join("tmp/phase4-real-pdf-acceptance/chili-peppers");
+    fs::create_dir_all(&output_dir).expect("output dir");
+    let document_path = output_dir.join("document-ir-v1.diagnostic.json");
+    let document = parse_source_document(&job, &source, &source_path, &document_path, "auto")
+        .expect("v1 document parses");
+    let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&document));
+    let candidates = split
+        .get("questionGroupCandidates")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let Some(candidate) = candidates.first() else {
+        panic!("chili split must produce group-1");
+    };
+    println!(
+        "group-1 heading: {:?}",
+        candidate.get("heading").and_then(Value::as_str)
+    );
+    let evidences = candidate
+        .get("sectionEvidence")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for evidence in &evidences {
+        let block_id = evidence
+            .get("blockId")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let preview = evidence
+            .get("textPreview")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let full_text = document
+            .get("pages")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .flat_map(|page| {
+                page.get("blocks")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+            })
+            .find(|block| block.get("blockId").and_then(Value::as_str) == Some(block_id))
+            .map(|block| {
+                block
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            })
+            .unwrap_or_default();
+        let truncated = full_text.chars().count() > preview.chars().count();
+        println!(
+            "block {block_id}: preview_len={} full_len={} preview_truncated={truncated}",
+            preview.chars().count(),
+            full_text.chars().count()
+        );
+        if truncated {
+            println!("  preview tail: {preview:?}");
+            println!("  full block text: {full_text:?}");
+        }
+    }
 }
 
 #[test]

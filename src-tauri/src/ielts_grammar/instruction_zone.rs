@@ -35,6 +35,12 @@ pub(crate) fn collect_instruction_zone(
     let mut selected = Vec::new();
     let mut warnings = Vec::new();
     let mut end_index = heading_index;
+    // IELTS papers close their instruction block with a sentence that points
+    // at the answer sheet (`Write your answers in boxes 7-13 on your answer
+    // sheet.`).  Notes/table/flow-chart bodies start right after that
+    // sentence, and those rows rarely open with a question number, so the
+    // scan needs the closing sentence as a boundary signal too.
+    let mut closing_instruction_seen = false;
     for (index, line) in lines.iter().enumerate().skip(heading_index) {
         let text = normalize_instruction_text(&line.text);
         if index > heading_index && is_task_boundary(&text, expected_numbers) {
@@ -48,6 +54,31 @@ pub(crate) fn collect_instruction_zone(
         if index > heading_index && is_new_task_heading(&text) {
             end_index = index;
             break;
+        }
+        // A printed answer blank (`preventing 7 ____`, `8 ………`) is question
+        // body, never instruction text.
+        if index > heading_index && line_contains_answer_blank(&text) {
+            end_index = index;
+            break;
+        }
+        if index > heading_index
+            && line_has_expected_number_before_blank(&text, expected_numbers)
+        {
+            end_index = index;
+            break;
+        }
+        // After the answer-sheet sentence only the reuse hint (`NB …` /
+        // `Note: …`) and the agree/disagree or option legend may follow; a
+        // notes title such as `The role of capsaicin` ends the instructions.
+        if index > heading_index
+            && closing_instruction_seen
+            && !may_follow_closing_instruction(&text)
+        {
+            end_index = index;
+            break;
+        }
+        if is_closing_answer_instruction(&text) {
+            closing_instruction_seen = true;
         }
         selected.push((index, line, text));
         end_index = index + 1;
@@ -258,6 +289,135 @@ fn is_option_run_start(text: &str) -> bool {
 
 fn is_new_task_heading(text: &str) -> bool {
     starts_with_question_heading(text)
+}
+
+/// Whether a contiguous run of blank characters starting at `start` reaches
+/// `min_width` printed cells (a Unicode ellipsis glyph prints as wide as
+/// three ordinary cells, matching `completion.rs`'s blank-width rule).
+fn blank_run_reaches(chars: &[char], start: usize, min_width: usize) -> bool {
+    let mut width = 0usize;
+    let mut index = start;
+    while index < chars.len() {
+        let width_cell = match chars[index] {
+            '…' | '⋯' => 3,
+            ch if is_instruction_blank_char(ch) => 1,
+            _ => break,
+        };
+        width += width_cell;
+        index += 1;
+    }
+    width >= min_width
+}
+
+/// Blank shapes the papers print into question rows.  Dashes are
+/// deliberately absent: prose hyphens are too common for a boundary signal.
+fn is_instruction_blank_char(ch: char) -> bool {
+    matches!(ch, '_' | '\u{ff3f}' | '.' | '…' | '⋯' | '□')
+}
+
+fn line_contains_answer_blank(text: &str) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    (0..chars.len()).any(|index| {
+        // Printed-width thresholds per shape: `___` fills a slot, `....` a
+        // dotted slot, one ellipsis glyph is sentence punctuation while two
+        // print a slot, and a pair of drawn boxes is a slot.  Lone dots in
+        // `e.g.` / `etc.` and one closing `…` stay prose.
+        let (min_width, min_run) = match chars[index] {
+            '_' | '\u{ff3f}' => (3, 3),
+            '.' => (4, 4),
+            '…' | '⋯' => (2, 2),
+            '□' => (2, 2),
+            _ => return false,
+        };
+        let mut run = 0;
+        while index + run < chars.len() && is_instruction_blank_char(chars[index + run]) {
+            run += 1;
+        }
+        run >= min_run && blank_run_reaches(&chars[index..index + run], 0, min_width)
+    })
+}
+
+/// `preventing 7 ____` — an expected question number printed immediately in
+/// front of an answer blank marks the first question row, even when the row
+/// opens with a bullet.
+fn line_has_expected_number_before_blank(text: &str, expected_numbers: &[u32]) -> bool {
+    if expected_numbers.is_empty() {
+        return false;
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut index = 0;
+    while index < chars.len() {
+        if !chars[index].is_ascii_digit() {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < chars.len() && chars[index].is_ascii_digit() {
+            index += 1;
+        }
+        let number: String = chars[start..index].iter().collect();
+        let Ok(number) = number.parse::<u32>() else {
+            continue;
+        };
+        if !expected_numbers.contains(&number) {
+            continue;
+        }
+        // Skip the blank field's own separators (`7. ____`, `7) ____`).
+        let mut cursor = index;
+        while cursor < chars.len() && chars[cursor].is_whitespace() {
+            cursor += 1;
+        }
+        if matches!(chars.get(cursor), Some('.' | ')' | ']' | ':' | '-')) {
+            cursor += 1;
+            while cursor < chars.len() && chars[cursor].is_whitespace() {
+                cursor += 1;
+            }
+        }
+        if blank_run_reaches(&chars, cursor, 2) {
+            return true;
+        }
+    }
+    false
+}
+
+/// The answer-sheet sentence (`Write your answers in boxes 7-13 on your
+/// answer sheet.`, `Write the correct letter, A-H, in boxes 27-31 on your
+/// answer sheet.`) closes the instruction block on real IELTS papers.
+fn is_closing_answer_instruction(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    (lower.contains("write your answers") && lower.contains("in boxes"))
+        || lower.contains("write the correct letter")
+        || (lower.contains("write") && lower.contains("answer sheet"))
+}
+
+/// Lines that legitimately continue after a closing instruction: the reuse
+/// hint (`NB You may use any letter more than once.`), a wrapped tail of the
+/// same sentence (`on your answer sheet.`), and the agree/disagree legend
+/// (`TRUE if the statement agrees … NOT GIVEN if there is no information on
+/// this`).
+fn may_follow_closing_instruction(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("answer sheet") {
+        return true;
+    }
+    let trimmed = lower.trim_start();
+    if trimmed.starts_with("nb ") || trimmed.starts_with("nb:") || trimmed == "nb" {
+        return true;
+    }
+    if trimmed.starts_with("note ") || trimmed.starts_with("note:") {
+        return true;
+    }
+    is_agreement_legend_line(&lower)
+}
+
+/// `TRUE` / `FALSE` / `NOT GIVEN` / `YES` / `NO` legend rows and their
+/// explanation tails (`if the statement contradicts the information`).
+fn is_agreement_legend_line(lower: &str) -> bool {
+    if lower.starts_with("if the statement") || lower.starts_with("if there is") {
+        return true;
+    }
+    lower.split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|token| matches!(token, "true" | "false" | "given" | "yes" | "no"))
 }
 
 fn trim_question_line_after_first_item(text: String, expected_numbers: &[u32]) -> String {
@@ -490,5 +650,68 @@ mod tests {
         let zone = collect_instruction_zone(&lines, 0, &[1, 2, 3, 4]);
         assert_eq!(zone.line_ids, vec!["h", "i"]);
         assert_eq!(zone.end_index, 2);
+    }
+
+    // Real Chili group-2 shape: the answer-sheet sentence closes the
+    // instructions, then the notes title and bullets follow.  The zone must
+    // end at the closing instruction instead of swallowing the notes body
+    // until the next leading question number.
+    #[test]
+    fn instruction_zone_stops_after_closing_instruction_before_notes_body() {
+        let lines = vec![
+            line("h", "Questions 7-13"),
+            line("i1", "Complete the notes below."),
+            line("i2", "Choose ONE WORD ONLY from the passage for each answer."),
+            line("close", "Write your answers in boxes 7-13 on your answer sheet."),
+            line("title", "The role of capsaicin"),
+            line("sub", "Chili seeds and capsaicin"),
+            line("b1", "• certain birds and other animals eat chili fruit and spread the seeds"),
+            line("b2", "• some animals destroy the seeds, preventing 7 __________"),
+            line("b3", "8 __________"),
+        ];
+        let zone = collect_instruction_zone(&lines, 0, &[7, 8, 9, 10, 11, 12, 13]);
+        assert_eq!(zone.line_ids, vec!["h", "i1", "i2", "close"]);
+        assert!(zone.text.contains("Write your answers in boxes 7-13 on your answer sheet."));
+        assert!(!zone.text.contains("capsaicin"));
+        assert!(!zone.text.contains("preventing"));
+    }
+
+    // The notes body can also start with a bullet row whose number is
+    // embedded before a printed blank (`preventing 7 ____`); without a
+    // closing sentence the blank itself must still end the zone.
+    #[test]
+    fn instruction_zone_stops_before_line_carrying_answer_blank() {
+        let lines = vec![
+            line("h", "Questions 7-13"),
+            line("i", "Complete the notes below."),
+            line("title", "Chili seeds and capsaicin"),
+            line("b2", "• some animals destroy the seeds, preventing 7 __________"),
+            line("b3", "8 __________"),
+        ];
+        let zone = collect_instruction_zone(&lines, 0, &[7, 8, 9, 10, 11, 12, 13]);
+        assert_eq!(zone.line_ids, vec!["h", "i", "title"]);
+        assert!(!zone.text.contains("preventing"));
+        assert!(!zone.text.contains("__________"));
+    }
+
+    // A closing instruction must not truncate legitimate continuations:
+    // the TFNG legend rows and an `NB …` reuse hint stay inside the zone.
+    #[test]
+    fn instruction_zone_keeps_tfng_legend_and_nb_after_closing_instruction() {
+        let lines = vec![
+            line("h", "Questions 1-6"),
+            line("i", "In boxes 1-6 on your answer sheet, write"),
+            line(
+                "legend",
+                "TRUE if the statement agrees with the information FALSE if the statement contradicts the information NOT GIVEN if there is no information on this",
+            ),
+            line("nb", "NB You may use any letter more than once."),
+            line("q1", "1 First statement"),
+        ];
+        let zone = collect_instruction_zone(&lines, 0, &[1, 2, 3, 4, 5, 6]);
+        assert!(zone.text.contains("TRUE if the statement agrees"));
+        assert!(zone.text.contains("NOT GIVEN if there is no information on this"));
+        assert!(zone.text.contains("NB You may use any letter more than once."));
+        assert!(!zone.text.contains("First statement"));
     }
 }

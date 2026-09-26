@@ -692,6 +692,17 @@ fn group_lines(
     source: Option<&SourceFile>,
 ) -> Vec<SemanticLine> {
     let block_ids = candidate_block_ids(candidate);
+    // Section evidence carries a *preview* of the block text —
+    // `dynamic_block_text_preview` (authoring_pipeline.rs) cuts it at 120
+    // characters.  Chili group-1's TFNG legend block is 145 characters, so
+    // the preview ends mid-sentence at "NOT GIVEN if there " and every
+    // downstream text (instructions, signature matching) inherited the cut.
+    // The parsed v1 document holds the full block text for the same block
+    // id, so prefer it and keep the preview as fallback only.
+    let full_v1_text_by_id = v1_lines
+        .iter()
+        .map(|line| (line.id.as_str(), line.text.as_str()))
+        .collect::<std::collections::BTreeMap<&str, &str>>();
     let mut lines = candidate
         .get("sectionEvidence")
         .and_then(Value::as_array)
@@ -703,10 +714,15 @@ fn group_lines(
                 .and_then(Value::as_str)
                 .unwrap_or("evidence")
                 .to_string();
-            let text = evidence
-                .get("textPreview")
-                .and_then(Value::as_str)
-                .map(normalize_instruction_text)
+            let text = full_v1_text_by_id
+                .get(id.as_str())
+                .map(|text| (*text).to_string())
+                .or_else(|| {
+                    evidence
+                        .get("textPreview")
+                        .and_then(Value::as_str)
+                        .map(normalize_instruction_text)
+                })
                 .filter(|text| !text.is_empty())?;
             let page_index = evidence
                 .get("pageIndex")
