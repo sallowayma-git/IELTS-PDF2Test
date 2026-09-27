@@ -1921,6 +1921,107 @@ mod tests {
             .join(name)
     }
 
+    fn demanding_pdf_authoring_snapshots() -> Option<(Value, Value, Value, Value)> {
+        if crate::pdf_geometry::pdfium_library_path().is_none() {
+            return None;
+        }
+        let fixture = parser_fixture("demanding-reading-passage-3.pdf");
+        let temp_root = env::temp_dir().join(format!(
+            "epic8-demanding-authoring-{}",
+            Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&temp_root).expect("create demanding PDF test scratch directory");
+        let mut job = test_job();
+        let source = test_source("pdf");
+        job.source_files = vec![source.clone()];
+        let document = parse_source_document(
+            &job,
+            &source,
+            &fixture,
+            &temp_root.join("document-ir.json"),
+            "auto",
+        )
+        .expect("parse demanding PDF through the fixture's normal parser path");
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&document));
+        let v1 = make_dynamic_authoring_ir(&job, &split, Some(&document));
+        let physical_shadow = crate::pdf_facts_shadow::write_pdf_facts_shadow_with_v1(
+            &job,
+            &source,
+            &fixture,
+            &temp_root.join("pdf-facts-shadow.json"),
+            Some(&document),
+        )
+        .expect("build the same physical PDF shadow used by product draft authoring");
+        let v2 = crate::ielts_grammar::build_authoring_v2_shadow(
+            &job,
+            &v1,
+            &split,
+            Some(&document),
+            Some(&physical_shadow),
+        )
+        .expect("build the product's V2 local draft shadow");
+        let _ = fs::remove_dir_all(&temp_root);
+        Some((document, split, v1, v2))
+    }
+
+    fn demanding_v1_question(authoring: &Value, number: u32) -> Option<&Value> {
+        let display_number = number.to_string();
+        for group in authoring.get("groups")?.as_array()? {
+            for question in group.get("questions")?.as_array()? {
+                if question.get("displayNumber").and_then(Value::as_str)
+                    == Some(display_number.as_str())
+                {
+                    return Some(question);
+                }
+            }
+        }
+        None
+    }
+
+    fn demanding_v2_group_for_slot<'a>(authoring: &'a Value, slot_id: &str) -> Option<&'a Value> {
+        authoring.get("taskGroups")?.as_array()?.iter().find(|group| {
+            group
+                .get("responseGroups")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .any(|response| {
+                    response
+                        .get("slotIds")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .any(|slot| slot.as_str() == Some(slot_id))
+                })
+        })
+    }
+
+    fn demanding_v2_options_for_slot<'a>(
+        group: &'a Value,
+        slot_id: &str,
+    ) -> Option<&'a Vec<Value>> {
+        if let Some(options) = group
+            .pointer("/optionBank/options")
+            .and_then(Value::as_array)
+        {
+            return Some(options);
+        }
+        group
+            .get("responseGroups")?
+            .as_array()?
+            .iter()
+            .find(|response| {
+                response
+                    .get("slotIds")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .any(|slot| slot.as_str() == Some(slot_id))
+            })?
+            .get("options")?
+            .as_array()
+    }
+
     fn phase4_pdf_fixtures() -> Vec<(String, PathBuf, Value)> {
         let repository_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
         let acceptance: Value =
@@ -8987,6 +9088,185 @@ Answers
                 .and_then(Value::as_u64),
             Some(27)
         );
+    }
+
+    #[test]
+    fn demanding_pdf_v2_choice_options_keep_source_text_for_36_through_40() {
+        let Some((_document, _split, v1, v2)) = demanding_pdf_authoring_snapshots() else {
+            return;
+        };
+        let expected_labels = ["A", "B", "C", "D"];
+        for number in 36..=40 {
+            let question = demanding_v1_question(&v1, number)
+                .unwrap_or_else(|| panic!("V1 must contain question {number}"));
+            let interaction = question
+                .get("interaction")
+                .unwrap_or_else(|| panic!("V1 q{number} must have an interaction"));
+            let labels = interaction
+                .get("options")
+                .and_then(Value::as_array)
+                .unwrap_or_else(|| panic!("V1 q{number} must expose its A-D option labels"))
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>();
+            assert_eq!(labels, expected_labels, "V1 option labels for q{number}");
+            let option_texts = interaction
+                .get("optionTexts")
+                .and_then(Value::as_object)
+                .unwrap_or_else(|| panic!("V1 q{number} must retain option text"));
+            let slot_id = format!("q{number}");
+            let group = demanding_v2_group_for_slot(&v2, &slot_id)
+                .unwrap_or_else(|| panic!("V2 must contain a task group for {slot_id}"));
+            let options = demanding_v2_options_for_slot(group, &slot_id)
+                .unwrap_or_else(|| panic!("V2 must expose options for {slot_id}"));
+            for label in expected_labels {
+                let source_text = option_texts
+                    .get(label)
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+                    .unwrap_or_else(|| panic!("V1 q{number} option {label} needs source text"));
+                let option = options
+                    .iter()
+                    .find(|option| option.get("label").and_then(Value::as_str) == Some(label))
+                    .unwrap_or_else(|| panic!("V2 {slot_id} must retain option {label}"));
+                let content = option
+                    .pointer("/content/0/text")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .unwrap_or_default();
+                assert_eq!(
+                    content, source_text,
+                    "V2 {slot_id} option {label} must render the full source text, not only its label"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn demanding_pdf_v2_summary_questions_27_through_31_keep_the_a_to_h_bank() {
+        let Some((_document, split, _v1, v2)) = demanding_pdf_authoring_snapshots() else {
+            return;
+        };
+        let group = demanding_v2_group_for_slot(&v2, "q27");
+        let candidate = split
+            .get("questionGroupCandidates")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|candidate| {
+                candidate
+                    .pointer("/questionRange")
+                    .and_then(Value::as_array)
+                    .is_some_and(|range| {
+                        range.first().and_then(Value::as_u64).is_some_and(|start| start <= 27)
+                            && range.get(1).and_then(Value::as_u64).is_some_and(|end| end >= 27)
+                    })
+            });
+        let Some(group) = group else {
+            panic!(
+                "V2 must contain q27; split candidate={}",
+                serde_json::to_string(candidate.unwrap_or(&Value::Null)).unwrap()
+            );
+        };
+        let options = group
+            .pointer("/optionBank/options")
+            .and_then(Value::as_array)
+            .unwrap_or_else(|| {
+                panic!(
+                    "q27–q31 must retain their shared A–H optionBank; split candidate={}",
+                    serde_json::to_string(candidate.unwrap_or(&Value::Null)).unwrap()
+                )
+            });
+        let labels = options
+            .iter()
+            .filter_map(|option| option.get("label").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(labels, vec!["A", "B", "C", "D", "E", "F", "G", "H"]);
+        for option in options {
+            assert!(
+                option
+                    .pointer("/content/0/text")
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| !text.trim().is_empty()),
+                "every shared option must retain its source text: {option}"
+            );
+        }
+    }
+
+    #[test]
+    fn demanding_pdf_question_35_prompt_does_not_absorb_the_page_number() {
+        let Some((document, split, v1, _v2)) = demanding_pdf_authoring_snapshots() else {
+            return;
+        };
+        let prompt = demanding_v1_question(&v1, 35)
+            .and_then(|question| question.get("prompt"))
+            .and_then(Value::as_str)
+            .expect("V1 must contain q35 prompt text");
+        let q35_candidate = split
+            .get("questionGroupCandidates")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|candidate| {
+                candidate
+                    .pointer("/questionRange")
+                    .and_then(Value::as_array)
+                    .is_some_and(|range| {
+                        range.first().and_then(Value::as_u64).is_some_and(|start| start <= 35)
+                            && range.get(1).and_then(Value::as_u64).is_some_and(|end| end >= 35)
+                    })
+            });
+        let q35_ids = q35_candidate
+            .and_then(|candidate| candidate.get("blockIds"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect::<HashSet<_>>();
+        let source_blocks = dynamic_document_blocks(Some(&document))
+            .into_iter()
+            .filter(|block| {
+                q35_ids.contains(
+                    block
+                        .get("blockId")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                )
+            })
+            .map(|block| {
+                json!({
+                    "text": block.get("text"),
+                    "pageIndex": block.get("pageIndex"),
+                    "bbox": block.get("bbox"),
+                    "roleHint": block.get("roleHint")
+                })
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            prompt.trim_end().ends_with("social problems."),
+            "the trailing page number must not be part of q35: {prompt:?}; source={source_blocks:?}"
+        );
+    }
+
+    #[test]
+    fn demanding_pdf_passage_excludes_instruction_zone_fragments() {
+        let Some((_document, _split, v1, v2)) = demanding_pdf_authoring_snapshots() else {
+            return;
+        };
+        let passage_json = serde_json::to_string(&json!({
+            "v1": v1.get("passage"),
+            "v2": v2.get("passage")
+        }))
+        .unwrap();
+        let leaked = [
+            "Passage 1 below.",
+            "You should spend about 20 minutes on Que",
+        ]
+        .into_iter()
+        .filter(|fragment| passage_json.contains(fragment))
+        .collect::<Vec<_>>();
+        assert!(leaked.is_empty(), "instruction-zone fragments leaked into passage: {leaked:?}");
     }
 
     #[test]
