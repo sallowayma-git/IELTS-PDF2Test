@@ -54,14 +54,14 @@ export function conflictRecoveryNotice(
 /** 后端编辑日志里的一行（`get_workspace_item.recentEdits`）。 */
 export interface RecentEditV1 {
   baseVersion: number;
-  /** `human` | `cloud_repair` | `answer_page_recognition` | `undo` | null（来源不明）。 */
+  /** `human` | `cloud_candidate_adoption` | `cloud_repair` | `answer_page_recognition` | `undo` | null（来源不明）。 */
   origin?: string | null;
 }
 
 /**
  * 本地基线之后的所有写入是否**全是机器写入**。
  *
- * 只有这种情况才自动重放：云端修复 / 答案页识别是后台在写，用户没有做任何需要他
+ * 只有这种情况才自动重放：云端采纳 / 修复 / 答案页识别是后台在写，用户没有做任何需要他
  * 二选一的事。只要夹着一次人工写入（另一个窗口）、来源不明、或日志不完整（条数对不上
  * 版本差），就不猜，交回给用户。
  */

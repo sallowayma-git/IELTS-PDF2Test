@@ -175,6 +175,39 @@ afterEach(() => {
 });
 
 describe("ExamWorkspacePage 的云端修复剩余条目刷新", () => {
+  it("真实展示云端采纳提示与不可采纳的回退原因，不占用交互提示状态", async () => {
+    vi.mocked(getRecognitionDecision).mockResolvedValueOnce({
+      ...decision("running"),
+      repair: {
+        ...decision("running").repair!,
+        candidateAdoption: { status: "adopted", adopted: true },
+      },
+    });
+
+    const { rerender } = render(<ExamWorkspacePage itemId={ITEM_ID} />);
+    await act(async () => {});
+    expect(screen.getByTestId("workspace-cloud-adoption-notice").textContent)
+      .toContain("已采用云端识别结果，校核结束后可撤销");
+
+    vi.mocked(getRecognitionDecision).mockResolvedValueOnce({
+      ...decision("completed"),
+      repair: {
+        ...decision("completed").repair!,
+        candidateAdoption: {
+          status: "not_adopted",
+          adopted: false,
+          reason: "云端候选未覆盖本地题号：15",
+          fallback: "local_draft",
+        },
+      },
+    });
+    editorRef.current = makeEditor(2);
+    rerender(<ExamWorkspacePage itemId={ITEM_ID} />);
+    await act(async () => {});
+    expect(screen.getByTestId("workspace-cloud-adoption-notice").textContent)
+      .toContain("未采纳云端候选，继续按本地稿校核：云端候选未覆盖本地题号：15");
+  });
+
   it("修复进行中读到 running 时安排重读：1.5 秒后的终态把 cloud-question 条目送进清单（期间不触发任何版本或处理事件）", async () => {
     vi.mocked(getRecognitionDecision)
       .mockResolvedValueOnce(decision("running"))

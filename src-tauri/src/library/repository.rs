@@ -217,6 +217,45 @@ pub(crate) fn get_canonical_ds(
     }
 }
 
+/// Human editor commands committed at or after an asynchronous candidate's version baseline.
+///
+/// Undo rows count as user intent too: restoring a manually chosen value after a user undo must
+/// not let the delayed cloud candidate overwrite that decision.
+pub(crate) fn human_editor_commands_since(
+    conn: &Connection,
+    item_id: &str,
+    base_version: i64,
+) -> CommandResult<Vec<Value>> {
+    let mut statement = conn
+        .prepare(
+            "SELECT command_json, result_json FROM editor_journal_v1
+              WHERE library_item_id = ?1 AND base_version >= ?2
+                AND edit_origin IN ('human', 'undo')
+              ORDER BY id ASC",
+        )
+        .map_err(|error| format!("library_v2_human_journal_prepare:{error}"))?;
+    let raw_rows = statement
+        .query_map(params![item_id, base_version], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })
+        .map_err(|error| format!("library_v2_human_journal_query:{error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("library_v2_human_journal_rows:{error}"))?;
+    raw_rows
+        .into_iter()
+        .map(|(command, result)| {
+            let command: Value = serde_json::from_str(&command)
+                .map_err(|error| format!("library_v2_human_journal_parse:{error}"))?;
+            let result: Value = result
+                .map(|raw| serde_json::from_str(&raw))
+                .transpose()
+                .map_err(|error| format!("library_v2_human_journal_result_parse:{error}"))?
+                .unwrap_or(Value::Null);
+            Ok(serde_json::json!({"command": command, "result": result}))
+        })
+        .collect()
+}
+
 /// 只读权威稿版本号，**不解析** `canonical_ds_json`。
 ///
 /// 为什么不复用 [`get_canonical_ds`]：事件发射路径每次阶段推进都要读一次版本号，
@@ -307,6 +346,8 @@ pub(crate) enum EditOrigin {
     /// 机器派生结果，不是人工编辑；但仍须尊重人工保护目标，否则重新绑定一次
     /// 音频就会盖掉用户手改过的 part media。
     ListeningAudio,
+    /// 将通过确定性资格门槛的完整云端首遍候选提升为正式稿。
+    CloudCandidateAdoption,
 }
 
 impl EditOrigin {
@@ -317,6 +358,7 @@ impl EditOrigin {
             EditOrigin::AnswerPageRecognition => "answer_page_recognition",
             EditOrigin::Undo => "undo",
             EditOrigin::ListeningAudio => "listening_audio",
+            EditOrigin::CloudCandidateAdoption => "cloud_candidate_adoption",
         }
     }
 
@@ -362,7 +404,14 @@ pub(crate) struct EditFootprint {
 ///
 /// 只列领域里真正被引用的身份字段；其余对象仍然会被递归遍历，只是不会把任意
 /// 字符串字段误当成 ID。
-const IDENTITY_KEYS: [&str; 5] = ["id", "taskId", "slotId", "responseGroupId", "assetId"];
+const IDENTITY_KEYS: [&str; 6] = [
+    "id",
+    "taskId",
+    "slotId",
+    "responseGroupId",
+    "assetId",
+    "optionId",
+];
 
 fn push_identity(value: &Value, out: &mut BTreeSet<String>) {
     let Some(object) = value.as_object() else {
@@ -395,7 +444,7 @@ fn collect_subtree_ids(value: &Value, out: &mut BTreeSet<String>) {
     }
 }
 
-fn find_object_by_id<'a>(value: &'a Value, id: &str) -> Option<&'a Value> {
+pub(crate) fn find_object_by_id<'a>(value: &'a Value, id: &str) -> Option<&'a Value> {
     let mut found = BTreeSet::new();
     push_identity(value, &mut found);
     if found.contains(id) {
@@ -914,6 +963,119 @@ fn capture_change_targets(commands: &[Value]) -> Vec<String> {
     roots.into_iter().collect()
 }
 
+fn cloud_candidate_change_targets(before: &Value, after: &Value) -> BTreeSet<String> {
+    let mut before_ids = BTreeSet::new();
+    let mut after_ids = BTreeSet::new();
+    collect_subtree_ids(before, &mut before_ids);
+    collect_subtree_ids(after, &mut after_ids);
+    let mut targets = BTreeSet::new();
+
+    for id in before_ids.union(&after_ids) {
+        if read_change_value(before, id) != read_change_value(after, id) {
+            targets.insert(id.clone());
+        }
+    }
+
+    let answer_ids = before
+        .get("answerKey")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(|answers| answers.keys())
+        .chain(
+            after
+                .get("answerKey")
+                .and_then(Value::as_object)
+                .into_iter()
+                .flat_map(|answers| answers.keys()),
+        )
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    for slot_id in answer_ids {
+        let key = format!("{ANSWER_KEY_PREFIX}{slot_id}");
+        if read_change_value(before, &key) != read_change_value(after, &key) {
+            targets.insert(key);
+        }
+    }
+
+    for field in [
+        "exam",
+        "passage",
+        "listening",
+        "assets",
+        "audit",
+        "sourceDocumentId",
+        "modality",
+    ] {
+        let key = format!("{TOP_FIELD_PREFIX}{field}");
+        if read_change_value(before, &key) != read_change_value(after, &key) {
+            targets.insert(key);
+        }
+    }
+
+    for document in [before, after] {
+        if let Some(groups) = document.get("taskGroups").and_then(Value::as_array) {
+            for group in groups {
+                if let Some(task_id) = group.get("taskId").and_then(Value::as_str) {
+                    targets.insert(format!("{TASK_GROUP_PREFIX}{task_id}"));
+                }
+            }
+        }
+    }
+    targets
+}
+
+fn capture_transaction_change_targets(
+    document: &Value,
+    commands: &[Value],
+    origin: EditOrigin,
+) -> Vec<String> {
+    if let Some(after) = commands
+        .iter()
+        .find(|command| {
+            command.get("op").and_then(Value::as_str) == Some("replaceAuthoringDocument")
+        })
+        .and_then(|command| command.get("authoring"))
+    {
+        return cloud_candidate_change_targets(document, after)
+            .into_iter()
+            .collect();
+    }
+
+    let mut targets = capture_change_targets(commands)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    if origin == EditOrigin::CloudRepair {
+        // Track the owning task group as well as directly-edited roots. This lets the existing
+        // run-level undo restore structure changed by adoption plus later child edits atomically.
+        for command in commands {
+            for node_id in command.get("nodeId").and_then(Value::as_str).into_iter() {
+                for task_id in
+                    task_group_ids_of_node(document, Some(&Value::String(node_id.to_string())))
+                {
+                    targets.insert(format!("{TASK_GROUP_PREFIX}{task_id}"));
+                }
+            }
+            if let Some(slot_id) = command.get("slotId").and_then(Value::as_str) {
+                targets.extend(
+                    task_groups_owning_slot(document, slot_id)
+                        .into_iter()
+                        .map(|task_id| format!("{TASK_GROUP_PREFIX}{task_id}")),
+                );
+            }
+            for task_id in command
+                .get("taskId")
+                .and_then(Value::as_str)
+                .into_iter()
+                .chain(command.pointer("/target/taskId").and_then(Value::as_str))
+                .chain(command.pointer("/taskGroup/taskId").and_then(Value::as_str))
+            {
+                targets.insert(format!("{TASK_GROUP_PREFIX}{task_id}"));
+            }
+        }
+    }
+    targets.into_iter().collect()
+}
+
 /// `answerKey` 条目的目标键前缀。
 ///
 /// 为什么需要它：`answerKey` 是一个**以 slotId 为键**的对象，条目本身没有任何身份
@@ -921,8 +1083,25 @@ fn capture_change_targets(commands: &[Value]) -> Vec<String> {
 /// 记一条，撤销就会"把槽位对象放回去了，但答案值还是模型写的那一份"，那比不能撤销更坏：
 /// 界面说已撤销，内容却没回来。
 const ANSWER_KEY_PREFIX: &str = "answerKey:";
+const TOP_FIELD_PREFIX: &str = "$top:";
+const TASK_GROUP_PREFIX: &str = "$task-group:";
 
 fn read_change_value(document: &Value, key: &str) -> Value {
+    if let Some(field) = key.strip_prefix(TOP_FIELD_PREFIX) {
+        return document.get(field).cloned().unwrap_or(Value::Null);
+    }
+    if let Some(task_id) = key.strip_prefix(TASK_GROUP_PREFIX) {
+        return document
+            .get("taskGroups")
+            .and_then(Value::as_array)
+            .and_then(|groups| {
+                groups.iter().enumerate().find_map(|(index, group)| {
+                    (group.get("taskId").and_then(Value::as_str) == Some(task_id))
+                        .then(|| serde_json::json!({"index": index, "value": group}))
+                })
+            })
+            .unwrap_or(Value::Null);
+    }
     if let Some(slot_id) = key.strip_prefix(ANSWER_KEY_PREFIX) {
         return document
             .get("answerKey")
@@ -936,6 +1115,46 @@ fn read_change_value(document: &Value, key: &str) -> Value {
 }
 
 fn write_change_value(document: &mut Value, key: &str, replacement: &Value) -> bool {
+    if let Some(field) = key.strip_prefix(TOP_FIELD_PREFIX) {
+        let Some(object) = document.as_object_mut() else {
+            return false;
+        };
+        if replacement.is_null() {
+            object.remove(field);
+        } else {
+            object.insert(field.to_string(), replacement.clone());
+        }
+        return true;
+    }
+    if let Some(task_id) = key.strip_prefix(TASK_GROUP_PREFIX) {
+        let Some(groups) = document.get_mut("taskGroups").and_then(Value::as_array_mut) else {
+            return false;
+        };
+        let current_index = groups
+            .iter()
+            .position(|group| group.get("taskId").and_then(Value::as_str) == Some(task_id));
+        if replacement.is_null() {
+            if let Some(index) = current_index {
+                groups.remove(index);
+                return true;
+            }
+            return false;
+        }
+        let Some(value) = replacement.get("value").filter(|value| value.is_object()) else {
+            return false;
+        };
+        let index = replacement
+            .get("index")
+            .and_then(Value::as_u64)
+            .unwrap_or(groups.len() as u64) as usize;
+        if let Some(current_index) = current_index {
+            groups[current_index] = value.clone();
+        } else {
+            let insertion_index = index.min(groups.len());
+            groups.insert(insertion_index, value.clone());
+        }
+        return true;
+    }
     if let Some(slot_id) = key.strip_prefix(ANSWER_KEY_PREFIX) {
         let Some(answers) = document.get_mut("answerKey").and_then(Value::as_object_mut) else {
             return false;
@@ -983,7 +1202,7 @@ fn with_after_snapshot(change: Value, document: &Value, targets: &[String]) -> V
 ///
 /// 「原位」很重要：撤销题组替换时必须把它放回 `taskGroups` 原来的位置，否则题号顺序
 /// 会变，而题号顺序是学生端渲染与答案映射的输入。
-fn replace_object_by_id(document: &mut Value, id: &str, replacement: &Value) -> bool {
+pub(crate) fn replace_object_by_id(document: &mut Value, id: &str, replacement: &Value) -> bool {
     fn ident_of(value: &Value) -> Option<&str> {
         for key in IDENTITY_KEYS {
             if let Some(found) = value.get(key).and_then(Value::as_str) {
@@ -1081,7 +1300,8 @@ pub(crate) fn undo_cloud_repair_run(
         let mut statement = transaction
             .prepare(
                 "SELECT COALESCE(change_json, 'null') FROM editor_journal_v1
-                  WHERE library_item_id = ?1 AND repair_run_id = ?2 AND edit_origin = 'cloud_repair'
+                  WHERE library_item_id = ?1 AND repair_run_id = ?2
+                    AND edit_origin IN ('cloud_repair', 'cloud_candidate_adoption')
                   ORDER BY id ASC",
             )
             .map_err(|error| format!("library_v2_undo_prepare:{error}"))?;
@@ -1492,7 +1712,7 @@ pub(crate) fn apply_editor_commands_tx_with(
 
     // 可信来源需要的 before 快照：撤销整轮修复时，把每个目标的首个 before 与最后
     // after 合并。只记命令直接点名的根对象，不下钻整棵子树。
-    let change_targets = capture_change_targets(&input.commands);
+    let change_targets = capture_transaction_change_targets(&ds, &input.commands, origin);
     let change = snapshot_change(&ds, &change_targets);
 
     for command in &input.commands {
@@ -2120,6 +2340,70 @@ mod tests {
             "user_value",
             "无关目标的人工修改必须保留"
         );
+    }
+
+    /// Cloud adoption and later repair writes use the existing run-level journal/undo. A later
+    /// user edit to one of the adopted targets must still be skipped by the normal CAS guard.
+    #[test]
+    fn cloud_adoption_and_repair_share_run_level_undo() {
+        let mut conn = grouped_item();
+        let run_id = "cloud-repair:batch-adopt";
+        let mut adopted = grouped_ds();
+        adopted["exam"]["title"] = json!("cloud title");
+        adopted["answerKey"]["slot-14"] = json!({"kind":"text", "values":["cloud answer"]});
+
+        let adoption_command = json!({"op":"replaceAuthoringDocument", "authoring": adopted});
+        apply_editor_commands_tx_with(
+            &mut conn,
+            &ApplyEditorCommandsInput {
+                item_id: "it-1".into(),
+                base_version: 1,
+                request_id: Some("adopt:batch-adopt".into()),
+                commands: vec![adoption_command],
+                title: None,
+            },
+            EditOrigin::CloudCandidateAdoption,
+            Some(run_id),
+            &|document, command| {
+                *document = command["authoring"].clone();
+                Ok(())
+            },
+            &noop_validate,
+            &|_, _| Ok(()),
+        )
+        .unwrap();
+
+        run_edit(
+            &mut conn,
+            vec![set_answer("slot-15", "cloud repair")],
+            EditOrigin::CloudRepair,
+            Some(run_id),
+            2,
+        )
+        .unwrap();
+        // A later human write to the adopted answer is outside the run and must survive undo.
+        run_edit(
+            &mut conn,
+            vec![set_answer("slot-14", "user answer")],
+            EditOrigin::Human,
+            None,
+            3,
+        )
+        .unwrap();
+
+        let outcome = undo_cloud_repair_run(&mut conn, "it-1", run_id, 4, &noop_validate).unwrap();
+        let (document, version) = get_canonical_ds(&conn, "it-1").unwrap().unwrap();
+        assert_eq!(outcome.edit_version, version);
+        assert_eq!(document.pointer("/exam/title"), Some(&json!("t")));
+        assert_eq!(
+            document.pointer("/answerKey/slot-15/values/0"),
+            Some(&json!("frame"))
+        );
+        assert_eq!(
+            document.pointer("/answerKey/slot-14/values/0"),
+            Some(&json!("user answer"))
+        );
+        assert!(outcome.skipped.contains(&"answerKey:slot-14".to_string()));
     }
 
     /// 记录已被裁剪的轮次如实不可撤销，不给一个点了没用的假按钮。

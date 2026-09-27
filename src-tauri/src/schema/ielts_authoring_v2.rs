@@ -530,6 +530,7 @@ pub enum RevisionSourceV2 {
     AutoExtract,
     User,
     Migration,
+    CloudCandidateAdoption,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

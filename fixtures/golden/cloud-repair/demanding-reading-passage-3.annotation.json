@@ -25,10 +25,10 @@
         "zeroBased": 3,
         "note": "read_source 返回的页号是 1-based（来自 cache/vision/pdf-images.json）；权威稿锚点与 DocumentIR 的 pageIndex 是 0-based。实测同一页：pdf-images pageIndex=4、DocumentIR/compare pageIndex=3、锚点 nodeIds 前缀 p004-。"
       },
-      "localDraftContains": "The writer recommends that to be effective, social history must 14 BLANK PAGE",
+      "localDraftContains": "The writer recommends that to be effective, social history must BLANK PAGE",
       "originalFileSays": "The writer recommends that to be effective, social history must",
       "originalFileQuote": "40 The writer recommends that to be effective, social history must",
-      "explanation": "原文件第 4 页的题干止于 must。`14` 是页码、`BLANK PAGE` 是第 5 页的页脚；本地识别把下一页的页脚并进了这一页的题干。这是**本地识别真实产生的**错误（不是脚本注入的）：见 authoring-ir.json 的 groups[2].questions[4].prompt。"
+      "explanation": "原文件第 4 页的题干止于 must。旧本地稿把页码 `14` 和第 5 页的 `BLANK PAGE` 一起并进题干；B4 已过滤独立页码，因此当前真实本地残差是 `BLANK PAGE`。本标注只将 localDraftContains 收窄到仍然存在的错文，原文真值与逐字引文不变；这仍是本地识别真实产生的跨页页脚错误（不是脚本注入的）：见 authoring-ir.json 的 groups[2].questions[4].prompt。"
     }
   ],
   "expectedAnswers": {

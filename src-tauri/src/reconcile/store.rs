@@ -22,6 +22,7 @@ use crate::util::{read_json_opt, safe_job_dir, write_json};
 use crate::CommandResult;
 
 pub(crate) const LOCAL_CANDIDATE_FILE: &str = "local-candidate.json";
+pub(crate) const LOCAL_AUTHORING_SNAPSHOT_FILE: &str = "local-authoring-snapshot.json";
 pub(crate) const CLOUD_CANDIDATE_FILE: &str = "cloud-candidate.json";
 pub(crate) const CLOUD_AUTHORING_CANDIDATE_FILE: &str = "cloud-authoring-candidate.json";
 /// 修复运行的摘要（诊断副本）。**完成判据始终是当前 canonical**，不是这份摘要。
@@ -54,6 +55,67 @@ pub(crate) fn write_candidate(
     let path = artifact_path(root, &candidate.job_id, batch_id, file)?;
     write_json(&path, candidate)?;
     Ok(path)
+}
+
+/// Freeze the complete local authoring document beside the comparison candidate. The latter is
+/// a deliberately lossy projection; cloud-first repair needs the rich full document as its
+/// challenger after adoption.
+pub(crate) fn write_local_authoring_snapshot(
+    root: &Path,
+    batch_id: &str,
+    job_id: &str,
+    base_edit_version: i64,
+    source_sha256: &str,
+    authoring: &Value,
+) -> CommandResult<PathBuf> {
+    let path = artifact_path(root, job_id, batch_id, LOCAL_AUTHORING_SNAPSHOT_FILE)?;
+    if path.exists() {
+        let existing = read_json_opt(&path)?
+            .ok_or_else(|| "local_authoring_snapshot_disappeared".to_string())?;
+        let matches = existing.get("batchId").and_then(Value::as_str) == Some(batch_id)
+            && existing.get("itemId").and_then(Value::as_str) == Some(job_id)
+            && existing.get("baseEditVersion").and_then(Value::as_i64) == Some(base_edit_version)
+            && existing.get("sourceSha256").and_then(Value::as_str) == Some(source_sha256);
+        if !matches {
+            return Err("local_authoring_snapshot_identity_mismatch".to_string());
+        }
+        return Ok(path);
+    }
+    write_json(
+        &path,
+        &json!({
+            "schemaVersion": "LocalAuthoringSnapshotV1",
+            "batchId": batch_id,
+            "itemId": job_id,
+            "baseEditVersion": base_edit_version,
+            "sourceSha256": source_sha256,
+            "authoring": authoring,
+        }),
+    )?;
+    Ok(path)
+}
+
+pub(crate) fn read_local_authoring_snapshot(
+    root: &Path,
+    job_id: &str,
+    batch_id: &str,
+) -> CommandResult<Option<Value>> {
+    let path = artifact_path(root, job_id, batch_id, LOCAL_AUTHORING_SNAPSHOT_FILE)?;
+    let Some(snapshot) = read_json_opt(&path)? else {
+        return Ok(None);
+    };
+    if snapshot.get("schemaVersion").and_then(Value::as_str) != Some("LocalAuthoringSnapshotV1")
+        || snapshot.get("batchId").and_then(Value::as_str) != Some(batch_id)
+        || snapshot.get("itemId").and_then(Value::as_str) != Some(job_id)
+    {
+        return Err("local_authoring_snapshot_corrupt_or_mismatched".to_string());
+    }
+    snapshot
+        .get("authoring")
+        .filter(|authoring| authoring.is_object())
+        .cloned()
+        .map(Some)
+        .ok_or_else(|| "local_authoring_snapshot_document_missing".to_string())
 }
 
 /// 落盘云端「完整候选」artifact。
@@ -557,6 +619,23 @@ pub(crate) fn write_batch_repair(
         return Err(format!("recognition_batch_missing:{batch_id}"));
     }
     Ok(())
+}
+
+pub(crate) fn read_batch_repair(conn: &Connection, batch_id: &str) -> CommandResult<Option<Value>> {
+    let raw: Option<Option<String>> = conn
+        .query_row(
+            "SELECT repair_json FROM recognition_batches_v1 WHERE batch_id = ?1",
+            [batch_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("recognition_read_batch_repair:{error}"))?;
+    match raw.flatten() {
+        Some(raw) => serde_json::from_str(&raw)
+            .map(Some)
+            .map_err(|error| format!("recognition_batch_repair_corrupt:{error}")),
+        None => Ok(None),
+    }
 }
 
 /// 云端**真的跑过、但没交出可用结果**时，把批次行的 cloud 阶段改写成真实终态。
@@ -1109,6 +1188,39 @@ mod tests {
             Some("Which TWO factors influenced early organisational design?"),
             "嵌套的子节点与文本必须逐字保留，不能被压平成纯文本"
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn local_full_authoring_snapshot_is_immutable_for_its_batch_identity() {
+        let root = temp_root();
+        let original =
+            json!({"taskGroups":[{"taskId":"local-task"}], "answerSlots":{"q14":{"slotId":"q14"}}});
+        write_local_authoring_snapshot(&root, "batch-1", "job-1", 7, "source-hash", &original)
+            .unwrap();
+        write_local_authoring_snapshot(
+            &root,
+            "batch-1",
+            "job-1",
+            7,
+            "source-hash",
+            &json!({"taskGroups": []}),
+        )
+        .expect("重试不能覆盖首个冻结快照");
+
+        let readback = read_local_authoring_snapshot(&root, "job-1", "batch-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(readback, original);
+        assert!(write_local_authoring_snapshot(
+            &root,
+            "batch-1",
+            "job-1",
+            8,
+            "source-hash",
+            &original,
+        )
+        .is_err());
         let _ = std::fs::remove_dir_all(&root);
     }
 

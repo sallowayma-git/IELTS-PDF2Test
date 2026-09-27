@@ -44,6 +44,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { isDeepStrictEqual } from "node:util";
 import {
   CDP_CHANNEL_LABEL,
   CDP_CHANNEL_NOTE,
@@ -61,7 +62,7 @@ import {
   writeReport,
 } from "./lib/tauri-cdp-harness.mjs";
 import { computeScenarioVerdict, SCENARIO_STATUS } from "./lib/chain-verdict.mjs";
-import { deriveAnswerRepairScenario, deriveRepairScenario, loadRepairGolden, textOfNodes } from "./lib/cloud-repair-scenario.mjs";
+import { deriveAnswerRepairScenario, deriveRepairScenario, diagnoseAnswerClaimL1, loadRepairGolden, textOfNodes } from "./lib/cloud-repair-scenario.mjs";
 import { loadPublishedPackageWithRealProviderAsync } from "./lib/student-real-provider.mjs";
 
 const exePath = path.join(repoRoot, "src-tauri", "target", "debug", "ielts-author-studio.exe");
@@ -113,7 +114,7 @@ const report = {
     servicePort,
   },
   service: { started: false, health: null, modes: [], requestLines: [] },
-  scenario: { derived: false, differences: [], fix: null, rule: null, unresolved: [], golden: null },
+  scenario: { derived: false, differences: [], fix: null, rule: null, unresolved: [], golden: null, humanProtection: null },
   // P10 答案类场景的独立判定段（三态：ready / not-executable / failed）。不进 scenarios，见 2b 的说明。
   answerScenario: null,
   observed: {
@@ -321,10 +322,11 @@ async function waitForService(timeoutMs = 20000) {
   return null;
 }
 
-function startService({ candidate = null, plan = null } = {}) {
+function startService({ candidate = null, plan = null, delayCandidateMs = 0 } = {}) {
   const args = [serviceScript, "--port", String(servicePort), "--mode", "normal"];
   if (candidate) args.push("--candidate", candidate);
   if (plan) args.push("--plan", plan);
+  if (delayCandidateMs > 0) args.push("--delay-candidate-ms", String(delayCandidateMs));
   serviceChild = spawn(process.execPath, args, {
     cwd: repoRoot,
     stdio: ["ignore", "pipe", "pipe"],
@@ -340,7 +342,7 @@ function startService({ candidate = null, plan = null } = {}) {
   serviceChild.stdout.on("data", collect);
   serviceChild.stderr.on("data", collect);
   report.service.log = () => out;
-  report.service.modes.push(candidate ? "candidate+plan" : "skeleton");
+  report.service.modes.push(candidate ? `candidate+plan${delayCandidateMs > 0 ? `+delay-${delayCandidateMs}ms` : ""}` : "skeleton");
   return out;
 }
 
@@ -403,10 +405,30 @@ function llmTraces(jobId) {
               .map((page) => Number(page?.pageIndex))
               .filter((page) => Number.isInteger(page))
           : [];
+        const toolObservations = (input.observations ?? []).map((observation) => {
+          const result = observation?.result ?? {};
+          const directPages = Array.isArray(result.pages) ? result.pages : [];
+          const satisfiedPages = Array.isArray(result.satisfied)
+            ? result.satisfied.flatMap((entry) => entry?.result?.pages ?? [])
+            : [];
+          return {
+            callId: observation?.callId ?? null,
+            status: observation?.status ?? null,
+            pageIndexes: [...new Set([...directPages, ...satisfiedPages]
+              .map((page) => Number(page?.pageIndex))
+              .filter((page) => Number.isInteger(page) && page >= 1))],
+          };
+        });
         traces.repairRounds.push({
           stamp: entry.stamp,
           observations: Array.isArray(input.observations) ? input.observations.length : 0,
+          toolObservations,
           differences: (input.context?.differences ?? []).length,
+          differenceTargets: (input.context?.differences ?? []).map((difference) => ({
+            targetType: difference?.targetType ?? null,
+            targetId: difference?.targetId ?? null,
+            field: difference?.field ?? null,
+          })),
           editVersion: input.context?.editVersion ?? null,
           protectedTargets: input.context?.protectedTargets ?? [],
           // 包模式的字段（`cloud_repair/packets.rs::build_packet`）。legacy 下 `packetId`
@@ -418,6 +440,7 @@ function llmTraces(jobId) {
           draftEditVersion: input.context?.draftSlice?.editVersion ?? null,
           packetId: input.context?.packetId ?? null,
           escalationLevel: input.context?.escalationLevel ?? null,
+          comparisonMode: input.context?.comparisonMode ?? null,
           packetMode: input.context?.contextMode === "packets",
           packetPages,
         });
@@ -471,6 +494,10 @@ function repairToolCalls(jobId) {
     .map((entry) => {
       try {
         const raw = JSON.parse(fs.readFileSync(path.join(dir, entry.file), "utf8"));
+        const inputPath = path.join(dir, `repair_authoring_step-input-${entry.stamp}.json`);
+        const input = fs.existsSync(inputPath)
+          ? JSON.parse(fs.readFileSync(inputPath, "utf8"))
+          : {};
         // 落盘的是**已解析的工具调用本身**（`{callId, tool, arguments}`），不是 OpenAI 那种
         // `choices[0].message.content` 信封。上一版按信封解，于是每一轮的 tool 都是 null，
         // 断言把「解析形状写错了」误报成「模型没按反馈修正」。两种形状都认。
@@ -483,6 +510,8 @@ function repairToolCalls(jobId) {
               : null;
         return {
           stamp: entry.stamp,
+          packetId: input.context?.packetId ?? null,
+          callId: call?.callId ?? null,
           tool: call?.tool ?? null,
           baseVersion: call?.arguments?.baseVersion ?? null,
           hasCommands: Array.isArray(call?.arguments?.commands),
@@ -596,6 +625,149 @@ function promptTextOf(ds, responseGroupId) {
 /** 权威稿里的答案键（用于「用户补答案」这一段的断言）。 */
 function answerOf(ds, slotId) {
   return (ds?.answerKey ?? {})[slotId] ?? null;
+}
+
+/** Pick a distinct unresolved answer target for the in-flight adoption protection scenario. */
+function humanProtectionProbe(ds, excludedSlotIds = []) {
+  const excluded = new Set(excludedSlotIds);
+  for (const group of ds?.taskGroups ?? []) {
+    for (const response of group.responseGroups ?? []) {
+      for (const slotId of response.slotIds ?? []) {
+        if (excluded.has(slotId) || answerOf(ds, slotId)?.kind !== "unresolved") continue;
+        const interaction = ds?.answerSlots?.[slotId]?.interaction;
+        const options = group.optionBank?.options ?? response.options ?? [];
+        if (["radio", "checkbox", "select"].includes(interaction) && options.length >= 2) {
+          const assignment = response.assignment ?? "per_slot";
+          return {
+            slotId,
+            candidateValue: { kind: "option", labels: [options[0].label], assignment },
+            userValue: { kind: "option", labels: [options[1].label], assignment },
+          };
+        }
+        if (interaction === "radio" || interaction === "checkbox" || interaction === "select") continue;
+        return {
+          slotId,
+          candidateValue: { kind: "text", normalization: "ielts_default", values: ["cloud"] },
+          userValue: { kind: "text", normalization: "ielts_default", values: ["human"] },
+        };
+      }
+    }
+  }
+  return null;
+}
+
+/** Real-app fallback proof: a normalized but ineligible candidate must not replace local draft. */
+async function runIneligibleCandidateFallback(derived) {
+  const primaryItemId = itemId;
+  let fallbackItemId = null;
+  const problems = [];
+  const candidateFile = path.join(scenarioDir, "authoring-candidate-ineligible.json");
+  try {
+    const ineligible = JSON.parse(JSON.stringify(derived.candidate));
+    // A failed chunk is an explicit candidate-level coverage defect. It remains structurally
+    // normalizable, but the candidate is partial and therefore ineligible for whole adoption.
+    // Keep authoring content untouched so this isolates the existing local-base repair fallback.
+    ineligible.uncoveredQuestionNumbers = [999];
+    fs.writeFileSync(candidateFile, JSON.stringify(ineligible, null, 2));
+
+    await session.clickSelector('[data-testid="workspace-back"]');
+    await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, {
+      timeoutMs: 30000,
+      label: "library-before-ineligible-candidate",
+    });
+    const health = await restartService({ candidate: candidateFile, plan: planPath });
+    if (!health.candidate || !health.plan) problems.push("受控服务没有装载不合格候选与修复剧本");
+
+    fallbackItemId = await importThroughUi();
+    itemId = fallbackItemId;
+    await session.clickSelector(`[data-item-id="${fallbackItemId}"] .library-row-main`);
+    await session.waitFor(`!!document.querySelector('[data-testid="exam-workspace"]')`, {
+      timeoutMs: 40000,
+      label: "ineligible-candidate-workspace",
+    });
+    await openPanel();
+
+    const local = await waitForLocalDraft(fallbackItemId, 180000);
+    if (!local) throw new Error("不合格候选场景没有本地正式稿");
+    const localPrompt = promptTextOf(local.ds, derived.fix.responseGroupId);
+    if (localPrompt !== derived.fix.before) {
+      problems.push(`修复前正式稿不是本地识别版本：${JSON.stringify(localPrompt)}`);
+    }
+
+    let finalRepair = null;
+    const deadline = Date.now() + 180000;
+    while (Date.now() < deadline) {
+      const decision = await readDecision();
+      const repair = decision?.repair ?? null;
+      const cloudState = decision?.chains?.cloud?.state ?? null;
+      if (repair && repair.status !== "running" && cloudState && !["queued", "running"].includes(cloudState)) {
+        finalRepair = repair;
+        break;
+      }
+      await sleep(600);
+    }
+    if (!finalRepair) throw new Error("不合格候选回退修复在 180 秒内没有进入终态");
+
+    const after = dumpDb(path.join(runDir, "db-ineligible-fallback-after.json"), "IneligibleFallbackAfter");
+    const adoption = finalRepair.candidateAdoption ?? null;
+    const finalPrompt = promptTextOf(after?.item?.canonical, derived.fix.responseGroupId);
+    const journal = Array.isArray(after?.journal) ? after.journal : [];
+    const adoptionWrites = journal.filter((entry) => entry.edit_origin === "cloud_candidate_adoption");
+    const repairWrites = journal.filter((entry) => entry.edit_origin === "cloud_repair");
+    if (adoption?.adopted !== false || adoption?.status !== "not_adopted") {
+      problems.push(`候选未被明确拒绝采纳：${JSON.stringify(adoption)}`);
+    }
+    if (!String(adoption?.reason ?? "").includes("未完整归一化成功")) {
+      problems.push(`拒绝原因没有记录候选覆盖不完整：${String(adoption?.reason ?? "")}`);
+    }
+    if (adoptionWrites.length > 0) problems.push("不合格候选仍写入了云端采纳修订");
+    if (repairWrites.length === 0) problems.push("回退后没有以云端校核事务修复本地正式稿");
+    if (finalPrompt !== derived.fix.after) {
+      problems.push(`本地稿回退修复没有得到原文题面：${JSON.stringify(finalPrompt)}`);
+    }
+
+    record(
+      "ineligible-candidate-falls-back-to-local-base",
+      problems.length === 0 ? SCENARIO_STATUS.PASSED : SCENARIO_STATUS.FAILED,
+      {
+        itemId: fallbackItemId,
+        localPrompt,
+        finalPrompt,
+        adoption,
+        candidateAdoptionJournalRows: adoptionWrites.length,
+        cloudRepairJournalRows: repairWrites.length,
+        problems,
+      },
+    );
+  } catch (error) {
+    problems.push(String(error?.message ?? error));
+    record("ineligible-candidate-falls-back-to-local-base", SCENARIO_STATUS.FAILED, {
+      itemId: fallbackItemId,
+      problems,
+    });
+  } finally {
+    itemId = primaryItemId;
+    try {
+      const inWorkspace = await session.evaluate(`!!document.querySelector('[data-testid="exam-workspace"]')`);
+      if (inWorkspace) await session.clickSelector('[data-testid="workspace-back"]');
+      await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, {
+        timeoutMs: 30000,
+        label: "library-after-ineligible-candidate",
+      });
+      await session.clickSelector(`[data-item-id="${primaryItemId}"] .library-row-main`);
+      await session.waitFor(`!!document.querySelector('[data-testid="exam-workspace"]')`, {
+        timeoutMs: 40000,
+        label: "primary-workspace-restored",
+      });
+      await openPanel();
+    } catch (error) {
+      report.findings.push({
+        id: "ineligible-candidate-ui-restore",
+        kind: "harness-recovery-failed",
+        detail: String(error?.message ?? error),
+      });
+    }
+  }
 }
 
 /** 文件 sha256。golden fixture 绑定的原文件必须与本次输入是同一份，否则标注不成立。 */
@@ -880,8 +1052,23 @@ async function main() {
           + `（标注期望 ${JSON.stringify(derived?.expected ?? null)}，实测 ${JSON.stringify(derived?.observed ?? null)}）`,
       );
     }
+    notExecutable(
+      "packet-mode-asked-for-the-missing-page",
+      `W1 答案主张场景没有可运行的派生样本：${derived?.reason ?? "本地稿不满足场景前提"}`,
+    );
     writeFinalReport();
     return;
+  }
+  const humanProbe = humanProtectionProbe(prepassDraft.ds, [derived.claim?.slotId].filter(Boolean));
+  if (humanProbe) {
+    // Harness-only competing answer values let the real editor journal exercise the same
+    // since-base rebase as an answer arriving while the candidate request is in flight.
+    derived.candidate.answerKey[humanProbe.slotId] = humanProbe.candidateValue;
+    report.scenario.humanProtection = {
+      slotId: humanProbe.slotId,
+      cloudCandidateValue: humanProbe.candidateValue,
+      expectedUserValue: humanProbe.userValue,
+    };
   }
   fs.writeFileSync(candidatePath, JSON.stringify(derived.candidate, null, 2));
   fs.writeFileSync(planPath, JSON.stringify(derived.plan, null, 2));
@@ -890,18 +1077,19 @@ async function main() {
   report.scenario.rule = derived.rule;
   report.scenario.unresolved = derived.plan.unresolved;
   report.scenario.differences = [
-    `task_group:${derived.rule.taskId}:instructions`,
     `response_group:${derived.fix.responseGroupId}:prompt`,
-    // W1（答案类场景）派生成功时会带出被认领的答案槽（claim）：它同样是稿子里的一处
-    // 真实差异，按同一命名惯例登记成 `slot:<slotId>:answer`。题面类场景没有 claim，
-    // 条件项为 null，过滤掉以保持数组元素都是字符串。
-    derived.claim ? `slot:${derived.claim.slotId}:answer` : null,
-  ].filter((item) => item !== null);
+    // W1 是必需差异；派生器没有 claim 时会拒绝返回可执行场景。
+    `slot:${derived.claim.slotId}:answer`,
+  ];
   // 这一条以前只记「派生成功了、文件写哪儿了」。它真正的断言是：派生出来的修复
   // **必须是一处真实的内容差异**（改前 ≠ 改后），否则后面的「云端改对了」就没有靶子。
   const deriveProblems = [];
   if (!derived.fix?.responseGroupId) deriveProblems.push("派生结果里没有作答组 id");
-  if (!derived.rule?.taskId) deriveProblems.push("派生结果里没有题组 id");
+  if (!derived.rule?.targetId) deriveProblems.push("派生结果里没有原文裁定目标");
+  if (!derived.claim?.slotId || !Array.isArray(derived.claim.searchPages) || derived.claim.searchPages.length === 0) {
+    deriveProblems.push("W1 没有可核对搜索页的答案主张");
+  }
+  if (!humanProbe) deriveProblems.push("真实稿里找不到与主张答案不同的未解析答案位，无法覆盖云端运行期间的用户手改保护");
   if (typeof derived.fix?.before !== "string" || derived.fix.before === derived.fix.after) {
     deriveProblems.push(`派生出的题面修改不是一处真实差异：before=${JSON.stringify(derived.fix?.before)} after=${JSON.stringify(derived.fix?.after)}`);
   }
@@ -917,6 +1105,7 @@ async function main() {
       differences: report.scenario.differences,
       // W1 认领信息随载荷如实上报；题面类场景没有 claim 时记 null。
       claim: derived.claim ?? null,
+      humanProtection: report.scenario.humanProtection,
       fix: { responseGroupId: derived.fix.responseGroupId, before: derived.fix.before, after: derived.fix.after },
       // 期望值的来源写清楚：断言时比的字符串来自 fixture，而不是脚本自己算的。
       golden: derived.golden,
@@ -926,6 +1115,10 @@ async function main() {
     });
   } else {
     record("derive-scenario-from-real-draft", SCENARIO_STATUS.FAILED, { problems: deriveProblems });
+    record("packet-mode-asked-for-the-missing-page", SCENARIO_STATUS.FAILED, {
+      problems: deriveProblems,
+      claim: derived.claim ?? null,
+    });
     writeFinalReport();
     return;
   }
@@ -982,7 +1175,8 @@ async function main() {
   }
 
   // ---- 3. 重启受控服务（这次带样本与剧本）----
-  await restartService({ candidate: candidatePath, plan: planPath });
+  const adoptionDelayMs = 45000;
+  await restartService({ candidate: candidatePath, plan: planPath, delayCandidateMs: adoptionDelayMs });
   // 「重启成功」的实质断言：服务真的活着，**而且**样本与剧本真的被它读进去了。
   // 以前只记了端口号，两个分支都 PASSED——重启失败也照样绿。
   const health1 = await waitForService();
@@ -991,12 +1185,14 @@ async function main() {
   // `/health` 回的是 `{ candidate, plan }` —— 载入的样本 / 剧本路径（未载入为 null）。
   if (health1 && !health1.candidate) scenarioProblems.push("受控服务没有载入候选样本");
   if (health1 && !health1.plan) scenarioProblems.push("受控服务没有载入修复剧本");
+  if (health1 && health1.delayCandidateMs !== adoptionDelayMs) scenarioProblems.push("受控服务没有延迟候选返回，无法覆盖运行期间的用户手改");
   if (scenarioProblems.length === 0) {
     record("controlled-service-restarted-with-scenario", SCENARIO_STATUS.PASSED, {
       port: servicePort,
       mode: health1.mode,
       candidate: health1.candidate,
       plan: health1.plan,
+      delayCandidateMs: health1.delayCandidateMs,
     });
   } else {
     record("controlled-service-restarted-with-scenario", SCENARIO_STATUS.FAILED, { problems: scenarioProblems, health: health1 });
@@ -1028,6 +1224,9 @@ async function main() {
   let finalRepair = null;
   let sawRunning = false;
   let baselineTooLate = false;
+  let humanProbeAttempted = false;
+  let humanProbeApplied = false;
+  let humanProbeError = null;
   while (Date.now() < repairDeadline) {
     // (a) 本地初稿一出现就**立刻**取基线——它必须落在云端写入之前。
     if (!draft) {
@@ -1076,6 +1275,40 @@ async function main() {
             ...report.observed.localDraft,
           });
         }
+      }
+    }
+    if (
+      draft
+      && humanProbe
+      && !humanProbeAttempted
+      && report.service.requestLines.some((line) => line.includes("task=generate_authoring_candidate"))
+    ) {
+      humanProbeAttempted = true;
+      try {
+        const liveWorkspace = await readWorkspace();
+        const baseVersion = workspaceVersion(liveWorkspace);
+        const edited = await call("apply_editor_commands", {
+          itemId,
+          commands: [{ op: "setAnswer", slotId: humanProbe.slotId, value: humanProbe.userValue }],
+          baseVersion,
+        });
+        if (!edited?.ok) throw new Error(`云端候选仍在运行时保存用户答案失败：${edited?.error ?? "unknown"}`);
+        const afterUserEdit = await readWorkspace();
+        const observed = answerOf(afterUserEdit?.ds, humanProbe.slotId);
+        if (!isDeepStrictEqual(observed, humanProbe.userValue)) {
+          throw new Error(`用户答案未落库：${JSON.stringify(observed)}`);
+        }
+        humanProbeApplied = true;
+        report.observed.userEditDuringCloud = {
+          slotId: humanProbe.slotId,
+          candidateValue: humanProbe.candidateValue,
+          userValue: humanProbe.userValue,
+          baseVersion,
+          editVersionAfterSave: workspaceVersion(afterUserEdit),
+          candidateRequestWasInFlight: true,
+        };
+      } catch (error) {
+        humanProbeError = String(error?.message ?? error);
       }
     }
     // (b) 进度采样：**从本地稿出现那一刻就开始**。等界面开完再采样，
@@ -1136,6 +1369,7 @@ async function main() {
   report.observed.editVersion = { before: versionBefore, after: versionAfter };
   report.observed.promptText = { before: promptBefore, after: promptAfter };
   report.modelTraces = { llm: llmTraces(itemId), toolCalls: repairToolCalls(itemId) };
+  report.observed.candidateAdoption = finalRepair.candidateAdoption ?? null;
 
   // ---- 10. 断言：云端**自己**改了什么 ----
   //
@@ -1149,7 +1383,11 @@ async function main() {
     );
   } else {
   const problems = [];
-  if (!(finalRepair.appliedCount >= 1)) problems.push(`appliedCount 应 >= 1，实际 ${finalRepair.appliedCount}`);
+  // 行为变化的原因：合格云端候选已在修复循环前通过 B1 正式写入；这里验证该采纳事务，
+  // 而不是要求 repair.appliedCount 再重复写一次相同题面。原文裁定仍必须真实发生。
+  if (finalRepair.candidateAdoption?.adopted !== true) {
+    problems.push(`云端候选应先被正式采纳，实际 ${JSON.stringify(finalRepair.candidateAdoption ?? null)}`);
+  }
   // 版本必须**两个都读到了**才谈得上「推进」。显式拒绝 null：`2 > null` 在 JS 里是 true
   // （null 被转成 0），把「快照缺失」读成「版本推进了」。
   if (versionBefore == null || versionAfter == null) {
@@ -1164,11 +1402,19 @@ async function main() {
   if (!applied) problems.push("权威稿差异里没有这条题面修改");
   if (!(finalRepair.adjudicatedCount >= 1)) problems.push(`adjudicatedCount 应 >= 1，实际 ${finalRepair.adjudicatedCount}`);
   const remainingIds = (finalRepair.remainingTasks ?? []).map((task) => task.userTaskId ?? "");
-  if (remainingIds.some((id) => id.includes(`cloud-diff:task_group:${derived.rule.taskId}:instructions`))) {
-    problems.push("已裁定的差异仍然出现在用户剩余任务里");
+  if (remainingIds.includes(`cloud-diff:response_group:${derived.fix.responseGroupId}:prompt`)) {
+    problems.push("原文已支持云端正式题面的差异仍出现在用户剩余任务里");
   }
   if (!remainingIds.some((id) => id.startsWith("cloud-question:"))) {
     problems.push("模型明确留下的疑问没有出现在剩余任务里");
+  }
+  if (!derived.claim?.slotId) {
+    problems.push("W1 答案主张没有 slotId，无法检查用户待办");
+  } else if (!(finalRepair.remainingTasks ?? []).some((task) =>
+    (task.targetIds ?? []).includes(derived.claim.slotId)
+    || String(task.userTaskId ?? "").includes(derived.claim.slotId),
+  )) {
+    problems.push(`原文无法判定的答案差异 ${derived.claim.slotId} 没有进入用户待办`);
   }
   const everyTaskActionable = (finalRepair.remainingTasks ?? []).every(
     (task) => typeof task.action === "string" && task.action.length > 0,
@@ -1177,13 +1423,55 @@ async function main() {
   if (problems.length === 0) {
     record("cloud-fixed-content-on-its-own", SCENARIO_STATUS.PASSED, {
       appliedCount: finalRepair.appliedCount,
+      adoption: finalRepair.candidateAdoption,
       adjudicatedCount: finalRepair.adjudicatedCount,
       editVersion: report.observed.editVersion,
       promptAfter,
+      behaviorChange: "B1 adopted the qualified candidate before repair; repair adjudicates source-backed cloud content instead of applying the same edit again.",
     });
   } else {
     record("cloud-fixed-content-on-its-own", SCENARIO_STATUS.FAILED, { problems });
   }
+  }
+
+  const humanPreservedValue = report.scenario.humanProtection
+    ? answerOf(dbAfter?.item?.canonical, report.scenario.humanProtection.slotId)
+    : null;
+  const humanProtectionProblems = [];
+  if (!humanProbeApplied) {
+    humanProtectionProblems.push(humanProbeError ?? "云端候选返回前没有成功保存用户答案");
+  }
+  if (finalRepair.candidateAdoption?.adopted !== true) {
+    humanProtectionProblems.push("本次没有发生云端采纳，不能证明采纳过程保留手改");
+  }
+  if (
+    report.scenario.humanProtection
+    && !isDeepStrictEqual(humanPreservedValue, report.scenario.humanProtection.expectedUserValue)
+  ) {
+    humanProtectionProblems.push(`用户答案没有保留：${JSON.stringify(humanPreservedValue)}`);
+  }
+  if (
+    report.scenario.humanProtection
+    && isDeepStrictEqual(
+      report.scenario.humanProtection.cloudCandidateValue,
+      report.scenario.humanProtection.expectedUserValue,
+    )
+  ) {
+    humanProtectionProblems.push("测试前提错误：云端候选值与用户值相同，无法区分是否保留");
+  }
+  if (humanProtectionProblems.length === 0) {
+    record("user-answer-edited-during-cloud-is-preserved", SCENARIO_STATUS.PASSED, {
+      ...report.observed.userEditDuringCloud,
+      finalValue: humanPreservedValue,
+      adoption: finalRepair.candidateAdoption,
+    });
+  } else {
+    record("user-answer-edited-during-cloud-is-preserved", SCENARIO_STATUS.FAILED, {
+      problems: humanProtectionProblems,
+      userEditDuringCloud: report.observed.userEditDuringCloud ?? null,
+      finalValue: humanPreservedValue,
+      adoption: finalRepair.candidateAdoption ?? null,
+    });
   }
 
   // ---- 10b. 断言：这次「云端改对了」不是自证 ----
@@ -1307,7 +1595,7 @@ async function main() {
     }
   }
 
-  // ---- 11. 断言：模型是**照着真实反馈**改的 ----
+  // ---- 11. 断言：修复循环按当前云端正式稿读取本地挑战并依据原文裁定 ----
   //
   // 这条步骤必须**按模式分流**。原先它把 legacy 的回合形状（read_draft → read_source →
   // 被拒的 apply_edits → 带 baseVersion 重交 → record_ruling → finish）写成了硬断言，
@@ -1316,14 +1604,33 @@ async function main() {
   // 形状完全不同（没有 read_draft，收工是 `finish_packet`，一个包一轮循环）。硬断言
   // 必然红，而且红得没有信息量：那不是「模型没照反馈改」，是断言在问一个包模式下不存在的问题。
   //
-  // 两种模式要证明的是**同一件事**：写进稿子的 `baseVersion` 是模型从**真实请求**里读到的，
-  // 不是剧本里的常量。legacy 读顶层 `editVersion`，包模式读 `draftSlice.editVersion`；
-  // 两个值都从请求体落盘文件里取，所以这条断言两边都可证伪。
+  // 行为变化原因：B1 在修复循环开始前已经一次事务采纳云端候选；B2 的正式稿是云端、
+  // 冻结本地稿是挑战方。若原文支持云端题面，循环应记录有引文的裁定，不应重复 apply_edits。
+  // 这里检查真实请求采用的 comparisonMode、真实差异和从原文读取的裁定证据；如有编辑，
+  // 仍逐一核对 baseVersion 来自同一轮请求。
   const rounds = report.modelTraces.toolCalls;
   const roundInputs = report.modelTraces.llm.repairRounds ?? [];
   const contextMode = repairContextMode();
   const feedbackProblems = [];
-  const readDraftRound = roundInputs[0];
+  const adoptedInputs = roundInputs.filter(
+    (round) => round.comparisonMode === "adopted_cloud_vs_local_snapshot",
+  );
+  if (adoptedInputs.length === 0) {
+    feedbackProblems.push("修复请求没有声明 adopted_cloud_vs_local_snapshot，无法证明云端正式稿是当前稿");
+  }
+  const expectedPromptRuling = `response_group:${derived.fix.responseGroupId}:prompt=current_is_correct`;
+  const promptRuling = rounds.find(
+    (round) => round.tool === "record_ruling" && (round.rulings ?? []).includes(expectedPromptRuling),
+  );
+  if (!promptRuling) {
+    feedbackProblems.push("没有为原文支持的云端正式题面记录 current_is_correct 裁定");
+  } else if (!(promptRuling.evidence ?? []).some((entry) => {
+    const quote = String(entry.quote ?? "");
+    return Number(entry.pageIndex) === Number(derived.fix.sourcePageOneBased)
+      && quote.includes(`${derived.fix.questionNumber} ${derived.fix.after}`);
+  })) {
+    feedbackProblems.push("云端正式题面的裁定没有带上原文题号行的逐字引文");
+  }
   if (contextMode === "packets") {
     const unknown = rounds
       .map((round) => round.tool)
@@ -1332,13 +1639,10 @@ async function main() {
       feedbackProblems.push(`出现了包模式清单外的工具：${[...new Set(unknown)].join("、")}`);
     }
     if (rounds.length < 2) {
-      feedbackProblems.push(`至少应有 2 轮工具调用（一轮构不成「照反馈修正」），实际 ${rounds.length}`);
+      feedbackProblems.push(`至少应有 2 轮工具调用（一轮不能同时证明取证与裁定），实际 ${rounds.length}`);
     }
     const inputsByStamp = new Map(roundInputs.map((round) => [round.stamp, round]));
     const edits = rounds.filter((round) => round.tool === "apply_edits");
-    if (edits.length === 0) {
-      feedbackProblems.push("整条修复回合里没有一次 apply_edits：题面根本没被改过");
-    }
     for (const edit of edits) {
       const fromRequest = inputsByStamp.get(edit.stamp)?.draftEditVersion ?? null;
       if (edit.baseVersion == null) {
@@ -1353,54 +1657,40 @@ async function main() {
       }
     }
   } else {
-    if (rounds.length < 5) feedbackProblems.push(`至少应有 5 轮工具调用，实际 ${rounds.length}`);
-    if (rounds[0]?.tool !== "read_draft") feedbackProblems.push(`第 1 轮应为 read_draft，实际 ${rounds[0]?.tool}`);
-    // 第 2 轮必须是 read_source：少了它，「照真实反馈改」就退化成照剧本改。
-    // （read_source 是后加的，下面所有轮次序号都跟着后移一位。）
-    if (rounds[1]?.tool !== "read_source") feedbackProblems.push(`第 2 轮应为 read_source，实际 ${rounds[1]?.tool}`);
-    if (rounds[2]?.tool !== "apply_edits" || rounds[2]?.baseVersion != null) {
-      feedbackProblems.push(`第 3 轮应为不带 baseVersion 的 apply_edits，实际 ${rounds[2]?.tool}/${rounds[2]?.baseVersion}`);
-    }
-    if (rounds[3]?.tool !== "apply_edits" || rounds[3]?.baseVersion == null) {
-      feedbackProblems.push(`第 4 轮应带 baseVersion 重交，实际 ${rounds[3]?.tool}/${rounds[3]?.baseVersion}`);
-    }
-    if (readDraftRound && rounds[3]?.baseVersion !== readDraftRound.editVersion) {
-      feedbackProblems.push(`第 4 轮的 baseVersion(${rounds[3]?.baseVersion}) 必须等于第 1 轮真实读到的 editVersion(${readDraftRound.editVersion})`);
-    }
-    if (rounds[4]?.tool !== "record_ruling") feedbackProblems.push(`第 5 轮应为 record_ruling，实际 ${rounds[4]?.tool}`);
-    if ((rounds.at(-1)?.tool ?? null) !== "finish") feedbackProblems.push(`最后一轮应为 finish，实际 ${rounds.at(-1)?.tool}`);
-    if ((rounds.at(-1)?.unresolved ?? 0) < 1) feedbackProblems.push("finish 必须留下至少一条未解疑问");
+    const sourceReads = rounds.filter((round) => round.tool === "read_source");
+    if (sourceReads.length === 0) feedbackProblems.push("legacy 模式没有 read_source，无法证明裁定来自原文");
   }
   if (feedbackProblems.length === 0) {
-    record("model-corrected-itself-from-real-feedback", SCENARIO_STATUS.PASSED, {
+    record("model-adjudicated-adopted-cloud-from-real-feedback", SCENARIO_STATUS.PASSED, {
       contextMode,
       rounds: rounds.map((round) => round.tool),
       baseVersions: rounds.filter((round) => round.tool === "apply_edits").map((round) => round.baseVersion ?? null),
-      readDraftEditVersion: readDraftRound?.editVersion ?? null,
+      promptRuling: expectedPromptRuling,
+      rulingEvidence: promptRuling?.evidence ?? [],
+      comparisonMode: adoptedInputs[0]?.comparisonMode,
       draftEditVersions: roundInputs.map((round) => round.draftEditVersion ?? null),
+      behaviorChange: "The adopted candidate already contains the source-backed prompt; repair records the evidence-backed ruling instead of re-applying it.",
     });
   } else {
-    record("model-corrected-itself-from-real-feedback", SCENARIO_STATUS.FAILED, { contextMode, problems: feedbackProblems });
+    record("model-adjudicated-adopted-cloud-from-real-feedback", SCENARIO_STATUS.FAILED, { contextMode, problems: feedbackProblems });
   }
 
   // ---- 11b. 断言：包模式下至少一个包走了 L1，且最终稿正确 ----
   //
   // 任务书 §7 要求「新增一步断言至少一个包走了 L1 且最终稿正确」。两件事必须**一起**
   // 断言：「包更小了」本身不是成绩——如果代价是模型拿不到该看的页，那只是把问题藏起来。
-  // L1 的判据取自 `llm-calls.jsonl` 的逐包记录（`packetId` + `escalationLevel`），
-  // 不是脚本自己的推断。
+  // L1 的判据来自 `llm-calls.jsonl` 的逐包级别，并与修复输入中的答案差异目标、
+  // 同一 packet 的已成功工具 observation 按 callId 对账；不能由无关包替它背书。
   //
   // L1 有两条腿（`mod.rs`：`report_insufficient_context` 与任何一个抓取工具都会把级别抬到 1），
   // 所以「一个包走了 L1」既可以是「它明说不够、要来了那一页」，也可以是「它自己伸手去取」。
   //
-  // 失败时的载荷必须能直接回答「为什么没走到 L1」：逐包的 `pagesIncluded` 与「承载正确答案的
-  // 那一页在不在这个包里」都要写出来。少了这两项，红了的报告只会说「全是 0」，
-  // 而看不出是「这一卷的包恰好自足」还是「模型没敢要」——两者的处置完全不同。
+  // 失败时报告首轮包页、claim 搜索页、工具 callId/返回页和升级级别，能区分首轮自足、
+  // 没发起抓取、抓取失败、抓到无关页，以及真正的同包 L1。
   const callRecords = report.modelTraces.llm?.callRecords ?? [];
   const packetCalls = callRecords.filter(
     (entry) => typeof entry.packetId === "string" && entry.packetId.startsWith("pkt-"),
   );
-  const l1Calls = packetCalls.filter((entry) => Number(entry.escalationLevel ?? 0) >= 1);
   const fixPageOneBased = Number(derived.fix.sourcePageOneBased);
   const packetDiagnostics = [...new Set(packetCalls.map((entry) => entry.packetId))].map((packetId) => {
     const calls = packetCalls.filter((entry) => entry.packetId === packetId);
@@ -1416,17 +1706,20 @@ async function main() {
     };
   });
   const selfSufficient = packetDiagnostics.filter((entry) => entry.firstCallHadFixPage === true);
+  const answerClaimL1 = diagnoseAnswerClaimL1({
+    claim: derived.claim,
+    repairRounds: report.modelTraces.llm?.repairRounds ?? [],
+    callRecords: packetCalls,
+    toolCalls: report.modelTraces.toolCalls ?? [],
+  });
   const packetProblems = [];
   if (packetCalls.length === 0) {
     packetProblems.push("没有任何修复调用带上包 id：包模式没有真的生效（或可观测性字段没落盘）");
   }
-  if (l1Calls.length === 0) {
+  if (!answerClaimL1.ok) {
     packetProblems.push(
-      `${packetCalls.length} 次修复调用的升级级别全是 0，没有任何包走到 L1。`
-        + `本次共 ${packetDiagnostics.length} 个包，其中 ${selfSufficient.length} 个在第一次请求里就已经带着承载正确答案的第 ${fixPageOneBased} 页`
-        + `（逐包明细见 packets）：若全部自足，说明这一卷的包没有「要不到材料」的机会，`
-        + "那么「至少一个包走 L1」这件事只能由另一份卷子或另一条差异来证明，不能靠这一条硬撑；"
-        + "若并不自足，那就是模型没敢要——这是缺陷。",
+      `W1 答案主张没有按需带入原文搜索页：${answerClaimL1.problems.join("；")}`
+        + `。首轮已带题面校核页的普通包数 ${selfSufficient.length}/${packetDiagnostics.length}；完整逐包明细见报告。`,
     );
   }
   // 「最终稿正确」与步骤 10 同一判据，且用的是**落库后的权威稿**，不是脚本的期望值。
@@ -1439,7 +1732,7 @@ async function main() {
   if (packetProblems.length === 0) {
     record("packet-mode-asked-for-the-missing-page", SCENARIO_STATUS.PASSED, {
       packetCalls: packetCalls.length,
-      l1Calls: l1Calls.length,
+      answerClaimL1,
       escalationLevels: packetCalls.map((entry) => entry.escalationLevel),
       packetIds: [...new Set(packetCalls.map((entry) => entry.packetId))],
       packets: packetDiagnostics,
@@ -1451,6 +1744,7 @@ async function main() {
     record("packet-mode-asked-for-the-missing-page", SCENARIO_STATUS.FAILED, {
       problems: packetProblems,
       packets: packetDiagnostics,
+      answerClaimL1,
       fixPageOneBased,
       finalPrompt: promptAfter,
     });
@@ -1479,10 +1773,29 @@ async function main() {
   if (!canvasText) canvasProblems.push("作者画布不在 DOM 里");
   else {
     if (derived.fix.before && canvasText.includes(derived.fix.before)) canvasProblems.push("画布上仍是改前的题面");
+    if (!canvasText.includes(derived.fix.after)) canvasProblems.push("画布没有显示云端候选采纳后的原文题面");
     if (/BLANK PAGE/u.test(canvasText)) canvasProblems.push("画布上仍能看到页脚残留");
   }
   if (canvasProblems.length === 0) record("canvas-refreshed-after-cloud-write", SCENARIO_STATUS.PASSED, { sample: (canvasText ?? "").slice(0, 200) });
   else record("canvas-refreshed-after-cloud-write", SCENARIO_STATUS.FAILED, { problems: canvasProblems });
+  const adoptionNotice = await session.waitFor(
+    `(() => { const el = document.querySelector('[data-testid="workspace-cloud-adoption-notice"]'); const text = el ? el.innerText.replace(/\\s+/g, ' ').trim() : ''; return text.includes('已采用云端识别结果') ? text : null; })()`,
+    { timeoutMs: 15000, intervalMs: 500, label: "cloud-adoption-notice" },
+  ).catch(() => null);
+  const adoptionUiProblems = [];
+  if (finalRepair.candidateAdoption?.adopted !== true) adoptionUiProblems.push("后端批次没有记录采纳成功");
+  if (!finalRepair.undoAvailable) adoptionUiProblems.push("正式稿批次没有提供整批撤销");
+  if (!adoptionNotice) adoptionUiProblems.push("工作区没有出现非打断式云端采纳提示");
+  if (!canvasText?.includes(derived.fix.after)) adoptionUiProblems.push("采纳后画布未显示云端正式题面");
+  if (adoptionUiProblems.length === 0) {
+    record("cloud-adoption-refreshes-canvas-and-offers-undo", SCENARIO_STATUS.PASSED, {
+      notice: adoptionNotice,
+      undoAvailable: finalRepair.undoAvailable,
+      repairRunId: finalRepair.repairRunId ?? null,
+    });
+  } else {
+    record("cloud-adoption-refreshes-canvas-and-offers-undo", SCENARIO_STATUS.FAILED, { problems: adoptionUiProblems, notice: adoptionNotice });
+  }
   await session.screenshot("canvas-after-cloud-repair");
 
   // ---- 14. 剩余任务：界面与后端一致，且每条都有真实动作 ----
@@ -1673,7 +1986,12 @@ async function main() {
       for (const slotId of response.slotIds ?? []) {
         const answer = answerOf(draft, slotId);
         if (answer?.kind === "unresolved") {
-          humanSlot = { slotId, interaction: draft.answerSlots?.[slotId]?.interaction ?? "text" };
+          humanSlot = {
+            slotId,
+            interaction: draft.answerSlots?.[slotId]?.interaction ?? "text",
+            options: group.optionBank?.options ?? response.options ?? [],
+            assignment: response.assignment ?? "per_slot",
+          };
           break;
         }
       }
@@ -1682,8 +2000,12 @@ async function main() {
     if (humanSlot) break;
   }
   if (humanSlot) {
-    const value = humanSlot.interaction === "radio" || humanSlot.interaction === "checkbox"
-      ? { kind: "option", labels: ["YES"] }
+    const value = ["radio", "checkbox", "select"].includes(humanSlot.interaction)
+      ? {
+          kind: "option",
+          labels: [humanSlot.options[1]?.label ?? humanSlot.options[0]?.label ?? "A"],
+          assignment: humanSlot.assignment,
+        }
       : { kind: "text", values: ["controlled-user-answer"] };
     const appliedHuman = await call("apply_editor_commands", {
       itemId,
@@ -1694,13 +2016,13 @@ async function main() {
     await sleep(1200);
     const afterHuman = await readWorkspace();
     const stored = answerOf(afterHuman?.ds, humanSlot.slotId);
-    if (JSON.stringify(stored) !== JSON.stringify(value)) {
+    if (!isDeepStrictEqual(stored, value)) {
       humanProblems.push(`用户补的答案没有落库：${JSON.stringify(stored)}`);
     }
     await reopenWorkspace();
     const reopened = await readWorkspace();
     const afterReopen = answerOf(reopened?.ds, humanSlot.slotId);
-    if (JSON.stringify(afterReopen) !== JSON.stringify(value)) {
+    if (!isDeepStrictEqual(afterReopen, value)) {
       humanProblems.push("重开之后用户的答案丢了");
     }
     const reopenedPrompt = promptTextOf(reopened?.ds, derived.fix.responseGroupId);
@@ -1713,6 +2035,10 @@ async function main() {
   } else {
     record("human-edit-saves-and-survives-reopen", SCENARIO_STATUS.FAILED, { problems: humanProblems });
   }
+
+  // Candidate coverage rejection is a separate product path: prove the existing local-base
+  // repair flow still runs and does not create a cloud-adoption journal entry.
+  await runIneligibleCandidateFallback(derived);
 
   // ---- 17. 导出：先看真实门禁怎么说，再由**用户**补齐答案 ----
   if (!skipExport) {
@@ -1744,7 +2070,7 @@ async function main() {
           const answer = answerOf(workspaceNow?.ds, slotId);
           if (answer?.kind !== "unresolved") continue;
           const interaction = workspaceNow?.ds?.answerSlots?.[slotId]?.interaction ?? "text";
-          if (interaction === "radio" || interaction === "checkbox") {
+          if (["radio", "checkbox", "select"].includes(interaction)) {
             const bank = group.optionBank?.options ?? response.options ?? [];
             const label = bank[0]?.label ?? "A";
             commands.push({

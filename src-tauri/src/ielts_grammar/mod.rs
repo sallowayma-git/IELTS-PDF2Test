@@ -186,6 +186,11 @@ pub(crate) fn build_authoring_v2_shadow_for_modality(
     let completion_blanks = physical_shadow
         .map(completion_blanks_from_shadow)
         .unwrap_or_default();
+    let page_number_block_ids = crate::authoring_pipeline::dynamic_document_blocks(v1_document)
+        .into_iter()
+        .filter(crate::authoring_pipeline::is_dynamic_page_number_block)
+        .map(|block| crate::authoring_pipeline::dynamic_block_id(&block))
+        .collect::<BTreeSet<_>>();
     let passage = if listening {
         Value::Null
     } else {
@@ -200,6 +205,7 @@ pub(crate) fn build_authoring_v2_shadow_for_modality(
             source_file_id,
             source_hash,
             source_type,
+            &page_number_block_ids,
         )
     };
     let mut task_groups = Vec::new();
@@ -522,6 +528,7 @@ fn build_passage(
     source_file_id: &str,
     source_hash: &str,
     source_type: &str,
+    page_number_block_ids: &BTreeSet<String>,
 ) -> Value {
     let candidate = split
         .get("passageCandidates")
@@ -560,9 +567,11 @@ fn build_passage(
     let mut passage_lines = v1_lines
         .iter()
         .filter(|line| {
-            range_ids.contains(&line.id)
-                || (passage_pages.contains(&line.page_index)
-                    && !question_pages.contains(&line.page_index))
+            !page_number_block_ids.contains(&line.id)
+                && !crate::authoring_pipeline::is_dynamic_passage_preamble_text(&line.text)
+                && (range_ids.contains(&line.id)
+                    || (passage_pages.contains(&line.page_index)
+                        && !question_pages.contains(&line.page_index)))
         })
         .filter_map(|line| {
             let mut line = line.clone();
@@ -619,6 +628,11 @@ fn build_passage(
         .and_then(|value| value.get("title"))
         .and_then(Value::as_str)
         .unwrap_or(&job.title);
+    let title = if crate::authoring_pipeline::is_dynamic_passage_preamble_text(title) {
+        &job.title
+    } else {
+        title
+    };
     let anchors = passage_lines
         .iter()
         .map(|line| line.source_anchor.clone())
@@ -1011,7 +1025,17 @@ fn build_responses_and_slots(
     {
         option_run_value(run, &format!("{task_id}-option"))
     } else {
-        fixed_options_from_v1(task_id, candidate, v1_group, task_anchors)
+        let first_v1_question = v1_group
+            .and_then(|group| group.get("questions"))
+            .and_then(Value::as_array)
+            .and_then(|questions| questions.first());
+        fixed_options_from_v1(
+            task_id,
+            candidate,
+            v1_group,
+            first_v1_question,
+            task_anchors,
+        )
     };
     let option_bank_ref = option_bank_ref.map(ToString::to_string);
     if shared {
@@ -1112,6 +1136,7 @@ fn build_responses_and_slots(
                 &format!("{task_id}-{number}"),
                 candidate,
                 v1_group,
+                v1_question,
                 task_anchors,
             )
         });
@@ -1414,21 +1439,18 @@ fn fixed_options_from_v1(
     id_prefix: &str,
     candidate: &Value,
     v1_group: Option<&Value>,
+    v1_question: Option<&Value>,
     anchors: &[Value],
 ) -> Vec<Value> {
-    let mut labels = candidate
+    let v1_question = v1_question.or_else(|| {
+        v1_group
+            .and_then(|group| group.get("questions"))
+            .and_then(Value::as_array)
+            .and_then(|questions| questions.first())
+    });
+    let candidate_labels = candidate
         .pointer("/classification/interaction/options")
         .and_then(Value::as_array)
-        .or_else(|| {
-            v1_group.and_then(|group| {
-                group
-                    .get("questions")
-                    .and_then(Value::as_array)
-                    .and_then(|questions| questions.first())
-                    .and_then(|question| question.pointer("/interaction/options"))
-                    .and_then(Value::as_array)
-            })
-        })
         .map(|items| {
             items
                 .iter()
@@ -1436,21 +1458,39 @@ fn fixed_options_from_v1(
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
         })
-        .unwrap_or_default();
-    if labels.is_empty() {
-        labels = Vec::new();
-    }
+        .filter(|labels| !labels.is_empty());
+    let v1_labels = v1_question
+        .and_then(|question| question.pointer("/interaction/options"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .filter(|labels| !labels.is_empty());
+    let labels = candidate_labels.or(v1_labels).unwrap_or_default();
+    let option_texts = candidate
+        .pointer("/classification/interaction/optionTexts")
+        .or_else(|| v1_question.and_then(|question| question.pointer("/interaction/optionTexts")));
     labels
         .into_iter()
         .enumerate()
         .map(|(index, label)| {
             let anchor = anchors.first().cloned().unwrap_or_else(empty_anchor);
+            let content_text = option_texts
+                .and_then(|texts| texts.get(&label))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .unwrap_or(label.as_str());
             json!({
                 "optionId": format!("{id_prefix}-fixed-option-{}", index + 1),
                 "label": label,
                 "content": [text_node(
                     &format!("{id_prefix}-fixed-option-text-{}", index + 1),
-                    &label,
+                    content_text,
                     Some(anchor.clone()),
                 )],
                 "sourceAnchors": [anchor]
@@ -1489,7 +1529,12 @@ fn fixed_response_option_bank(
     if canonical_labels.is_none() && !is_matching && !is_shared_unordered {
         return None;
     }
-    let mut options = fixed_options_from_v1(task_id, candidate, v1_group, anchors);
+    let first_v1_question = v1_group
+        .and_then(|group| group.get("questions"))
+        .and_then(Value::as_array)
+        .and_then(|questions| questions.first());
+    let mut options =
+        fixed_options_from_v1(task_id, candidate, v1_group, first_v1_question, anchors);
     if options.is_empty() {
         let canonical_labels = canonical_labels?;
         let anchor = anchors.first().cloned().unwrap_or_else(empty_anchor);
@@ -2921,6 +2966,36 @@ mod tests {
             .filter_map(|node| node.get("slotId").and_then(Value::as_str))
             .collect::<Vec<_>>();
         assert_eq!(stimulus_slot_ids, vec!["q24", "q25", "q26"]);
+    }
+
+    #[test]
+    fn fixed_options_from_v1_uses_the_question_specific_source_text() {
+        let candidate = json!({
+            "classification": {"interaction": {"options": ["A", "B"]}}
+        });
+        let v1_group = json!({
+            "questions": [
+                {
+                    "displayNumber":"36",
+                    "interaction":{"options":["A","B"],"optionTexts":{"A":"q36 A text","B":"q36 B text"}}
+                },
+                {
+                    "displayNumber":"37",
+                    "interaction":{"options":["A","B"],"optionTexts":{"A":"q37 A text","B":"q37 B text"}}
+                }
+            ]
+        });
+        let q37 = &v1_group["questions"][1];
+        let options = fixed_options_from_v1(
+            "group-1-37",
+            &candidate,
+            Some(&v1_group),
+            Some(q37),
+            &[],
+        );
+        assert_eq!(options[0]["label"], "A");
+        assert_eq!(options[0]["content"][0]["text"], "q37 A text");
+        assert_eq!(options[1]["content"][0]["text"], "q37 B text");
     }
 
     #[test]
