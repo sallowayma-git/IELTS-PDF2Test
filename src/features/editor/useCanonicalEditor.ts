@@ -44,7 +44,6 @@ interface SaveBatch {
   title?: string;
 }
 interface RecoveryDraft {
-  draft: IeltsAuthoringIRV2;
   version: number;
   title?: string;
   pending: AuthoringPatchV2[];
@@ -161,7 +160,7 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
     try {
       if (count && draftRef.current) {
         const recovery: RecoveryDraft = {
-          draft: draftRef.current, version: versionRef.current, title: titleRef.current,
+          version: versionRef.current, title: titleRef.current,
           pending: pendingRef.current, pendingTitle: pendingTitleRef.current, batch: batchRef.current
         };
         localStorage.setItem(recoveryKey, JSON.stringify(recovery));
@@ -372,13 +371,21 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
       try {
         const saved = localStorage.getItem(recoveryKey);
         const recovery: RecoveryDraft | undefined = saved ? JSON.parse(saved) : undefined;
-        if (recovery?.draft && Array.isArray(recovery.pending)) {
-          loaded = recovery.draft;
+        const outstanding = recovery && Array.isArray(recovery.pending)
+          ? [...(recovery.batch?.commands ?? []), ...recovery.pending]
+          : [];
+        if (recovery && Array.isArray(recovery.pending) && (outstanding.length || recovery.pendingTitle !== undefined)) {
           loadedTitle = recovery.title ?? loadedTitle;
           setVersion(recovery.version);
           pendingRef.current = recovery.pending;
           pendingTitleRef.current = recovery.pendingTitle;
           batchRef.current = recovery.batch;
+          // 不再存整份稿：从服务端权威稿 + 未提交命令重建工作稿。服务端仍停在崩溃时的基线→
+          // 精确重放；已推进→尽力展示，真正的合并交给恢复后 persist 撞 CAS 的既有冲突流程，
+          // 绝不静默覆盖服务端的新版本。旧格式记录带的整份稿一并忽略（下面的字段两种格式都有）。
+          loaded = workspace.editVersion === recovery.version
+            ? applyLocalPatches(loaded, outstanding)
+            : rebasePendingPatches(loaded, outstanding).rebased;
           setSaveState("failed");
           setSaveMessage("已恢复未保存的修改，请重试保存。");
         }
