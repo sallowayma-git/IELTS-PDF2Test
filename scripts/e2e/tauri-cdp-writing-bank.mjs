@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // C3 写作题库真实应用 e2e：#/legacy/writing 重定向到题库写作子标签 → 新建 Task 1 + Task 2、
-// 填题目、标记可导出 → 导出（走 PDF2TEST_AUTOMATION_EXPORT_DIR 钩子，不弹原生框）→
+// 填题目、标记可导出 → 导出 →
 // 检查产物文件存在且含刚录入的题目文本 → 删除一题后列表同步。
 import fs from "node:fs";
 import path from "node:path";
@@ -38,12 +38,12 @@ async function writingJobCount(session) {
   return await session.evaluate(`document.querySelectorAll('[data-testid="writing-job-table"] .job-row').length`);
 }
 
-// 新建一道 taskType 的写作题并填题目、标记可导出。返回新建后的 job 数。
 async function createAndReadyTask(session, taskType, promptText) {
   await setControlled(session, '.writing-create-form select', taskType);
-  await session.clickByText('新建写作任务');
+  // 「新建写作任务」既是分区 eyebrow 又是按钮文案，clickByText 会命中靠前的 eyebrow（点了没反应），
+  // 故用创建表单里唯一的按钮定位。
+  await session.clickSelector('.writing-create-form button');
   await sleep(800);
-  // 选中最新一行（新建后默认选中它），填题目。
   await session.waitFor(`!!document.querySelector('.writing-prompt-textarea')`, { timeoutMs: 8000, label: "editor" });
   await setControlled(session, '.writing-prompt-textarea', promptText);
   await session.clickByText('保存');
@@ -71,24 +71,21 @@ async function main() {
     report.browserArgs = session.browserArgs;
     await session.evaluate(`(() => { window.confirm = () => true; return true; })()`);
 
-    // 1) #/legacy/writing 重定向到题库写作子标签。
     await session.evaluate(`(() => { window.location.hash = "#/legacy/writing"; return true; })()`);
     await session.waitFor(`!!document.querySelector('[data-testid="library-writing-panel"]')`, { timeoutMs: 20000, label: "writing-panel" });
     const hash = await session.evaluate(`window.location.hash`);
     recordAssertion(report, "C3-1 legacy-writing-redirects-to-subtab", String(hash).includes("modality=writing"),
       `#/legacy/writing 落到 ${JSON.stringify(hash)}，写作面板已渲染`);
 
-    // 2) 新建 Task 1 + Task 2 并标记可导出。
     await createAndReadyTask(session, "task1", T1);
     await createAndReadyTask(session, "task2", T2);
     const count = await writingJobCount(session);
     recordAssertion(report, "C3-2 create-two-tasks", count === 2, `写作任务数=${count}（期望 2）`);
 
-    // 3) 就地导出（走自动化目录钩子，不弹原生框）。
+    // 导出走 PDF2TEST_AUTOMATION_EXPORT_DIR 钩子，不弹 CDP 点不了的原生框。
     await session.clickSelector('[data-testid="writing-export"]');
     await session.waitFor(`(document.querySelector('[data-testid="writing-notice"]')?.textContent ?? '').includes('已导出')`, { timeoutMs: 30000, label: "export-done" });
 
-    // 4) 检查产物文件存在且含刚录入的题目文本。
     const artifactsFound = [];
     const roots = [path.join(exportDir, "writing-exams"), exportDir];
     let combined = "";
@@ -103,7 +100,6 @@ async function main() {
       artifactsFound.length > 0 && combined.includes(T1) && combined.includes(T2),
       `产物文件=${JSON.stringify(artifactsFound)}；含 T1=${combined.includes(T1)}、含 T2=${combined.includes(T2)}`);
 
-    // 5) 删除一题后列表同步。
     await session.clickSelector('[data-testid="writing-job-table"] .job-row');
     await sleep(400);
     await session.clickByText('删除');
