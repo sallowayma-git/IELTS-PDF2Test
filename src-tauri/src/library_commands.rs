@@ -260,7 +260,7 @@ pub(crate) fn delete_library_exam_core(root: &Path, id: &str) -> CommandResult<b
     let conn = crate::library::repository::open_library_connection(root)?;
     // 能从旧 exams 回填 v1 就顺带回填；回填不了也不早退——soft_delete 会标记 v2（及存在的 v1），
     // 识别中的 v2-only 条目照样删得掉（旧代码在此 return Ok(false) 造成「识别中删除空操作」）。
-    let _ = ensure_library_item_for_exam(&conn, id);
+    ensure_library_item_for_exam(&conn, id)?;
     soft_delete_library_item(&conn, id)
 }
 
