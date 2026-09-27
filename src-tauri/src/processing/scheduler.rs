@@ -830,6 +830,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     let mut repair_error: Option<String> = None;
     // 修复摘要（`repair` 契约）。最终一份写进批次行；修复过程中的进度在循环里直接写库。
     let mut repair_summary: Option<serde_json::Value> = None;
+    let mut adopted_cloud_candidate_for_answers: Option<serde_json::Value> = None;
 
     // 本地周期：把本地候选 / 原文核验 / 批次汇总落盘，并**建出批次行**。云端如实标
     // `not_run`（本地周期看不见云端），下面的 advance 会用真实修复状态覆盖它。
@@ -931,6 +932,9 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                     adoption_reasons.push("云端校核租约已失效，未写入云端候选".to_string());
                 }
                 let adopted = adoption_result.is_some();
+                if adopted {
+                    adopted_cloud_candidate_for_answers = Some(candidate_value.clone());
+                }
                 let adoption_info = if let Some(result) = adoption_result.as_ref() {
                     serde_json::json!({
                         "status": "adopted",
@@ -1178,10 +1182,12 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         && !state.cancelled.read().await.contains(&job_id)
     {
         let answer_profile = resolved_profile.clone().unwrap_or_default();
+        let adopted_cloud_candidate = adopted_cloud_candidate_for_answers.clone();
         let answer_permit = state.cloud_permits.clone().acquire_owned().await;
         let answer_result = run_blocking({
             let root = root.clone();
             let job_id = job_id.clone();
+            let adopted_cloud_candidate = adopted_cloud_candidate.clone();
             move || {
                 // 同一个答案页步骤：服务暂时不可用时自动再试一次，结果写回工作区读的
                 // `parser.visionAnswerExtraction`（此前这里只打日志，界面看不到这次识别）。
@@ -1190,7 +1196,12 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                     &job_id,
                     &answer_profile,
                     &mut |root, job_id, profile| {
-                        crate::auto_pipeline::recognize_and_apply_pdf_answers(root, job_id, profile)
+                        crate::auto_pipeline::recognize_and_apply_pdf_answers_with_adopted_candidate(
+                            root,
+                            job_id,
+                            profile,
+                            adopted_cloud_candidate.as_ref(),
+                        )
                     },
                 );
                 drop(answer_permit);

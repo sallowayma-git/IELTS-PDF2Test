@@ -254,6 +254,10 @@ pub struct CloudAuthoringCandidateV1 {
     /// 后端标准化后的完整稿件：`passage` / `taskGroups`（含 instructions、stimulus、
     /// prompts、选项库、responseGroups）/ `answerSlots` / `answerKey` / `assets` 全部保留。
     pub authoring: IeltsAuthoringIRV2,
+    /// 模型只在原文件明确印出答案页/答案表时提供的逐题可见引文。
+    /// 这是候选侧车，不进入正式稿；答案页视觉步骤会与自己的页图引文交叉核对。
+    #[serde(default)]
+    pub answer_page_evidence: Vec<Value>,
     /// 模型临时 ID → 后端稳定 ID。重写引用后，稿件里出现过的临时引用必须**全部**
     /// 在本表有对应项，或有明确的未解析记录。
     #[serde(default)]

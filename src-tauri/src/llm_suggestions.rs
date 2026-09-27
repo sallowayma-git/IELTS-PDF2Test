@@ -462,6 +462,7 @@ pub(crate) fn authoring_candidate_output_contract(modality: &str) -> Value {
         "answerKey": {
             "cloud-q1": {"kind": "option", "labels": ["B"], "assignment": "per_slot"}
         },
+        "answerPageEvidence": [{"questionNumber": 1, "pageIndex": 6, "quote": "1 B"}],
         "unresolvedRegions": [{
             "sourceFileId": "the source fileId you were given",
             "pageIndex": 3,
@@ -473,12 +474,13 @@ pub(crate) fn authoring_candidate_output_contract(modality: &str) -> Value {
     });
     let mut rules = vec![
         "Return FULL recognition content, not an outline and not a summary. This is used as a complete candidate draft.".to_string(),
-        "Top-level keys: taskGroups, answerSlots, answerKey, unresolvedRegions, sourceCoverageNotes, warnings. Nothing else.".to_string(),
+        "Top-level keys: taskGroups, answerSlots, answerKey, answerPageEvidence, unresolvedRegions, sourceCoverageNotes, warnings. Nothing else.".to_string(),
         "Transcribe every question's FULL prompt text. Do not abbreviate, summarise or paraphrase any question.".to_string(),
         "Transcribe every option's label and FULL option text. Keep the option bank per task group.".to_string(),
         "Do NOT transcribe the reading passage / audio script body. Transcribe only what the task groups show: instructions, and the notes / table / diagram / flow-chart / form / summary text a group depends on (into stimulus).".to_string(),
         "Give every question an answerKey entry. If the original file does not provide an answer, use {\"kind\": \"unresolved\"} — never invent an answer.".to_string(),
         "answerKey values: {\"kind\":\"text\",\"values\":[\"...\"]} with at least one value, {\"kind\":\"option\",\"labels\":[\"A\"],\"assignment\":\"per_slot\"} with at least one label, or {\"kind\":\"unresolved\"}.".to_string(),
+        "answerPageEvidence is an array of {questionNumber, pageIndex, quote}. Include an entry only when this original file visibly prints that answer on an answer page/key; quote the exact visible answer line and use its 1-based pageIndex. Never cite inferred answers or invent a quote; use [] when no visible answer key exists.".to_string(),
         "Use temporary ids only (for example cloud-tg-1, cloud-q14, cloud-opt-a). NEVER copy ids from any other document and never use a real database id.".to_string(),
         "Required on every taskGroup: taskId, displayRange, taskType, instructions (array), responseGroups (array). displayRange is {\"kind\":\"range\",\"start\":1,\"end\":5} or {\"kind\":\"set\",\"values\":[1,3,5]}.".to_string(),
         "Required on every optionBank: optionBankId, scope, options, allowReuse; every option needs optionId, label and content (array).".to_string(),

@@ -3394,6 +3394,7 @@ pub(crate) fn cloud_authoring_candidate_from_normalized(
         status: normalized.status,
         reason_code: normalized.reason_code,
         authoring,
+        answer_page_evidence: Vec::new(),
         id_map: normalized.id_map,
         unresolved_references: normalized.unresolved_references,
         unresolved_regions: normalized.unresolved_regions,
@@ -3617,6 +3618,7 @@ pub(crate) fn merge_candidate_chunks(
     let mut task_groups: Vec<Value> = Vec::new();
     let mut answer_slots = Map::new();
     let mut answer_key = Map::new();
+    let mut answer_page_evidence: Vec<Value> = Vec::new();
     let mut unresolved_regions: Vec<Value> = Vec::new();
     let mut coverage_notes: Vec<Value> = Vec::new();
     let mut warnings: Vec<Value> = Vec::new();
@@ -3637,6 +3639,7 @@ pub(crate) fn merge_candidate_chunks(
                     // 说明类字段可能在外层：一并带进来。
                     for key in [
                         "unresolvedRegions",
+                        "answerPageEvidence",
                         "sourceCoverageNotes",
                         "warnings",
                         "listeningParts",
@@ -3688,6 +3691,7 @@ pub(crate) fn merge_candidate_chunks(
         }
         for (key, target) in [
             ("unresolvedRegions", &mut unresolved_regions),
+            ("answerPageEvidence", &mut answer_page_evidence),
             ("sourceCoverageNotes", &mut coverage_notes),
             ("warnings", &mut warnings),
             ("listeningParts", &mut listening_parts),
@@ -3711,6 +3715,7 @@ pub(crate) fn merge_candidate_chunks(
         "taskGroups": task_groups,
         "answerSlots": answer_slots,
         "answerKey": answer_key,
+        "answerPageEvidence": answer_page_evidence,
         "unresolvedRegions": unresolved_regions,
         "sourceCoverageNotes": coverage_notes,
         "warnings": warnings,
@@ -5559,8 +5564,14 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
     #[test]
     fn chunks_reusing_the_same_temporary_ids_merge_and_map_onto_canonical_groups() {
         let canonical = golden_authoring();
-        let first = cloud_draft(&[14, 15], "cloud");
-        let second = cloud_draft(&[16, 17], "cloud");
+        let mut first = cloud_draft(&[14, 15], "cloud");
+        first["answerPageEvidence"] = json!([{
+            "questionNumber": 14, "pageIndex": 40, "quote": "14 B"
+        }]);
+        let mut second = cloud_draft(&[16, 17], "cloud");
+        second["answerPageEvidence"] = json!([{
+            "questionNumber": 16, "pageIndex": 41, "quote": "16 A"
+        }]);
         assert_eq!(
             first["taskGroups"][0]["taskId"], second["taskGroups"][0]["taskId"],
             "测试前提：临时 id 相撞"
@@ -5571,6 +5582,9 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
             (chunk(&[16, 17]), Ok(second)),
         ])
         .expect("两块都成功必须能合并");
+        assert_eq!(merged["answerPageEvidence"].as_array().unwrap().len(), 2);
+        assert_eq!(merged["answerPageEvidence"][0]["questionNumber"], 14);
+        assert_eq!(merged["answerPageEvidence"][1]["questionNumber"], 16);
         let task_ids: Vec<&str> = merged["taskGroups"]
             .as_array()
             .unwrap()

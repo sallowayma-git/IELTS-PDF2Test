@@ -1227,7 +1227,7 @@ fn authoring_candidate_prompt(input: &Value) -> String {
     format!(
         "You are recognising an {paper} paper from its ORIGINAL FILE into a COMPLETE authoring draft.\n\
 Return JSON only. Do not return Markdown, HTML, JavaScript, explanations, or final export files.\n\
-Return exactly one JSON object with the top-level keys \"taskGroups\", \"answerSlots\", \"answerKey\", \"unresolvedRegions\", \"sourceCoverageNotes\", \"warnings\"{envelope_extra}; the exact shape is outputContract.shape.\n\
+Return exactly one JSON object with the top-level keys \"taskGroups\", \"answerSlots\", \"answerKey\", \"answerPageEvidence\", \"unresolvedRegions\", \"sourceCoverageNotes\", \"warnings\"{envelope_extra}; the exact shape is outputContract.shape.\n\
 This is NOT an outline and NOT a comparison summary: transcribe the FULL question content so it can be rendered.\n\
 {repair}\n\
 Rules that matter most:\n\
@@ -1237,6 +1237,7 @@ Rules that matter most:\n\
 - Transcribe every option label and its FULL text; keep one option bank per task group.\n\
 - Do NOT transcribe the passage or script body. Transcribe the instructions and the notes / tables / diagrams / form text a task group depends on (into stimulus).\n\
 - Give EVERY question an answerKey entry; use {{\"kind\":\"unresolved\"}} when the file gives no answer. Never invent answers.\n\
+- answerPageEvidence may cite only an answer visibly printed in this original file's answer key/page: {{\"questionNumber\":1,\"pageIndex\":6,\"quote\":\"1 B\"}}. Quotes must reproduce the visible line exactly; use [] when there is no printed answer.\n\
 - Use TEMPORARY ids only (cloud-tg-1, cloud-q14, cloud-opt-a ...). Never copy a real database id.\n\
 - Every responseGroups[].slotIds entry MUST be a key of answerSlots; every hostNodeId MUST be an id you defined here.\n\
 - Every responseGroup needs kind, cardinality, assignment, scoringPolicy, duplicatePolicy and allowOptionReuse; every answerSlot needs slotId, questionNumber, displayLabel, hostType, interaction, participation and confidence; every content node needs type and id.\n\
