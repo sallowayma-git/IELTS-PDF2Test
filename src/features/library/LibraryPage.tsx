@@ -82,8 +82,7 @@ export function LibraryPage({ intent, initialModality }: { intent?: LibraryInten
     [store.rows, modalityTab, tab, search]
   );
 
-  // 跨题型的总计：后台识别横幅与「清空回收站」按钮都作用于全部题型，计数不能被题型子标签收敛，
-  // 否则横幅会漏报/消失（审查 #8），清空按钮的数字会与它实际删除的范围不符（审查 #7）。
+  // 后台识别横幅与「清空回收站」都作用于全部题型，计数不能被题型子标签收敛。
   const totalProcessingCount = useMemo(
     () => store.rows.filter((row) => !row.inTrash && isProcessingStage(row.stage)).length,
     [store.rows]
@@ -93,7 +92,7 @@ export function LibraryPage({ intent, initialModality }: { intent?: LibraryInten
     [store.rows]
   );
 
-  // C4：当前题面里实际出现的 Part（P1/P2/P3 / Part 1–4 / Task 1/2），用于渲染筛选按钮。
+  // 当前题面里实际出现的 Part（P1/P2/P3 / Part 1–4 / Task 1/2），用于渲染筛选按钮。
   const availableParts = useMemo(() => {
     const set = new Set<string>();
     for (const row of tabRows) if (row.part) set.add(row.part);
@@ -235,7 +234,7 @@ export function LibraryPage({ intent, initialModality }: { intent?: LibraryInten
         setNotice(`已清空回收站，永久删除 ${result.deleted} 项。`);
         return;
       }
-      // 区分「仍在处理中」与「真的删除失败」——不要把后者也说成「请取消或等待」（审查 #2）。
+      // 区分「仍在处理中」与「真的删除失败」——不要把后者也说成「请取消或等待」。
       const stillProcessing = result.skipped.filter((s) => s.reason.includes("ITEM_STILL_PROCESSING")).length;
       const otherFailed = result.skipped.length - stillProcessing;
       const parts = [`已永久删除 ${result.deleted} 项`];
@@ -247,7 +246,7 @@ export function LibraryPage({ intent, initialModality }: { intent?: LibraryInten
     }
   }
 
-  /** C4：手动设置/清除某条目的 Part 标签。 */
+  /** 手动设置/清除某条目的 Part 标签。 */
   async function setPart(id: string, label: string | null) {
     try {
       await store.setPart(id, label);
@@ -315,8 +314,7 @@ export function LibraryPage({ intent, initialModality }: { intent?: LibraryInten
             </div>
           ) : null}
 
-          {/* 清空回收站作用于**全部**题型的回收站，只在「全部」子标签下出现，避免计数与
-              实际删除范围不符（审查 #7）。其它题型子标签下想清空可切到「全部」。 */}
+          {/* 清空回收站作用于全部题型，只在「全部」子标签下出现，避免计数与实际删除范围不符。 */}
           {tab === "trash" && modalityTab === "all" && totalTrashedCount > 0 ? (
             <div className="library-trash-toolbar" data-testid="library-trash-toolbar">
               <button className="danger small" data-testid="library-empty-trash" onClick={emptyTrash}>

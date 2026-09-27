@@ -120,10 +120,8 @@ fn migrations() -> Vec<(i64, &'static str)> {
         //   证据摘要与原文件清理状态。原文件与过程文件被删除后，质量评估靠这份冻结证据
         //   继续核对题号集合。
         (9, PUBLISH_RECORDS_AND_FINAL_VERSION_SQL),
-        // v10：Part 标签（C4）。阅读 P1/P2/P3、听力 Part 1–4、写作 Task 1/2 直接显示在
-        // 题库卡片上并可筛选。判定结果连同来源（manual / content / range / filename）一起落库，
-        // 判不出就都为 NULL（不猜）。两列都可空：历史行首次列表加载时惰性回填
-        // （见 `commands::list_library_items_core`），手动设置永远压过自动判定。
+        // v10：Part 标签。part_label 是展示标签（P1/P2/P3 / Part 1–4 / Task 1/2），
+        // part_source 是判定来源（manual/content/range/filename）；两列 NULL = 未判定。
         (
             10,
             "ALTER TABLE library_items_v2 ADD COLUMN part_label TEXT;

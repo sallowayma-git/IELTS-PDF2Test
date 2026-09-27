@@ -61,7 +61,7 @@ export interface LibraryStore {
   permanentlyDelete: (id: string) => Promise<void>;
   /** 清空回收站（不可恢复）。返回删除数与被跳过（仍在处理中）的条目。 */
   emptyTrash: () => Promise<EmptyRecycleBinResult>;
-  /** 手动设置 Part 标签（C4）；`label` 为 null 表示清除、回到自动判定。 */
+  /** 手动设置 Part 标签；`label` 为 null 表示清除、回到自动判定。 */
   setPart: (id: string, label: string | null) => Promise<void>;
 }
 

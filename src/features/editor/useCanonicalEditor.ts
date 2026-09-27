@@ -50,13 +50,7 @@ export interface CanonicalEditor {
   draft?: IeltsAuthoringIRV2;
   saveState: SaveState;
   saveMessage?: string;
-  /**
-   * 保存失败时后端返回的**原始错误码/详情**（如 `library_v2_tx:database is locked`）。
-   *
-   * `saveMessage` 是给用户看的人话；`saveErrorDetail` 是给开发者看的机器码，只在
-   * 开发者模式下展示、并写进 console。以前这条信息被 `persist` 的 catch 直接丢掉，
-   * 现场里「保存变红」无从归因（计划 C1 §1）。
-   */
+  /** 后端返回的原始错误码/详情（如 `library_v2_tx:database is locked`），供开发者模式与 console 使用。 */
   saveErrorDetail?: string;
   pendingCount: number;
   /** 已保存的权威稿版本号（用于学生预览显示 revision 状态）。 */
@@ -288,11 +282,11 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
           }
         }
         setSaveState(conflict ? "conflict" : "failed");
-        // 原始错误码进 console + 开发者模式详情，不再静默丢弃（计划 C1 §1）。
+        // 原始错误码进 console + 开发者模式详情，不再静默吞掉。
         console.error("[canonical-save] 保存失败：", message);
         setSaveErrorDetail(message);
-        // 瞬时占用（WAL 写锁争用 / SQLITE_BUSY）与真·失败分开措辞：前者点一次「重试保存」
-        // 基本就能过，别让用户以为改动丢了；后者提示保留 + 出路（计划 C1 §3）。
+        // 瞬时占用（WAL 写锁争用 / SQLITE_BUSY）与真·失败分开措辞：前者点一次「重试保存」通常即可，
+        // 不该让用户以为改动丢了。
         const transientBusy = !conflict && /database is locked|sqlite_busy|busy|locked|snapshot/i.test(message);
         setSaveMessage(
           conflict

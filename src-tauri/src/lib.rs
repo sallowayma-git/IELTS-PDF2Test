@@ -1715,7 +1715,7 @@ async fn empty_recycle_bin(app: AppHandle) -> CommandResult<Value> {
     }))
 }
 
-/// 手动设置题库条目的 Part 标签（C4）。`label` 为空表示清除手动值、回到自动判定。
+/// 手动设置题库条目的 Part 标签。`label` 为空表示清除手动值、回到自动判定。
 #[tauri::command]
 async fn set_library_item_part(
     item_id: String,

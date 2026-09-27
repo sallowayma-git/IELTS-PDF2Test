@@ -13,10 +13,8 @@ import { StatusPill } from "../../components/StatusPill";
 import { toUserFacingError } from "../../utils/userFacingError";
 import type { WritingJob, WritingJobStatus, WritingTaskType } from "../../types";
 
-// C3：写作题库并入题库的「写作」子标签。功能（新建/编辑/删除/导出 NAS 写作题库）从
-// 原 src/pages/WritingStudio.tsx 迁移到这里，不再维护两份；#/legacy/writing 重定向到
-// /library?modality=writing（见 router）。导出改为就地完成（选 Task 1 + Task 2 → 选目录
-// → export_writing_library），不再跳转已被退休的导出页。
+// 题库「写作」子标签的创作面板：新建/编辑/删除写作题，并就地导出 NAS 写作题库
+// （选一道 Task 1 + 一道 Task 2 → 选目录 → export_writing_library）。
 
 const TASK_DEFAULTS: Record<WritingTaskType, { suggested: number; label: string }> = {
   task1: { suggested: 150, label: "图表描述题 (Task 1)" },

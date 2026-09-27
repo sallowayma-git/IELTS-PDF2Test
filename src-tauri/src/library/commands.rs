@@ -142,9 +142,8 @@ pub(crate) fn apply_editor_commands_core(
 pub(crate) fn list_library_items_core(root: &Path, include_deleted: bool) -> CommandResult<Value> {
     let conn = open_library_connection(root)?;
     let mut rows = list_items(&conn, include_deleted)?;
-    // C4：首次加载惰性判定 Part。判定（读 DS）先做，写入**合并到一个事务**里，
-    // 且带 `part_source IS NULL` 守卫——既不在读命令路径上做 N 次串行写（性能，审查 #5），
-    // 也不会覆盖同时发生的手动设置（并发正确性，审查 #4）。判不出记 sentinel，之后不再重算。
+    // 首次加载惰性判定 Part：判定（读 DS）先做，写入合并进一个事务、且带 part_source IS NULL
+    // 守卫——避免读路径上 N 次串行写，也不覆盖并发的手动设置。判不出记 sentinel，之后不再重算。
     let mut pending: Vec<(String, Option<String>, String)> = Vec::new();
     for row in rows.iter_mut() {
         if row.part_source.is_some() || !row.has_canonical_ds {
@@ -174,7 +173,7 @@ pub(crate) fn list_library_items_core(root: &Path, include_deleted: bool) -> Com
     Ok(Value::Array(result))
 }
 
-/// 手动设置某条目的 Part 标签（C4）：来源记为 `manual`，压过一切自动判定。
+/// 手动设置某条目的 Part 标签：来源记为 `manual`，压过一切自动判定。
 /// `label` 为空/None 表示清除手动值，回到自动判定（下次列表重新推断）。
 pub(crate) fn set_library_item_part_core(
     root: &Path,

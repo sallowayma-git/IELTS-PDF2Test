@@ -56,7 +56,7 @@ pub(crate) struct LibraryItemRowV2 {
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,
-    /// Part 标签（C4）：阅读 P1/P2/P3、听力 Part 1–4、写作 Task 1/2；判不出为 None。
+    /// Part 标签：阅读 P1/P2/P3、听力 Part 1–4、写作 Task 1/2；判不出为 None。
     pub part_label: Option<String>,
     /// 判定来源：manual | content | range | filename。
     pub part_source: Option<String>,
@@ -99,8 +99,8 @@ pub(crate) fn set_item_part(
     Ok(affected > 0)
 }
 
-/// 惰性回填 Part（**仅当尚未判定过**：`part_source IS NULL`）——绝不覆盖手动设置或已判定值，
-/// 避免与并发的手动设置竞争（C4 审查 #4）。返回是否写入。
+/// 惰性回填 Part，仅当尚未判定过（`part_source IS NULL`）——绝不覆盖手动设置或已判定值，
+/// 以免与并发的手动设置竞争。返回是否写入。
 pub(crate) fn backfill_item_part(
     conn: &Connection,
     item_id: &str,

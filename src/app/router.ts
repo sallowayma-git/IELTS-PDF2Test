@@ -40,17 +40,19 @@ export interface RouteState {
   legacyPage?: LegacyPageName;
 }
 
+/** 路径分段，忽略 query：`#/a/b?x=1` → `["a","b"]`。query 段不能当路径判断，否则
+ *  `library?modality=writing` 会被拆成 `second="modality=writing"` 而误重定向到 `/items/...`。 */
+function routePathSegments(hash: string): string[] {
+  return hash.replace(/^#\/?/, "").split("?")[0].split("/").filter(Boolean);
+}
+
 /** 已退休的路由 -> 新路由。返回 undefined 表示这个 hash 不是旧链接。 */
 export function legacyRedirect(hash: string): string | undefined {
-  const value = hash.replace(/^#\/?/, "");
-  // 只按**路径**分段判断，query（?modality= / ?import= / ?publish=）不参与——否则
-  // "library?modality=writing" 会被拆出 second="modality=writing" 而误重定向到
-  // "/items/modality=writing"，把 C3 的写作子标签落地页打回死链（ultracode 审查 #6）。
-  const parts = value.split("?")[0].split("/").filter(Boolean);
+  const parts = routePathSegments(hash);
   if (!parts.length) return "/library";
   const [head, second, third] = parts;
   if (head === "legacy") {
-    // 写作创作页并入题库的写作子标签（C3）：不再是独立的逃生页面。
+    // 写作创作页并入题库的写作子标签，不再是独立的逃生页面。
     if (second === "writing") return "/library?modality=writing";
     return third ? `/items/${third}` : second === "import" ? "/library?import=1" : "/library";
   }
@@ -124,9 +126,8 @@ export function jobResumePath(job: { jobId: string }): string {
 /** 在 hashchange 之前把旧链接换成新链接。返回 true 表示已触发一次重定向。 */
 export function applyLegacyRedirect(hash = window.location.hash): boolean {
   const raw = hash.replace(/^#\/?/, "");
-  // 同 legacyRedirect：只看路径段，query 不参与分段判断。
-  const parts = raw.split("?")[0].split("/").filter(Boolean);
-  // 新路由不重定向。#/legacy/writing 不再豁免——它要被重定向到题库写作子标签（C3）。
+  const parts = routePathSegments(hash);
+  // 新路由不重定向；#/legacy/writing 例外——它要被重定向到题库写作子标签。
   if (parts[0] === "items" || parts[0] === "settings") return false;
   if (parts[0] === "library" && !parts[1]) return false;
   const target = legacyRedirect(hash);

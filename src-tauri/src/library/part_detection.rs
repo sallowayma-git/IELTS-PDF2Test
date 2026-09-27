@@ -1,4 +1,4 @@
-//! C4：题库条目的 Part 标签判定。
+//! 题库条目的 Part 标签判定。
 //!
 //! 语义：阅读 = Passage 1/2/3（显示为 P1/P2/P3）；听力 = Part 1–4；写作 = Task 1/2。
 //!
@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn filename_does_not_false_positive_on_word_internal_letters() {
-        // 词内 p / part 不得触发 Part（ultracode 审查 #3）。
+        // 词内 p / part 不得触发 Part。
         assert_eq!(detect(&input("reading", "Group 3 elements", &[], &[])), None);
         assert_eq!(detect(&input("reading", "Deep 2 dive", &[], &[])), None);
         assert_eq!(detect(&input("reading", "Step 1 guide", &[], &[])), None);
