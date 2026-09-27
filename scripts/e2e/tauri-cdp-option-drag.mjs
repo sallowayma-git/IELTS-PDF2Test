@@ -22,7 +22,8 @@
  * 复现关键：导入 fixtures/parser/demanding-reading-passage-3.pdf（可用 --pdf 覆盖）
  * 后**不等识别结束**立刻打开工作区，用 CDP Input.dispatchMouseEvent 真实鼠标连续
  * 拖动 5 次：每次悬停选项行让手柄出现 → 按住最后一行手柄步进拖到第一行上方 →
- * **按住期间注入一次后台草稿写入**（产品同一条 IPC apply_authoring_v2_patches 写
+ * **按住期间注入一次后台草稿写入**（产品编辑保存同一条事务 IPC
+ * apply_editor_commands 写
  * 答案补丁，等工作区出现「已被更新」提示确认 setDraft 新对象到达——离线环境下
  * "行可见且识别进行中"窗口结构性为 0，本地识别完成才发布草稿，见
  * injectBackgroundWrite 注释与 report.stageTimeline；识别竞态的真实窗口在云端修复
@@ -260,9 +261,9 @@ async function waitPersisted(session, itemId, predicate, { timeoutMs = 30000, la
  * 草稿发布为 ready_for_review（scheduler 的 on_local_done），选项行渲染滞后 stage
  * 终态约 0.4s。而验收缺陷的真正窗口在云端修复阶段（cloud_recognition/reconciling）：
  * 草稿已可编辑，远端写稿持续到达 → getWorkspaceItem → setDraft（新对象）。这里用
- * 产品同一条 IPC（apply_authoring_v2_patches）写一条与选项顺序无关的答案补丁来确
- * 定性地制造这个窗口：
- *   1. baseRevision 从冲突错误里解析重试（revision_conflict:current=N:base=M）；
+ * 产品编辑保存同一条事务 IPC（apply_editor_commands）写一条与选项顺序无关的答案
+ * 补丁来确定性地制造这个窗口：
+ *   1. baseVersion 从冲突错误里解析重试（EDIT_VERSION_CONFLICT:current=N:base=M）；
  *   2. 等持久化 editVersion 推进（写入落盘）；
  *   3. 等工作区把它拉下来——`[data-testid="workspace-remote-pending"]`
  *      （「这份题稿在别处已被更新…」提示，useCanonicalEditor 的
@@ -273,9 +274,8 @@ async function injectBackgroundWrite(session, itemId, preItem, picked, noticeTim
   const info = { attempted: true, applied: false, noticeSeen: false };
   try {
     const resolved = resolveOptionsForRg(preItem?.ds, picked.responseGroupId);
-    const jobId = preItem?.ds?.jobId ?? null;
-    if (!resolved || !jobId || !resolved.options.length) {
-      info.reason = `注入前提不足：jobId=${jobId ? "ok" : "missing"}，options=${resolved?.options.length ?? 0}`;
+    if (!resolved || !resolved.options.length || typeof preItem?.editVersion !== "number") {
+      info.reason = `注入前提不足：editVersion=${preItem?.editVersion}，options=${resolved?.options.length ?? 0}`;
       return info;
     }
     // 被注入的答案槽：就用被拖组自己的第一个 slot（答案与选项顺序正交，互不干扰）。
@@ -297,31 +297,31 @@ async function injectBackgroundWrite(session, itemId, preItem, picked, noticeTim
       value: { kind: "option", labels: [resolved.options[0].label], assignment: "per_slot" },
     };
     info.patch = patch;
-    // baseRevision 探测：补丁层修订与 editVersion 是两个计数器，冲突错误里带 current。
+    // baseVersion 探测：权威稿 editVersion 是这个 CAS 事务的乐观锁，冲突错误里带 current。
     let applied = null;
-    let base = 0;
+    let base = preItem.editVersion;
     for (let attempt = 0; attempt < 6 && !applied; attempt += 1) {
-      const r = await session.invoke("apply_authoring_v2_patches", {
-        input: { jobId, baseRevision: base, patches: [patch] },
+      const r = await session.invoke("apply_editor_commands", {
+        input: { itemId, baseVersion: base, commands: [patch] },
       });
       if (r?.ok) {
-        applied = { baseRevision: base };
+        applied = { baseVersion: base };
         break;
       }
       const message = String(r?.error ?? "");
-      const match = message.match(/current=(\d+)/);
+      const match = message.match(/EDIT_VERSION_CONFLICT:current=(\d+):/);
       if (!match) {
-        info.reason = `apply_authoring_v2_patches 失败：${message.slice(0, 200)}`;
+        info.reason = `apply_editor_commands 失败：${message.slice(0, 200)}`;
         return info;
       }
       base = Number(match[1]);
     }
     if (!applied) {
-      info.reason = "baseRevision 重试次数用尽仍未成功";
+      info.reason = "baseVersion 重试次数用尽仍未成功";
       return info;
     }
     info.applied = true;
-    info.baseRevision = applied.baseRevision;
+    info.baseVersion = applied.baseVersion;
     // 硬判据：写入已持久化（权威稿 editVersion 推进）——这保证手势松手前草稿
     // 确实被换成了新版本。应用"何时拉取"是它的内部策略（本地干净 → 静默 reload；
     // 有未保存修改 → 推迟并出「已被更新」提示，见 useCanonicalEditor 的
@@ -581,7 +581,7 @@ async function runOnce({ round, identity }) {
           // 离线环境下"选项行可见且识别进行中"窗口结构性为 0（本地识别完成才发布草稿，
           // 行渲染滞后 stage 终态约 0.4s，多轮运行的 stage 时间线为证），识别竞态的真正
           // 窗口在云端修复阶段——其机制就是"远端写稿 → getWorkspaceItem → setDraft 新
-          // 对象"。这里用产品同一条 IPC（apply_authoring_v2_patches）注入一条与选项顺序
+          // 对象"。这里用产品编辑保存同一条事务 IPC（apply_editor_commands）注入一条与选项顺序
           // 无关的答案补丁；松手必须按**最新草稿**提交。
           drag.backgroundWrite = await injectBackgroundWrite(session, itemId, preItem, picked);
           if (drag.backgroundWrite.applied) {
@@ -667,7 +667,7 @@ async function runOnce({ round, identity }) {
       report,
       "A0 background-refresh-during-drag",
       refreshedDrags === DRAG_ROUNDS,
-      `${refreshedDrags}/${DRAG_ROUNDS} 次拖动按住期间发生了后台草稿写入（apply_authoring_v2_patches 成功返回；notice/persisted 为诊断信号，editVersion 只随应用保存路径推进）；` +
+      `${refreshedDrags}/${DRAG_ROUNDS} 次拖动按住期间发生了后台草稿写入（apply_editor_commands 成功返回；notice/persisted 为诊断信号，editVersion 只随应用保存路径推进）；` +
         `详情=${JSON.stringify(report.drags.map((d) => ({ round: d.round, bg: d.backgroundWrite })))}；` +
         `stage 时间线（诊断）=${JSON.stringify((report.stageTimeline ?? []).filter((e, i, a) => i === 0 || e.stage !== a[i - 1].stage || e.rows !== a[i - 1].rows))}`,
     );

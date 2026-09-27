@@ -619,8 +619,11 @@ mod tests {
             assets: BTreeMap::new(),
         };
 
-        // The honest runtime hash (over the raw payload the wrapper embeds).
-        let honest_runtime = sha256_hex(&canonical_json_bytes_js(&source_value));
+        // The honest runtime hash (over the payload the wrapper actually embeds:
+        // the student-package projection, canonical JSON.stringify encoding).
+        let honest_runtime = sha256_hex(&canonical_json_bytes_js(
+            &crate::export_artifacts::student_package_source(&source_value),
+        ));
         let script_sha = sha256_hex(wrapper.as_bytes());
         let asset_sha = sha256_hex(b"{}");
         let honest = ProbePackageFiles {

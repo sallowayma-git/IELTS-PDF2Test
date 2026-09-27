@@ -781,6 +781,11 @@ pub(crate) fn apply_recognition_decisions_core(
     let now = chrono::Utc::now().to_rfc3339();
 
     // ── 拒绝：只改状态，不碰权威稿 ──────────────────────────────────
+    // 驳回虽不写权威稿，但它同样是人对识别结果的处理决定，与接受/撤销同受
+    // 「云端校核进行中」锁约束（前端锁定的是同一组入口）；云端校核可能正要
+    // 依据这些待办状态继续修复，此刻改写状态会与机器写入交错。
+    let cloud_review_locked =
+        crate::processing::queue::cloud_review_in_progress(&conn, &item_id)?;
     for decision_id in &request.reject {
         let Some(index) = items
             .iter()
@@ -796,6 +801,17 @@ pub(crate) fn apply_recognition_decisions_core(
             });
             continue;
         };
+        if cloud_review_locked {
+            outcomes.push(DecisionOutcomeV1 {
+                decision_id: decision_id.clone(),
+                kind: DecisionOutcomeKindV1::Failed,
+                reason_code: Some("CLOUD_REVIEW_IN_PROGRESS".to_string()),
+                message: "云端正在校核，暂不进行修改；校核结束后再处理这条建议。".to_string(),
+                applied_at: None,
+                undo: None,
+            });
+            continue;
+        }
         items[index].status = DecisionStatusV1::Rejected;
         store::set_decision_status(
             &conn,
@@ -1854,6 +1870,56 @@ mod tests {
     /// - 其它值 ⇒ 用户改过该槽位（撤销应被拒、视图应示为失效）。
     ///
     /// 返回 `(root, item_id, batch_id, item)`。
+    /// 云端校核进行中，「驳回识别建议」与接受/撤销一样是人工入口，必须被同一道锁拦下。
+    /// 驳回只写决策状态、不碰权威稿，因此这里的拒绝走单项 Failed，而不是整条命令报错。
+    #[test]
+    fn reject_is_blocked_while_cloud_review_is_in_progress() {
+        let (root, item_id, batch_id, item) = seed_applied_batch("reject-lock", &applied_option());
+        {
+            let conn = open_library_connection(&root).expect("db");
+            conn.execute(
+                "INSERT INTO processing_jobs_v2
+                 (id, library_item_id, source_asset_id, stage, local_status, cloud_status,
+                  reconcile_status, progress_json, actionable_count, retry_count, created_at, updated_at)
+                 VALUES ('pj-1', ?1, 'sa', 'reconciling', 'succeeded', 'running', 'running', '{}', 0, 0,
+                         '2026-09-16T00:00:00Z', '2026-09-16T00:00:00Z')",
+                rusqlite::params![item_id],
+            )
+            .expect("processing row");
+        }
+        let result = apply_recognition_decisions_core(
+            &root,
+            ApplyRecognitionDecisionsRequestV1 {
+                request_id: "req-reject-lock".to_string(),
+                batch_id: batch_id.clone(),
+                base_edit_version: 0,
+                accept: vec![],
+                reject: vec![item.decision_id.clone()],
+                undo: vec![],
+            },
+        )
+        .expect("锁只拦具体项，不应让整条命令失败");
+        assert_eq!(
+            result["outcomes"][0]["kind"].as_str(),
+            Some("failed"),
+            "{result}"
+        );
+        assert_eq!(
+            result["outcomes"][0]["reasonCode"].as_str(),
+            Some("CLOUD_REVIEW_IN_PROGRESS"),
+            "{result}"
+        );
+        // 被拒的驳回不得留下状态写入：该项保持原状态，锁释放后可重新处理。
+        let conn = open_library_connection(&root).expect("db");
+        let items = store::load_decision_items(&conn, &batch_id).expect("items");
+        assert_eq!(
+            items[0].status,
+            DecisionStatusV1::Accepted,
+            "被拒的驳回不得改写决策状态"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     fn seed_applied_batch(
         tag: &str,
         slot_value: &Value,

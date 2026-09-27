@@ -18,7 +18,8 @@ import type { AuthoringPatchV2, IeltsAuthoringIRV2 } from "../../types";
 
 const SAVE_DEBOUNCE_MS = 450;
 const RECOVERY_KEY_PREFIX = "ielts-author-studio.workspace-recovery.v1:";
-export type SaveState = "idle" | "saving" | "saved" | "failed" | "conflict";
+const HISTORY_LIMIT = 10;
+export type SaveState = "idle" | "saving" | "saved" | "failed" | "conflict" | "locked";
 
 /** 文案分层（计划 §9.10）：机器码不进入正文，普通用户只看到可操作的人话。
  *  结构操作自身抛出的中文提示（如「这个选项已用作本题答案」）原样透传。 */
@@ -28,6 +29,13 @@ function describeEditError(error: unknown): string {
 }
 
 interface HistoryEntry { patch: AuthoringPatchV2; inverse: AuthoringPatchV2 }
+
+/** 撤销/重做栈只保留最近 HISTORY_LIMIT 步，超出丢最早：无限历史会让长会话内存无界，
+ *  且产品上撤销就限定这么多步。 */
+function pushHistory(stack: HistoryEntry[], entry: HistoryEntry): void {
+  stack.push(entry);
+  if (stack.length > HISTORY_LIMIT) stack.shift();
+}
 interface SaveBatch {
   itemId: string;
   baseVersion: number;
@@ -36,7 +44,6 @@ interface SaveBatch {
   title?: string;
 }
 interface RecoveryDraft {
-  draft: IeltsAuthoringIRV2;
   version: number;
   title?: string;
   pending: AuthoringPatchV2[];
@@ -153,7 +160,7 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
     try {
       if (count && draftRef.current) {
         const recovery: RecoveryDraft = {
-          draft: draftRef.current, version: versionRef.current, title: titleRef.current,
+          version: versionRef.current, title: titleRef.current,
           pending: pendingRef.current, pendingTitle: pendingTitleRef.current, batch: batchRef.current
         };
         localStorage.setItem(recoveryKey, JSON.stringify(recovery));
@@ -260,6 +267,15 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
         setSaveErrorDetail(undefined);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        // 云端校核锁不是保存失败：保留待保存队列、进入 locked 态（提示"暂缓保存"而非变红），
+        // 解锁后由工作区补发。
+        if (message.includes("CLOUD_REVIEW_IN_PROGRESS")) {
+          setSaveState("locked");
+          setSaveMessage(undefined);
+          setSaveErrorDetail(message);
+          checkpoint();
+          throw error;
+        }
         const conflict = message.includes("EDIT_VERSION_CONFLICT");
         // 撞上的是云端修复 / 答案页识别自己的写入：自动重放**一次**，不逼用户二选一。
         // 只有冲突里有人工写入、或重放本身失败时，才落到下面的按钮。
@@ -364,13 +380,21 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
       try {
         const saved = localStorage.getItem(recoveryKey);
         const recovery: RecoveryDraft | undefined = saved ? JSON.parse(saved) : undefined;
-        if (recovery?.draft && Array.isArray(recovery.pending)) {
-          loaded = recovery.draft;
+        const outstanding = recovery && Array.isArray(recovery.pending)
+          ? [...(recovery.batch?.commands ?? []), ...recovery.pending]
+          : [];
+        if (recovery && Array.isArray(recovery.pending) && (outstanding.length || recovery.pendingTitle !== undefined)) {
           loadedTitle = recovery.title ?? loadedTitle;
           setVersion(recovery.version);
           pendingRef.current = recovery.pending;
           pendingTitleRef.current = recovery.pendingTitle;
           batchRef.current = recovery.batch;
+          // 不再存整份稿：从服务端权威稿 + 未提交命令重建工作稿。服务端仍停在崩溃时的基线→
+          // 精确重放；已推进→尽力展示，真正的合并交给恢复后 persist 撞 CAS 的既有冲突流程，
+          // 绝不静默覆盖服务端的新版本。旧格式记录带的整份稿一并忽略（下面的字段两种格式都有）。
+          loaded = workspace.editVersion === recovery.version
+            ? applyLocalPatches(loaded, outstanding)
+            : rebasePendingPatches(loaded, outstanding).rebased;
           setSaveState("failed");
           setSaveMessage("已恢复未保存的修改，请重试保存。");
         }
@@ -428,7 +452,7 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
       draftRef.current = next;
       setDraft(next);
       if (inverse) {
-        undoStack.current.push({ patch, inverse });
+        pushHistory(undoStack.current, { patch, inverse });
         redoStack.current = [];
       }
       pendingRef.current.push(patch);
@@ -453,14 +477,14 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
     const entry = undoStack.current.pop();
     if (!entry) return;
     enqueue(entry.inverse, false);
-    redoStack.current.push(entry);
+    pushHistory(redoStack.current, entry);
     setHistoryDepth({ undo: undoStack.current.length, redo: redoStack.current.length });
   }, [enqueue]);
   const redo = useCallback(() => {
     const entry = redoStack.current.pop();
     if (!entry) return;
     enqueue(entry.patch, false);
-    undoStack.current.push(entry);
+    pushHistory(undoStack.current, entry);
     setHistoryDepth({ undo: undoStack.current.length, redo: redoStack.current.length });
   }, [enqueue]);
 

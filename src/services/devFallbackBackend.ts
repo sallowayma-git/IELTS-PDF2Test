@@ -2595,30 +2595,6 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       return session as T;
     }
 
-    case "apply_authoring_v2_patches": {
-      const input = args.input as ApplyAuthoringV2PatchesInput;
-      const session = phase5Session(store, input.jobId);
-      if (session.revision !== input.baseRevision) {
-        throw new Error(`revision_conflict:current=${session.revision}:base=${input.baseRevision}`);
-      }
-      const nextAuthoring = applyAuthoringV2Patches(session.authoring, input.patches);
-      const nextRevision = session.revision + 1;
-      store.authoringV2[input.jobId] = {
-        ...nextAuthoring,
-        audit: {
-          ...nextAuthoring.audit,
-          revision: nextRevision,
-          source: "user",
-          updatedAt: now()
-        }
-      };
-      store.authoringV2Revisions[input.jobId] = nextRevision;
-      save(store);
-      return {
-        ...phase5Session(store, input.jobId),
-        savedPatchCount: input.patches.length
-      } as T;
-    }
     case "export_authoring_v2": {
       const input = args.input as { jobId: string; exportDir: string; revision?: number };
       const session = phase5Session(store, input.jobId);

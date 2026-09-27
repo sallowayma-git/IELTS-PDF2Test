@@ -19,3 +19,21 @@ export function processingNoteOf(
       return undefined;
   }
 }
+
+const CLOUD_REVIEW_STAGES = [
+  "queued", "running", "preparing_source", "local_recognition", "cloud_recognition", "reconciling"
+];
+
+/**
+ * 云端校核是否进行中——与后端 `processing/queue.rs::cloud_review_in_progress` 的
+ * stage + cloud_status 判据对齐，作为前端锁定人工编辑的依据。
+ *
+ * 后端还有一条 `cancel_requested_at IS NULL`：用户请求停止后立即解锁。该字段不在这里的
+ * 处理状态里，由工作区的本地"已请求停止"标记先行解锁，随后阶段离开校核集时自然收敛。
+ */
+export function cloudReviewInProgress(
+  processing: { stage?: string; cloudStatus?: string } | null | undefined
+): boolean {
+  if (!processing?.stage || !CLOUD_REVIEW_STAGES.includes(processing.stage)) return false;
+  return processing.cloudStatus === "queued" || processing.cloudStatus === "running" || processing.stage === "reconciling";
+}

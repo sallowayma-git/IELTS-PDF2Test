@@ -5,8 +5,8 @@ use authoring_commands::{
     save_split_adjustments_core, update_authoring_ir_core,
 };
 use authoring_v2_commands::{
-    apply_authoring_v2_patches_core, export_authoring_v2_core, get_authoring_v2_core,
-    get_publish_preflight_core, resolve_authoring_asset_preview_core,
+    export_authoring_v2_core, get_authoring_v2_core, get_publish_preflight_core,
+    resolve_authoring_asset_preview_core,
 };
 use auto_pipeline::{
     run_auto_pipeline_core, run_cloud_review_core, run_cloud_review_core_with_gateway,
@@ -1300,12 +1300,6 @@ async fn resolve_authoring_asset_preview(
 }
 
 #[tauri::command]
-async fn apply_authoring_v2_patches(input: Value, app: AppHandle) -> CommandResult<Value> {
-    let root = app_root(&app)?;
-    apply_authoring_v2_patches_core(&root, input)
-}
-
-#[tauri::command]
 async fn export_authoring_v2(input: Value, app: AppHandle) -> CommandResult<Value> {
     let root = app_root(&app)?;
     export_authoring_v2_core(&root, input)
@@ -1816,7 +1810,6 @@ pub fn run() {
             get_authoring_v2,
             get_publish_preflight,
             resolve_authoring_asset_preview,
-            apply_authoring_v2_patches,
             export_authoring_v2,
             render_group_html,
             list_llm_profiles,

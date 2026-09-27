@@ -83,7 +83,7 @@ fn migrations() -> Vec<(i64, &'static str)> {
         // 于是撤销整轮自动修复时无法把云端写的东西与人写的东西区分开。新增四列：
         //   edit_origin   human | cloud_repair | undo（由调用入口决定，绝不来自请求体）
         //   repair_run_id 属于哪一次自动修复 run（人工编辑为空）
-        //   change_json   受影响目标的 before/after（撤销的依据）
+        //   change_json   受影响目标的路径级差异（撤销的依据）
         //   result_json   实际提交结果（apply / reject 及原因）
         // 历史行为 NULL，按「来源不明」处理：不参与自动撤销，但也不被当成 Human 保护。
         (

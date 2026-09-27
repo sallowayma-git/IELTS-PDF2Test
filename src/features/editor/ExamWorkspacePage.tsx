@@ -29,7 +29,7 @@ import { describeDeferredRemoteRefresh } from "./remoteVersion";
 import { toUserFacingError } from "../../utils/userFacingError";
 import { getPublishPreflight, listLibraryItems, type PublishCheckResultV1 } from "../../api/workspaceClient";
 import type { ProcessingState } from "../../api/processingClient";
-import { processingNoteOf } from "./workspaceStatus";
+import { processingNoteOf, cloudReviewInProgress } from "./workspaceStatus";
 import { answerPageStatusOf, describeAnswerPageRetry } from "./answerPageStatus";
 import { findTargetElement } from "./locate";
 
@@ -45,7 +45,9 @@ const SAVE_LABEL = {
   // 冲突与失败对用户是**同一件事**：这次没存上，再试一次。
   // 「保存冲突」是内部机制的说法（本轮任务书第一节），不进普通界面。
   failed: "保存失败，请重试",
-  conflict: "保存失败，请重试"
+  conflict: "保存失败，请重试",
+  // 云端校核锁：不是失败，是暂缓——解锁后自动补发。
+  locked: "云端校核中，暂缓保存"
 } as const;
 
 /** 降级文案分层（计划 §9.10 / findings F-M0-3）：普通用户只看到人话，
@@ -148,6 +150,9 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   const sourceActionsEnabled = sourceActionsAvailable(sourcePurged);
   // 处理任务的真实阶段（标题下那行进度小字的依据），每收到一次处理事件就重读。
   const [processingState, setProcessingState] = useState<ProcessingState | null | undefined>();
+  // 用户在锁定横幅上点了「停止云端校核」：后端 cancel_requested_at 会立即解锁，但处理状态
+  // 里没有这个字段，故本地先行解锁；阶段离开校核集时复位，让下一轮校核仍能重新锁上。
+  const [cloudStopRequested, setCloudStopRequested] = useState(false);
   useEffect(() => {
     let cancelled = false;
     listLibraryItems(false)
@@ -155,6 +160,19 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
       .catch(() => {});
     return () => { cancelled = true; };
   }, [itemId, processingTick]);
+
+  // 云端校核进行中锁定人工编辑；已请求停止则本地先行解锁。
+  const cloudReviewing = cloudReviewInProgress(processingState) && !cloudStopRequested;
+  useEffect(() => {
+    if (!cloudReviewInProgress(processingState)) setCloudStopRequested(false);
+  }, [processingState]);
+  // 解锁瞬间补发校核期间被暂存（locked）的保存：待保存队列在锁期一直保留，这里让它落库。
+  const wasCloudReviewingRef = useRef(false);
+  useEffect(() => {
+    const was = wasCloudReviewingRef.current;
+    wasCloudReviewingRef.current = cloudReviewing;
+    if (was && !cloudReviewing) void editor.flush().catch(() => {});
+  }, [cloudReviewing, editor.flush]);
 
   useEffect(() => {
     let stopped = false;
@@ -465,7 +483,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             <EditableTitle
               title={editor.title ?? title}
               editing={titleEditing}
-              onBegin={() => setTitleEditing(true)}
+              onBegin={() => { if (!cloudReviewing) setTitleEditing(true); }}
               onCommit={(next) => {
                 setTitleEditing(false);
                 editor.setTitle(next);
@@ -510,14 +528,14 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               })}
               title="识别详情：云端自动修正了什么、逐项撤销"
             >详情</button>
-            <button title="撤销" aria-label="撤销" disabled={!editor.canUndo} onClick={editor.undo}><Undo2 size={16} /></button>
-            <button title="重做" aria-label="重做" disabled={!editor.canRedo} onClick={editor.redo}><Redo2 size={16} /></button>
-            <button data-testid="workspace-save" disabled={Boolean(busyAction)} onClick={save}>
+            <button title="撤销" aria-label="撤销" disabled={!editor.canUndo || cloudReviewing} onClick={editor.undo}><Undo2 size={16} /></button>
+            <button title="重做" aria-label="重做" disabled={!editor.canRedo || cloudReviewing} onClick={editor.redo}><Redo2 size={16} /></button>
+            <button data-testid="workspace-save" disabled={Boolean(busyAction) || cloudReviewing} onClick={save}>
               {busyAction === "save" ? "正在保存…" : "保存"}
             </button>
             {/* 顶栏唯一的主操作：底色/悬停对齐基准的提交类按钮（见 workspace.css 的
                 .workspace-publish-btn）。data-testid 与点击行为不变。 */}
-            <button className="workspace-publish-btn" data-testid="workspace-publish" disabled={Boolean(busyAction)} onClick={publish}>
+            <button className="workspace-publish-btn" data-testid="workspace-publish" disabled={Boolean(busyAction) || cloudReviewing} onClick={publish}>
               {busyAction === "publish" ? "正在发布…" : "发布"}
             </button>
             <button aria-label="更多操作" title="更多操作" onClick={() => setMenuOpen((open) => !open)}><MoreHorizontal size={16} /></button>
@@ -610,6 +628,22 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
         ) : null}
       </div>
 
+      {cloudReviewing ? (
+        <div className="workspace-notice" role="status" data-testid="workspace-cloud-review-banner">
+          <span>云端正在校核，暂不进行修改{processingNote ? `（${processingNote}）` : ""}。</span>
+          <button
+            className="ghost small"
+            data-testid="workspace-cloud-review-stop"
+            disabled={Boolean(busyAction)}
+            onClick={() => {
+              // cancel_requested_at 非空即解锁，且只停云端、保留当前正式稿（见 queue.rs 注释）。
+              setCloudStopRequested(true);
+              void cancelProcessing(itemId).catch(() => {});
+              setNotice("已请求停止云端校核，当前题稿保持不变。");
+            }}
+          >停止云端校核</button>
+        </div>
+      ) : null}
       {notice ? (
         <p className="workspace-notice" role="status" data-publish-outcome={publishOutcome && publishOutcome.text === notice ? publishOutcome.kind : undefined}>
           {notice}
@@ -798,6 +832,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
           itemId={itemId}
           editVersion={editor.version}
           refreshKey={recognitionRefreshKey}
+          locked={cloudReviewing}
           onLocate={locateTarget}
           // 文档级剩余任务（云端读不到原文件某一块、模型留下无法定位到题面的疑问）
           // 唯一真能推进的动作就是打开原文件抽屉。
@@ -838,16 +873,19 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
           </div>
         ) : null}
         {editor.draft && mode === "edit" ? (
+          // 云端校核期间画布只读：ExamCanvas 内部对根节点加 inert 挡住一切交互，
+          // 同时这里不下发编辑回调（作者工具随 onStructureAction 缺席而隐藏）。双重兜底。
           <ExamCanvas
             authoring={editor.draft}
             mode="author"
+            locked={cloudReviewing}
             selectedId={selectedId}
             onSelect={setSelectedId}
-            onTextCommand={({ nodeId, expectedText, text }) =>
+            onTextCommand={cloudReviewing ? undefined : ({ nodeId, expectedText, text }) =>
               editor.applyCommand({ op: "set_text", nodeId, expectedText, text })
             }
-            onAnswerChange={(slotId, value) => editor.applyCommand({ op: "set_answer", slotId, value })}
-            onStructureAction={(action) => {
+            onAnswerChange={cloudReviewing ? undefined : (slotId, value) => editor.applyCommand({ op: "set_answer", slotId, value })}
+            onStructureAction={cloudReviewing ? undefined : (action) => {
               const draft = latestDraftRef.current;
               if (!draft) return;
               // 先按**最新**草稿分辨「做不了」：compileStructureAction 对找不到的实体
