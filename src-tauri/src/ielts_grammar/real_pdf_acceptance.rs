@@ -3461,3 +3461,133 @@ fn phase4_metrics_report_only_over_available_corpus() {
         "phase4 metrics runner must cover the manifest"
     );
 }
+
+/// 去 HTML 标签：把 `<...>` 换成换行，便于按行找 "READING PASSAGE n" 标题。
+fn strip_html_tags(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => {
+                in_tag = true;
+                out.push('\n');
+            }
+            '>' => {
+                in_tag = false;
+                out.push('\n');
+            }
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// C4：8 份私有真实 PDF 逐份过 `detect_part`，断言判定标签 == 人工核对期望。
+/// 期望值由人工核对文件名 + 原文写死；实际值取自识别产物（authoring-ir-v1）过 detect_part。
+/// 判不出写 None、不猜。按私有 corpus 门控：缺 corpus 时干净跳过。
+#[test]
+fn part_detection_matches_expected_label_for_eight_real_pdfs() {
+    if !crate::test_support::golden_private_corpus_ready(
+        "part_detection_matches_expected_label_for_eight_real_pdfs",
+    ) {
+        return;
+    }
+    let expected: &[(&str, Option<&str>)] = &[
+        ("chili-peppers", Some("P1")),
+        ("conformity", Some("P3")),
+        ("fishbourne-roman-palace", Some("P1")),
+        ("listening-to-the-ocean", Some("P1")),
+        ("organisational-design", Some("P2")),
+        ("petri-dish", Some("P2")),
+        ("sleep-study", Some("P1")),
+        ("western-celebrity", Some("P2")),
+    ];
+    let root = repo_root();
+    let manifest = read_json(&root.join(MANIFEST)).expect("golden manifest must load");
+    let fixtures = manifest
+        .get("fixtures")
+        .and_then(Value::as_array)
+        .expect("golden fixtures");
+
+    let mut rows: Vec<String> = Vec::new();
+    let mut mismatches: Vec<String> = Vec::new();
+    // FILL_LOOP
+    for (fixture_id, want) in expected {
+        let fixture = fixtures
+            .iter()
+            .find(|f| f.get("fixtureId").and_then(Value::as_str) == Some(*fixture_id))
+            .unwrap_or_else(|| panic!("{fixture_id}: fixture missing from golden manifest"));
+        process_fixture(&root, fixture_id, fixture)
+            .unwrap_or_else(|e| panic!("{fixture_id}: chain failed: {e}"));
+        let authoring_v1 = read_json(
+            &root
+                .join("tmp/phase4-real-pdf-acceptance")
+                .join(fixture_id)
+                .join("authoring-ir-v1.actual.json"),
+        )
+        .unwrap_or_else(|e| panic!("{fixture_id}: authoring v1 actual unreadable: {e}"));
+        let filename = fixture
+            .get("originalName")
+            .and_then(Value::as_str)
+            .unwrap_or(fixture_id);
+
+        // 题号：answerKey 的 q<n> 键。
+        let mut numbers: Vec<u32> = Vec::new();
+        if let Some(ak) = authoring_v1.get("answerKey").and_then(Value::as_object) {
+            for key in ak.keys() {
+                if let Some(digits) = key.strip_prefix('q').or(Some(key.as_str())) {
+                    if let Ok(n) = digits.parse::<u32>() {
+                        numbers.push(n);
+                    }
+                }
+            }
+        }
+        // 原文行：passage.htmlBlocks[].html 去标签后按行拆（含 "READING PASSAGE n" 标题行）。
+        let mut lines: Vec<String> = Vec::new();
+        if let Some(blocks) = authoring_v1
+            .pointer("/passage/htmlBlocks")
+            .and_then(Value::as_array)
+        {
+            for block in blocks {
+                if let Some(html) = block.get("html").and_then(Value::as_str) {
+                    for line in strip_html_tags(html).lines() {
+                        let trimmed = line.trim();
+                        if !trimmed.is_empty() {
+                            lines.push(trimmed.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        let detected = crate::library::part_detection::detect_part(
+            &crate::library::part_detection::PartDetectionInput {
+                modality: "reading",
+                manual_label: None,
+                task_type: None,
+                source_lines: &lines,
+                question_numbers: &numbers,
+                filename,
+            },
+        );
+        let actual = detected.as_ref().map(|d| d.label.as_str());
+        let source = detected.as_ref().map(|d| d.source.as_str()).unwrap_or("-");
+        rows.push(format!(
+            "| {fixture_id} | {filename} | {} | {} (source={source}) |",
+            want.unwrap_or("None"),
+            actual.unwrap_or("None"),
+        ));
+        if actual != *want {
+            mismatches.push(format!("{fixture_id}: 期望 {want:?} 实得 {actual:?}"));
+        }
+    }
+    eprintln!(
+        "\nPart 判定表（8 份真实 PDF）：\n| fixtureId | 文件名 | 期望 | 实际 |\n|---|---|---|---|\n{}\n",
+        rows.join("\n")
+    );
+    assert!(
+        mismatches.is_empty(),
+        "Part 判定与期望不符：\n{}",
+        mismatches.join("\n")
+    );
+}

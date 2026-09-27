@@ -17,8 +17,30 @@ use crate::CommandResult;
 
 pub(crate) fn open_library_connection(root: &std::path::Path) -> CommandResult<Connection> {
     let conn = crate::db::open_connection(root)?;
-    ensure_v2_schema(&conn)?;
+    // V2 迁移每进程/每库文件只跑一次。`ensure_v2_schema` 内部是一个 BEGIN IMMEDIATE
+    // 事务（即使无迁移可做，也照样抢一次写锁再提交）。此前**每次开连接**都跑它，等于
+    // 每次读/写库前都先抢一次写锁——编辑保存正持锁、或后台识别在写时，这一步就会
+    // 等到 busy_timeout 耗尽而 `database is locked`。启动首开完成迁移后，后续普通连接
+    // 只设 busy_timeout / foreign_keys（见 `db::open_connection`），不再触碰写锁。
+    ensure_v2_schema_once(&crate::db::db_path(root), &conn)?;
     Ok(conn)
+}
+
+/// 记录已迁移过 V2 schema 的库文件（进程内、按路径去重）。
+fn v2_ensured_set() -> &'static std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>> {
+    static V2_ENSURED: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>,
+    > = std::sync::OnceLock::new();
+    V2_ENSURED.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+fn ensure_v2_schema_once(path: &std::path::Path, conn: &Connection) -> CommandResult<()> {
+    if v2_ensured_set().lock().unwrap().contains(path) {
+        return Ok(());
+    }
+    ensure_v2_schema(conn)?;
+    v2_ensured_set().lock().unwrap().insert(path.to_path_buf());
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -34,6 +56,10 @@ pub(crate) struct LibraryItemRowV2 {
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,
+    /// Part 标签：阅读 P1/P2/P3、听力 Part 1–4、写作 Task 1/2；判不出为 None。
+    pub part_label: Option<String>,
+    /// 判定来源：manual | content | range | filename。
+    pub part_source: Option<String>,
 }
 
 fn row_from(row: &rusqlite::Row<'_>) -> rusqlite::Result<LibraryItemRowV2> {
@@ -49,11 +75,46 @@ fn row_from(row: &rusqlite::Row<'_>) -> rusqlite::Result<LibraryItemRowV2> {
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
         deleted_at: row.get("deleted_at")?,
+        part_label: row.get("part_label")?,
+        part_source: row.get("part_source")?,
     })
 }
 
 const ITEM_COLUMNS: &str =
-    "id, modality, title, status, current_edit_version, canonical_ds_json, source_asset_id, created_at, updated_at, deleted_at";
+    "id, modality, title, status, current_edit_version, canonical_ds_json, source_asset_id, created_at, updated_at, deleted_at, part_label, part_source";
+
+/// 写入 Part 标签与来源（`None` 清空）。返回是否有行被更新。
+pub(crate) fn set_item_part(
+    conn: &Connection,
+    item_id: &str,
+    part_label: Option<&str>,
+    part_source: Option<&str>,
+) -> CommandResult<bool> {
+    let affected = conn
+        .execute(
+            "UPDATE library_items_v2 SET part_label = ?2, part_source = ?3 WHERE id = ?1",
+            params![item_id, part_label, part_source],
+        )
+        .map_err(|error| format!("library_v2_set_part:{error}"))?;
+    Ok(affected > 0)
+}
+
+/// 惰性回填 Part，仅当尚未判定过（`part_source IS NULL`）——绝不覆盖手动设置或已判定值，
+/// 以免与并发的手动设置竞争。返回是否写入。
+pub(crate) fn backfill_item_part(
+    conn: &Connection,
+    item_id: &str,
+    part_label: Option<&str>,
+    part_source: &str,
+) -> CommandResult<bool> {
+    let affected = conn
+        .execute(
+            "UPDATE library_items_v2 SET part_label = ?2, part_source = ?3 WHERE id = ?1 AND part_source IS NULL",
+            params![item_id, part_label, part_source],
+        )
+        .map_err(|error| format!("library_v2_backfill_part:{error}"))?;
+    Ok(affected > 0)
+}
 
 pub(crate) fn get_item(
     conn: &Connection,
@@ -2305,6 +2366,48 @@ mod tests {
             .unwrap();
         assert_eq!(origin.as_deref(), Some("cloud_repair"));
         assert_eq!(run.as_deref(), Some("run-7"));
+    }
+
+    /// C1 §2 前提校验：自动重放靠 editor_journal_v1 判定「区间内是否有人工写入」，因此**所有**
+    /// 人工写路径都必须记一条 edit_origin='human' 的日志。覆盖：结构动作（setAnswer）、编辑命令、
+    /// 标题修改。若将来新增不记日志的人工写路径，这条会红，提醒先补日志、别放宽重放判定。
+    #[test]
+    fn human_write_paths_are_journalled_with_human_origin() {
+        let mut conn = grouped_item();
+        // 1) 结构动作 / 答案（setAnswer）走 EditOrigin::Human。
+        run_edit(&mut conn, vec![set_answer("slot-14", "human_value")], EditOrigin::Human, None, 1).unwrap();
+        // 2) 标题修改（commands 空、仅 title）走同一条人工保存链。
+        apply_editor_commands_tx_with(
+            &mut conn,
+            &ApplyEditorCommandsInput {
+                item_id: "it-1".into(),
+                base_version: 2,
+                request_id: None,
+                commands: vec![],
+                title: Some("人工改名".into()),
+            },
+            EditOrigin::Human,
+            None,
+            &real_patch(),
+            &noop_validate,
+            &|_, _| Ok(()),
+        )
+        .unwrap();
+
+        let origins: Vec<String> = {
+            let mut stmt = conn
+                .prepare("SELECT edit_origin FROM editor_journal_v1 WHERE library_item_id='it-1' ORDER BY id")
+                .unwrap();
+            stmt.query_map([], |row| row.get::<_, Option<String>>(0))
+                .unwrap()
+                .map(|row| row.unwrap().unwrap_or_default())
+                .collect()
+        };
+        assert_eq!(
+            origins,
+            vec!["human".to_string(), "human".to_string()],
+            "每次人工写入（setAnswer 结构动作、标题修改）都必须记一条 edit_origin='human' 的日志"
+        );
     }
 
     /// 撤销整轮修复：结构（槽位与答案）一并回滚，**无关目标上的后续人工修改保留**。

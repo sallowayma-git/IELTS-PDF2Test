@@ -30,3 +30,7 @@
 *.css   text eol=lf
 *.json  text eol=lf
 *.md    text eol=lf
+# Cargo.toml/清单等 .toml 也强制 LF：否则 Windows(core.autocrlf=true) 下工作区是 CRLF，
+# 而它是 e2e 构建新鲜度哈希的后端输入，唯一非 eol=lf 的后端文件会造成「构建期间输入漂移」
+# 而让 exe 被判为不可归因、真实应用 e2e 拒绝运行。
+*.toml  text eol=lf

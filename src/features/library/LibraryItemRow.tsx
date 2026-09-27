@@ -1,4 +1,4 @@
-import { STAGE_LABEL, canRetryRow, isProcessingStage, type LibraryRowV1 } from "./libraryTypes";
+import { PART_OPTIONS, STAGE_LABEL, canRetryRow, isProcessingStage, type LibraryRowV1 } from "./libraryTypes";
 
 // 普通行不显示 hash、source path、schema、revision 或错误技术码（计划 §10.6 / §3.4）。
 const MODALITY_LABEL = { reading: "Reading", listening: "Listening", writing: "Writing" } as const;
@@ -22,6 +22,8 @@ export function LibraryItemRow({
   onOpen,
   onTrash,
   onRestore,
+  onPermanentDelete,
+  onSetPart,
   onRetry
 }: {
   row: LibraryRowV1;
@@ -30,6 +32,8 @@ export function LibraryItemRow({
   onOpen: (id: string) => void;
   onTrash: (id: string) => void;
   onRestore: (id: string) => void;
+  onPermanentDelete: (id: string) => void;
+  onSetPart: (id: string, label: string | null) => void;
   onRetry?: (id: string) => void;
 }) {
   const processing = isProcessingStage(row.stage);
@@ -57,7 +61,10 @@ export function LibraryItemRow({
       )}
 
       <button className="library-row-main" onClick={() => (row.inTrash ? undefined : onOpen(row.id))} disabled={row.inTrash}>
-        <strong className="file-name">{row.title}</strong>
+        <strong className="file-name">
+          {row.part ? <span className="part-badge" data-testid="library-row-part">{row.part}</span> : null}
+          {row.title}
+        </strong>
         <small>{meta}</small>
       </button>
 
@@ -73,7 +80,16 @@ export function LibraryItemRow({
 
       <div className="library-row-actions">
         {row.inTrash ? (
-          <button className="ghost small" onClick={() => onRestore(row.id)}>恢复</button>
+          <>
+            <button className="ghost small" onClick={() => onRestore(row.id)}>恢复</button>
+            <button
+              className="danger small"
+              data-testid="library-row-permanent-delete"
+              onClick={() => onPermanentDelete(row.id)}
+            >
+              永久删除
+            </button>
+          </>
         ) : (
           <>
             {canRetryRow(row) && onRetry ? (
@@ -81,6 +97,18 @@ export function LibraryItemRow({
             ) : (
               <button className="ghost small" onClick={() => onOpen(row.id)}>打开</button>
             )}
+            <select
+              className="part-select small"
+              data-testid="library-row-part-select"
+              aria-label={`设置 ${row.title} 的 Part`}
+              value={row.part ?? ""}
+              onChange={(event) => onSetPart(row.id, event.target.value === "" ? null : event.target.value)}
+            >
+              <option value="">Part：自动</option>
+              {PART_OPTIONS[row.modality].map((label) => (
+                <option key={label} value={label}>{label}</option>
+              ))}
+            </select>
             <button className="danger small" onClick={() => onTrash(row.id)}>删除</button>
           </>
         )}

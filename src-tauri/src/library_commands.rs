@@ -276,6 +276,72 @@ pub(crate) fn list_trashed_exams_core(root: &Path) -> CommandResult<Vec<LibraryE
     crate::db::list_trashed_items(&conn)
 }
 
+/// 活动处理阶段：处于这些阶段说明还有 worker 在写这道题，永久删除会与之竞争、留下孤儿写。
+fn is_actively_processing(stage: &str) -> bool {
+    use crate::processing::queue::{
+        STAGE_CLOUD_RECOGNITION, STAGE_LOCAL_RECOGNITION, STAGE_QUEUED, STAGE_RECONCILING,
+        STAGE_RUNNING,
+    };
+    matches!(
+        stage,
+        STAGE_QUEUED
+            | STAGE_RUNNING
+            | STAGE_LOCAL_RECOGNITION
+            | STAGE_CLOUD_RECOGNITION
+            | STAGE_RECONCILING
+    )
+}
+
+/// 永久删除单个回收站条目。三条约束：
+/// - 只删已在回收站的条目（`deleted_at IS NOT NULL`），否则拒绝 `NOT_IN_TRASH`；
+/// - 仍在识别/排队中则拒绝 `ITEM_STILL_PROCESSING`：运行中任务只能异步取消，此刻删行会与
+///   仍持租约的 worker 竞争、被写回成孤儿；终态或无任务才放行；
+/// - 先删数据库（单事务、枚举全表），再删文件——DB 提交后条目即从所有列表消失。
+pub(crate) fn permanently_delete_library_exam_core(root: &Path, id: &str) -> CommandResult<bool> {
+    // 用 v2 连接：清理与处理状态检查要读 v2 表，旧 `open_connection` 在未建 v2 的路径上会缺表。
+    let conn = crate::library::repository::open_library_connection(root)?;
+    if !is_library_item_soft_deleted(&conn, id) {
+        return Err(format!("NOT_IN_TRASH:{id}"));
+    }
+    if let Some(job) = crate::processing::queue::get_job(&conn, id)? {
+        if is_actively_processing(&job.stage) {
+            return Err(format!("ITEM_STILL_PROCESSING:{}", job.stage));
+        }
+    }
+    let removed = crate::db::purge_all_rows_for_item(&conn, id)?;
+    eprintln!("[library] permanent delete {id}: purged {removed} db rows");
+    // 释放 DB 连接后再删文件（受管音频清理会另开连接）。文件删除失败只记日志、不回滚：DB 已一致。
+    drop(conn);
+    if let Err(error) = crate::job_commands::delete_job_artifacts(root, id) {
+        eprintln!("[library] permanent delete {id}: file cleanup failed (db already purged): {error}");
+    }
+    // 写作条目的权威内容在 writing-jobs/<id>/，不在 job 目录里；复用 delete_writing_job 的目录清理
+    // （非写作条目该目录不存在，无副作用），否则永久删除写作题会残留 writing-job.json。
+    if let Err(error) = crate::writing_store::delete_writing_job(root, id) {
+        eprintln!("[library] permanent delete {id}: writing dir cleanup failed: {error}");
+    }
+    Ok(true)
+}
+
+/// 清空回收站：逐个永久删除所有回收站条目；仍在处理中的条目跳过并把 `(id, reason)` 收集回报，
+/// 不阻断其余条目。返回 `(deleted_count, skipped)`。
+pub(crate) fn empty_recycle_bin_core(root: &Path) -> CommandResult<(usize, Vec<(String, String)>)> {
+    let trashed = {
+        let conn = open_connection(root)?;
+        crate::db::list_trashed_items(&conn)?
+    };
+    let mut deleted = 0usize;
+    let mut skipped: Vec<(String, String)> = Vec::new();
+    for summary in trashed {
+        match permanently_delete_library_exam_core(root, &summary.id) {
+            Ok(true) => deleted += 1,
+            Ok(false) => {}
+            Err(reason) => skipped.push((summary.id.clone(), reason)),
+        }
+    }
+    Ok((deleted, skipped))
+}
+
 /// 检查某 library_item 是否已被软删除（供双写钩子判断是否跳过复活）。
 fn is_library_item_soft_deleted(conn: &Connection, id: &str) -> bool {
     conn.query_row(
@@ -682,6 +748,216 @@ mod tests {
         assert_eq!(active.len(), 1);
         assert_eq!(active[0].id, "import-test-1");
         assert!(list_trashed_exams_core(&root).unwrap().is_empty());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn permanently_delete_purges_all_tables_and_files() {
+        use crate::library::repository::{
+            get_item, open_library_connection, seed_canonical_ds, upsert_item_shell,
+            ApplyEditorCommandsInput, UpsertItemInput,
+        };
+        let root = make_reading_appdata();
+        migrate_existing_into_library(&root).unwrap(); // 旧 library_items 行
+
+        // 建 v2 权威稿 + 一次编辑（产生 editor_journal_v1 行），证明 v2 表也被清干净。
+        {
+            let conn = open_library_connection(&root).unwrap();
+            upsert_item_shell(
+                &conn,
+                &UpsertItemInput {
+                    id: "import-test-1",
+                    modality: "reading",
+                    title: "Trash me",
+                    status: "ready",
+                    source_asset_id: None,
+                },
+            )
+            .unwrap();
+            let ds = fs::read(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join("fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"),
+            )
+            .unwrap();
+            let ds: serde_json::Value = serde_json::from_slice(&ds).unwrap();
+            seed_canonical_ds(&conn, "import-test-1", &ds.to_string(), "ready").unwrap();
+        }
+        // writing-jobs/<id> 目录模拟写作条目的权威内容，断言永久删除会一并删掉。
+        let writing_dir = crate::util::writing_job_dir(&root, "import-test-1");
+        fs::create_dir_all(&writing_dir).unwrap();
+        fs::write(writing_dir.join("writing-job.json"), b"{}").unwrap();
+        crate::library::commands::apply_editor_commands_core(
+            &root,
+            ApplyEditorCommandsInput {
+                item_id: "import-test-1".to_string(),
+                base_version: 1,
+                request_id: Some("perma-test".to_string()),
+                commands: vec![],
+                title: Some("Trash me edited".to_string()),
+            },
+        )
+        .unwrap();
+
+        assert!(delete_library_exam_core(&root, "import-test-1").unwrap());
+        assert_eq!(list_trashed_exams_core(&root).unwrap().len(), 1);
+
+        assert!(permanently_delete_library_exam_core(&root, "import-test-1").unwrap());
+
+        let conn = crate::db::open_connection(&root).unwrap();
+        // 再枚举清一次应删 0 行 —— 所有表都不再残留该 id。
+        assert_eq!(
+            crate::db::purge_all_rows_for_item(&conn, "import-test-1").unwrap(),
+            0,
+            "永久删除后不应还有任何表残留该 id"
+        );
+        assert!(get_item(&conn, "import-test-1").unwrap().is_none());
+        assert!(crate::db::get_exam(&conn, "import-test-1").unwrap().is_none());
+        assert!(
+            !crate::util::job_dir(&root, "import-test-1").exists(),
+            "永久删除必须删掉 job 目录"
+        );
+        assert!(
+            !writing_dir.exists(),
+            "永久删除必须删掉 writing-jobs 目录（写作条目权威内容不留孤儿）"
+        );
+        assert!(!restore_library_exam_core(&root, "import-test-1").unwrap());
+        assert!(list_trashed_exams_core(&root).unwrap().is_empty());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn permanently_delete_refuses_item_not_in_trash() {
+        let root = make_reading_appdata();
+        migrate_existing_into_library(&root).unwrap();
+        let err = permanently_delete_library_exam_core(&root, "import-test-1").unwrap_err();
+        assert!(
+            err.starts_with("NOT_IN_TRASH"),
+            "应拒绝未在回收站的条目，实得：{err}"
+        );
+        assert_eq!(list_library_exams_core(&root, None).unwrap().len(), 1);
+        cleanup(&root);
+    }
+
+    #[test]
+    fn permanently_delete_refuses_item_still_processing() {
+        use crate::library::repository::{open_library_connection, upsert_item_shell, UpsertItemInput};
+        let root = make_reading_appdata();
+        migrate_existing_into_library(&root).unwrap();
+        // processing_jobs_v2.library_item_id 外键指向 library_items_v2；导入流程里 job_id
+        // 与库条目 id 同值。先建 v2 壳行再挂一个 queued 任务，模拟“已进回收站但仍在识别/排队”。
+        {
+            let conn = open_library_connection(&root).unwrap();
+            upsert_item_shell(
+                &conn,
+                &UpsertItemInput {
+                    id: "import-test-1",
+                    modality: "reading",
+                    title: "Trash me",
+                    status: "processing",
+                    source_asset_id: None,
+                },
+            )
+            .unwrap();
+            crate::processing::queue::enqueue(
+                &conn,
+                "import-test-1",
+                "import-test-1",
+                "asset-1",
+                &serde_json::Value::Null,
+            )
+            .unwrap();
+        }
+        assert!(delete_library_exam_core(&root, "import-test-1").unwrap());
+        let err = permanently_delete_library_exam_core(&root, "import-test-1").unwrap_err();
+        assert!(
+            err.starts_with("ITEM_STILL_PROCESSING"),
+            "识别/排队中的条目应拒绝永久删除，实得：{err}"
+        );
+        // 拒绝后仍留在回收站，未被误删成孤儿。
+        assert_eq!(list_trashed_exams_core(&root).unwrap().len(), 1);
+        cleanup(&root);
+    }
+
+    #[test]
+    fn empty_recycle_bin_purges_every_trashed_item() {
+        let root = make_reading_appdata();
+        migrate_existing_into_library(&root).unwrap();
+        assert!(delete_library_exam_core(&root, "import-test-1").unwrap());
+        assert_eq!(list_trashed_exams_core(&root).unwrap().len(), 1);
+
+        let (deleted, skipped) = empty_recycle_bin_core(&root).unwrap();
+        assert_eq!(deleted, 1);
+        assert!(skipped.is_empty(), "不应有跳过项：{skipped:?}");
+        assert!(list_trashed_exams_core(&root).unwrap().is_empty());
+        assert!(!crate::util::job_dir(&root, "import-test-1").exists());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn part_label_backfills_from_ds_and_manual_overrides() {
+        use crate::library::repository::{
+            open_library_connection, seed_canonical_ds, upsert_item_shell, UpsertItemInput,
+        };
+        let root = make_reading_appdata();
+        {
+            let conn = open_library_connection(&root).unwrap();
+            upsert_item_shell(
+                &conn,
+                &UpsertItemInput {
+                    id: "import-test-1",
+                    modality: "reading",
+                    title: "no filename hint",
+                    status: "ready",
+                    source_asset_id: None,
+                },
+            )
+            .unwrap();
+            // synthetic 阅读稿 answerKey = q14/q15 → 题号范围落在 Passage 2。
+            let ds = fs::read(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join("fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"),
+            )
+            .unwrap();
+            let ds: serde_json::Value = serde_json::from_slice(&ds).unwrap();
+            seed_canonical_ds(&conn, "import-test-1", &ds.to_string(), "ready").unwrap();
+        }
+
+        let find = |value: &serde_json::Value| -> serde_json::Value {
+            value
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["id"] == "import-test-1")
+                .unwrap()
+                .clone()
+        };
+
+        let listed = crate::library::commands::list_library_items_core(&root, false).unwrap();
+        let row = find(&listed);
+        assert_eq!(row["partLabel"], "P2", "题号 14–15 应判为 Passage 2");
+        let source = row["partSource"].as_str().unwrap();
+        assert!(
+            source == "range" || source == "content",
+            "自动判定来源应为 range/content，实得 {source}"
+        );
+
+        assert!(
+            crate::library::commands::set_library_item_part_core(&root, "import-test-1", Some("P1"))
+                .unwrap()
+        );
+        let row = find(&crate::library::commands::list_library_items_core(&root, false).unwrap());
+        assert_eq!(row["partLabel"], "P1");
+        assert_eq!(row["partSource"], "manual");
+
+        // 清除手动值应回到自动判定，而不是停留在手动值。
+        assert!(
+            crate::library::commands::set_library_item_part_core(&root, "import-test-1", None)
+                .unwrap()
+        );
+        let row = find(&crate::library::commands::list_library_items_core(&root, false).unwrap());
+        assert_eq!(row["partLabel"], "P2", "清除手动值后应回到自动判定");
         cleanup(&root);
     }
 

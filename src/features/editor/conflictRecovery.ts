@@ -73,7 +73,14 @@ export function conflictWasMachineOnly(input: {
   const { localBase, remoteVersion, recentEdits } = input;
   if (!Array.isArray(recentEdits) || remoteVersion <= localBase) return false;
   const since = recentEdits.filter((edit) => edit.baseVersion >= localBase && edit.baseVersion < remoteVersion);
-  if (since.length !== remoteVersion - localBase) return false;
+  // 完整性证明：区间 (localBase, remoteVersion] 的每一次版本推进都要有一条日志——baseVersions
+  // 必须恰好覆盖 {localBase..remoteVersion-1}，无缺口、无截断。有缺口（日志被 50 条上限截断，
+  // 或 seed 之类不记日志的机器写入落进区间）就证明不了「全是机器写入」，按人工冲突交用户。
+  const baseVersions = new Set(since.map((edit) => edit.baseVersion));
+  for (let version = localBase; version < remoteVersion; version += 1) {
+    if (!baseVersions.has(version)) return false;
+  }
+  // 覆盖完整后，这段里不能有任何人工/撤销/来源不明的写入。
   return since.every((edit) => typeof edit.origin === "string" && edit.origin !== "human" && edit.origin !== "undo");
 }
 

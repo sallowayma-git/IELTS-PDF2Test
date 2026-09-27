@@ -141,7 +141,27 @@ pub(crate) fn apply_editor_commands_core(
 
 pub(crate) fn list_library_items_core(root: &Path, include_deleted: bool) -> CommandResult<Value> {
     let conn = open_library_connection(root)?;
-    let rows = list_items(&conn, include_deleted)?;
+    let mut rows = list_items(&conn, include_deleted)?;
+    // 首次加载惰性判定 Part：判定（读 DS）先做，写入合并进一个事务、且带 part_source IS NULL
+    // 守卫——避免读路径上 N 次串行写，也不覆盖并发的手动设置。判不出记 sentinel，之后不再重算。
+    let mut pending: Vec<(String, Option<String>, String)> = Vec::new();
+    for row in rows.iter_mut() {
+        if row.part_source.is_some() || !row.has_canonical_ds {
+            continue;
+        }
+        if let Some((label, source)) = compute_part_for_row(&conn, row) {
+            row.part_label = label.clone();
+            row.part_source = Some(source.clone());
+            pending.push((row.id.clone(), label, source));
+        }
+    }
+    if !pending.is_empty() {
+        if let Err(error) = persist_part_backfill(&conn, &pending) {
+            // 回填失败不影响列表返回：下次加载会再试（part_source 仍为 NULL）。
+            eprintln!("[library] part backfill batch failed: {error}");
+        }
+    }
+
     let mut result = Vec::new();
     for row in rows {
         let processing = crate::processing::queue::get_job(&conn, &row.id)?;
@@ -151,4 +171,90 @@ pub(crate) fn list_library_items_core(root: &Path, include_deleted: bool) -> Com
         result.push(value);
     }
     Ok(Value::Array(result))
+}
+
+/// 手动设置某条目的 Part 标签：来源记为 `manual`，压过一切自动判定。
+/// `label` 为空/None 表示清除手动值，回到自动判定（下次列表重新推断）。
+pub(crate) fn set_library_item_part_core(
+    root: &Path,
+    item_id: &str,
+    label: Option<&str>,
+) -> CommandResult<bool> {
+    let conn = open_library_connection(root)?;
+    let trimmed = label.map(str::trim).filter(|value| !value.is_empty());
+    match trimmed {
+        Some(value) => super::repository::set_item_part(&conn, item_id, Some(value), Some("manual")),
+        None => super::repository::set_item_part(&conn, item_id, None, None),
+    }
+}
+
+/// 判不出 Part 时写入的 sentinel：区分「算过但没有」与「还没算过（NULL）」，避免每次列表都重算。
+const PART_SOURCE_NONE: &str = "none";
+
+/// 从权威稿 + 标题判定该行的 Part（只读、不写库）。返回 `(标签, 来源)`；判不出时标签为
+/// None、来源为 sentinel。DS 读不到则返回 None（本行不参与回填）。
+fn compute_part_for_row(
+    conn: &rusqlite::Connection,
+    row: &super::repository::LibraryItemRowV2,
+) -> Option<(Option<String>, String)> {
+    let (ds, _) = super::repository::get_canonical_ds(conn, &row.id).ok()??;
+    let (lines, numbers) = part_inputs_from_ds(&ds);
+    let detected = crate::library::part_detection::detect_part(
+        &crate::library::part_detection::PartDetectionInput {
+            modality: &row.modality,
+            manual_label: None,
+            task_type: ds.get("taskType").and_then(Value::as_str),
+            source_lines: &lines,
+            question_numbers: &numbers,
+            filename: &row.title,
+        },
+    );
+    Some(match detected {
+        Some(part) => (Some(part.label), part.source.as_str().to_string()),
+        None => (None, PART_SOURCE_NONE.to_string()),
+    })
+}
+
+/// 把一批 Part 回填写入同一个 IMMEDIATE 事务，每条都带 `part_source IS NULL` 守卫。
+fn persist_part_backfill(
+    conn: &rusqlite::Connection,
+    pending: &[(String, Option<String>, String)],
+) -> CommandResult<()> {
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
+        .map_err(|error| format!("part_backfill_begin:{error}"))?;
+    for (id, label, source) in pending {
+        super::repository::backfill_item_part(&tx, id, label.as_deref(), source)?;
+    }
+    tx.commit()
+        .map_err(|error| format!("part_backfill_commit:{error}"))
+}
+
+/// 从权威稿抽取 Part 判定输入：题号（answerKey 的 `q<n>` 键）+ 可能含标题行的文本
+/// （passage 标题/正文、exam 标题）。best-effort：抽不到就交给文件名判定。
+fn part_inputs_from_ds(ds: &Value) -> (Vec<String>, Vec<u32>) {
+    let mut numbers: Vec<u32> = Vec::new();
+    if let Some(answer_key) = ds.get("answerKey").and_then(Value::as_object) {
+        for key in answer_key.keys() {
+            if let Some(digits) = key.strip_prefix('q').or(Some(key.as_str())) {
+                if let Ok(number) = digits.parse::<u32>() {
+                    numbers.push(number);
+                }
+            }
+        }
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut push_strings = |value: Option<&Value>| {
+        if let Some(text) = value.and_then(Value::as_str) {
+            for line in text.lines() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    lines.push(trimmed.to_string());
+                }
+            }
+        }
+    };
+    push_strings(ds.pointer("/exam/title"));
+    push_strings(ds.pointer("/passage/title"));
+    push_strings(ds.pointer("/passage/content"));
+    (lines, numbers)
 }

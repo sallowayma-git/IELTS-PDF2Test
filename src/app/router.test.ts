@@ -36,10 +36,15 @@ describe("parseRoute — 三个主表面", () => {
     expect(parseRoute("#/items/x?publish=1")).toMatchObject({ name: "workspace", itemId: "x", intent: "publish" });
   });
 
-  it("只放行 legacy/writing，其余 legacy 页面不再解析为 legacy 路由", () => {
+  it("legacy 页面解析：writing 仍可解析（重定向前的一跳），其余按 legacy 或落回题库", () => {
     expect(parseRoute("#/legacy/writing")).toMatchObject({ name: "legacy", legacyPage: "writing" });
     expect(parseRoute("#/legacy/dashboard")).toMatchObject({ name: "legacy", legacyPage: "dashboard" });
     expect(parseRoute("#/legacy/not-a-page")).toMatchObject({ name: "library" });
+  });
+
+  it("题库路由带上题型子标签（?modality=）", () => {
+    expect(parseRoute("#/library?modality=writing")).toMatchObject({ name: "library", modality: "writing" });
+    expect(parseRoute("#/library?modality=reading")).toMatchObject({ name: "library", modality: "reading" });
   });
 
   it("无法识别的一级路径落回题库", () => {
@@ -72,18 +77,25 @@ describe("legacyRedirect — 旧链接一次性重定向", () => {
     expect(legacyRedirect("#/packs")).toBe("/library?publish=1");
   });
 
-  it("显式 legacy 逃生通道：除 writing 外重定向", () => {
+  it("显式 legacy 逃生通道全部重定向（writing 并入题库写作子标签，C3）", () => {
     expect(legacyRedirect("#/legacy/import")).toBe("/library?import=1");
     expect(legacyRedirect("#/legacy/dashboard")).toBe("/library");
     expect(legacyRedirect("#/legacy/dashboard/abc")).toBe("/items/abc");
+    expect(legacyRedirect("#/legacy/writing")).toBe("/library?modality=writing");
+    expect(legacyRedirect("#/legacy/writing/abc")).toBe("/library?modality=writing");
   });
 
-  it("新路由与 legacy/writing 不重定向", () => {
+  it("新路由不重定向", () => {
     expect(legacyRedirect("#/items/abc")).toBeUndefined();
     expect(legacyRedirect("#/settings")).toBeUndefined();
     expect(legacyRedirect("#/library")).toBeUndefined();
-    expect(legacyRedirect("#/legacy/writing")).toBeUndefined();
-    expect(legacyRedirect("#/legacy/writing/abc")).toBeUndefined();
+  });
+
+  it("writing 落地页 /library?modality=writing 不被二次重定向（否则写作子标签死链）", () => {
+    expect(legacyRedirect("#/legacy/writing")).toBe("/library?modality=writing");
+    // 落地页是新路由：query 不能被当成路径段而误判成 /items/modality=writing。
+    expect(legacyRedirect("#/library?modality=writing")).toBeUndefined();
+    expect(legacyRedirect("#/library?import=1")).toBeUndefined();
   });
 });
 

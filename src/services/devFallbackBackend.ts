@@ -2492,10 +2492,21 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
           editVersion: session.revision, hasCanonicalDs: true, updatedAt: now() }, issues: session.authoring.quality.issues } as T;
     }
     case "list_library_items": {
-      return Object.entries(store.authoringV2).map(([itemId, ds]) => ({ id: itemId, title: ds.exam.title,
-        modality: "reading", status: ds.quality.state === "ready" ? "ready" : "action_required",
-        currentEditVersion: store.authoringV2Revisions[itemId] ?? 0, hasCanonicalDs: true,
-        createdAt: now(), updatedAt: now(), deletedAt: null, sourceAssetId: null })) as T;
+      return Object.entries(store.authoringV2).map(([itemId, ds]) => {
+        const manualPart = localStorage.getItem(`dev-part:${itemId}`);
+        return { id: itemId, title: ds.exam.title,
+          modality: "reading", status: ds.quality.state === "ready" ? "ready" : "action_required",
+          currentEditVersion: store.authoringV2Revisions[itemId] ?? 0, hasCanonicalDs: true,
+          createdAt: now(), updatedAt: now(), deletedAt: null, sourceAssetId: null,
+          partLabel: manualPart ?? null, partSource: manualPart ? "manual" : null };
+      }) as T;
+    }
+    case "set_library_item_part": {
+      const id = String(args.itemId ?? "");
+      const label = args.label == null ? null : String(args.label).trim();
+      if (label) localStorage.setItem(`dev-part:${id}`, label);
+      else localStorage.removeItem(`dev-part:${id}`);
+      return true as T;
     }
     case "apply_editor_commands": {
       const input = args.input as { itemId: string; baseVersion: number; commands: ApplyAuthoringV2PatchesInput["patches"]; title?: string; requestId?: string };
@@ -3812,6 +3823,26 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       ];
       trashed.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
       return trashed as T;
+    }
+
+    case "permanently_delete_library_exam": {
+      // 只允许删已在回收站里的条目；物理移除 job/writing 记录与 trashed 标记。
+      const id = String(args.id ?? "");
+      if (!store.trashedIds.includes(id)) throw new Error(`NOT_IN_TRASH:${id}`);
+      store.trashedIds = store.trashedIds.filter((t) => t !== id);
+      store.jobs = store.jobs.filter((j) => j.jobId !== id);
+      store.writingJobs = store.writingJobs.filter((j) => j.jobId !== id);
+      save(store);
+      return true as T;
+    }
+
+    case "empty_recycle_bin": {
+      const ids = [...store.trashedIds];
+      store.jobs = store.jobs.filter((j) => !ids.includes(j.jobId));
+      store.writingJobs = store.writingJobs.filter((j) => !ids.includes(j.jobId));
+      store.trashedIds = [];
+      save(store);
+      return { deleted: ids.length, skipped: [] as Array<{ id: string; reason: string }> } as T;
     }
 
     case "search_library_exams": {

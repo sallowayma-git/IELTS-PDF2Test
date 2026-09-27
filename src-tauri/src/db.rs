@@ -13,8 +13,9 @@
 use crate::{LibraryExamDetail, LibraryExamSummary, LibraryFilter, LibraryMetaPatch, LibraryStats};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use crate::CommandResult;
 
@@ -47,7 +48,7 @@ pub(crate) fn migrate_db_file(root: &Path) -> CommandResult<()> {
     Ok(())
 }
 
-/// 打开一个连接：设置 WAL/外键/忙等超时，并确保 schema 存在（幂等）。
+/// 打开一个连接：设置 WAL/外键/忙等超时，并确保 schema 存在（每进程/每库文件只建一次）。
 pub(crate) fn open_connection(root: &Path) -> CommandResult<Connection> {
     // 先做文件级迁移（旧 library.db → authoring_hub.db）。
     migrate_db_file(root)?;
@@ -63,8 +64,29 @@ pub(crate) fn open_connection(root: &Path) -> CommandResult<Connection> {
          PRAGMA busy_timeout=5000;",
     )
     .map_err(|error| format!("db_pragma:{}", error))?;
-    ensure_schema(&conn)?;
+    // 建表只跑一次/进程/库文件。`ensure_schema` 是 `CREATE TABLE IF NOT EXISTS` 批量，
+    // 每次开连接都重复执行是纯争用来源：编辑保存正持写锁时，另一条连接的建表批量也要
+    // 抢写锁，`busy_timeout` 耗尽即 `database is locked`。启动首开建好后，后续普通连接
+    // 只设 PRAGMA。
+    ensure_schema_once(&path, &conn)?;
     Ok(conn)
+}
+
+/// 记录已建表的库文件（进程内、按路径去重）。
+fn schema_ensured_set() -> &'static Mutex<HashSet<PathBuf>> {
+    static SCHEMA_ENSURED: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+    SCHEMA_ENSURED.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// 对某个库文件只跑一次 `ensure_schema`。并发首开时可能重复跑（`ensure_schema` 幂等），
+/// 但绝不会漏跑。
+fn ensure_schema_once(path: &Path, conn: &Connection) -> CommandResult<()> {
+    if schema_ensured_set().lock().unwrap().contains(path) {
+        return Ok(());
+    }
+    ensure_schema(conn)?;
+    schema_ensured_set().lock().unwrap().insert(path.to_path_buf());
+    Ok(())
 }
 
 /// 建表 + 索引（IF NOT EXISTS，幂等）。
@@ -842,8 +864,9 @@ pub(crate) fn upsert_library_item(
     conn: &Connection,
     record: &LibraryItemRecord,
 ) -> CommandResult<String> {
-    let tx = conn
-        .unchecked_transaction()
+    // 先读后写（先查 MAX(revision_no) 再 INSERT），用 IMMEDIATE 避免 WAL 下的
+    // SQLITE_BUSY_SNAPSHOT（不受 busy_timeout 保护）；详见 listening_audio/store.rs 的同类修复。
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
         .map_err(|e| format!("lib_item_begin:{}", e))?;
     // 查现有 item 与最大 revision_no。
     let existing: Option<(Option<String>, i64)> = tx
@@ -919,6 +942,91 @@ pub(crate) fn restore_library_item(conn: &Connection, id: &str) -> CommandResult
         )
         .map_err(|e| format!("restore:{}:{}", id, e))?;
     Ok(affected > 0)
+}
+
+/// 值 = 条目/任务 id 的列名（`purge_all_rows_for_item` 按这些列删行）。
+/// 新增引用条目的表/列时必须同步更新，否则会漏删——由 `purge_column_coverage_is_exhaustive` 守卫。
+pub(crate) const PURGE_ID_COLUMNS: &[&str] = &[
+    "library_item_id",
+    "item_id",
+    "linked_library_item_id",
+    "created_from_job_id",
+    "ingest_job_id",
+];
+
+/// 这些表的主键 `id` 本身就是条目/任务 id。
+pub(crate) const PURGE_ID_PK_TABLES: &[&str] = &[
+    "library_items_v2",
+    "processing_jobs_v2",
+    "library_items",
+    "ingest_jobs",
+    "exams",
+];
+
+/// 永久删除：把某个题库条目（item id == job id）在所有表里的行删干净。
+///
+/// 遍历 `sqlite_master` 的用户表，凡带 `ID_COLUMNS` 里的列（library_item_id / item_id /
+/// linked_library_item_id / created_from_job_id / ingest_job_id），或本身以 `id` 为条目 id 的
+/// `ID_PK_TABLES`，就按该 id 删行。全程一个 IMMEDIATE 事务 + `defer_foreign_keys=ON`，把外键
+/// 检查推迟到 commit，删除顺序无所谓、无需拓扑排序。
+///
+/// 只认下面写死的列名/表名：将来新表若用别的列名（如 job_id）引用条目会被静默漏删，
+/// 由 `purge_column_coverage_is_exhaustive` 守卫——新增此类列不在清单里即测试失败。
+///
+/// 不动 `source_assets`：其行可能被多个条目共享（`library_items.source_asset_id` 指向它），
+/// 按条目 id 删会误伤；原文件由 job 目录清理覆盖。
+///
+/// 返回删除的总行数。
+pub(crate) fn purge_all_rows_for_item(conn: &Connection, id: &str) -> CommandResult<u64> {
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| format!("purge_begin:{}", e))?;
+    tx.execute_batch("PRAGMA defer_foreign_keys=ON;")
+        .map_err(|e| format!("purge_defer_fk:{}", e))?;
+
+    let tables: Vec<String> = {
+        let mut stmt = tx
+            .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+            .map_err(|e| format!("purge_list_tables:{}", e))?;
+        let mapped = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| format!("purge_list_tables:{}", e))?;
+        let mut out = Vec::new();
+        for row in mapped {
+            out.push(row.map_err(|e| format!("purge_list_tables:{}", e))?);
+        }
+        out
+    };
+
+    let mut removed: u64 = 0;
+    for table in &tables {
+        let columns: Vec<String> = {
+            let mut stmt = tx
+                .prepare(&format!("PRAGMA table_info(\"{table}\")"))
+                .map_err(|e| format!("purge_columns:{table}:{}", e))?;
+            let mapped = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|e| format!("purge_columns:{table}:{}", e))?;
+            let mut out = Vec::new();
+            for row in mapped {
+                out.push(row.map_err(|e| format!("purge_columns:{table}:{}", e))?);
+            }
+            out
+        };
+        for column in &columns {
+            let matches = PURGE_ID_COLUMNS.contains(&column.as_str())
+                || (column == "id" && PURGE_ID_PK_TABLES.contains(&table.as_str()));
+            if matches {
+                let sql = format!("DELETE FROM \"{table}\" WHERE \"{column}\" = ?1");
+                removed += tx
+                    .execute(&sql, params![id])
+                    .map_err(|e| format!("purge_delete:{table}.{column}:{}", e))?
+                    as u64;
+            }
+        }
+    }
+
+    tx.commit().map_err(|e| format!("purge_commit:{}", e))?;
+    Ok(removed)
 }
 
 fn exam_record_from_library_item(conn: &Connection, id: &str) -> CommandResult<Option<ExamRecord>> {
@@ -1042,6 +1150,58 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         ensure_schema(&conn).unwrap();
         conn
+    }
+
+    /// 守卫 `purge_all_rows_for_item` 的覆盖面：全 schema 里凡是 id 形态的列
+    /// （`*item_id` / `*job_id`）都必须在 `PURGE_ID_COLUMNS` 里，或在写明理由的豁免清单里。
+    /// 否则将来新增引用条目的表/列会被永久删除静默漏删、留下孤儿——这里让它在加表时就变红。
+    #[test]
+    fn purge_column_coverage_is_exhaustive() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+        crate::library::schema::ensure_v2_schema(&conn).unwrap();
+
+        // 不按自身删除的 id 形态列：删除已由同表其它键或「该行整体按 id 删」覆盖。
+        const EXEMPT: &[(&str, &str)] = &[
+            // 同表已有 library_item_id（按它删），job_id 只是冗余记录。
+            ("recognition_batches_v1", "job_id"),
+            // library_items 整行按主键 id 删；这是指向 ingest 任务的 FK，不单独定位行。
+            ("library_items", "linked_ingest_job_id"),
+        ];
+
+        let tables: Vec<String> = {
+            let mut stmt = conn
+                .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+                .unwrap();
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0)).unwrap();
+            rows.map(Result::unwrap).collect()
+        };
+
+        let mut uncovered = Vec::new();
+        for table in &tables {
+            let mut stmt = conn
+                .prepare(&format!("PRAGMA table_info(\"{table}\")"))
+                .unwrap();
+            let cols: Vec<String> = stmt
+                .query_map([], |r| r.get::<_, String>(1))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
+            for col in &cols {
+                let id_like = col.ends_with("item_id") || col.ends_with("job_id");
+                if !id_like
+                    || PURGE_ID_COLUMNS.contains(&col.as_str())
+                    || EXEMPT.contains(&(table.as_str(), col.as_str()))
+                {
+                    continue;
+                }
+                uncovered.push(format!("{table}.{col}"));
+            }
+        }
+        assert!(
+            uncovered.is_empty(),
+            "这些 id 列既不在 PURGE_ID_COLUMNS 也不在豁免清单，永久删除会漏删：{uncovered:?}"
+        );
     }
 
     fn sample_record(id: &str, subject: &str, status: &str) -> ExamRecord {
