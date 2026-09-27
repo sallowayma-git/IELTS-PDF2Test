@@ -2021,6 +2021,48 @@ mod tests {
         assert_eq!(run.as_deref(), Some("run-7"));
     }
 
+    /// C1 §2 前提校验：自动重放靠 editor_journal_v1 判定「区间内是否有人工写入」，因此**所有**
+    /// 人工写路径都必须记一条 edit_origin='human' 的日志。覆盖：结构动作（setAnswer）、编辑命令、
+    /// 标题修改。若将来新增不记日志的人工写路径，这条会红，提醒先补日志、别放宽重放判定。
+    #[test]
+    fn human_write_paths_are_journalled_with_human_origin() {
+        let mut conn = grouped_item();
+        // 1) 结构动作 / 答案（setAnswer）走 EditOrigin::Human。
+        run_edit(&mut conn, vec![set_answer("slot-14", "human_value")], EditOrigin::Human, None, 1).unwrap();
+        // 2) 标题修改（commands 空、仅 title）走同一条人工保存链。
+        apply_editor_commands_tx_with(
+            &mut conn,
+            &ApplyEditorCommandsInput {
+                item_id: "it-1".into(),
+                base_version: 2,
+                request_id: None,
+                commands: vec![],
+                title: Some("人工改名".into()),
+            },
+            EditOrigin::Human,
+            None,
+            &real_patch(),
+            &noop_validate,
+            &|_, _| Ok(()),
+        )
+        .unwrap();
+
+        let origins: Vec<String> = {
+            let mut stmt = conn
+                .prepare("SELECT edit_origin FROM editor_journal_v1 WHERE library_item_id='it-1' ORDER BY id")
+                .unwrap();
+            stmt.query_map([], |row| row.get::<_, Option<String>>(0))
+                .unwrap()
+                .map(|row| row.unwrap().unwrap_or_default())
+                .collect()
+        };
+        assert_eq!(
+            origins,
+            vec!["human".to_string(), "human".to_string()],
+            "每次人工写入（setAnswer 结构动作、标题修改）都必须记一条 edit_origin='human' 的日志"
+        );
+    }
+
     /// 撤销整轮修复：结构（槽位与答案）一并回滚，**无关目标上的后续人工修改保留**。
     #[test]
     fn undo_repair_run_restores_targets_and_keeps_unrelated_edits() {

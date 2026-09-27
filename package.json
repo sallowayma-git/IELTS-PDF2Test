@@ -59,6 +59,7 @@
     "e2e:issue-list": "node scripts/e2e/tauri-cdp-issue-list.mjs --diagnostic-args",
     "e2e:tfng-layout": "node scripts/e2e/tauri-cdp-tfng-layout.mjs",
     "e2e:option-drag": "node scripts/e2e/tauri-cdp-option-drag.mjs",
+    "e2e:edit-save-stress": "node scripts/e2e/tauri-cdp-edit-save-stress.mjs",
     "test:chain-verdict": "vitest run scripts/e2e/lib/chain-verdict.test.mjs",
     "capture:phase0-baseline": "node scripts/phase0-golden.mjs capture",
     "register:phase0:private": "node scripts/register-phase0-private-sample.mjs",

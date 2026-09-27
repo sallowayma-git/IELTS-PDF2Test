@@ -231,6 +231,10 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
     if (timer.current !== undefined) window.clearTimeout(timer.current);
     timer.current = undefined;
     if (inFlight.current) return inFlight.current;
+    // 每个新的保存循环（批次）重新获得一次自动重放机会；同一循环内 autoRebaseTried 置位后
+    // 仍最多重放一次。不这样的话：一次冲突把 autoRebaseTried 永久置真，之后每个新编辑的
+    // 保存都跳过重放、永久变红，直到用户手动点按钮。
+    autoRebaseTried.current = false;
     const run = async (): Promise<void> => {
       try {
         while (batchRef.current || pendingRef.current.length || pendingTitleRef.current !== undefined) {
@@ -317,6 +321,12 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
    * 按「可能有变更」保守处理，绝不能因为拿不到版本号就把通知丢掉。
    */
   const noteRemoteVersion = useCallback((incoming: number | null | undefined) => {
+    // 权威稿还没加载好（识别进行中，首次 load 撞上 ds=null）：任何远端通知都当作
+    // 「可能已 seed」的信号去重试加载。load 成功后会补发此前暂存的标题编辑（见 load effect）。
+    if (!draftRef.current) {
+      requestReload();
+      return;
+    }
     const action = decideRemoteVersionAction({
       incoming,
       current: versionRef.current,
@@ -344,10 +354,13 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
     setLoadError(undefined);
     getWorkspaceItem(itemId).then((workspace) => {
       if (cancelled) return;
+      // 即使权威稿尚未 seed（识别进行中，ds=null），也先采纳后端返回的版本号：否则编辑器
+      // 停在初始 base 0，标题这类无需 draft 的编辑会以过期基线 0 发出保存，撞上已被建壳/
+      // seed 推到的 current，永久变红——这正是「识别进行中编辑变红」的根因。
+      setVersion(workspace.editVersion);
       if (!workspace.ds) throw new Error("ITEM_DS_NOT_SEEDED");
       let loaded = workspace.ds as unknown as IeltsAuthoringIRV2;
       let loadedTitle = workspace.item.title;
-      setVersion(workspace.editVersion);
       try {
         const saved = localStorage.getItem(recoveryKey);
         const recovery: RecoveryDraft | undefined = saved ? JSON.parse(saved) : undefined;
@@ -367,11 +380,16 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
       setDraft(loaded);
       setTitleState(loadedTitle);
       checkpoint();
+      // seed 完成后（含从识别中重载而来）：把此前暂存、当时没敢以 base 0 发出的编辑补发，
+      // 此刻 base 已是采纳后的真实版本。
+      if (pendingTitleRef.current !== undefined || pendingRef.current.length || batchRef.current) {
+        void persist().catch(() => {});
+      }
     }).catch((error) => {
       if (!cancelled) setLoadError(error instanceof Error ? error.message : String(error));
     }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [itemId, reloadTick, recoveryKey, checkpoint]);
+  }, [itemId, reloadTick, recoveryKey, checkpoint, persist]);
 
   const schedule = useCallback(() => {
     checkpoint();
@@ -395,8 +413,11 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
       setDraft(draftRef.current);
     }
     pendingTitleRef.current = trimmed;
-    schedule();
-  }, [schedule]);
+    // 权威稿还没加载好（识别进行中）时**暂存不发**：以 base 0 保存必然撞版本冲突。
+    // 等 seed 后重载成功，load 回调会补发这条暂存的标题（见上面的 effect）。
+    if (draftRef.current) schedule();
+    else checkpoint();
+  }, [schedule, checkpoint]);
 
   const enqueue = useCallback((patch: AuthoringPatchV2, recordHistory: boolean) => {
     const current = draftRef.current;
