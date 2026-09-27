@@ -410,6 +410,40 @@ fn dynamic_block_bbox(block: &Value) -> Option<[f64; 4]> {
     ])
 }
 
+pub(crate) fn is_dynamic_page_number_block(block: &Value) -> bool {
+    if matches!(dynamic_block_role(block), "question" | "answer")
+        || block.pointer("/layoutHints/numbering").is_some()
+    {
+        return false;
+    }
+    let text = dynamic_block_text(block);
+    if text.is_empty()
+        || !text
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || ch.is_whitespace() || matches!(ch, '.' | '-'))
+    {
+        return false;
+    }
+    let digits = text.chars().filter(char::is_ascii_digit).count();
+    if digits == 0 || digits > 3 {
+        return false;
+    }
+    let Some(page_height) = block
+        .get("_epic8PageHeight")
+        .and_then(Value::as_f64)
+        .filter(|height| *height > 0.0)
+    else {
+        return false;
+    };
+    let bbox = dynamic_block_normalized_bbox(block).or_else(|| dynamic_block_bbox(block));
+    let Some([_, y0, _, y1]) = bbox else {
+        return false;
+    };
+    let top = y0.min(y1);
+    let bottom = y0.max(y1);
+    top <= page_height * 0.08 || bottom >= page_height * 0.90
+}
+
 fn normalize_rotation_degrees(value: i64) -> i64 {
     value.rem_euclid(360)
 }
@@ -2839,7 +2873,11 @@ fn infer_dynamic_passage_title(job: &ImportJob, passage_blocks: &[Value]) -> Str
     passage_blocks
         .iter()
         .map(dynamic_block_text)
-        .find(|text| !text.is_empty() && !text.to_uppercase().starts_with("READING PASSAGE"))
+        .find(|text| {
+            !text.is_empty()
+                && !text.to_uppercase().starts_with("READING PASSAGE")
+                && !is_dynamic_passage_preamble_text(text)
+        })
         .unwrap_or_else(|| job.title.clone())
 }
 
@@ -3064,6 +3102,31 @@ fn is_dynamic_question_or_instruction_like_text(text: &str) -> bool {
         || lower.contains("answer sheet")
         || lower.contains("______")
         || lower.contains("_____")
+}
+
+pub(crate) fn is_dynamic_passage_preamble_text(text: &str) -> bool {
+    let lower = collapse_whitespace(text).to_lowercase();
+    if lower.starts_with("you should spend about")
+        || lower.starts_with("on pages ")
+        || (lower.starts_with("stions ") && lower.contains("based on reading passage"))
+        || (lower.starts_with("questions ")
+            && (lower.contains("based on reading passage")
+                || lower.contains("choose the correct letter")))
+    {
+        return true;
+    }
+    if lower.starts_with("passage ")
+        && lower.contains(" below")
+        && lower.split_whitespace().count() <= 5
+    {
+        return true;
+    }
+    false
+}
+
+fn is_dynamic_passage_preamble_block(block: &Value) -> bool {
+    is_dynamic_page_number_block(block)
+        || is_dynamic_passage_preamble_text(&dynamic_block_text(block))
 }
 
 fn is_dynamic_response_legend_text(text: &str) -> bool {
@@ -4360,7 +4423,10 @@ pub(crate) fn make_dynamic_split_candidates(
     job: &ImportJob,
     doc: Option<&Value>,
 ) -> Value {
-    let blocks = dynamic_document_blocks(doc);
+    let blocks = dynamic_document_blocks(doc)
+        .into_iter()
+        .filter(|block| !is_dynamic_page_number_block(block))
+        .collect::<Vec<_>>();
     if blocks.is_empty() {
         return split_candidates(job_id);
     }
@@ -4417,6 +4483,7 @@ pub(crate) fn make_dynamic_split_candidates(
             .cloned()
             .collect::<Vec<_>>(),
     };
+    passage_blocks.retain(|block| !is_dynamic_passage_preamble_block(block));
     let mut deferred_passage_blocks = Vec::new();
     let all_umbrella_blocks = blocks
         .iter()
@@ -8629,14 +8696,19 @@ pub(crate) fn make_dynamic_authoring_ir(
     let passage_html = passage_source_ids
         .iter()
         .filter_map(|block_id| blocks_by_id.get(block_id))
+        .filter(|block| !is_dynamic_passage_preamble_block(block))
         .map(dynamic_block_html)
         .collect::<Vec<_>>()
         .join("\n");
     let passage_title = first_passage
         .and_then(|candidate| candidate.get("title"))
         .and_then(Value::as_str)
-        .unwrap_or(&job.title)
-        .to_string();
+        .unwrap_or(&job.title);
+    let passage_title = if is_dynamic_passage_preamble_text(passage_title) {
+        job.title.clone()
+    } else {
+        passage_title.to_string()
+    };
 
     let group_candidates = split
         .get("questionGroupCandidates")
@@ -12868,6 +12940,53 @@ mod tests {
             .expect("group block ids");
         assert!(block_ids.contains(&json!("q008")));
         assert!(block_ids.contains(&json!("q009")));
+    }
+
+    #[test]
+    fn passage_candidate_excludes_preamble_banner_and_wrapped_time_instruction() {
+        let job = test_job();
+        let doc = json!({
+            "schemaVersion":"DocumentIRV1",
+            "pages":[{
+                "pageIndex":1,
+                "width":612.0,
+                "height":792.0,
+                "blocks":[
+                    {"blockId":"reading-header","text":"READING PASSAGE 1","roleHint":"header"},
+                    {"blockId":"passage-banner","text":"Passage 1 below.","roleHint":"passage"},
+                    {"blockId":"time-instruction","text":"You should spend about 20 minutes on Que","roleHint":""},
+                    {"blockId":"page-instruction","text":"on pages 10 and 11.","roleHint":""},
+                    {"blockId":"folio","text":"10","roleHint":"","bbox":[299.0,748.0,306.0,756.0]},
+                    {"blockId":"question-range","text":"Questions 1-2, which are based on Reading Passage 1","roleHint":"question"},
+                    {"blockId":"passage-title","text":"The history of the archive","roleHint":"passage"},
+                    {"blockId":"passage-body","text":"A long passage paragraph that carries enough prose to be recognized as the document body.","roleHint":"passage"},
+                    {"blockId":"question-heading","text":"Questions 1-2","roleHint":"question"},
+                    {"blockId":"q1","text":"1 Which records were preserved?","roleHint":"question"}
+                ]
+            }],
+            "assets":[],
+            "parser":{"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let passage = split
+            .pointer("/passageCandidates/0")
+            .expect("document passage candidate");
+        let range = passage
+            .get("range")
+            .and_then(Value::as_array)
+            .expect("passage source range");
+        let range_ids = range.iter().filter_map(Value::as_str).collect::<Vec<_>>();
+        assert_eq!(
+            passage.get("title").and_then(Value::as_str),
+            Some("The history of the archive"),
+            "the preamble banner is not the passage title"
+        );
+        for id in ["passage-banner", "time-instruction", "page-instruction", "folio"] {
+            assert!(
+                !range_ids.contains(&id),
+                "preamble/page-number block {id} leaked into passage range: {range_ids:?}"
+            );
+        }
     }
 
     #[test]

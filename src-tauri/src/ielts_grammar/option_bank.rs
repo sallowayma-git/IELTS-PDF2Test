@@ -123,11 +123,23 @@ pub(crate) fn detect_completion_option_bank(
         .map(|option| option.line_id.as_str())
         .collect::<std::collections::BTreeSet<_>>()
         .len();
+    let mut labels_per_source_row = std::collections::BTreeMap::<&str, usize>::new();
+    for option in by_label.values() {
+        *labels_per_source_row
+            .entry(option.line_id.as_str())
+            .or_default() += 1;
+    }
+    let compact_rows_are_closed = by_label.len() == expected.len()
+        && labels_per_source_row.len() >= 2
+        && labels_per_source_row.values().all(|count| *count >= 2);
     // Without a visible `List of ...` heading, require one source row per
-    // declared label.  This keeps a prose line such as `A study compared B
-    // with C` from becoming a selectable bank merely because the instruction
-    // mentions a list and an A-C range.
-    if !has_structural_heading && distinct_label_rows < expected.len() {
+    // declared label unless multiple explicitly labelled options close the
+    // alphabet across at least two compact source rows. This still rejects a
+    // single prose line such as `A study compared B with C`.
+    if !has_structural_heading
+        && distinct_label_rows < expected.len()
+        && !compact_rows_are_closed
+    {
         return None;
     }
     let options = expected
@@ -395,6 +407,41 @@ mod tests {
             ]
         );
         assert_eq!(bank.title, Some("List of words".to_string()));
+    }
+
+    #[test]
+    fn completion_bank_accepts_closed_compact_rows_without_a_structural_heading() {
+        let lines = [
+            line(
+                "instruction",
+                "Complete the summary using the list of words and phrases, A-H, below.",
+            ),
+            line(
+                "row-1",
+                "A methodology B needs C originality D important people E accuracy F interests and feelings",
+            ),
+            line("row-2", "G explanation H organisational matters"),
+        ];
+        let bank = detect_completion_option_bank(&lines, "Questions 27-31", Some(false), 5)
+            .expect("complete labelled rows form a source-backed shared bank");
+        assert_eq!(
+            bank.run
+                .options
+                .iter()
+                .map(|option| (option.label.as_str(), option.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("A", "methodology"),
+                ("B", "needs"),
+                ("C", "originality"),
+                ("D", "important people"),
+                ("E", "accuracy"),
+                ("F", "interests and feelings"),
+                ("G", "explanation"),
+                ("H", "organisational matters")
+            ]
+        );
+        assert!(!bank.allow_reuse);
     }
 
     #[test]

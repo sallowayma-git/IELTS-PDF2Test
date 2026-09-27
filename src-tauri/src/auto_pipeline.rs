@@ -1656,6 +1656,125 @@ fn answer_page_evidence_by_number(candidate: &Value) -> BTreeMap<String, Value> 
     evidence
 }
 
+fn attach_adopted_cloud_answer_claim(vision_candidate: &mut Value, cloud_candidate: &Value) {
+    let cloud_authoring = cloud_candidate
+        .get("authoring")
+        .filter(|authoring| authoring.is_object())
+        .unwrap_or(cloud_candidate);
+    vision_candidate["adoptedCloudCandidate"] = json!(true);
+    vision_candidate["cloudAnswerKey"] = cloud_authoring
+        .get("answerKey")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    vision_candidate["cloudAnswerPageEvidence"] = cloud_candidate
+        .get("answerPageEvidence")
+        .or_else(|| cloud_authoring.get("answerPageEvidence"))
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+}
+
+fn normalized_answer_quote(value: &str) -> String {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
+}
+
+fn answer_quote_supports_value(quote: &str, answer: &Value) -> bool {
+    let quote_tokens = normalized_compare_text(&json!(quote))
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let values = match answer.get("kind").and_then(Value::as_str) {
+        Some("text") => answer.get("values"),
+        Some("option") => answer.get("labels"),
+        _ => None,
+    };
+    let Some(values) = values.and_then(Value::as_array) else {
+        return false;
+    };
+    if values.is_empty() {
+        return false;
+    }
+    let value_is_cited = |value: &Value| {
+        let answer_tokens = normalized_compare_text(value)
+            .split(|ch: char| !ch.is_alphanumeric())
+            .filter(|token| !token.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        !answer_tokens.is_empty()
+            && quote_tokens
+                .windows(answer_tokens.len())
+                .any(|window| window == answer_tokens)
+    };
+    match answer.get("kind").and_then(Value::as_str) {
+        Some("text") => values.iter().any(value_is_cited),
+        Some("option") => values.iter().all(value_is_cited),
+        _ => false,
+    }
+}
+
+/// Candidate-side citation counts only when the answer-page vision pass independently sees an
+/// matching quote for the same question on the same page. This keeps model-supplied metadata
+/// from becoming proof by itself.
+fn adopted_candidate_citation_is_visible(
+    candidate: &Value,
+    number: &str,
+    visible_page_evidence: &BTreeMap<String, Value>,
+    cloud_answer: &Value,
+) -> bool {
+    let Some(visible) = visible_page_evidence.get(number) else {
+        return false;
+    };
+    let Some(visible_page) = visible.get("pageIndex").and_then(Value::as_u64) else {
+        return false;
+    };
+    let visible_quote = normalized_answer_quote(
+        visible
+            .get("quote")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    );
+    if visible_quote.is_empty() {
+        return false;
+    }
+    let visible_source_quote = visible
+        .get("quote")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !answer_quote_supports_value(visible_source_quote, cloud_answer) {
+        return false;
+    }
+    candidate
+        .get("cloudAnswerPageEvidence")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|entry| {
+            let entry_number = entry
+                .get("questionNumber")
+                .and_then(normalized_answer_page_question_number);
+            let page = entry.get("pageIndex").and_then(Value::as_u64);
+            let quote = normalized_answer_quote(
+                entry
+                    .get("quote")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            );
+            let exact_quote = entry
+                .get("quote")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            entry_number.as_deref() == Some(number)
+                && page == Some(visible_page)
+                && !quote.is_empty()
+                && answer_quote_supports_value(exact_quote, cloud_answer)
+                && visible_quote == quote
+        })
+}
+
 /// Turn one visual candidate into canonical `setAnswer` commands.  The caller
 /// supplies the slots whose latest journal write came from answer-page
 /// recognition; those slots are the only machine values that an empty or
@@ -1686,6 +1805,7 @@ fn build_answer_page_commands(
         })
         .collect::<BTreeMap<_, _>>();
     let mut reliable = BTreeMap::<String, Value>::new();
+    let mut adopted_page_claims = BTreeMap::<String, (String, Value)>::new();
     if confidence >= 0.85 {
         if let Some(answers) = answers {
             for (raw_number, raw_answer) in answers {
@@ -1705,11 +1825,35 @@ fn build_answer_page_commands(
                 }
             }
         }
+        if candidate
+            .get("adoptedCloudCandidate")
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            if let Some(accepted_answers) = constraint_report
+                .get("acceptedAnswers")
+                .and_then(Value::as_object)
+            {
+                for (raw_number, raw_answer) in accepted_answers {
+                    let Some(number) = normalized_answer_page_question_number(&json!(raw_number))
+                    else {
+                        continue;
+                    };
+                    let Some(slot_id) = slot_by_number.get(&number) else {
+                        continue;
+                    };
+                    if let Some(value) = answer_value_for_slot(canonical, slot_id, raw_answer) {
+                        adopted_page_claims.insert(slot_id.clone(), (number, value));
+                    }
+                }
+            }
+        }
     }
 
     let mut commands = Vec::new();
     let mut slot_ids = previous_answer_page_slots.clone();
     slot_ids.extend(reliable.keys().cloned());
+    slot_ids.extend(adopted_page_claims.keys().cloned());
     for slot_id in slot_ids {
         if protected_targets.contains(&slot_id)
             || protected_targets.contains(&format!("answerKey:{slot_id}"))
@@ -1720,6 +1864,40 @@ fn build_answer_page_commands(
             .get("answerKey")
             .and_then(Value::as_object)
             .and_then(|answers| answers.get(&slot_id));
+        if let Some((number, page_value)) = adopted_page_claims.get(&slot_id) {
+            if current == Some(page_value) {
+                continue;
+            }
+            let page_has_citation = evidence
+                .get(number)
+                .and_then(|entry| entry.get("quote"))
+                .and_then(Value::as_str)
+                .is_some_and(|quote| answer_quote_supports_value(quote, page_value));
+            let cloud_answer = candidate
+                .pointer(&format!("/cloudAnswerKey/{slot_id}"))
+                .or_else(|| candidate.pointer(&format!("/cloudAnswerKey/q{number}")));
+            let cloud_claim_matches_current = current.is_some() && cloud_answer == current;
+            let cloud_has_citation = cloud_claim_matches_current
+                && cloud_answer.is_some_and(|cloud_answer| {
+                    adopted_candidate_citation_is_visible(
+                        candidate,
+                        number,
+                        &evidence,
+                        cloud_answer,
+                    )
+                });
+            let next = match (page_has_citation, cloud_has_citation) {
+                (true, false) => page_value.clone(),
+                (false, true) => continue,
+                // Both citations disagree, or neither side has a visible answer-page citation:
+                // do not choose a winner and do not leave the conflicting answer in place.
+                (true, true) | (false, false) => json!({"kind":"unresolved"}),
+            };
+            if current != Some(&next) {
+                commands.push(json!({"op":"setAnswer", "slotId":slot_id, "value":next}));
+            }
+            continue;
+        }
         let next = if let Some(value) = reliable.get(&slot_id) {
             if answer_is_empty_for_page_write(current)
                 || previous_answer_page_slots.contains(&slot_id)
@@ -1931,6 +2109,15 @@ pub(crate) fn recognize_and_apply_pdf_answers(
     job_id: &str,
     profile_id: &str,
 ) -> CommandResult<Value> {
+    recognize_and_apply_pdf_answers_with_adopted_candidate(root, job_id, profile_id, None)
+}
+
+pub(crate) fn recognize_and_apply_pdf_answers_with_adopted_candidate(
+    root: &Path,
+    job_id: &str,
+    profile_id: &str,
+    adopted_candidate: Option<&Value>,
+) -> CommandResult<Value> {
     let job = load_job(root, job_id)?;
     if !main_source_is_pdf(&job) {
         return Ok(json!({
@@ -1970,7 +2157,7 @@ pub(crate) fn recognize_and_apply_pdf_answers(
     let (answer_page_extraction, answer_page_indexes) =
         answer_page_extraction(root, &job, &extraction);
     let answer_page_image_count = image_count_from_extraction(&answer_page_extraction);
-    let (candidate, output) = match vision_answer_candidate_for_job(
+    let (mut candidate, output) = match vision_answer_candidate_for_job(
         root,
         &job,
         profile_id,
@@ -1986,6 +2173,9 @@ pub(crate) fn recognize_and_apply_pdf_answers(
             ));
         }
     };
+    if let Some(cloud) = adopted_candidate {
+        attach_adopted_cloud_answer_claim(&mut candidate, cloud);
+    }
     let _ = write_json(&dir.join("vision-answer-output.json"), &output);
     let _ = write_vision_answer_candidates_file(&dir, job_id, &candidate);
     let mut report = apply_vision_answer_candidate(root, job_id, &candidate)?;
@@ -2896,6 +3086,13 @@ pub(crate) fn finalize_cloud_authoring_candidate(
     let mut normalized =
         crate::reconcile::candidate::normalize_cloud_authoring(&identity, canonical.as_ref(), raw)?;
     if normalized.document.is_object() {
+        // Asset descriptors and their paths are backend/user-owned identities; the model is not
+        // allowed to register them. Reuse the already-registered set when promoting the cloud
+        // content so valid image/audio references do not become dangling just because candidate
+        // normalization intentionally strips model-supplied asset descriptors.
+        if let Some(assets) = canonical.as_ref().and_then(|value| value.get("assets")) {
+            normalized.document["assets"] = assets.clone();
+        }
         // 用**同一套**质量管线评估候选，覆盖占位块。物理影子对不上时 `evaluate_quality`
         // 自己会如实标 `physicalShadow: missing`，这里不做任何粉饰。
         crate::authoring_v2_commands::refresh_quality_report(
@@ -2904,9 +3101,31 @@ pub(crate) fn finalize_cloud_authoring_candidate(
             &mut normalized.document,
         )?;
     }
-    let candidate = crate::reconcile::candidate::cloud_authoring_candidate_from_normalized(
+    let mut candidate = crate::reconcile::candidate::cloud_authoring_candidate_from_normalized(
         &identity, normalized,
     )?;
+    candidate.answer_page_evidence = raw
+        .get("answerPageEvidence")
+        .or_else(|| raw.pointer("/authoring/answerPageEvidence"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|item| {
+            normalized_answer_page_question_number(
+                item.get("questionNumber").unwrap_or(&Value::Null),
+            )
+            .is_some()
+                && item
+                    .get("pageIndex")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|page| page > 0)
+                && item
+                    .get("quote")
+                    .and_then(Value::as_str)
+                    .is_some_and(|quote| !quote.trim().is_empty())
+        })
+        .cloned()
+        .collect();
     crate::reconcile::store::write_cloud_authoring_candidate(root, batch_id, &candidate)?;
     Ok(candidate)
 }
@@ -5282,6 +5501,209 @@ mod tests {
                 "slotId":"q15",
                 "value":{"kind":"option", "labels":["II"], "assignment":"per_slot"}
             })]
+        );
+    }
+
+    fn adopted_answer_conflict_canonical() -> Value {
+        json!({
+            "answerSlots": {"q1": {"slotId":"q1", "questionNumber":1, "interaction":"text"}},
+            "answerKey": {"q1": {"kind":"text", "values":["cloud answer"]}}
+        })
+    }
+
+    #[test]
+    fn adopted_cloud_candidate_answer_claim_is_read_from_its_nested_authoring_document() {
+        let mut vision_candidate = json!({"answers": {}});
+        let cloud_candidate = json!({
+            "authoring": {
+                "answerKey": {"q1": {"kind":"text", "values":["cloud answer"]}}
+            },
+            "answerPageEvidence": [{"questionNumber":1, "pageIndex":5, "quote":"1 cloud answer"}]
+        });
+
+        attach_adopted_cloud_answer_claim(&mut vision_candidate, &cloud_candidate);
+
+        assert_eq!(vision_candidate["adoptedCloudCandidate"], true);
+        assert_eq!(
+            vision_candidate["cloudAnswerKey"]["q1"]["values"][0],
+            "cloud answer"
+        );
+        assert_eq!(
+            vision_candidate["cloudAnswerPageEvidence"][0]["quote"],
+            "1 cloud answer"
+        );
+    }
+
+    #[test]
+    fn cited_answer_page_value_wins_over_an_uncited_adopted_answer() {
+        let canonical = adopted_answer_conflict_canonical();
+        let candidate = json!({
+            "adoptedCloudCandidate": true,
+            "cloudAnswerKey": {"q1": {"kind":"text", "values":["cloud answer"]}},
+            "cloudAnswerPageEvidence": [],
+            "answers": {"1":"page answer"},
+            "confidence": 0.99,
+            "evidence": [{"questionNumber":"1", "pageIndex":5, "quote":"1. page answer"}],
+            "answerPageIndexes": [5]
+        });
+        assert_eq!(
+            build_answer_page_commands(&canonical, &candidate, &BTreeSet::new(), &BTreeSet::new()),
+            vec![
+                json!({"op":"setAnswer", "slotId":"q1", "value":{"kind":"text", "normalization":"ielts_default", "values":["page answer"]}})
+            ]
+        );
+    }
+
+    #[test]
+    fn adopted_answer_page_recognition_does_not_overwrite_a_human_protected_answer() {
+        let canonical = adopted_answer_conflict_canonical();
+        let candidate = json!({
+            "adoptedCloudCandidate": true,
+            "cloudAnswerKey": {"q1": {"kind":"text", "values":["cloud answer"]}},
+            "cloudAnswerPageEvidence": [],
+            "answers": {"1":"page answer"},
+            "confidence": 0.99,
+            "evidence": [{"questionNumber":"1", "pageIndex":5, "quote":"1. page answer"}],
+            "answerPageIndexes": [5]
+        });
+        let protected = std::collections::BTreeSet::from(["q1".to_string()]);
+
+        assert!(
+            build_answer_page_commands(&canonical, &candidate, &BTreeSet::new(), &protected)
+                .is_empty(),
+            "a user-protected q1 must stay untouched even when the page has a visible citation"
+        );
+    }
+
+    #[test]
+    fn conflicting_answers_without_visible_citations_become_unresolved() {
+        let canonical = adopted_answer_conflict_canonical();
+        let candidate = json!({
+            "adoptedCloudCandidate": true,
+            "cloudAnswerKey": {"q1": {"kind":"text", "values":["cloud answer"]}},
+            "cloudAnswerPageEvidence": [],
+            "answers": {"1":"page answer"},
+            "confidence": 0.99,
+            "evidence": [],
+            "answerPageIndexes": [5]
+        });
+        assert_eq!(
+            build_answer_page_commands(&canonical, &candidate, &BTreeSet::new(), &BTreeSet::new()),
+            vec![json!({"op":"setAnswer", "slotId":"q1", "value":{"kind":"unresolved"}})]
+        );
+    }
+
+    #[test]
+    fn non_adopted_answer_page_pass_keeps_an_existing_answer_unchanged() {
+        let canonical = adopted_answer_conflict_canonical();
+        let candidate = json!({
+            // No adoptedCloudCandidate marker: legacy/fallback behavior must stay unchanged.
+            "answers": {"1":"page answer"},
+            "confidence": 0.99,
+            "evidence": [{"questionNumber":"1", "pageIndex":5, "quote":"1. page answer"}],
+            "answerPageIndexes": [5]
+        });
+
+        assert!(build_answer_page_commands(
+            &canonical,
+            &candidate,
+            &BTreeSet::new(),
+            &BTreeSet::new()
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn a_single_letter_answer_must_not_match_inside_an_unrelated_quote_word() {
+        let canonical = json!({
+            "answerSlots": {"q1": {"slotId":"q1", "questionNumber":1, "interaction":"radio"}},
+            "taskGroups": [{
+                "taskId":"group-1",
+                "responseGroups": [{
+                    "slotIds":["q1"],
+                    "options":[{"label":"A"}, {"label":"B"}]
+                }]
+            }],
+            "answerKey": {"q1": {"kind":"option", "labels":["B"], "assignment":"per_slot"}}
+        });
+        let candidate = json!({
+            "adoptedCloudCandidate": true,
+            "cloudAnswerKey": {"q1": {"kind":"option", "labels":["B"], "assignment":"per_slot"}},
+            "cloudAnswerPageEvidence": [],
+            "answers": {"1":"A"},
+            "confidence": 0.99,
+            "evidence": [{"questionNumber":"1", "pageIndex":5, "quote":"The answer appears in this sentence."}],
+            "answerPageIndexes": [5]
+        });
+
+        assert_eq!(
+            build_answer_page_commands(&canonical, &candidate, &BTreeSet::new(), &BTreeSet::new()),
+            vec![json!({"op":"setAnswer", "slotId":"q1", "value":{"kind":"unresolved"}})]
+        );
+    }
+
+    #[test]
+    fn independently_visible_cloud_citation_keeps_cloud_answer_when_page_claim_is_uncited() {
+        let canonical = adopted_answer_conflict_canonical();
+        let candidate = json!({
+            "adoptedCloudCandidate": true,
+            "cloudAnswerKey": {"q1": {"kind":"text", "values":["cloud answer"]}},
+            "cloudAnswerPageEvidence": [{"questionNumber":1, "pageIndex":5, "quote":"1. cloud answer"}],
+            "answers": {"1":"page answer"},
+            "confidence": 0.99,
+            "evidence": [{"questionNumber":"1", "pageIndex":5, "quote":"1. cloud answer"}],
+            "answerPageIndexes": [5]
+        });
+        assert!(build_answer_page_commands(
+            &canonical,
+            &candidate,
+            &BTreeSet::new(),
+            &BTreeSet::new()
+        )
+            .is_empty());
+    }
+
+    #[test]
+    fn answer_number_overlap_is_not_visible_proof_for_the_cloud_answer() {
+        let canonical = adopted_answer_conflict_canonical();
+        let candidate = json!({
+            "adoptedCloudCandidate": true,
+            "cloudAnswerKey": {"q1": {"kind":"text", "values":["cloud answer"]}},
+            "cloudAnswerPageEvidence": [{"questionNumber":1, "pageIndex":5, "quote":"1 cloud answer"}],
+            "answers": {"1":"page answer"},
+            "confidence": 0.99,
+            "evidence": [{"questionNumber":"1", "pageIndex":5, "quote":"1"}],
+            "answerPageIndexes": [5]
+        });
+
+        assert_eq!(
+            build_answer_page_commands(&canonical, &candidate, &BTreeSet::new(), &BTreeSet::new()),
+            vec![json!({"op":"setAnswer", "slotId":"q1", "value":{"kind":"unresolved"}})]
+        );
+    }
+
+    #[test]
+    fn one_cited_label_does_not_validate_a_multi_select_cloud_answer() {
+        let answer = json!({"kind":"option", "labels":["A", "B"], "assignment":"unordered_set"});
+        assert!(!answer_quote_supports_value("1 A", &answer));
+        assert!(answer_quote_supports_value("1 A and B", &answer));
+    }
+
+    #[test]
+    fn two_conflicting_claims_both_cited_on_the_visible_page_remain_unresolved() {
+        let canonical = adopted_answer_conflict_canonical();
+        let candidate = json!({
+            "adoptedCloudCandidate": true,
+            "cloudAnswerKey": {"q1": {"kind":"text", "values":["cloud answer"]}},
+            "cloudAnswerPageEvidence": [{"questionNumber":1, "pageIndex":5, "quote":"1. page answer; alternate cloud answer"}],
+            "answers": {"1":"page answer"},
+            "confidence": 0.99,
+            "evidence": [{"questionNumber":"1", "pageIndex":5, "quote":"1. page answer; alternate cloud answer"}],
+            "answerPageIndexes": [5]
+        });
+        assert_eq!(
+            build_answer_page_commands(&canonical, &candidate, &BTreeSet::new(), &BTreeSet::new()),
+            vec![json!({"op":"setAnswer", "slotId":"q1", "value":{"kind":"unresolved"}})]
         );
     }
 

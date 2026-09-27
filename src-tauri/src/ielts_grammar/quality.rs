@@ -3761,6 +3761,16 @@ fn source_text_key(text: &str) -> String {
         .collect()
 }
 
+fn is_numeric_page_folio(text: &str) -> bool {
+    let trimmed = text.trim();
+    let digit_count = trimmed.chars().filter(char::is_ascii_digit).count();
+    digit_count > 0
+        && digit_count <= 3
+        && trimmed.chars().all(|ch| {
+            ch.is_ascii_digit() || ch.is_whitespace() || matches!(ch, '.' | '-')
+        })
+}
+
 fn source_coverage_summary(
     authoring: &Value,
     physical_shadow: Option<&Value>,
@@ -4194,6 +4204,35 @@ fn physical_ignored_reasons(
                 .and_then(|bbox| bbox.get("width"))
                 .and_then(Value::as_f64)
                 .is_some_and(|width| width <= 8.0);
+
+            let page_height = page.get("heightPt").and_then(Value::as_f64);
+            let folio_bbox = region.get("bbox").and_then(Value::as_object);
+            let near_page_edge = page_height
+                .zip(folio_bbox)
+                .is_some_and(|(page_height, bbox)| {
+                    let y = bbox.get("y").and_then(Value::as_f64);
+                    let height = bbox.get("height").and_then(Value::as_f64);
+                    y.zip(height).is_some_and(|(y, height)| {
+                        page_height > 0.0
+                            && height > 0.0
+                            && (y <= page_height * 0.08
+                                || y + height >= page_height * 0.90)
+                    })
+                });
+
+            // Keep the physical-coverage ledger consistent with the first-pass page-folio
+            // filter: only a text-only region containing at most three digits at a page edge
+            // is explained as furniture. Body numbers, labels, and structural regions remain
+            // significant and must still be assigned.
+            if kind == "text"
+                && child_line_ids.len() == 1
+                && child_object_count == 0
+                && is_numeric_page_folio(&region_text)
+                && near_page_edge
+            {
+                ignored.insert(region_id.to_string(), "page_number_furniture".to_string());
+                continue;
+            }
 
             // 卷标（`【VOL7-T9】`）：整块就是一对书名号夹住的短标签，别无他物。
             // 它印在正文页眉上，所以**不**受封面前置页那三道闸约束——它本来就是
@@ -6184,6 +6223,48 @@ mod tests {
             .iter()
             .all(|entry| entry.get("disposition").and_then(Value::as_str)
                 == Some("ignored_with_reason")));
+    }
+
+    #[test]
+    fn source_coverage_explains_centered_edge_folios_but_not_body_numbers() {
+        let physical = json!({
+            "schemaVersion":"DocumentIRV2","documentId":"document-1","jobId":"job-1",
+            "sourceFiles":[{"sourceFileId":"source-1"}],
+            "pages":[
+                {
+                    "pageIndex":0,"widthPt":612.0,"heightPt":792.0,
+                    "lines":[
+                        {"id":"p001-l0001","text":"11"},
+                        {"id":"p001-l0002","text":"2"},
+                        {"id":"p001-l0003","text":"12 questions"}
+                    ],
+                    "regions":[
+                        {"id":"p001-r0001","kind":"text","childLineIds":["p001-l0001"],"childObjectIds":[],"bbox":{"x":299.3,"y":20.0,"width":16.7,"height":12.0}},
+                        {"id":"p001-r0002","kind":"text","childLineIds":["p001-l0002"],"childObjectIds":[],"bbox":{"x":299.3,"y":300.0,"width":8.0,"height":12.0}},
+                        {"id":"p001-r0003","kind":"text","childLineIds":["p001-l0003"],"childObjectIds":[],"bbox":{"x":20.0,"y":20.0,"width":16.7,"height":12.0}}
+                    ]
+                },
+                {
+                    "pageIndex":1,"widthPt":612.0,"heightPt":792.0,
+                    "lines":[{"id":"p002-l0001","text":"14"}],
+                    "regions":[
+                        {"id":"p002-r0001","kind":"text","childLineIds":["p002-l0001"],"childObjectIds":[],"bbox":{"x":299.3,"y":760.0,"width":16.7,"height":12.0}}
+                    ]
+                }
+            ],
+            "assets":[]
+        });
+
+        let summary = source_coverage_summary(&unanchored_authoring(), Some(&physical));
+
+        for id in ["p001-r0001", "p002-r0001"] {
+            assert_eq!(disposition_of(&summary, id), "ignored_with_reason", "{id}");
+            assert_eq!(reason_of(&summary, id).as_deref(), Some("page_number_furniture"), "{id}");
+        }
+        for id in ["p001-r0002", "p001-r0003"] {
+            assert_eq!(disposition_of(&summary, id), "unassigned", "{id} must remain significant");
+            assert_eq!(reason_of(&summary, id), None, "{id} must not be silently ignored");
+        }
     }
 
     #[test]

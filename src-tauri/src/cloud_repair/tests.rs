@@ -3825,6 +3825,228 @@ fn seed_packet_job(root: &Path) {
     .expect("document-ir");
 }
 
+fn seed_adopted_local_snapshot(root: &Path, local_authoring: &Value) {
+    seed_batch_row(root, 1);
+    store::write_local_authoring_snapshot(
+        root,
+        BATCH_ID,
+        ITEM_ID,
+        1,
+        &"a".repeat(64),
+        local_authoring,
+    )
+    .expect("freeze local authoring challenger");
+    let conn = open_library_connection(root).expect("open library connection");
+    store::write_batch_repair(
+        &conn,
+        BATCH_ID,
+        &json!({"candidateAdoption": {"adopted": true}}),
+    )
+    .expect("mark cloud candidate adopted");
+}
+
+#[test]
+fn adopted_cloud_keeps_undecidable_non_answer_but_leaves_answer_for_the_user() {
+    let root = temp_root();
+    let mut cloud = golden_authoring();
+    cloud["taskGroups"][0]["responseGroups"][0]["prompt"][0]["children"][0]["text"] =
+        json!("Cloud-recognized prompt");
+    cloud["answerKey"]["q14"] =
+        json!({"kind": "option", "labels": ["B"], "assignment": "unordered_set"});
+    let mut local = golden_authoring();
+    local["taskGroups"][0]["responseGroups"][0]["prompt"][0]["children"][0]["text"] =
+        json!("Locally recognized prompt");
+    local["answerKey"]["q14"] =
+        json!({"kind": "option", "labels": ["A"], "assignment": "unordered_set"});
+    seed_item(&root, &cloud);
+    seed_packet_job(&root);
+    seed_adopted_local_snapshot(&root, &local);
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 4);
+    let mut calls = 0;
+    let mut prompt_target_id = None;
+    let report = run_packets(&request, |context: &Value, _observations: &[Value]| {
+        calls += 1;
+        if calls > 2 {
+            return Ok(json!({
+                "callId": "finish-adopted-packet",
+                "tool": "finish_packet",
+                "arguments": {}
+            }));
+        }
+        let differences = context["differences"].as_array().expect("comparison deltas");
+        if calls == 2 {
+            let answer = differences
+                .iter()
+                .find(|difference| {
+                    difference["field"] == "answer" && difference["targetId"] == "q14"
+                })
+                .expect("q14 answer delta remains after its unresolved ruling");
+            return Ok(json!({
+                "callId": "reject-answer-cloud-default",
+                "tool": "record_ruling",
+                "arguments": {"rulings": [{
+                    "targetType": answer["targetType"],
+                    "targetId": answer["targetId"],
+                    "field": answer["field"],
+                    "ruling": crate::schema::cloud_repair_v1::CLOUD_RULING_KEPT_CLOUD_DEFAULT,
+                    "reason": "answer defaults are not permitted",
+                    "evidence": []
+                }]}
+            }));
+        }
+        let prompt = differences
+            .iter()
+            .find(|difference| difference["field"] == "prompt")
+            .expect("prompt challenger delta");
+        let answer = differences
+            .iter()
+            .find(|difference| difference["field"] == "answer" && difference["targetId"] == "q14")
+            .expect("q14 answer challenger delta");
+        prompt_target_id = prompt["targetId"].as_str().map(str::to_string);
+        let ruling = |difference: &Value, kind: &str, reason: &str| {
+            json!({
+                "targetType": difference["targetType"],
+                "targetId": difference["targetId"],
+                "field": difference["field"],
+                "ruling": kind,
+                "reason": reason,
+                "evidence": []
+            })
+        };
+        Ok(json!({
+            "callId": "adopted-rulings",
+            "tool": "record_ruling",
+            "arguments": {"rulings": [
+                ruling(
+                    prompt,
+                    crate::schema::cloud_repair_v1::CLOUD_RULING_KEPT_CLOUD_DEFAULT,
+                    "原文不足以判定此非答案差异，按规则保留云端版本",
+                ),
+                ruling(
+                    answer,
+                    crate::schema::cloud_repair_v1::CLOUD_RULING_CANNOT_RESOLVE,
+                    "原文无法判定答案差异",
+                )
+            ]}
+        }))
+    })
+    .expect("adopted-cloud repair cycle");
+
+    let observation = report
+        .observations
+        .iter()
+        .find(|observation| observation["callId"] == "adopted-rulings")
+        .expect("ruling tool observation");
+    assert_eq!(observation["status"], "ok", "{observation:#?}");
+    assert_eq!(report.adjudicated_count, 2);
+    let rejected_answer_default = report
+        .observations
+        .iter()
+        .find(|observation| observation["callId"] == "reject-answer-cloud-default")
+        .expect("answer cannot use the cloud-default ruling");
+    assert_eq!(rejected_answer_default["status"], "rejected");
+    assert!(rejected_answer_default["errors"].as_array().is_some_and(|errors| {
+        errors.iter().any(|error| {
+            error
+                .as_str()
+                .is_some_and(|error| error.starts_with("CLOUD_RULING_KEPT_CLOUD_DEFAULT_NOT_ALLOWED"))
+        })
+    }));
+    let prompt_target_id = prompt_target_id.expect("prompt difference target id");
+    assert!(
+        !report.remaining_tasks.iter().any(|task| {
+            task["field"] == "prompt"
+                && task["targetIds"]
+                    .as_array()
+                    .is_some_and(|ids| ids.iter().any(|id| id == &prompt_target_id))
+        }),
+        "undecidable non-answer delta must keep the cloud draft without a user task: {:#?}",
+        report.remaining_tasks
+    );
+    assert!(
+        report.remaining_tasks.iter().any(|task| {
+            task["field"] == "answer"
+                && task["targetIds"]
+                    .as_array()
+                    .is_some_and(|ids| ids.iter().any(|id| id == "q14"))
+        }),
+        "undecidable answer conflict must remain user-visible: {:#?}",
+        report.remaining_tasks
+    );
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["B"]));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn cloud_default_ruling_is_rejected_when_the_candidate_was_not_adopted() {
+    let root = temp_root();
+    let local = golden_authoring();
+    let mut cloud = cloud_draft_with("B", "D");
+    cloud["taskGroups"][0]["responseGroups"][0]["prompt"][0]["children"][0]["text"] =
+        json!("Cloud-recognized prompt");
+    seed_item(&root, &local);
+    store_candidate_draft(&root, cloud);
+    seed_packet_job(&root);
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 3);
+    let mut calls = 0;
+    let report = run_packets(&request, |context: &Value, _observations: &[Value]| {
+        calls += 1;
+        if calls > 1 {
+            return Ok(json!({
+                "callId": "finish-fallback-packet",
+                "tool": "finish_packet",
+                "arguments": {}
+            }));
+        }
+        let difference = context["differences"]
+            .as_array()
+            .expect("candidate deltas")
+            .iter()
+            .find(|difference| difference["field"] == "prompt")
+            .expect("non-answer candidate delta");
+        Ok(json!({
+            "callId": "reject-fallback-cloud-default",
+            "tool": "record_ruling",
+            "arguments": {"rulings": [{
+                "targetType": difference["targetType"],
+                "targetId": difference["targetId"],
+                "field": difference["field"],
+                "ruling": crate::schema::cloud_repair_v1::CLOUD_RULING_KEPT_CLOUD_DEFAULT,
+                "reason": "this ruling is only available after adoption",
+                "evidence": []
+            }]}
+        }))
+    })
+    .expect("fallback repair cycle");
+
+    let rejected = report
+        .observations
+        .iter()
+        .find(|observation| observation["callId"] == "reject-fallback-cloud-default")
+        .expect("fallback ruling observation");
+    assert_eq!(rejected["status"], "rejected", "{rejected:#?}");
+    assert!(rejected["errors"].as_array().is_some_and(|errors| {
+        errors.iter().any(|error| {
+            error.as_str().is_some_and(|error| {
+                error.starts_with("CLOUD_RULING_KEPT_CLOUD_DEFAULT_NOT_ALLOWED")
+            })
+        })
+    }));
+    assert!(
+        report
+            .remaining_tasks
+            .iter()
+            .any(|task| task["field"] == "prompt"),
+        "rejected ruling must not hide the fallback difference: {:#?}",
+        report.remaining_tasks
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// 默认模式必须是 packets，且 legacy 只能靠诊断开关进入。
 #[test]
 fn the_default_context_mode_is_packets_and_legacy_is_diagnostic_only() {
@@ -5558,6 +5780,7 @@ fn complex_reading_splits_into_packets_that_obey_the_grouping_rules() {
         protected: &BTreeSet::new(),
         source: &source,
         edit_version: version,
+        adopted_cloud_canonical: false,
     });
 
     // 规则 2（负向）：两个题组既不共享选项库也不共享 stimulus ⇒ 各自成包，不许并。
@@ -5871,6 +6094,7 @@ fn a_document_packet_never_hands_out_a_draft_slice() {
         protected: &std::collections::BTreeSet::new(),
         source: &source,
         edit_version: 7,
+        adopted_cloud_canonical: false,
     });
     assert_eq!(
         planned.len(),

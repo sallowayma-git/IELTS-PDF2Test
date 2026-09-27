@@ -71,6 +71,7 @@ import http from 'node:http';
 import { appendFileSync, readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { questionLineByNumber } from './e2e/lib/cloud-repair-scenario.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -84,6 +85,7 @@ function parseArgs(argv) {
     fixture: path.join(repoRoot, 'fixtures', 'controlled-llm', 'reading-outline.json'),
     candidate: null,
     plan: null,
+    delayCandidateMs: 0,
     requestLog: null,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -94,14 +96,18 @@ function parseArgs(argv) {
     else if (arg === '--fixture') options.fixture = path.resolve(argv[++index]);
     else if (arg === '--candidate') options.candidate = path.resolve(argv[++index]);
     else if (arg === '--plan') options.plan = path.resolve(argv[++index]);
+    else if (arg === '--delay-candidate-ms') options.delayCandidateMs = Number(argv[++index]);
     else if (arg === '--request-log') options.requestLog = path.resolve(argv[++index]);
     else if (arg === '--help' || arg === '-h') {
-      console.log('usage: node scripts/controlled-llm-service.mjs [--port N] [--host H] [--mode normal|decline|partial|fail|garbage] [--fixture FILE] [--candidate FILE] [--plan FILE] [--request-log FILE]');
+      console.log('usage: node scripts/controlled-llm-service.mjs [--port N] [--host H] [--mode normal|decline|partial|fail|garbage] [--fixture FILE] [--candidate FILE] [--plan FILE] [--delay-candidate-ms N] [--request-log FILE]');
       process.exit(0);
     }
   }
   if (!Number.isInteger(options.port) || options.port <= 0) {
     throw new Error(`invalid --port: ${options.port}`);
+  }
+  if (!Number.isInteger(options.delayCandidateMs) || options.delayCandidateMs < 0) {
+    throw new Error(`invalid --delay-candidate-ms: ${options.delayCandidateMs}`);
   }
   if (!MODES.includes(options.mode)) {
     throw new Error(`invalid --mode: ${options.mode}（可选：${MODES.join(' | ')}）`);
@@ -431,6 +437,32 @@ function repairStepReply(text) {
     if (!target || !derived || !rewritten.done || !location) {
       return giveUp('受控服务在真实稿/原文件里找不到剧本指定的作答结构，本轮不做任何修改');
     }
+    const adoptedCloudMode = context.comparisonMode === 'adopted_cloud_vs_local_snapshot';
+    const promptDifference = (context.differences ?? []).find(
+      (difference) => difference?.targetType === 'response_group'
+        && difference?.targetId === target.response.responseGroupId
+        && difference?.field === 'prompt',
+    );
+    if (adoptedCloudMode && promptDifference && JSON.stringify(rewritten.nodes) === JSON.stringify(target.response.prompt)) {
+      return {
+        callId: 'c3',
+        tool: 'record_ruling',
+        arguments: {
+          rulings: [{
+            targetType: 'response_group',
+            targetId: target.response.responseGroupId,
+            field: 'prompt',
+            ruling: 'current_is_correct',
+            reason: '原文逐字支持当前云端正式稿；本地快照是挑战方。',
+            evidence: [{
+              sourceFileId: location.sourceFileId ?? context.sourceFileId,
+              pageIndex: Number(plan.sourcePageOneBased),
+              quote: derived.quote,
+            }],
+          }],
+        },
+      };
+    }
     // 有意**不带** `baseVersion`：这一轮一定被拒，用来证明「被拒之后是照着真实错误改的」。
     return {
       callId: 'c3',
@@ -439,7 +471,7 @@ function repairStepReply(text) {
     };
   }
 
-  if (round === 4) {
+  if (round === 4 && context.comparisonMode !== 'adopted_cloud_vs_local_snapshot') {
     if (!target || !derived || !rewritten.done || !location) {
       return giveUp('受控服务在真实稿/原文件里找不到剧本指定的作答结构，本轮不做任何修改');
     }
@@ -505,6 +537,41 @@ function repairStepReply(text) {
       };
     }
     return { callId: 'c5', tool: 'record_ruling', arguments: { rulings } };
+  }
+
+  if (context.comparisonMode === 'adopted_cloud_vs_local_snapshot' && plan.answerClaim) {
+    const differences = Array.isArray(context.differences) ? context.differences : [];
+    const claimDifference = differences.find(
+      (difference) => difference?.targetType === 'slot'
+        && difference?.field === 'answer'
+        && difference?.targetId === plan.answerClaim.slotId,
+    );
+    if (claimDifference) {
+      const source = lastSourceObservation(observations);
+      const pageIndex = Number(plan.answerClaim.searchPages?.at(-1) ?? plan.sourcePageOneBased);
+      const pageText = pageTextOf(source, pageIndex);
+      const quote = (pageText ?? '')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .at(-1) ?? 'BLANK PAGE';
+      return {
+        callId: `c${round}`,
+        tool: 'finish',
+        arguments: {
+          note: plan.answerClaim.finishNote ?? '原文没有可核实的答案，保留答案差异供用户处理。',
+          unresolved: [
+            ...unresolvedFrom(plan, context),
+            {
+              targetId: claimDifference.targetId,
+              message: plan.answerClaim.unresolvedMessage
+                ?? `第 ${plan.answerClaim.questionNumber} 题的答案无法由原文判定，请人工核对。`,
+              evidence: [{ sourceFileId: context.sourceFileId, pageIndex, quote }],
+            },
+          ],
+        },
+      };
+    }
   }
 
   return {
@@ -811,7 +878,12 @@ function packetRulingCall(context, plan, round, observations) {
     );
     if (!listed) continue;
     if (rulingAlreadyRecorded(observations, entry)) continue;
-    const grounded = packetLineContaining(context, entry.evidenceKeyword);
+    const lines = packetLines(context);
+    const grounded = entry.questionNumber != null
+      ? questionLineByNumber(lines, entry.questionNumber)
+      : (typeof entry.evidenceKeyword === 'string'
+        ? lines.find((line) => line.text.includes(entry.evidenceKeyword)) ?? null
+        : null);
     if (!grounded) continue;
     return {
       callId: `p${round}`,
@@ -854,12 +926,6 @@ function rulingAlreadyRecorded(observations, entry) {
   });
 }
 
-/** 包内原文行里第一行含 `keyword` 的（返回 `{pageIndex, lineId, text}`）。 */
-function packetLineContaining(context, keyword) {
-  if (typeof keyword !== 'string' || keyword.length === 0) return null;
-  return packetLines(context).find((entry) => entry.text.includes(keyword)) ?? null;
-}
-
 /**
  * 题面类修复：把作答组的 prompt 改回原文件里的真值。
  *
@@ -887,6 +953,12 @@ function packetPromptRewrite(context, plan, round, version) {
   if (!target) return null;
   const rewritten = replaceFirstText(target.response.prompt, derived.stem);
   if (!rewritten.done) return null;
+  // An adopted cloud prompt already matching the source is adjudicated below, not rewritten as a
+  // no-op. Legacy/fallback still reaches its original edit path when the local draft is wrong.
+  if (
+    context?.comparisonMode === 'adopted_cloud_vs_local_snapshot'
+    && JSON.stringify(rewritten.nodes) === JSON.stringify(target.response.prompt)
+  ) return null;
   return {
     callId: `p${round}`,
     tool: 'apply_edits',
@@ -1153,6 +1225,7 @@ const server = http.createServer(async (request, response) => {
       fixture: options.fixture,
       candidate: options.candidate,
       plan: options.plan,
+      delayCandidateMs: options.delayCandidateMs,
     });
     return;
   }
@@ -1182,6 +1255,11 @@ const server = http.createServer(async (request, response) => {
       + `model=${model} parts=[${attachedParts.join(',')}] content=${content.length}B`
       + `${failThisTask ? ' -> 500' : ''}${garbageThisTask ? ' -> 非约定 JSON' : ''}`,
   );
+
+  if (task === 'generate_authoring_candidate' && options.delayCandidateMs > 0) {
+    console.log(`[controlled-llm] delaying authoring candidate ${options.delayCandidateMs}ms`);
+    await new Promise((resolve) => setTimeout(resolve, options.delayCandidateMs));
+  }
 
   if (failThisTask) {
     reply(500, { error: { message: 'controlled-llm: injected failure', type: 'controlled_failure' } });

@@ -62,6 +62,16 @@ export function collectTextNodes(nodes, out = []) {
   return out;
 }
 
+/** Find a source line that begins with the complete question number, not a range heading. */
+export function questionLineByNumber(lines, questionNumber) {
+  const number = Number(questionNumber);
+  if (!Number.isInteger(number) || number <= 0) return null;
+  const prefix = new RegExp(`^${number}(?!\\d)(?:\\s+|[.)]\\s+)\\S`, 'u');
+  return (Array.isArray(lines) ? lines : []).find(
+    (line) => typeof line?.text === 'string' && prefix.test(line.text.trim()),
+  ) ?? null;
+}
+
 /** 深拷贝（只走 JSON 数据，真实稿里没有别的东西）。 */
 export function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -176,21 +186,13 @@ export function deriveRepairScenario(draft, golden) {
     };
   }
 
-  // ── 3. 裁定目标：真实稿里的 YES/NO/NOT GIVEN 题组 ──
-  // 候选把它的题干说明只抄了首句，当前稿是完整的 → 云端应裁定「当前稿对」。
+  // ── 3. 裁定目标：云端正式稿里的题面已由原文支持 ──
+  // 云端候选是完整识别结果并可能已成为正式稿；本地错误稿作为挑战方。
+  // 因此本场景要证明原文支持正式云端题面时只记录裁定，不重复写同一内容。
   const ruleTarget =
     groups.find((group) => (group.taskType ?? '').includes('yes_no_not_given'))
     ?? groups.find((group) => textOfNodes(group.instructions ?? []).length > 80)
     ?? groups[0];
-  const ruleBefore = textOfNodes(ruleTarget.instructions ?? []);
-  const ruleNodes = collectTextNodes(ruleTarget.instructions ?? []);
-  if (!ruleBefore || ruleNodes.length !== 1) {
-    return { ok: false, reason: '真实稿里找不到一个可用于裁定的题组说明' };
-  }
-  const ruleCandidateText = ruleBefore.split(/(?<=[?.])\s+/u)[0] ?? ruleBefore;
-  if (ruleCandidateText === ruleBefore) {
-    return { ok: false, reason: '候选侧的说明截断后与原文相同，构不成一条差异' };
-  }
 
   // ── 3′. 答案主张靶子：候选（云端独立识别的建模）给一个无答案的槽位声明一个答案 ──
   //
@@ -220,18 +222,34 @@ export function deriveRepairScenario(draft, golden) {
       return !answer || answer?.kind === 'unresolved';
     });
     if (!slotId) continue;
+    const optionLabels = (group.optionBank?.options ?? [])
+      .map((option) => option?.label)
+      .filter((label) => typeof label === 'string' && label.trim().length > 0);
     const words = (textOfNodes(group.stimulus ?? group.instructions ?? []) ?? '')
       .split(/\s+/u)
       .map((word) => word.toLowerCase())
       .filter((word) => /^[a-z]{5,}$/u.test(word));
-    claimWordCandidates.push({ taskId: group.taskId, slotId, questionNumber: Number((slotId.match(/\d+/u) ?? [])[0] ?? 0), words });
+    claimWordCandidates.push({
+      taskId: group.taskId,
+      slotId,
+      questionNumber: Number((slotId.match(/\d+/u) ?? [])[0] ?? 0),
+      answerKind: optionLabels.length > 0 ? 'option' : 'text',
+      optionLabels,
+      words,
+    });
     break;
   }
   // 主张组（至多一个）在这里定位；主张**值**要等剧本成型之后才选（见第 6 节）——
   // 剧本里出现主张值，受控服务就不用抓取核实了，场景退回自证。
   const claimTarget = claimWordCandidates[0] ?? null;
+  if (!claimTarget) {
+    return {
+      ok: false,
+      reason: '真实稿里没有可用于 W1 的未解析答案位，不能证明答案主张包按需升级并核对搜索页',
+    };
+  }
 
-  // ── 4. 候选样本：整卷照抄真实稿，只改被标注的那一处 + 裁定靶子 ──
+  // ── 4. 候选样本：整卷照抄真实稿，只把被标注的真实本地错误改成原文真值 ──
   // 「云端对原文件的独立识别」在这里被建模为：题面 = golden 标注的原文真值。
   const candidate = {
     passage: clone(draft.passage ?? {}),
@@ -246,8 +264,6 @@ export function deriveRepairScenario(draft, golden) {
     (response) => response.responseGroupId === fix.responseGroupId,
   );
   collectTextNodes(candidateFixResponse.prompt ?? [])[0].text = fix.after;
-  const candidateRuleGroup = candidate.taskGroups.find((group) => group.taskId === ruleTarget.taskId);
-  collectTextNodes(candidateRuleGroup.instructions ?? [])[0].text = ruleCandidateText;
 
   // ── 5. 模型确实无法定论的疑问：从真实稿里**读出来**的不一致，不是编出来的 ──
   const unresolved = [];
@@ -283,14 +299,14 @@ export function deriveRepairScenario(draft, golden) {
     // 裁定：给目标与「去哪一行找依据」，引文本身必须从 read_source 的返回里读。
     rulings: [
       {
-        targetType: 'task_group',
-        targetId: ruleTarget.taskId,
-        field: 'instructions',
+        targetType: 'response_group',
+        targetId: fix.responseGroupId,
+        field: 'prompt',
         ruling: 'current_is_correct',
-        reason: '原文件里这段说明包含完整的 YES / NO / NOT GIVEN 定义，当前稿与之一致，候选只抄了首句。',
-        // 只是「在原文里定位到哪一行」的检索键，**不是引文内容**；
-        // 引文必须由受控服务从 read_source 的返回里逐字取出。
-        evidenceKeyword: 'NOT GIVEN',
+        reason: '原文件中的题面与已采纳的云端正式稿一致；本地快照仅作为挑战方保留差异。',
+        // 检索键不是引文；受控服务必须从 source/packet observation 中逐字取证。
+        questionNumber: fix.questionNumber,
+        evidenceKeyword: String(fix.questionNumber),
       },
     ],
     unresolved,
@@ -303,19 +319,38 @@ export function deriveRepairScenario(draft, golden) {
   let claim = null;
   if (claimTarget) {
     const serializedPlan = JSON.stringify(plan);
-    const claimWord = (claimTarget.words ?? []).find((word) => !serializedPlan.includes(word)) ?? null;
-    if (!claimWord) {
-      return {
-        ok: false,
-        reason: '主张组的文字里选不出一个不出现在剧本里的词，答案主张构造不了',
-        target: { taskId: claimTarget.taskId, slotId: claimTarget.slotId },
+    let claimAnswerValue;
+    if (claimTarget.answerKind === 'option') {
+      const optionLabel = claimTarget.optionLabels.find((label) =>
+        !serializedPlan.includes(JSON.stringify(label)),
+      ) ?? null;
+      if (!optionLabel) {
+        return {
+          ok: false,
+          reason: '主张组的选项标号无法与剧本隔离，答案主张构造不了',
+          target: { taskId: claimTarget.taskId, slotId: claimTarget.slotId },
+        };
+      }
+      claimAnswerValue = { kind: 'option', labels: [optionLabel], assignment: 'per_slot' };
+    } else {
+      const claimWord = (claimTarget.words ?? []).find((word) => !serializedPlan.includes(word)) ?? null;
+      if (!claimWord) {
+        return {
+          ok: false,
+          reason: '主张组的文字里选不出一个不出现在剧本里的词，答案主张构造不了',
+          target: { taskId: claimTarget.taskId, slotId: claimTarget.slotId },
+        };
+      }
+      claimAnswerValue = {
+        kind: 'text',
+        values: [claimWord],
+        normalization: 'ielts_default',
       };
     }
-    candidate.answerKey[claimTarget.slotId] = {
-      kind: 'text',
-      values: [claimWord],
-      normalization: 'ielts_default',
-    };
+    candidate.answerKey[claimTarget.slotId] = claimAnswerValue;
+    const answerValueForLeakCheck = claimTarget.answerKind === 'option'
+      ? JSON.stringify(claimAnswerValue.labels[0])
+      : claimAnswerValue.values[0];
     plan.answerClaim = {
       slotId: claimTarget.slotId,
       questionNumber: claimTarget.questionNumber,
@@ -328,7 +363,7 @@ export function deriveRepairScenario(draft, golden) {
         + '云端不能编造答案。请对照原文件或自行填写。',
       finishNote: '受控服务：答案主张无法在原文件里核实，已如实交还用户',
     };
-    if (JSON.stringify(plan).includes(claimWord)) {
+    if (JSON.stringify(plan).includes(answerValueForLeakCheck)) {
       return {
         ok: false,
         reason: '剧本里出现了答案主张的值：受控服务就不用抓取核实了，场景退回自证',
@@ -339,6 +374,7 @@ export function deriveRepairScenario(draft, golden) {
       taskId: claimTarget.taskId,
       slotId: claimTarget.slotId,
       questionNumber: claimTarget.questionNumber,
+      answerKind: claimTarget.answerKind,
       searchPages: plan.answerClaim.searchPages,
     };
   }
@@ -350,9 +386,11 @@ export function deriveRepairScenario(draft, golden) {
     fix,
     claim,
     rule: {
-      taskId: ruleTarget.taskId,
-      before: ruleBefore,
-      candidate: ruleCandidateText,
+      targetType: 'response_group',
+      targetId: fix.responseGroupId,
+      field: 'prompt',
+      candidate: fix.after,
+      challenger: fix.before,
     },
     golden: {
       path: golden.path,
@@ -363,6 +401,97 @@ export function deriveRepairScenario(draft, golden) {
       originalFileQuote: annotated.originalFileQuote,
       localDraftContains: annotated.localDraftContains,
     },
+  };
+}
+
+/**
+ * 验证 W1 的 L1 证据确实来自答案差异所在的包，且升级请求带入 claim 声明的搜索页。
+ * 任意无关 packet 的升级都不能替答案包背书。
+ */
+export function diagnoseAnswerClaimL1({ claim, repairRounds = [], callRecords = [], toolCalls = [] } = {}) {
+  const slotId = typeof claim?.slotId === 'string' ? claim.slotId : '';
+  const searchPages = [...new Set((claim?.searchPages ?? [])
+    .map(Number)
+    .filter((page) => Number.isInteger(page) && page >= 1))];
+  const claimRounds = repairRounds.filter((round) =>
+    typeof round?.packetId === 'string'
+      && (round.differenceTargets ?? []).some((difference) =>
+        difference?.targetType === 'slot'
+          && difference?.targetId === slotId
+          && difference?.field === 'answer',
+      ),
+  );
+  const claimPacketIds = [...new Set(claimRounds.map((round) => round.packetId))];
+  const observationPages = (observation) =>
+    [...new Set((observation?.pageIndexes ?? [])
+      .map(Number)
+      .filter((page) => Number.isInteger(page) && page >= 1))];
+  const packetDiagnostics = claimPacketIds.map((packetId) => {
+    const calls = callRecords.filter((call) => call?.packetId === packetId);
+    const rounds = claimRounds
+      .filter((round) => round.packetId === packetId)
+      .slice()
+      .sort((left, right) => Number(left.stamp ?? 0) - Number(right.stamp ?? 0));
+    const firstCallPages = Array.isArray(rounds[0]?.packetPages)
+      ? rounds[0].packetPages.map(Number)
+      : [];
+    const fetchedSearchPageObservations = rounds.flatMap((round) =>
+      (round.toolObservations ?? [])
+        .filter((observation) => String(observation?.status ?? '').toLowerCase() === 'ok')
+        .flatMap((observation) => {
+          const pages = observationPages(observation);
+          const sourceCall = toolCalls.find((call) =>
+            call?.packetId === packetId
+              && call?.callId === observation.callId
+              && ['read_source', 'report_insufficient_context'].includes(call?.tool),
+          );
+          return sourceCall && searchPages.some((page) => pages.includes(page))
+            ? [{
+                stamp: round.stamp ?? null,
+                escalationLevel: round.escalationLevel ?? null,
+                callId: observation.callId,
+                tool: sourceCall.tool,
+                pageIndexes: pages,
+              }]
+            : [];
+        }),
+    );
+    const l1Calls = calls.filter((call) => Number(call?.escalationLevel ?? 0) >= 1);
+    const l1RoundsWithFetchedPage = rounds.filter((round) =>
+      Number(round?.escalationLevel ?? 0) >= 1
+        && fetchedSearchPageObservations.some((observation) => observation.stamp === round.stamp),
+    );
+    return {
+      packetId,
+      calls: calls.length,
+      firstCallPages,
+      firstCallMissingSearchPage: searchPages.length > 0
+        && searchPages.some((page) => !firstCallPages.includes(page)),
+      l1Calls: l1Calls.map((call) => ({ escalationLevel: call.escalationLevel ?? null })),
+      successfulSearchPageFetches: fetchedSearchPageObservations,
+      l1RoundsWithFetchedPage: l1RoundsWithFetchedPage.map((round) => round.stamp ?? null),
+    };
+  });
+  const qualifyingPackets = packetDiagnostics.filter((packet) =>
+    packet.firstCallMissingSearchPage
+      && packet.l1Calls.length > 0
+      && packet.l1RoundsWithFetchedPage.length > 0,
+  );
+  const problems = [];
+  if (!slotId) problems.push('答案主张没有 slotId');
+  if (searchPages.length === 0) problems.push('答案主张没有有效的 1-based 搜索页');
+  if (claimPacketIds.length === 0) problems.push(`没有找到包含答案差异 ${slotId || '(missing slotId)'} 的修复包`);
+  if (qualifyingPackets.length === 0) {
+    problems.push('答案差异所在的包没有从缺少搜索页的首轮请求，经成功的同页抓取进入 L1');
+  }
+  return {
+    ok: problems.length === 0,
+    claimSlotId: slotId || null,
+    searchPages,
+    claimPacketIds,
+    qualifyingPacketIds: qualifyingPackets.map((packet) => packet.packetId),
+    packetDiagnostics,
+    problems,
   };
 }
 

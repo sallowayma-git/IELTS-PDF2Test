@@ -63,6 +63,10 @@ export function buildRuntimeConfig(packageDir, appVersion) {
   };
 }
 
+export function hasTrailingBlankPageResidue(prompt) {
+  return /(?:\d+\s+)?BLANK\s+PAGE\s*$/iu.test(String(prompt ?? ""));
+}
+
 function parseManifest(source) {
   const match = source.match(/__READING_EXAM_MANIFEST__\s*=\s*([\s\S]*?);?\s*$/u);
   return JSON.parse(match ? match[1].trim().replace(/;\s*$/, "") : source);
@@ -242,11 +246,12 @@ export async function loadPublishedPackageWithRealProviderAsync({
       check("getAsset-task-groups>0", taskGroups.length > 0, `taskGroups=${taskGroups.length}`);
       observed.taskGroups = taskGroups.length;
 
-      // 云端自行修掉的那处：题面尾部的分页残留 `… must 14 BLANK PAGE` 必须已经不在。
+      // 云端自行修掉的那处：题面尾部的分页残留必须已经不在。
+      // B4 会先剔除纯数字页码，所以也要覆盖不再带 `14` 的 `BLANK PAGE` 残留。
       const prompts = taskGroups.flatMap((group) =>
         (group.responseGroups ?? []).map((response) => String(response.prompt ?? "")),
       );
-      const footerResidue = prompts.filter((prompt) => /\d+\s+BLANK\s+PAGE\s*$/iu.test(prompt));
+      const footerResidue = prompts.filter(hasTrailingBlankPageResidue);
       check(
         "cloud-fix-survives-into-student-payload",
         footerResidue.length === 0,

@@ -188,6 +188,9 @@ impl CloudRepairContextNeedV1 {
 /// 不是模型的一句话。
 pub const CLOUD_RULING_CURRENT_IS_CORRECT: &str = "current_is_correct";
 pub const CLOUD_RULING_CANNOT_RESOLVE: &str = "cannot_resolve";
+/// Adopted cloud draft default for an undecidable non-answer delta. It is a recorded comparison,
+/// not a claim that the local challenger or the source was verified; it must not create a user task.
+pub const CLOUD_RULING_KEPT_CLOUD_DEFAULT: &str = "kept_cloud_default";
 
 /// 一条差异裁定：模型对**某个具体差异**给出的结论。
 ///
@@ -200,7 +203,8 @@ pub struct CloudRepairRulingV1 {
     pub target_type: String,
     pub target_id: String,
     pub field: String,
-    /// [`CLOUD_RULING_CURRENT_IS_CORRECT`] 或 [`CLOUD_RULING_CANNOT_RESOLVE`]。
+    /// [`CLOUD_RULING_CURRENT_IS_CORRECT`]、[`CLOUD_RULING_CANNOT_RESOLVE`]，或仅采纳模式的
+    /// [`CLOUD_RULING_KEPT_CLOUD_DEFAULT`]。
     pub ruling: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -219,7 +223,9 @@ impl CloudRepairRulingV1 {
     pub fn is_known_kind(&self) -> bool {
         matches!(
             self.ruling.as_str(),
-            CLOUD_RULING_CURRENT_IS_CORRECT | CLOUD_RULING_CANNOT_RESOLVE
+            CLOUD_RULING_CURRENT_IS_CORRECT
+                | CLOUD_RULING_CANNOT_RESOLVE
+                | CLOUD_RULING_KEPT_CLOUD_DEFAULT
         )
     }
 }
@@ -248,6 +254,10 @@ pub struct CloudAuthoringCandidateV1 {
     /// 后端标准化后的完整稿件：`passage` / `taskGroups`（含 instructions、stimulus、
     /// prompts、选项库、responseGroups）/ `answerSlots` / `answerKey` / `assets` 全部保留。
     pub authoring: IeltsAuthoringIRV2,
+    /// 模型只在原文件明确印出答案页/答案表时提供的逐题可见引文。
+    /// 这是候选侧车，不进入正式稿；答案页视觉步骤会与自己的页图引文交叉核对。
+    #[serde(default)]
+    pub answer_page_evidence: Vec<Value>,
     /// 模型临时 ID → 后端稳定 ID。重写引用后，稿件里出现过的临时引用必须**全部**
     /// 在本表有对应项，或有明确的未解析记录。
     #[serde(default)]

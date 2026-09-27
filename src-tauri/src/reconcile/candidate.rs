@@ -2188,23 +2188,15 @@ fn retain_keys(map: &mut Map<String, Value>, allowed: &[&str]) {
     map.retain(|key, _| allowed.contains(&key.as_str()));
 }
 
-/// 补齐来源锚点的**后端**字段。
+/// 将来源锚点绑定到本次导入的**后端来源身份**。
 ///
-/// `extractionMode` 与 `sourceHash` 属于后端登记的事实，模型无从得知：让它们缺失
-/// 直接导致 `deny_unknown_fields` / 必填字段缺失而拒掉整份候选。这里按后端身份补上，
-/// 并剥掉契约外的键（模型多写一个字段不该烧掉整次识别）。
+/// `sourceFileId` / `extractionMode` / `sourceHash` 属于后端登记的事实，模型无权提供。
+/// 覆盖而不是只补空值，也能防止候选复用旧导入的锚点身份，或把引用指向另一个来源。
 fn normalize_source_anchor(anchor: &mut Value, identity: &CloudAuthoringIdentity<'_>) {
     let Some(map) = anchor.as_object_mut() else {
         return;
     };
-    let file_id = map
-        .get("sourceFileId")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| identity.source_file_id.to_string());
-    map.insert("sourceFileId".to_string(), json!(file_id));
+    map.insert("sourceFileId".to_string(), json!(identity.source_file_id));
     let page_index = map.get("pageIndex").and_then(Value::as_i64).unwrap_or(0);
     map.insert("pageIndex".to_string(), json!(page_index));
     let node_ids = map
@@ -2213,27 +2205,11 @@ fn normalize_source_anchor(anchor: &mut Value, identity: &CloudAuthoringIdentity
         .cloned()
         .unwrap_or_default();
     map.insert("nodeIds".to_string(), json!(node_ids));
-    if map
-        .get("extractionMode")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .unwrap_or("")
-        .is_empty()
-    {
-        map.insert(
-            "extractionMode".to_string(),
-            json!(identity.extraction_mode),
-        );
-    }
-    if map
-        .get("sourceHash")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .unwrap_or("")
-        .is_empty()
-    {
-        map.insert("sourceHash".to_string(), json!(identity.source_sha256));
-    }
+    map.insert(
+        "extractionMode".to_string(),
+        json!(identity.extraction_mode),
+    );
+    map.insert("sourceHash".to_string(), json!(identity.source_sha256));
     retain_keys(
         map,
         &[
@@ -2279,6 +2255,43 @@ fn sanitize_anchors(value: &mut Value, identity: &CloudAuthoringIdentity<'_>) {
         }
         _ => {}
     }
+}
+
+/// 从指令内容节点自身的锚点派生 signature 证据。
+///
+/// 模型提供的 `instructionSignature` 不会被采信；signature 是后端派生物，但其证据必须
+/// 指回承载指令文本的内容节点，不能因此被丢成空数组。
+fn instruction_source_anchors(instructions: &Value) -> Vec<Value> {
+    fn collect(value: &Value, output: &mut Vec<Value>) {
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    collect(item, output);
+                }
+            }
+            Value::Object(map) => {
+                if map.get("type").and_then(Value::as_str).is_some() {
+                    if let Some(anchors) = map.get("sourceAnchors").and_then(Value::as_array) {
+                        for anchor in anchors {
+                            if !output.contains(anchor) {
+                                output.push(anchor.clone());
+                            }
+                        }
+                    }
+                }
+                for key in ["children", "items", "rows", "cells", "caption"] {
+                    if let Some(child) = map.get(key) {
+                        collect(child, output);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut anchors = Vec::new();
+    collect(instructions, &mut anchors);
+    anchors
 }
 
 /// 内容节点的后端字段：`sourceAnchors` 缺省为空数组，`provenanceStatus` 一律由后端定为
@@ -2907,6 +2920,18 @@ pub(crate) fn normalize_cloud_authoring(
         });
     }
 
+    // References are rewritten through one global ID map. Repeated incoming task IDs cannot be
+    // disambiguated by occurrence, even if their question ranges happen to match different
+    // canonical groups, so reject the malformed candidate before constructing any mappings.
+    let mut cloud_task_ids = BTreeSet::new();
+    for group in &groups {
+        if let Some(task_id) = group.get("taskId").and_then(Value::as_str) {
+            if !task_id.is_empty() && !cloud_task_ids.insert(task_id.to_string()) {
+                return Err(format!("cloud_authoring_duplicate_task_id:{task_id}"));
+            }
+        }
+    }
+
     // 临时 ID 全集：界定「模型临时空间」与「既有稳定引用」。
     let mut temp_ids: BTreeSet<String> = BTreeSet::new();
     collect_reference_ids(&draft, &mut temp_ids);
@@ -2917,18 +2942,28 @@ pub(crate) fn normalize_cloud_authoring(
         collect_reference_ids(canonical, &mut used);
     }
 
+    // A cloud pass may carry forward an already-stable canonical ID unchanged (for example
+    // qN answer slots and passage nodes). Such references are still in `temp_ids`, so seed
+    // explicit identity mappings for IDs already owned by the canonical draft. More specific
+    // structural matching below can replace an identity mapping when an incoming ID belongs
+    // to a different canonical object.
+    let mut id_map: BTreeMap<String, String> = temp_ids
+        .intersection(&used)
+        .map(|id| (id.clone(), id.clone()))
+        .collect();
+
     let canonical_groups = canonical.map(canonical_group_index).unwrap_or_default();
     let canonical_slots = canonical
         .map(|value| canonical_slot_index(value, &canonical_groups))
         .unwrap_or_default();
 
-    let mut id_map: BTreeMap<String, String> = BTreeMap::new();
     let mut unresolved: BTreeSet<String> = BTreeSet::new();
 
     // ── 1) 题组身份 ────────────────────────────────────────────────
     // cloud_group_index -> (stable task id 或 None 表示保留临时 ID)
     let mut group_stable: Vec<Option<String>> = Vec::with_capacity(groups.len());
     let mut group_canonical: Vec<Option<usize>> = Vec::with_capacity(groups.len());
+    let mut matched_canonical_groups = BTreeSet::new();
     for (index, group) in groups.iter().enumerate() {
         let cloud_task_id = group
             .get("taskId")
@@ -2939,6 +2974,25 @@ pub(crate) fn normalize_cloud_authoring(
         let numbers = cloud_group_numbers(group, &draft);
         match match_task_group(cloud_type, &numbers, &canonical_groups) {
             GroupMatch::Unique(target) => {
+                if !matched_canonical_groups.insert(target) {
+                    // A canonical identity may be reused by only one cloud group. Mapping a
+                    // second group to the same taskId would create duplicate IDs in the full
+                    // candidate and make later edits/undo target the wrong group. Keep this
+                    // group in its temporary identity space and make the ambiguity explicit;
+                    // the partial candidate is ineligible for whole-candidate adoption.
+                    let temporary_id = if cloud_task_id.is_empty() {
+                        format!("cloud-tg-{}", index + 1)
+                    } else {
+                        cloud_task_id.clone()
+                    };
+                    unresolved.insert(format!(
+                        "task_group:{temporary_id}:canonical_group_already_matched:{}",
+                        canonical_groups[target].task_id
+                    ));
+                    group_stable.push(Some(temporary_id));
+                    group_canonical.push(None);
+                    continue;
+                }
                 let stable = canonical_groups[target].task_id.clone();
                 if !cloud_task_id.is_empty() && cloud_task_id != stable {
                     id_map.insert(cloud_task_id, stable.clone());
@@ -3201,8 +3255,16 @@ pub(crate) fn normalize_cloud_authoring(
             .or_insert_with(|| json!([]));
         next.entry("sourceAnchors".to_string())
             .or_insert_with(|| json!([]));
-        // 后端派生 / 后端裁定，模型无权填写。
+        // 后端派生 / 后端裁定，模型无权填写。签名证据从每条 instruction 自身的
+        // sourceAnchors 派生，保留出处但不采信模型直接给出的 signature。
         let mut group_value = Value::Object(next);
+        let instruction_anchors = group_value
+            .get("instructions")
+            .map(instruction_source_anchors)
+            .unwrap_or_default();
+        if !instruction_anchors.is_empty() {
+            group_value["instructionSignature"] = json!({"evidenceAnchors": instruction_anchors});
+        }
         derive_instruction_signature_for_group(&mut group_value);
         let numbers: Vec<u32> = group_value
             .get("displayRange")
@@ -3332,6 +3394,7 @@ pub(crate) fn cloud_authoring_candidate_from_normalized(
         status: normalized.status,
         reason_code: normalized.reason_code,
         authoring,
+        answer_page_evidence: Vec::new(),
         id_map: normalized.id_map,
         unresolved_references: normalized.unresolved_references,
         unresolved_regions: normalized.unresolved_regions,
@@ -3555,6 +3618,7 @@ pub(crate) fn merge_candidate_chunks(
     let mut task_groups: Vec<Value> = Vec::new();
     let mut answer_slots = Map::new();
     let mut answer_key = Map::new();
+    let mut answer_page_evidence: Vec<Value> = Vec::new();
     let mut unresolved_regions: Vec<Value> = Vec::new();
     let mut coverage_notes: Vec<Value> = Vec::new();
     let mut warnings: Vec<Value> = Vec::new();
@@ -3575,6 +3639,7 @@ pub(crate) fn merge_candidate_chunks(
                     // 说明类字段可能在外层：一并带进来。
                     for key in [
                         "unresolvedRegions",
+                        "answerPageEvidence",
                         "sourceCoverageNotes",
                         "warnings",
                         "listeningParts",
@@ -3626,6 +3691,7 @@ pub(crate) fn merge_candidate_chunks(
         }
         for (key, target) in [
             ("unresolvedRegions", &mut unresolved_regions),
+            ("answerPageEvidence", &mut answer_page_evidence),
             ("sourceCoverageNotes", &mut coverage_notes),
             ("warnings", &mut warnings),
             ("listeningParts", &mut listening_parts),
@@ -3649,6 +3715,7 @@ pub(crate) fn merge_candidate_chunks(
         "taskGroups": task_groups,
         "answerSlots": answer_slots,
         "answerKey": answer_key,
+        "answerPageEvidence": answer_page_evidence,
         "unresolvedRegions": unresolved_regions,
         "sourceCoverageNotes": coverage_notes,
         "warnings": warnings,
@@ -5139,6 +5206,65 @@ mod cloud_authoring_tests {
         );
     }
 
+    #[test]
+    fn cloud_authoring_accepts_identity_mappings_for_existing_stable_ids() {
+        let canonical = golden_authoring();
+        let raw = json!({"authoring": canonical.clone()});
+
+        let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), &raw)
+            .expect("候选沿用正式稿稳定 ID 时仍应成功标准化");
+
+        assert_eq!(
+            normalized.status,
+            ChainStatusV1::Succeeded,
+            "身份一致的稳定引用被误判：{:?}",
+            normalized.unresolved_references
+        );
+        assert!(
+            normalized.unresolved_references.is_empty(),
+            "沿用的正式稿 ID 应被视为已解析，而不是临时引用缺口：{:?}",
+            normalized.unresolved_references
+        );
+        assert_eq!(
+            normalized.document["taskGroups"][0]["taskId"],
+            "early-approaches-q14-15"
+        );
+        assert!(normalized.document["answerSlots"].get("q14").is_some());
+    }
+
+    #[test]
+    fn cloud_authoring_derives_instruction_evidence_from_current_source_anchors() {
+        let canonical = golden_authoring();
+        let mut raw = json!({"authoring": cloud_draft(&[14, 15], "cloud")});
+        raw["authoring"]["taskGroups"][0]["instructions"][0]["sourceAnchors"] = json!([{
+            "sourceFileId": "stale-file-from-another-import",
+            "pageIndex": 2,
+            "nodeIds": ["source-instruction-node"],
+            "extractionMode": "docx_ooxml",
+            "sourceHash": "b".repeat(64)
+        }]);
+        // A model-provided signature is not trusted. Evidence must be grounded in the
+        // instruction content's own source anchors and rebound to the current import.
+        raw["authoring"]["taskGroups"][0]["instructionSignature"] = json!({
+            "evidenceAnchors": [{"sourceFileId":"forged-file","pageIndex":99,"nodeIds":["forged"]}]
+        });
+
+        let normalized =
+            normalize_cloud_authoring(&identity(), Some(&canonical), &raw).expect("标准化必须成功");
+        let evidence = normalized
+            .document
+            .pointer("/taskGroups/0/instructionSignature/evidenceAnchors")
+            .and_then(Value::as_array)
+            .expect("后台必须从 instructions 生成 signature evidence");
+
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence[0]["sourceFileId"], "early-approaches-pdf");
+        assert_eq!(evidence[0]["sourceHash"], "a".repeat(64));
+        assert_eq!(evidence[0]["pageIndex"], 2);
+        assert_eq!(evidence[0]["nodeIds"], json!(["source-instruction-node"]));
+        assert_eq!(evidence[0]["extractionMode"], "pdf_native");
+    }
+
     /// 云端识别出的**新增**对象：后端分配稳定 ID，绝不整类降级成人工问题。
     #[test]
     fn cloud_authoring_new_objects_get_backend_identity_without_degrading() {
@@ -5212,6 +5338,57 @@ mod cloud_authoring_tests {
             candidate.authoring.task_groups[0].response_groups[0].response_group_id,
             "cloud-tg-1-rg-1"
         );
+    }
+
+    #[test]
+    fn two_cloud_groups_cannot_reuse_one_canonical_task_identity() {
+        let canonical = golden_authoring();
+        let mut draft = cloud_draft(&[14, 15], "cloud");
+        let mut overlapping = draft["taskGroups"][0].clone();
+        overlapping["taskId"] = json!("cloud-tg-overlap");
+        overlapping["displayRange"] = json!({"kind":"set", "values":[15]});
+        overlapping["responseGroups"][0]["responseGroupId"] = json!("cloud-rg-overlap");
+        overlapping["responseGroups"][0]["slotIds"] = json!(["cloud-q15"]);
+        draft["taskGroups"].as_array_mut().unwrap().push(overlapping);
+
+        let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), &draft)
+            .expect("重复对齐应降级为显式歧义，而不是归一化失败");
+        assert_eq!(normalized.status, ChainStatusV1::Partial);
+        assert!(normalized.unresolved_references.iter().any(|entry| {
+            entry.contains("cloud-tg-overlap")
+                && entry.contains("canonical_group_already_matched")
+        }));
+
+        let candidate = cloud_authoring_candidate_from_normalized(&identity(), normalized)
+            .expect("部分候选仍可用于修复诊断");
+        let task_ids = candidate
+            .authoring
+            .task_groups
+            .iter()
+            .map(|group| group.task_id.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(task_ids.len(), candidate.authoring.task_groups.len());
+        assert_ne!(
+            candidate.authoring.task_groups[0].task_id,
+            candidate.authoring.task_groups[1].task_id,
+            "第二个云端题组不得与首个题组复用本地 taskId"
+        );
+    }
+
+    #[test]
+    fn duplicate_cloud_task_ids_are_rejected_before_canonical_mapping() {
+        let canonical = golden_authoring();
+        let mut draft = cloud_draft(&[14, 15], "cloud");
+        let mut overlapping = draft["taskGroups"][0].clone();
+        overlapping["displayRange"] = json!({"kind":"set", "values":[15]});
+        overlapping["responseGroups"][0]["slotIds"] = json!(["cloud-q15"]);
+        draft["taskGroups"].as_array_mut().unwrap().push(overlapping);
+
+        let error = normalize_cloud_authoring(&identity(), Some(&canonical), &draft)
+            .err()
+            .expect("重复的云端 taskId 无法通过全局 ID 映射安全消歧");
+
+        assert_eq!(error, "cloud_authoring_duplicate_task_id:cloud-tg-1");
     }
 
     /// 后端身份字段只从 `identity` 取：模型在输出里伪造 jobId / batchId 一律不采信。
@@ -5387,8 +5564,14 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
     #[test]
     fn chunks_reusing_the_same_temporary_ids_merge_and_map_onto_canonical_groups() {
         let canonical = golden_authoring();
-        let first = cloud_draft(&[14, 15], "cloud");
-        let second = cloud_draft(&[16, 17], "cloud");
+        let mut first = cloud_draft(&[14, 15], "cloud");
+        first["answerPageEvidence"] = json!([{
+            "questionNumber": 14, "pageIndex": 40, "quote": "14 B"
+        }]);
+        let mut second = cloud_draft(&[16, 17], "cloud");
+        second["answerPageEvidence"] = json!([{
+            "questionNumber": 16, "pageIndex": 41, "quote": "16 A"
+        }]);
         assert_eq!(
             first["taskGroups"][0]["taskId"], second["taskGroups"][0]["taskId"],
             "测试前提：临时 id 相撞"
@@ -5399,6 +5582,9 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
             (chunk(&[16, 17]), Ok(second)),
         ])
         .expect("两块都成功必须能合并");
+        assert_eq!(merged["answerPageEvidence"].as_array().unwrap().len(), 2);
+        assert_eq!(merged["answerPageEvidence"][0]["questionNumber"], 14);
+        assert_eq!(merged["answerPageEvidence"][1]["questionNumber"], 16);
         let task_ids: Vec<&str> = merged["taskGroups"]
             .as_array()
             .unwrap()

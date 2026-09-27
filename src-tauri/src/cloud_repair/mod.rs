@@ -644,6 +644,15 @@ fn describe_difference(difference: &Value) -> String {
     format!("{where_}的{label}与云端识别结果不一致")
 }
 
+fn describe_comparison_difference(difference: &Value, adopted: bool) -> String {
+    let message = describe_difference(difference);
+    if adopted {
+        message.replace("云端识别结果", "本地识别结果")
+    } else {
+        message
+    }
+}
+
 /// 当下**仍然有效**的裁定条数（「云端替用户了结了多少争议」的唯一可核对数字）。
 ///
 /// 为什么不能用 `rulings.len()`：那份列表是 append-only 的累积记录，里面同时躺着
@@ -692,13 +701,13 @@ fn adjudicated_count_now(
         return 0;
     };
     drop(conn);
-    let Ok(Some(candidate)) = store::read_cloud_authoring_candidate(root, job_id, batch_id) else {
+    let Ok(adopted) = batch_uses_adopted_cloud_as_canonical(root, batch_id) else {
         return 0;
     };
-    let Ok(candidate_value) = serde_json::to_value(&candidate.authoring) else {
+    let Ok(Some(challenger)) = comparison_challenger(root, job_id, batch_id, adopted) else {
         return 0;
     };
-    effective_adjudicated_count(&canonical, &candidate_value, rulings)
+    effective_adjudicated_count(&canonical, &challenger, rulings)
 }
 
 /// 修复 run 的标识。**唯一**的产生处：循环内部与调度器兜底必须给出同一个值，
@@ -972,6 +981,34 @@ pub(crate) fn candidate_differences(canonical: &Value, candidate: &Value) -> Vec
     out
 }
 
+fn batch_uses_adopted_cloud_as_canonical(root: &Path, batch_id: &str) -> CommandResult<bool> {
+    let conn = open_library_connection(root)?;
+    let repair = store::read_batch_repair(&conn, batch_id)?;
+    Ok(repair
+        .as_ref()
+        .and_then(|value| value.pointer("/candidateAdoption/adopted"))
+        .and_then(Value::as_bool)
+        == Some(true))
+}
+
+/// Return the comparison challenger: cloud candidate on the unchanged fallback path, or the
+/// immutable full local authoring snapshot after cloud adoption.
+fn comparison_challenger(
+    root: &Path,
+    job_id: &str,
+    batch_id: &str,
+    adopted: bool,
+) -> CommandResult<Option<Value>> {
+    if adopted {
+        return store::read_local_authoring_snapshot(root, job_id, batch_id)?
+            .map(Some)
+            .ok_or_else(|| "adopted_cloud_local_snapshot_missing".to_string());
+    }
+    store::read_cloud_authoring_candidate(root, job_id, batch_id)?
+        .map(|candidate| serde_json::to_value(candidate.authoring).map_err(|e| e.to_string()))
+        .transpose()
+}
+
 /// 构建修复上下文：**只读**，不调用模型、不写任何东西。
 ///
 /// 首轮就把原文范围索引、当前稿、云端候选与差异、质量诊断、人工保护目标一次性给到，
@@ -990,15 +1027,14 @@ pub(crate) fn build_repair_context(
         (canonical, edit_version, protected)
     };
 
+    let adopted = batch_uses_adopted_cloud_as_canonical(root, batch_id)?;
     let candidate = store::read_cloud_authoring_candidate(root, job_id, batch_id)?;
-    let candidate_authoring = candidate
-        .as_ref()
-        .and_then(|candidate| serde_json::to_value(&candidate.authoring).ok())
-        .unwrap_or(Value::Null);
-    let differences = if candidate_authoring.is_null() {
+    let challenger = comparison_challenger(root, job_id, batch_id, adopted)?;
+    let challenger_authoring = challenger.unwrap_or(Value::Null);
+    let differences = if challenger_authoring.is_null() {
         Vec::new()
     } else {
-        candidate_differences(&canonical, &candidate_authoring)
+        candidate_differences(&canonical, &challenger_authoring)
     };
 
     let source_file_id = canonical
@@ -1013,6 +1049,8 @@ pub(crate) fn build_repair_context(
         "batchId": batch_id,
         "sourceFileId": source_file_id,
         "editVersion": edit_version,
+        "comparisonMode": if adopted { "adopted_cloud_vs_local_snapshot" } else { "local_draft_vs_cloud_candidate" },
+        "challengerLabel": if adopted { "frozen_local_snapshot" } else { "cloud_candidate" },
         // 整卷范围索引：模型必须看到整份文档，而不是只看到已发现的差异。
         "documentIndex": canonical
             .get("taskGroups")
@@ -1749,7 +1787,15 @@ fn execute_tool(
             // taskId，以及候选切片里出现过的 taskId。
             let mut allowed = tools.task_ids.clone();
             for group in context
-                .pointer("/candidateSlice/taskGroups")
+                .pointer(
+                    if context.get("comparisonMode").and_then(Value::as_str)
+                        == Some("adopted_cloud_vs_local_snapshot")
+                    {
+                        "/localSnapshotSlice/taskGroups"
+                    } else {
+                        "/candidateSlice/taskGroups"
+                    },
+                )
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
@@ -1770,14 +1816,12 @@ fn execute_tool(
                     None,
                 );
             }
-            let candidate = store::read_cloud_authoring_candidate(
-                request.root,
-                request.job_id,
-                request.batch_id,
-            )
+            let adopted = context.get("comparisonMode").and_then(Value::as_str)
+                == Some("adopted_cloud_vs_local_snapshot");
+            let candidate =
+                comparison_challenger(request.root, request.job_id, request.batch_id, adopted)
             .ok()
             .flatten()
-            .and_then(|candidate| serde_json::to_value(&candidate.authoring).ok())
             .unwrap_or(Value::Null);
             if candidate.is_null() {
                 return (
@@ -2110,11 +2154,13 @@ fn execute_tool(
                     ruling.as_str(),
                     crate::schema::cloud_repair_v1::CLOUD_RULING_CURRENT_IS_CORRECT
                         | crate::schema::cloud_repair_v1::CLOUD_RULING_CANNOT_RESOLVE
+                        | crate::schema::cloud_repair_v1::CLOUD_RULING_KEPT_CLOUD_DEFAULT
                 ) {
                     errors.push(format!(
                         "CLOUD_RULING_UNKNOWN_KIND:{ruling}: allowed are \
                          current_is_correct (the current draft is right and the candidate is wrong) \
-                         and cannot_resolve (the original file does not settle it)"
+                         cannot_resolve (the original file does not settle it), and \
+                         kept_cloud_default (adopted-cloud mode, non-answer differences only)"
                     ));
                     continue;
                 }
@@ -2128,6 +2174,25 @@ fn execute_tool(
                     ));
                     continue;
                 };
+                let adopted_cloud_mode = context.get("comparisonMode").and_then(Value::as_str)
+                    == Some("adopted_cloud_vs_local_snapshot");
+                if ruling == crate::schema::cloud_repair_v1::CLOUD_RULING_KEPT_CLOUD_DEFAULT
+                    && (!adopted_cloud_mode || field == "answer")
+                {
+                    errors.push(format!(
+                        "CLOUD_RULING_KEPT_CLOUD_DEFAULT_NOT_ALLOWED:{target_type}:{target_id}:{field}: only adopted-cloud non-answer differences may keep the cloud default"
+                    ));
+                    continue;
+                }
+                if adopted_cloud_mode
+                    && ruling == crate::schema::cloud_repair_v1::CLOUD_RULING_CANNOT_RESOLVE
+                    && field != "answer"
+                {
+                    errors.push(format!(
+                        "CLOUD_RULING_USE_KEPT_CLOUD_DEFAULT:{target_type}:{target_id}:{field}: undecidable non-answer differences in adopted-cloud mode default to the cloud draft without a user task"
+                    ));
+                    continue;
+                }
                 let (canonical_digest, candidate_digest, context_digest) =
                     difference_digests(difference);
                 // P9：裁定证据与 apply_edits 走**同一套**校验——先结构，再引文对照完整原文。
@@ -2400,7 +2465,9 @@ fn remaining_tasks(
     };
     drop(conn);
 
+    let adopted = batch_uses_adopted_cloud_as_canonical(root, batch_id)?;
     let candidate = store::read_cloud_authoring_candidate(root, job_id, batch_id)?;
+    let challenger = comparison_challenger(root, job_id, batch_id, adopted)?;
     let mut tasks: Vec<Value> = Vec::new();
     // 去重键 → 已在 `tasks` 里的下标。**跨源**去重（见 `repair_key`）。
     let mut by_key: BTreeMap<(String, String), usize> = BTreeMap::new();
@@ -2447,9 +2514,8 @@ fn remaining_tasks(
     }
 
     // ── 2) 尚未裁定的内容差异 ─────────────────────────────────────────────
-    if let Some(candidate) = candidate.as_ref() {
-        if let Ok(candidate_value) = serde_json::to_value(&candidate.authoring) {
-            for difference in candidate_differences(&canonical, &candidate_value) {
+    if let Some(challenger) = challenger.as_ref() {
+        for difference in candidate_differences(&canonical, challenger) {
                 let (target_type, target_id, field) = difference_key(&difference);
                 let task_id = format!("cloud-diff:{target_type}:{target_id}:{field}");
                 match fresh_ruling_for_difference(rulings, &difference) {
@@ -2462,6 +2528,14 @@ fn remaining_tasks(
                     {
                         continue;
                     }
+                Some(ruling)
+                    if ruling.get("ruling").and_then(Value::as_str)
+                        == Some(
+                            crate::schema::cloud_repair_v1::CLOUD_RULING_KEPT_CLOUD_DEFAULT,
+                        ) =>
+                {
+                    continue;
+                }
                     // 已裁定「原文件不足以定论」：仍然要人看，但**带上模型的结论与出处**，
                     // 而不是让用户从零开始重新判断一遍。
                     Some(ruling) => {
@@ -2470,6 +2544,20 @@ fn remaining_tasks(
                             == Some(crate::schema::cloud_repair_v1::CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT);
                         let message = if insufficient {
                             context_insufficient_message(&ruling)
+                    } else if adopted && field != "answer" {
+                        format!(
+                            "{}；原文无法裁定，已默认保留云端版本：{}",
+                            describe_comparison_difference(&difference, true),
+                            ruling
+                                .get("reason")
+                                .and_then(Value::as_str)
+                                .unwrap_or("未说明理由")
+                        )
+                    } else if adopted {
+                        format!(
+                            "{}；云端与本地答案不一致，原文无法判定，请核对",
+                            describe_comparison_difference(&difference, true)
+                        )
                         } else {
                             format!(
                                 "{}；云端已查过原文件但无法定论：{}",
@@ -2490,6 +2578,8 @@ fn remaining_tasks(
                             "field": field.clone(),
                             "currentValue": difference.get("canonical").cloned().unwrap_or(Value::Null),
                             "cloudValue": difference.get("candidate").cloned().unwrap_or(Value::Null),
+                        "challengerValue": difference.get("candidate").cloned().unwrap_or(Value::Null),
+                        "challengerLabel": if adopted { "本地识别" } else { "云端识别" },
                             "evidence": ruling.get("evidence").cloned().unwrap_or_else(|| json!([])),
                             "repairFamily": repair_family_for_difference_field(&field),
                         });
@@ -2508,13 +2598,15 @@ fn remaining_tasks(
                             json!({
                                 "userTaskId": task_id,
                                 "targetIds": [target_id],
-                                "message": describe_difference(&difference),
+                            "message": describe_comparison_difference(&difference, adopted),
                                 "action": "review_difference",
                                 "blocking": false,
                                 // 当前值与云端值一并给前端：任务里要能直接看到「现在是什么、云端读到的是什么」。
                                 "field": field.clone(),
                                 "currentValue": difference.get("canonical").cloned().unwrap_or(Value::Null),
                                 "cloudValue": difference.get("candidate").cloned().unwrap_or(Value::Null),
+                            "challengerValue": difference.get("candidate").cloned().unwrap_or(Value::Null),
+                            "challengerLabel": if adopted { "本地识别" } else { "云端识别" },
                                 "repairFamily": repair_family_for_difference_field(&field),
                             }),
                         );
@@ -2522,7 +2614,6 @@ fn remaining_tasks(
                 }
             }
         }
-    }
 
     // ── 3) 模型明确留下的未解疑问 ─────────────────────────────────────────
     //
@@ -3665,9 +3756,9 @@ fn plan_repair_packets(
     let canonical = current_canonical(request)?
         .map(|(document, _)| document)
         .unwrap_or(Value::Null);
-    let candidate =
-        store::read_cloud_authoring_candidate(request.root, request.job_id, request.batch_id)?
-            .and_then(|candidate| serde_json::to_value(&candidate.authoring).ok())
+    let adopted = context.get("comparisonMode").and_then(Value::as_str)
+        == Some("adopted_cloud_vs_local_snapshot");
+    let candidate = comparison_challenger(request.root, request.job_id, request.batch_id, adopted)?
             .unwrap_or(Value::Null);
     let differences: Vec<Value> = context
         .get("differences")
@@ -3699,6 +3790,7 @@ fn plan_repair_packets(
         protected: &protected,
         source: source_index,
         edit_version,
+        adopted_cloud_canonical: adopted,
     });
     Ok(planned
         .into_iter()
