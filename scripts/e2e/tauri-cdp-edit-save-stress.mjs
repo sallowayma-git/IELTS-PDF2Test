@@ -126,7 +126,6 @@ async function readStage(session, itemId) {
   const p = r.value.find((i) => i?.id === itemId)?.processing ?? null;
   return p?.stage ?? null;
 }
-// PLACEHOLDER_MAIN
 const report = {
   task: "edit-save-stress-under-concurrent-writes",
   scope: "识别可编辑窗口内连续 30 次前台编辑 + 每次并发后台写入，断言无 failed/conflict、无丢写（真实应用端到端）",
