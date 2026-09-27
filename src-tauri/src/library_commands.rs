@@ -840,6 +840,46 @@ mod tests {
     }
 
     #[test]
+    fn permanently_delete_refuses_item_still_processing() {
+        use crate::library::repository::{open_library_connection, upsert_item_shell, UpsertItemInput};
+        let root = make_reading_appdata();
+        migrate_existing_into_library(&root).unwrap();
+        // processing_jobs_v2.library_item_id 外键指向 library_items_v2；导入流程里 job_id
+        // 与库条目 id 同值。先建 v2 壳行再挂一个 queued 任务，模拟“已进回收站但仍在识别/排队”。
+        {
+            let conn = open_library_connection(&root).unwrap();
+            upsert_item_shell(
+                &conn,
+                &UpsertItemInput {
+                    id: "import-test-1",
+                    modality: "reading",
+                    title: "Trash me",
+                    status: "processing",
+                    source_asset_id: None,
+                },
+            )
+            .unwrap();
+            crate::processing::queue::enqueue(
+                &conn,
+                "import-test-1",
+                "import-test-1",
+                "asset-1",
+                &serde_json::Value::Null,
+            )
+            .unwrap();
+        }
+        assert!(delete_library_exam_core(&root, "import-test-1").unwrap());
+        let err = permanently_delete_library_exam_core(&root, "import-test-1").unwrap_err();
+        assert!(
+            err.starts_with("ITEM_STILL_PROCESSING"),
+            "识别/排队中的条目应拒绝永久删除，实得：{err}"
+        );
+        // 拒绝后仍留在回收站，未被误删成孤儿。
+        assert_eq!(list_trashed_exams_core(&root).unwrap().len(), 1);
+        cleanup(&root);
+    }
+
+    #[test]
     fn empty_recycle_bin_purges_every_trashed_item() {
         let root = make_reading_appdata();
         migrate_existing_into_library(&root).unwrap();
