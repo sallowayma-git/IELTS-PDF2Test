@@ -922,26 +922,58 @@ pub(crate) fn upsert_library_item(
     Ok(revision_id)
 }
 
-/// 软删除：置 deleted_at（不物理删除，可恢复）。
-pub(crate) fn soft_delete_library_item(conn: &Connection, id: &str) -> CommandResult<bool> {
-    let affected = conn
-        .execute(
-            "UPDATE library_items SET deleted_at=?1, updated_at=?1 WHERE id=?2 AND deleted_at IS NULL",
-            params![now_iso(), id],
-        )
-        .map_err(|e| format!("soft_delete:{}:{}", id, e))?;
-    Ok(affected > 0)
+fn table_exists(conn: &Connection, name: &str) -> bool {
+    conn.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
+        rusqlite::params![name],
+        |_| Ok(()),
+    )
+    .optional()
+    .map(|o: Option<()>| o.is_some())
+    .unwrap_or(false)
 }
 
-/// 恢复软删除：清空 deleted_at。
+/// 软删除：置 deleted_at。删除态以 v2 为准，但 v1、v2 两表都标记——识别中条目只有 v2 外壳、
+/// 已迁移条目还有 v1 行，任一表把它当活动就会「复活」。v2 表不存在的纯 v1 上下文只写 v1。
+pub(crate) fn soft_delete_library_item(conn: &Connection, id: &str) -> CommandResult<bool> {
+    let now = now_iso();
+    let v2 = if table_exists(conn, "library_items_v2") {
+        conn.execute(
+            "UPDATE library_items_v2 SET deleted_at=?1, updated_at=?1 WHERE id=?2 AND deleted_at IS NULL",
+            params![now, id],
+        )
+        .map_err(|e| format!("soft_delete_v2:{}:{}", id, e))?
+    } else {
+        0
+    };
+    let v1 = conn
+        .execute(
+            "UPDATE library_items SET deleted_at=?1, updated_at=?1 WHERE id=?2 AND deleted_at IS NULL",
+            params![now, id],
+        )
+        .map_err(|e| format!("soft_delete:{}:{}", id, e))?;
+    Ok(v1 > 0 || v2 > 0)
+}
+
+/// 恢复软删除：清空 deleted_at（与软删对称，v1、v2 两表都清）。
 pub(crate) fn restore_library_item(conn: &Connection, id: &str) -> CommandResult<bool> {
-    let affected = conn
+    let now = now_iso();
+    let v2 = if table_exists(conn, "library_items_v2") {
+        conn.execute(
+            "UPDATE library_items_v2 SET deleted_at=NULL, updated_at=?1 WHERE id=?2 AND deleted_at IS NOT NULL",
+            params![now, id],
+        )
+        .map_err(|e| format!("restore_v2:{}:{}", id, e))?
+    } else {
+        0
+    };
+    let v1 = conn
         .execute(
             "UPDATE library_items SET deleted_at=NULL, updated_at=?1 WHERE id=?2 AND deleted_at IS NOT NULL",
-            params![now_iso(), id],
+            params![now, id],
         )
         .map_err(|e| format!("restore:{}:{}", id, e))?;
-    Ok(affected > 0)
+    Ok(v1 > 0 || v2 > 0)
 }
 
 /// 值 = 条目/任务 id 的列名（`purge_all_rows_for_item` 按这些列删行）。
@@ -1117,24 +1149,72 @@ pub(crate) fn restore_exam_from_library_item(conn: &Connection, id: &str) -> Com
     Ok(true)
 }
 
-/// 列出已软删除的题库条目（回收站）。
+/// 回收站 = v1 已删 ∪ v2 已删（按 id 去重，v1 富摘要优先）。识别中删除的条目只有 v2 行，
+/// 必须也列出——否则它进不了回收站，前端也无从据此把活动列表里仍在的 job 行遮掉。
 pub(crate) fn list_trashed_items(conn: &Connection) -> CommandResult<Vec<LibraryExamSummary>> {
-    let sql =
+    let v1_sql =
         "SELECT id, NULL AS exam_id, title, subject, category, difficulty AS frequency, status, \
                CASE WHEN subject='writing' THEN category ELSE NULL END AS task_type, \
                tags_json, NULL AS source_hash, 0 AS issue_errors, 0 AS issue_warnings, \
                created_at, updated_at \
                FROM library_items WHERE deleted_at IS NOT NULL ORDER BY updated_at DESC";
-    let mut stmt = conn
-        .prepare(sql)
-        .map_err(|e| format!("trash_prepare:{}", e))?;
-    let rows = stmt
-        .query_map([], row_to_summary)
-        .map_err(|e| format!("trash_query:{}", e))?;
-    let mut out = Vec::new();
-    for r in rows {
-        out.push(r.map_err(|e| format!("trash_row:{}", e))?);
+    let mut out: Vec<LibraryExamSummary> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    {
+        let mut stmt = conn.prepare(v1_sql).map_err(|e| format!("trash_prepare:{}", e))?;
+        let rows = stmt
+            .query_map([], row_to_summary)
+            .map_err(|e| format!("trash_query:{}", e))?;
+        for r in rows {
+            let s = r.map_err(|e| format!("trash_row:{}", e))?;
+            seen.insert(s.id.clone());
+            out.push(s);
+        }
     }
+    if table_exists(conn, "library_items_v2") {
+        // 内容真源在 v2；这里用 v2 列构最小摘要（够回收站展示与去重）。
+        let v2_sql = "SELECT id, title, modality, status, part_label, created_at, updated_at \
+                      FROM library_items_v2 WHERE deleted_at IS NOT NULL ORDER BY updated_at DESC";
+        let mut stmt = conn.prepare(v2_sql).map_err(|e| format!("trash_v2_prepare:{}", e))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                ))
+            })
+            .map_err(|e| format!("trash_v2_query:{}", e))?;
+        for r in rows {
+            let (id, title, modality, status, part_label, created_at, updated_at) =
+                r.map_err(|e| format!("trash_v2_row:{}", e))?;
+            if seen.contains(&id) {
+                continue;
+            }
+            seen.insert(id.clone());
+            out.push(LibraryExamSummary {
+                id,
+                exam_id: None,
+                title,
+                subject: modality,
+                category: part_label,
+                frequency: None,
+                status: normalize_public_status(&status).to_string(),
+                task_type: None,
+                tags: Vec::new(),
+                source_hash: None,
+                issue_errors: 0,
+                issue_warnings: 0,
+                created_at,
+                updated_at,
+            });
+        }
+    }
+    out.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     Ok(out)
 }
 
