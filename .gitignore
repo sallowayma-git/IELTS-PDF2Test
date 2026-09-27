@@ -32,4 +32,4 @@ src-tauri/lib/pdfium-linux/
 .workbuddy/
 customer-delivery/
 .zcodeignore
-authoring_hub.db
+authoring_hub.db*
