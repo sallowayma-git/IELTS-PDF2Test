@@ -2585,6 +2585,94 @@ mod tests {
         );
     }
 
+    /// 量化拖动选项：change_json 记路径级差异，只随「动了几个选项」增长，而非整题组快照。
+    /// 重排同长度选项数组时按元素递归——只有位置变化的那些选项进 diff（逐元素，非整组一条）。
+    #[test]
+    fn dragging_an_option_records_a_path_diff_not_the_whole_task_group() {
+        let opt = |i: usize| -> Value {
+            json!({
+                "optionId": format!("opt-{i}"),
+                "label": ((b'A' + i as u8) as char).to_string(),
+                "provenanceStatus": "derived",
+                "sourceAnchors": [{"page": 1, "blockId": format!("blk-{i}"), "charStart": i * 40}],
+                "content": [{
+                    "type": "paragraph", "id": format!("p-opt-{i}"), "provenanceStatus": "derived",
+                    "sourceAnchors": [{"page": 1, "blockId": format!("blk-{i}")}],
+                    "children": [{
+                        "type": "text", "id": format!("t-opt-{i}"), "provenanceStatus": "derived",
+                        "sourceAnchors": [], "text": format!("选项 {i} 正文，{}", "细节".repeat(24))
+                    }]
+                }]
+            })
+        };
+        let options: Vec<Value> = (0..8).map(opt).collect();
+        // 题干块：属于整题组但不参与选项重排——旧格式会把它连同整组 before/after 各记一份。
+        // 放大到令整题组≈200KB，正好复现任务书「拖一个选项记整题组≈400KB」的量级。
+        let instructions = json!([{
+            "type": "paragraph", "id": "p-instr", "provenanceStatus": "derived", "sourceAnchors": [],
+            "children": [{"type": "text", "id": "t-instr", "provenanceStatus": "derived",
+                "sourceAnchors": [], "text": "题干".repeat(32000)}]
+        }]);
+        let group_ds = |opts: &[Value]| -> Value {
+            json!({
+                "schemaVersion": "IeltsAuthoringIRV2", "exam": {"title": "t"},
+                "taskGroups": [{
+                    "taskId": "task-1", "taskType": "matching", "requiredness": "required", "status": "included",
+                    "instructions": instructions,
+                    "responseGroups": [{"responseGroupId": "rg-1", "kind": "matching", "slotIds": ["slot-1"], "options": opts}]
+                }],
+                "answerSlots": {"slot-1": {"slotId": "slot-1", "questionNumber": 1, "interaction": "matching"}},
+                "answerKey": {"slot-1": {"kind": "option", "labels": ["A"], "assignment": "per_slot"}},
+                "quality": {"state": "action_required", "hardFailures": [], "issues": []}
+            })
+        };
+        // 施加一次「整组替换成选项重排后」的编辑（与前端 option.move 编译出的 setResponseGroup 一致），
+        // 返回（新 change_json 字节数, diff 条目数, 旧整题组快照字节数, 路径是否深入数组下标）。
+        let measure = |reordered: Vec<Value>| -> (i64, usize, i64, bool) {
+            let ds_before = group_ds(&options);
+            let conn = memory_repo();
+            upsert_item_shell(&conn, &UpsertItemInput { id: "it-1", modality: "reading", title: "t", status: "action_required", source_asset_id: None }).unwrap();
+            seed_canonical_ds(&conn, "it-1", &ds_before.to_string(), "action_required").unwrap();
+            let mut conn = conn;
+            let patch = json!({
+                "op": "setResponseGroup", "taskId": "task-1",
+                "responseGroup": {"responseGroupId": "rg-1", "kind": "matching", "slotIds": ["slot-1"], "options": reordered}
+            });
+            run_edit(&mut conn, vec![patch], EditOrigin::Human, None, 1).unwrap();
+            let change_json: String = conn.query_row(
+                "SELECT change_json FROM editor_journal_v1 WHERE library_item_id = 'it-1' ORDER BY id DESC LIMIT 1",
+                [], |row| row.get(0),
+            ).unwrap();
+            let parsed: Value = serde_json::from_str(&change_json).unwrap();
+            let diff = parsed.pointer("/targets/task-1/diff").and_then(Value::as_array).cloned().unwrap_or_default();
+            let element_wise = diff.iter().any(|entry| {
+                let Some(path) = entry.get("path").and_then(Value::as_array) else { return false };
+                path.iter().any(|seg| seg.as_str() == Some("options")) && path.iter().any(Value::is_number)
+            });
+            let (ds_after, _) = get_canonical_ds(&conn, "it-1").unwrap().unwrap();
+            let legacy = json!({
+                "before": {"task-1": read_change_value(&ds_before, "task-1")},
+                "after": {"task-1": read_change_value(&ds_after, "task-1")}
+            });
+            (change_json.len() as i64, diff.len(), serde_json::to_string(&legacy).unwrap().len() as i64, element_wise)
+        };
+
+        let mut rotate = options.clone();
+        let last = rotate.pop().unwrap();
+        rotate.insert(0, last);
+        let (new_rot, entries_rot, old_rot, ew_rot) = measure(rotate);
+        eprintln!("[quant] 拖选项·末→首（8 选项整列错位）：旧整题组快照 {old_rot} 字节 → 新路径差异 {new_rot} 字节（{entries_rot} 条 diff，逐元素={ew_rot}）");
+
+        let mut swap = options.clone();
+        swap.swap(6, 7);
+        let (new_swap, entries_swap, old_swap, _) = measure(swap);
+        eprintln!("[quant] 拖选项·相邻对调（动 2 个位置）：旧整题组快照 {old_swap} 字节 → 新路径差异 {new_swap} 字节（{entries_swap} 条 diff）");
+
+        assert!(new_rot < old_rot, "整列错位下路径差异仍应小于整题组快照：新 {new_rot} vs 旧 {old_rot}");
+        assert!(ew_rot, "重排应逐元素记录（diff 路径深入到 options 数组下标），而不是整组一条");
+        assert!(new_swap < new_rot, "只拖一格应比整列错位记得更少：{new_swap} vs {new_rot}");
+    }
+
     /// 逐路径撤销：只回滚本轮修复动过的路径，同一目标里用户后改的兄弟字段必须保留。
     #[test]
     fn undo_reverts_only_the_repaired_path_and_keeps_a_sibling_edit_in_the_same_target() {
