@@ -248,6 +248,37 @@ pub(crate) fn advance_stage(
     Ok(Some((seq, effective_stage)))
 }
 
+/// 云端校核是否正在进行（D1 产品决定：此期间拒绝人工来源编辑）。
+///
+/// 以调度器的实际阶段/状态为准：
+/// - `cloud_status` 为 `queued`/`running`：云端候选已排队或拉取中（含与本地识别
+///   并行的窗口——那时 stage 仍是 `local_recognition`）；
+/// - `stage` 为 `reconciling`：云端采纳、修复循环与答案页识别都在这个阶段内执行，
+///   直到 finalize 推进到 `ready_for_review`（或失败/取消落到对应终态）。
+/// 云端关闭、失败、回退或结束后 stage/cloud_status 都离开这些取值，编辑随之解锁。
+/// `cancel_requested_at` 非空表示用户已请求停止：锁立即归还给用户，云端尾部写入
+/// 仍由 CAS 与人工保护兜底。
+pub(crate) fn cloud_review_in_progress(
+    conn: &Connection,
+    library_item_id: &str,
+) -> CommandResult<bool> {
+    let in_progress: bool = conn
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM processing_jobs_v2
+                 WHERE library_item_id = ?1
+                   AND cancel_requested_at IS NULL
+                   AND stage IN ('queued', 'running', 'preparing_source',
+                                 'local_recognition', 'cloud_recognition', 'reconciling')
+                   AND (cloud_status IN ('queued', 'running') OR stage = 'reconciling')
+             )",
+            [library_item_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("processing_cloud_review_state:{error}"))?;
+    Ok(in_progress)
+}
+
 /// 仅更新 `cloud_status`，不切换 `stage`。用于「本地识别仍在跑、云端已排队/起飞」
 /// 的可观测信号：此时 `stage` 应忠实停留在 `local_recognition`（percent=45），
 /// 而不是被提前推进到 `cloud_recognition`（percent=70），否则进度条会短暂虚高。

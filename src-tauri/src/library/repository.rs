@@ -1235,6 +1235,11 @@ pub(crate) fn undo_cloud_repair_run(
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|error| format!("library_v2_tx:{error}"))?;
 
+    // 撤销也是人的意志写回权威稿：云端校核进行中同样必须拒绝（机器写入不受影响）。
+    if crate::processing::queue::cloud_review_in_progress(&transaction, item_id)? {
+        return Err(format!("CLOUD_REVIEW_IN_PROGRESS:{item_id}"));
+    }
+
     let rows: Vec<String> = {
         let mut statement = transaction
             .prepare(
@@ -1635,6 +1640,15 @@ pub(crate) fn apply_editor_commands_tx_with(
     let mut ds: Value =
         serde_json::from_str(&ds_json).map_err(|error| format!("library_v2_ds_corrupt:{error}"))?;
 
+    // 云端校核期间锁定人工编辑（D1 产品决定）。检查放在同一个 Immediate 事务内：
+    // 前端的只读锁挡不住竞态，人工写入必须在提交点被后端兜底拒绝。机器来源
+    // （云端采纳、修复、答案页识别、听力绑定）不受影响。
+    if origin.writes_human_protection()
+        && crate::processing::queue::cloud_review_in_progress(&transaction, &input.item_id)?
+    {
+        return Err(format!("CLOUD_REVIEW_IN_PROGRESS:{}", input.item_id));
+    }
+
     // 影响范围必须对着**编辑前**的稿件算：`replaceContent` / `deleteNode` 覆盖的是
     // 那棵被替换掉的旧子树，编辑之后就找不到它了。
     let footprint = EditFootprint::merge(&ds, &input.commands);
@@ -2001,6 +2015,119 @@ mod tests {
         .unwrap();
         seed_canonical_ds(&conn, "it-1", &grouped_ds().to_string(), "action_required").unwrap();
         conn
+    }
+
+    /// 在 processing_jobs_v2 里放置一条处理任务行，用于模拟调度器的阶段/状态。
+    fn stage_processing_job(conn: &Connection, stage: &str, cloud_status: &str) {
+        conn.execute(
+            "DELETE FROM processing_jobs_v2 WHERE id = 'pj-it-1'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO processing_jobs_v2
+             (id, library_item_id, source_asset_id, stage, local_status, cloud_status,
+              reconcile_status, progress_json, actionable_count, retry_count, created_at, updated_at)
+             VALUES ('pj-it-1', 'it-1', 'sa', ?1, 'succeeded', ?2, 'not_started', '{}', 0, 0,
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            params![stage, cloud_status],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn human_editor_writes_are_rejected_while_cloud_review_is_in_progress() {
+        let mut conn = grouped_item();
+        let mut base_version = 1;
+        // 云端候选排队/运行（含与本地识别并行的 queued/running）都算校核进行中。
+        for (stage, cloud_status) in [
+            ("cloud_recognition", "queued"),
+            ("cloud_recognition", "running"),
+            ("local_recognition", "queued"),
+            ("local_recognition", "running"),
+            ("reconciling", "running"),
+        ] {
+            stage_processing_job(&conn, stage, cloud_status);
+            let error = run_edit(
+                &mut conn,
+                vec![set_answer("slot-14", "user_value")],
+                EditOrigin::Human,
+                None,
+                base_version,
+            )
+            .err()
+            .unwrap_or_else(|| panic!("{stage}/{cloud_status} 期间人工写入必须被拒绝"));
+            assert!(
+                error.starts_with("CLOUD_REVIEW_IN_PROGRESS"),
+                "{stage}/{cloud_status}: {error}"
+            );
+            let (_, version) = get_canonical_ds(&conn, "it-1").unwrap().unwrap();
+            assert_eq!(version, base_version, "{stage}/{cloud_status}: 被拒的写入不得推进版本");
+        }
+        // 云端失败/取消后残留的 cloud_status 不得永久锁住编辑（失败不算进行中）。
+        for (stage, cloud_status) in [("failed", "running"), ("cancelled", "running")] {
+            stage_processing_job(&conn, stage, cloud_status);
+            let result = run_edit(
+                &mut conn,
+                vec![set_answer("slot-14", "user_value")],
+                EditOrigin::Human,
+                None,
+                base_version,
+            )
+            .unwrap_or_else(|error| panic!("{stage} 终态后人工写入必须放行: {error}"));
+            base_version = result.edit_version;
+        }
+        // 云端结束后人工写入恢复可用。
+        stage_processing_job(&conn, "ready_for_review", "not_run");
+        run_edit(
+            &mut conn,
+            vec![set_answer("slot-14", "user_value")],
+            EditOrigin::Human,
+            None,
+            base_version,
+        )
+        .expect("校核结束后人工写入必须放行");
+    }
+
+    #[test]
+    fn machine_writes_are_not_blocked_by_cloud_review_gate() {
+        let mut conn = grouped_item();
+        stage_processing_job(&conn, "reconciling", "running");
+        run_edit(
+            &mut conn,
+            vec![set_answer("slot-14", "cloud_round_1")],
+            EditOrigin::CloudRepair,
+            Some("run-A"),
+            1,
+        )
+        .expect("云端修复写入在校核进行中必须照常落库");
+        stage_processing_job(&conn, "cloud_recognition", "running");
+        run_edit(
+            &mut conn,
+            vec![set_answer("slot-15", "answer_page")],
+            EditOrigin::AnswerPageRecognition,
+            None,
+            2,
+        )
+        .expect("答案页识别写入在校核进行中必须照常落库");
+    }
+
+    #[test]
+    fn undo_is_rejected_while_cloud_review_is_in_progress() {
+        let mut conn = grouped_item();
+        run_edit(
+            &mut conn,
+            vec![set_answer("slot-14", "cloud_round_1")],
+            EditOrigin::CloudRepair,
+            Some("run-A"),
+            1,
+        )
+        .unwrap();
+        stage_processing_job(&conn, "reconciling", "running");
+        let error = undo_cloud_repair_run(&mut conn, "it-1", "run-A", 2, &noop_validate)
+            .err()
+            .expect("校核进行中撤销必须被拒绝");
+        assert!(error.starts_with("CLOUD_REVIEW_IN_PROGRESS"), "{error}");
     }
 
     fn real_patch() -> impl Fn(&mut Value, &Value) -> CommandResult<()> {

@@ -129,19 +129,20 @@ fn display_message_for(job: &queue::ProcessingJobRow) -> String {
     if job.stage == STAGE_CLOUD_RECOGNITION && job.local_status != "succeeded" {
         return display_message(STAGE_LOCAL_RECOGNITION, None);
     }
-    // 「本地先出稿」是产品的核心承诺：本地稿一旦形成就必须明确告诉用户
-    // 现在可以打开编辑，同时如实地说明云端仍在排队，而不是笼统写"识别中"。
+    // 「本地先出稿」是产品的核心承诺：本地稿一旦形成就必须如实说明本地进度与云端
+    // 排队状态，而不是笼统写"识别中"。云端校核（候选排队/运行、采纳、修复、答案页）
+    // 期间人工编辑被后端锁定（CLOUD_REVIEW_IN_PROGRESS），进度说明必须与之一致，
+    // 不能再写"可以打开编辑/可以继续编辑"误导用户去改稿。
     if job.stage == STAGE_CLOUD_RECOGNITION && job.cloud_status == "queued" {
-        return "本地识别完成，可以打开编辑 · 云端识别排队中".to_string();
+        return "本地识别完成 · 云端识别排队中，暂不进行修改".to_string();
     }
     if job.stage == STAGE_CLOUD_RECOGNITION && job.cloud_status == "running" {
-        return "本地识别完成，可以打开编辑 · 云端识别中".to_string();
+        return "本地识别完成 · 云端识别中，暂不进行修改".to_string();
     }
-    // 修复循环最长十分钟。这一行是用户在它跑完之前**唯一**能看到的进度说明，必须说清楚
-    // 「云端正在自己改稿、你仍然可以编辑」，而不是笼统的「正在合并」——后者会让用户以为
-    // 需要等他做点什么。
+    // 修复循环最长十分钟。这一行是用户在它跑完之前**唯一**能看到的进度说明，必须
+    // 说清楚「云端正在自己改稿、此刻不能编辑」，而不是笼统的「正在合并」。
     if job.stage == STAGE_RECONCILING && job.cloud_status == "running" {
-        return "云端正在自动修复题稿，可以继续编辑".to_string();
+        return "云端正在自动修复题稿，暂不进行修改".to_string();
     }
     display_message(&job.stage, None)
 }

@@ -6,10 +6,11 @@
 //! typed authoring document, and appends an immutable revision.  The legacy
 //! `authoring-ir.json` file is never rewritten here.
 
+#[cfg(test)]
+use crate::artifact_store::{append_revision, RevisionSourceV2};
 use crate::artifact_store::{
-    append_revision, ensure_job_artifact_layout, list_revision_records, read_revision,
-    recover_current_revision, write_artifact_json, write_canonical_json_atomic,
-    write_js_canonical_json_atomic, RevisionSourceV2,
+    ensure_job_artifact_layout, list_revision_records, read_revision, recover_current_revision,
+    write_artifact_json, write_canonical_json_atomic, write_js_canonical_json_atomic,
 };
 use crate::ielts_grammar::quality::derive_instruction_signature_for_group;
 use crate::listening_source_v1::compile_exam_source_v2;
@@ -37,6 +38,11 @@ pub(crate) const AUTHORING_V2_SHADOW_FILE: &str = "authoring-ir-v2.shadow.json";
 const DOCUMENT_V2_SHADOW_FILE: &str = "document-ir-v2.shadow.json";
 const SESSION_SCHEMA_VERSION: &str = "AuthoringEditorSessionV1";
 
+/// 旧修订路径的请求体：产品 IPC 已退役，仅作为遗留修订读路径的测试夹具构建器。
+///
+/// 运行时仍然要**读**遗留修订（迁移候选选择、旧导出回执绑定），但不再有任何
+/// 产品路径**写**修订快照；本构造器只为测试在临时目录里搭建这类遗留数据。
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ApplyAuthoringV2PatchesInput {
@@ -177,6 +183,7 @@ pub(crate) fn resolve_authoring_asset_preview_core(
     }))
 }
 
+#[cfg(test)]
 pub(crate) fn apply_authoring_v2_patches_core(root: &Path, input: Value) -> CommandResult<Value> {
     let input: ApplyAuthoringV2PatchesInput = serde_json::from_value(input)
         .map_err(|error| format!("authoring_v2_invalid_patch_request:{error}"))?;
@@ -1437,6 +1444,7 @@ pub(crate) fn validate_authoring(value: &Value) -> CommandResult<()> {
 /// stays verified; an unverified one stays unverified. Content safety still comes from the rest of
 /// the gate -- zero unresolved blocker issues, no unresolved answers, quality `ready`, compiler
 /// pass, asset closure -- all recomputed from the current document on every export.
+#[cfg(test)]
 fn mark_user_audit(document: &mut Value, revision: u64) {
     if let Some(audit) = document.get_mut("audit").and_then(Value::as_object_mut) {
         let already_verified = audit.get("humanVerified").and_then(Value::as_bool) == Some(true);

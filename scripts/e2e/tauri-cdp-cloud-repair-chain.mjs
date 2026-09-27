@@ -1225,7 +1225,6 @@ async function main() {
   let sawRunning = false;
   let baselineTooLate = false;
   let humanProbeAttempted = false;
-  let humanProbeApplied = false;
   let humanProbeError = null;
   while (Date.now() < repairDeadline) {
     // (a) 本地初稿一出现就**立刻**取基线——它必须落在云端写入之前。
@@ -1292,19 +1291,23 @@ async function main() {
           commands: [{ op: "setAnswer", slotId: humanProbe.slotId, value: humanProbe.userValue }],
           baseVersion,
         });
-        if (!edited?.ok) throw new Error(`云端候选仍在运行时保存用户答案失败：${edited?.error ?? "unknown"}`);
-        const afterUserEdit = await readWorkspace();
-        const observed = answerOf(afterUserEdit?.ds, humanProbe.slotId);
-        if (!isDeepStrictEqual(observed, humanProbe.userValue)) {
-          throw new Error(`用户答案未落库：${JSON.stringify(observed)}`);
+        // D1 产品决定：云端校核运行期间人工编辑被后端拒绝。这里改的正是这一条：
+        // 候选请求在途时保存必须失败，且拒绝码必须是 CLOUD_REVIEW_IN_PROGRESS——
+        // 其它错误（版本冲突、schema 拒绝）都说明锁没有按预期生效。
+        if (edited?.ok) {
+          throw new Error("云端候选运行期间人工编辑未被阻止：产品必须以 CLOUD_REVIEW_IN_PROGRESS 拒绝");
         }
-        humanProbeApplied = true;
+        const rejection = String(edited?.error ?? "");
+        if (!rejection.startsWith("CLOUD_REVIEW_IN_PROGRESS")) {
+          throw new Error(`云端运行期间的编辑被拒绝，但拒绝码不是 CLOUD_REVIEW_IN_PROGRESS：${rejection}`);
+        }
         report.observed.userEditDuringCloud = {
           slotId: humanProbe.slotId,
           candidateValue: humanProbe.candidateValue,
           userValue: humanProbe.userValue,
           baseVersion,
-          editVersionAfterSave: workspaceVersion(afterUserEdit),
+          blockedDuringCloud: true,
+          rejectionCode: "CLOUD_REVIEW_IN_PROGRESS",
           candidateRequestWasInFlight: true,
         };
       } catch (error) {
@@ -1434,42 +1437,69 @@ async function main() {
   }
   }
 
-  const humanPreservedValue = report.scenario.humanProtection
-    ? answerOf(dbAfter?.item?.canonical, report.scenario.humanProtection.slotId)
-    : null;
-  const humanProtectionProblems = [];
-  if (!humanProbeApplied) {
-    humanProtectionProblems.push(humanProbeError ?? "云端候选返回前没有成功保存用户答案");
+  // D1 产品决定：云端校核进行中（候选排队/运行、采纳、修复、答案页识别）人工编辑
+  // 被后端拒绝。用户改稿从此发生在云端结束后，所以「采纳事务保留云端运行期间手改」
+  // 无法再在真实链路里制造出来——那条兜底逻辑由 cloud_adoption.rs 的单测继续覆盖；
+  // 本场景改为验证锁定本身：期间被拒（正确拒绝码）、结束后同一条编辑可以保存并落库。
+  // 横幅可见断言属前端（D1 阶段二），library-round 合入后补上。
+  const editLockProblems = [];
+  if (!report.observed.userEditDuringCloud?.blockedDuringCloud) {
+    editLockProblems.push(
+      humanProbeError
+        ?? "没有拿到「云端运行期间编辑被 CLOUD_REVIEW_IN_PROGRESS 拒绝」的证据",
+    );
   }
-  if (finalRepair.candidateAdoption?.adopted !== true) {
-    humanProtectionProblems.push("本次没有发生云端采纳，不能证明采纳过程保留手改");
+  if (humanProbe && isDeepStrictEqual(humanProbe.candidateValue, humanProbe.userValue)) {
+    editLockProblems.push("测试前提错误：云端候选值与用户值相同，无法区分候选与用户编辑");
   }
-  if (
-    report.scenario.humanProtection
-    && !isDeepStrictEqual(humanPreservedValue, report.scenario.humanProtection.expectedUserValue)
-  ) {
-    humanProtectionProblems.push(`用户答案没有保留：${JSON.stringify(humanPreservedValue)}`);
+  // 结束后：同一条编辑必须成功并持久化。修复终态落库与处理行 finalize 之间可能有
+  // 短暂的收尾窗口，对「仍被拒绝」给一个有界重试；除此之外的失败与超时都是产品缺陷。
+  let postCloudSave = null;
+  if (humanProbe) {
+    const retryDeadline = Date.now() + 30000;
+    let lastError = null;
+    while (Date.now() < retryDeadline) {
+      const liveWorkspace = await readWorkspace();
+      const attempt = await call("apply_editor_commands", {
+        itemId,
+        commands: [{ op: "setAnswer", slotId: humanProbe.slotId, value: humanProbe.userValue }],
+        baseVersion: workspaceVersion(liveWorkspace),
+      });
+      if (attempt?.ok) {
+        postCloudSave = attempt;
+        break;
+      }
+      lastError = String(attempt?.error ?? "unknown");
+      if (!lastError.startsWith("CLOUD_REVIEW_IN_PROGRESS")) break;
+      await sleep(600);
+    }
+    if (!postCloudSave?.ok) {
+      editLockProblems.push(`云端结束后同一条编辑没有保存成功：${lastError ?? "30 秒内一直被拒绝"}`);
+    } else {
+      const afterCloudEdit = await readWorkspace();
+      const observed = answerOf(afterCloudEdit?.ds, humanProbe.slotId);
+      if (!isDeepStrictEqual(observed, humanProbe.userValue)) {
+        editLockProblems.push(`云端结束后的编辑没有落库：${JSON.stringify(observed)}`);
+      }
+      report.observed.userEditAfterCloud = {
+        slotId: humanProbe.slotId,
+        editVersionAfterSave: workspaceVersion(afterCloudEdit),
+        persistedValue: observed,
+      };
+    }
   }
-  if (
-    report.scenario.humanProtection
-    && isDeepStrictEqual(
-      report.scenario.humanProtection.cloudCandidateValue,
-      report.scenario.humanProtection.expectedUserValue,
-    )
-  ) {
-    humanProtectionProblems.push("测试前提错误：云端候选值与用户值相同，无法区分是否保留");
-  }
-  if (humanProtectionProblems.length === 0) {
-    record("user-answer-edited-during-cloud-is-preserved", SCENARIO_STATUS.PASSED, {
-      ...report.observed.userEditDuringCloud,
-      finalValue: humanPreservedValue,
+  if (editLockProblems.length === 0) {
+    record("edit-during-cloud-is-blocked-and-saves-after-it-ends", SCENARIO_STATUS.PASSED, {
+      duringCloud: report.observed.userEditDuringCloud ?? null,
+      afterCloud: report.observed.userEditAfterCloud ?? null,
       adoption: finalRepair.candidateAdoption,
+      banner: "横幅可见断言属 D1 阶段二（library-round 合入后补上）",
     });
   } else {
-    record("user-answer-edited-during-cloud-is-preserved", SCENARIO_STATUS.FAILED, {
-      problems: humanProtectionProblems,
-      userEditDuringCloud: report.observed.userEditDuringCloud ?? null,
-      finalValue: humanPreservedValue,
+    record("edit-during-cloud-is-blocked-and-saves-after-it-ends", SCENARIO_STATUS.FAILED, {
+      problems: editLockProblems,
+      duringCloud: report.observed.userEditDuringCloud ?? null,
+      afterCloud: report.observed.userEditAfterCloud ?? null,
       adoption: finalRepair.candidateAdoption ?? null,
     });
   }
@@ -2007,10 +2037,13 @@ async function main() {
           assignment: humanSlot.assignment,
         }
       : { kind: "text", values: ["controlled-user-answer"] };
+    // 版本必须取**实时**权威稿：前序场景（云端结束后的编辑）可能已经推进过版本，
+    // 用旧快照当 CAS 基线会把用户自己的合法操作误判成冲突。
+    const liveBeforeHumanEdit = await readWorkspace();
     const appliedHuman = await call("apply_editor_commands", {
       itemId,
       commands: [{ op: "setAnswer", slotId: humanSlot.slotId, value }],
-      baseVersion: versionAfter,
+      baseVersion: workspaceVersion(liveBeforeHumanEdit),
     });
     if (!appliedHuman?.ok) humanProblems.push(`用户补答案失败：${appliedHuman?.error}`);
     await sleep(1200);
