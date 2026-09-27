@@ -19,7 +19,7 @@ import type { AuthoringPatchV2, IeltsAuthoringIRV2 } from "../../types";
 const SAVE_DEBOUNCE_MS = 450;
 const RECOVERY_KEY_PREFIX = "ielts-author-studio.workspace-recovery.v1:";
 const HISTORY_LIMIT = 10;
-export type SaveState = "idle" | "saving" | "saved" | "failed" | "conflict";
+export type SaveState = "idle" | "saving" | "saved" | "failed" | "conflict" | "locked";
 
 /** 文案分层（计划 §9.10）：机器码不进入正文，普通用户只看到可操作的人话。
  *  结构操作自身抛出的中文提示（如「这个选项已用作本题答案」）原样透传。 */
@@ -267,6 +267,15 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
         setSaveErrorDetail(undefined);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        // 云端校核锁：这不是保存失败。保留待保存队列、进入 locked 态（界面提示"暂缓保存"而非
+        // 变红报错），解锁后由工作区补发。绝不把用户的修改当成失败丢掉。
+        if (message.includes("CLOUD_REVIEW_IN_PROGRESS")) {
+          setSaveState("locked");
+          setSaveMessage(undefined);
+          setSaveErrorDetail(message);
+          checkpoint();
+          throw error;
+        }
         const conflict = message.includes("EDIT_VERSION_CONFLICT");
         // 撞上的是云端修复 / 答案页识别自己的写入：自动重放**一次**，不逼用户二选一。
         // 只有冲突里有人工写入、或重放本身失败时，才落到下面的按钮。

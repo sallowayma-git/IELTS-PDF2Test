@@ -1310,6 +1310,18 @@ async function main() {
           rejectionCode: "CLOUD_REVIEW_IN_PROGRESS",
           candidateRequestWasInFlight: true,
         };
+        // D1 阶段二：锁定期间工作区必须显示「云端正在校核」横幅（真实产品路径）。
+        // 单独 try：横幅探测失败不能污染上面的「被拒绝」证据。
+        try {
+          const bannerText = await session.waitFor(
+            `(() => { const el = document.querySelector('[data-testid="workspace-cloud-review-banner"]'); const t = el ? el.innerText.replace(/\\s+/g,' ').trim() : ''; return t.includes('云端正在校核') ? t : null; })()`,
+            { timeoutMs: 20000, label: "cloud-review-banner-visible" },
+          );
+          report.observed.userEditDuringCloud.bannerVisible = true;
+          report.observed.userEditDuringCloud.bannerText = bannerText;
+        } catch {
+          report.observed.userEditDuringCloud.bannerVisible = false;
+        }
       } catch (error) {
         humanProbeError = String(error?.message ?? error);
       }
@@ -1441,13 +1453,17 @@ async function main() {
   // 被后端拒绝。用户改稿从此发生在云端结束后，所以「采纳事务保留云端运行期间手改」
   // 无法再在真实链路里制造出来——那条兜底逻辑由 cloud_adoption.rs 的单测继续覆盖；
   // 本场景改为验证锁定本身：期间被拒（正确拒绝码）、结束后同一条编辑可以保存并落库。
-  // 横幅可见断言属前端（D1 阶段二），library-round 合入后补上。
+  // 本场景改为验证锁定本身：期间被拒（正确拒绝码）、工作区显示锁定横幅、
+  // 结束后横幅消失且同一条编辑可以保存并落库。
   const editLockProblems = [];
   if (!report.observed.userEditDuringCloud?.blockedDuringCloud) {
     editLockProblems.push(
       humanProbeError
         ?? "没有拿到「云端运行期间编辑被 CLOUD_REVIEW_IN_PROGRESS 拒绝」的证据",
     );
+  }
+  if (report.observed.userEditDuringCloud && !report.observed.userEditDuringCloud.bannerVisible) {
+    editLockProblems.push("云端运行期间工作区没有显示「云端正在校核」锁定横幅");
   }
   if (humanProbe && isDeepStrictEqual(humanProbe.candidateValue, humanProbe.userValue)) {
     editLockProblems.push("测试前提错误：云端候选值与用户值相同，无法区分候选与用户编辑");
@@ -1486,6 +1502,17 @@ async function main() {
         editVersionAfterSave: workspaceVersion(afterCloudEdit),
         persistedValue: observed,
       };
+      // 结束后锁定横幅必须消失（画布随之解锁，编辑得以保存）。
+      try {
+        await session.waitFor(
+          `!document.querySelector('[data-testid="workspace-cloud-review-banner"]')`,
+          { timeoutMs: 20000, label: "cloud-review-banner-cleared" },
+        );
+        report.observed.userEditAfterCloud.bannerCleared = true;
+      } catch {
+        report.observed.userEditAfterCloud.bannerCleared = false;
+        editLockProblems.push("云端结束后锁定横幅没有消失");
+      }
     }
   }
   if (editLockProblems.length === 0) {
@@ -1493,7 +1520,6 @@ async function main() {
       duringCloud: report.observed.userEditDuringCloud ?? null,
       afterCloud: report.observed.userEditAfterCloud ?? null,
       adoption: finalRepair.candidateAdoption,
-      banner: "横幅可见断言属 D1 阶段二（library-round 合入后补上）",
     });
   } else {
     record("edit-during-cloud-is-blocked-and-saves-after-it-ends", SCENARIO_STATUS.FAILED, {

@@ -38,6 +38,8 @@ export interface ExamCanvasProps {
   onTextCommand?: (command: { nodeId: string; expectedText: string; text: string }) => void;
   onAnswerChange?: (slotId: string, value: AnswerValueV2) => void;
   onStructureAction?: (action: ExamCanvasStructureAction) => void;
+  /** 只读锁（云端校核进行中）：对画布根节点加 inert，挡住文本/答案/结构/拖动等一切交互。 */
+  locked?: boolean;
 }
 
 type VisualNodeV2 = Extract<ContentNodeV2, { type: "figure" | "image" | "diagram" }>;
@@ -704,7 +706,7 @@ export function ExamCanvas(props: ExamCanvasProps) {
 
   return <CanvasAnswersContext.Provider value={{ answers: canvasAnswers, setText, setOption }}>
     <OptionDragContext.Provider value={optionDrag}>
-    <div className={`exam-canvas-v2 ${props.mode === "author" ? "is-author" : "is-student"}${listening ? " is-listening" : ""}`} data-testid={`exam-canvas-v2-${props.mode}`}>
+    <div className={`exam-canvas-v2 ${props.mode === "author" ? "is-author" : "is-student"}${listening ? " is-listening" : ""}`} data-testid={`exam-canvas-v2-${props.mode}`} inert={props.locked || undefined}>
     {listening ? (
       <ListeningHeader
         itemId={props.authoring.jobId}

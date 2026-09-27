@@ -87,9 +87,11 @@ export interface RecognitionPanelProps {
    * 时**不提交**决策、给出提示。
    */
   beforeApply?: () => Promise<void>;
+  /** 云端校核进行中：接受/驳回/撤销、撤销整轮修复都是人工来源写入，后端会拒绝，这里提前禁用。 */
+  locked?: boolean;
 }
 
-export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, onOpenSource, onApplied, answerKey, beforeApply }: RecognitionPanelProps) {
+export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, onOpenSource, onApplied, answerKey, beforeApply, locked }: RecognitionPanelProps) {
   const [view, setView] = useState<RecognitionDecisionViewV1 | undefined>();
   const [loadError, setLoadError] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | undefined>();
@@ -183,6 +185,7 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
 
   async function submit(groupKey: string, items: RecognitionDecisionItemV1[], action: "accept" | "reject" | "undo") {
     if (!view || busyGroup) return;
+    if (locked) { setNotice("云端正在校核，暂不进行修改。校核结束后可再处理识别建议。"); return; }
     const key = `${view.batchId}:${groupKey}:${action}`;
     if (!requestIds.current.has(key)) requestIds.current.set(key, crypto.randomUUID());
     setBusyGroup(groupKey);
@@ -261,6 +264,7 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
    */
   async function undoRepair() {
     if (!view?.repair?.repairRunId || busyGroup) return;
+    if (locked) { setNotice("云端正在校核，暂不进行修改。校核结束后可再撤销本轮修复。"); return; }
     setBusyGroup(REPAIR_UNDO_KEY);
     setNotice(undefined);
     try {
@@ -343,7 +347,7 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
               {canUndoRepair(view.repair) ? (
                 <button
                   className="ghost small"
-                  disabled={busyGroup === REPAIR_UNDO_KEY}
+                  disabled={busyGroup === REPAIR_UNDO_KEY || locked}
                   onClick={() => void undoRepair()}
                   data-testid="workspace-recognition-repair-undo"
                 >
