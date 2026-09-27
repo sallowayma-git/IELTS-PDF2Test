@@ -27,6 +27,25 @@ async function libraryRowIds(session) {
   return (await session.evaluate(`[...document.querySelectorAll('[data-testid="library-row"]')].map(r => r.getAttribute('data-item-id'))`)) ?? [];
 }
 
+// 活动处理阶段：处于这些阶段说明仍有 worker 在写这道题（后端据此拒绝永久删除、软删也会被回写复活）。
+const ACTIVE_STAGES = new Set(["queued", "running", "local_recognition", "cloud_recognition", "reconciling"]);
+async function readStage(session, itemId) {
+  const r = await session.invoke("list_library_items", { includeDeleted: true });
+  if (!r?.ok || !Array.isArray(r.value)) return null;
+  return r.value.find((i) => i?.id === itemId)?.processing?.stage ?? null;
+}
+// 删除只对识别落终态（ready_for_review/failed/cancelled）的条目稳定生效——运行中删行会与
+// worker 竞争、被 upsert 回写复活。故删前等它离开活动阶段，测的才是真实“删已完成条目”的路径。
+async function waitUntilSettled(session, itemId, timeoutMs = 180000) {
+  const deadline = Date.now() + timeoutMs;
+  let stage = await readStage(session, itemId);
+  while (Date.now() < deadline && (stage === null || ACTIVE_STAGES.has(stage))) {
+    await sleep(1000);
+    stage = await readStage(session, itemId);
+  }
+  return stage;
+}
+
 async function importOne(session, report) {
   await session.evaluate(`(() => { window.location.hash = "#/library"; return true; })()`);
   await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, { timeoutMs: 40000, label: "library" });
@@ -45,6 +64,10 @@ async function importOne(session, report) {
     if (!itemId) await sleep(500);
   }
   if (!itemId) throw new Error("导入后未出现新的题库行");
+  const settledStage = await waitUntilSettled(session, itemId);
+  (report.settledStages ??= {})[itemId] = settledStage;
+  if (settledStage === null || ACTIVE_STAGES.has(settledStage))
+    throw new Error(`条目 ${itemId} 识别未在超时内落终态（stage=${settledStage}），无法可靠测试删除`);
   return itemId;
 }
 
