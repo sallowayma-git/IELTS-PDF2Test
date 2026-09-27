@@ -50,7 +50,7 @@ describe("useCanonicalEditor 撤销栈上限（D2）", () => {
     }
     expect(undos).toBe(10);
     // 丢掉了 v0→v1、v1→v2 两条逆补丁，撤到底只能回到第 2 次编辑后的状态。
-    expect((result.current.draft as { answerKey: { s1: { values: string[] } } }).answerKey.s1.values[0]).toBe("v2");
+    expect((result.current.draft as unknown as { answerKey: { s1: { values: string[] } } }).answerKey.s1.values[0]).toBe("v2");
   });
 
   it("重做栈同样封顶 10 步", async () => {
