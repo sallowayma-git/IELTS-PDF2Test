@@ -55,6 +55,22 @@ describe("useCanonicalEditor 冲突后恢复（C1）", () => {
     expect(result.current.version).toBe(8);
   });
 
+  it("反例：区间内有人工来源写入（另一个窗口）时不自动重放，交用户处理（不静默覆盖）", async () => {
+    getWorkspaceItem.mockResolvedValueOnce({ item: { title: "T" }, ds: sampleDs("T"), editVersion: 5, recentEdits: [] });
+    // 保存冲突：拉最新时区间里有一条 human 来源写入 → conflictWasMachineOnly=false → 不自动重放。
+    applyEditorCommands.mockRejectedValueOnce(conflict(6, 5));
+    getWorkspaceItem.mockResolvedValueOnce({ item: { title: "T" }, ds: sampleDs("T"), editVersion: 6, recentEdits: [{ baseVersion: 5, origin: "human" }] });
+
+    const { result } = renderHook(() => useCanonicalEditor("it-1"));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => result.current.setTitle("我的改动"));
+    await waitFor(() => expect(result.current.saveState).toBe("conflict"), { timeout: 4000 });
+    // 只发起过一次保存尝试，没有自动重放覆盖对方的人工写入；本地改动仍在待保存队列里。
+    expect(applyEditorCommands).toHaveBeenCalledTimes(1);
+    expect(result.current.pendingCount).toBeGreaterThan(0);
+  });
+
   it("识别进行中打开（ds=null）：采纳后端版本、标题编辑先暂存不以 base 0 发出；seed 后补发成功", async () => {
     // 首次加载：权威稿未 seed，但后端返回 editVersion=1。
     getWorkspaceItem.mockResolvedValueOnce({ item: { title: "T" }, ds: null, editVersion: 1, recentEdits: [] });
