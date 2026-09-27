@@ -1169,33 +1169,43 @@ fn write_change_value(document: &mut Value, key: &str, replacement: &Value) -> b
     replace_object_by_id(document, key, replacement)
 }
 
-fn snapshot_change(document: &Value, targets: &[String]) -> Value {
-    let mut before = serde_json::Map::new();
+/// 编辑前捕获每个目标的整值（仅内存过渡，不落盘）：改后据此算路径级差异。
+fn capture_before_values(document: &Value, targets: &[String]) -> serde_json::Map<String, Value> {
+    targets
+        .iter()
+        .map(|id| (id.clone(), read_change_value(document, id)))
+        .collect()
+}
+
+/// 构造 diff-v1 的 change_json：对每个目标记 before→after 的路径级最小差异。
+///
+/// 记录**所有**捕获目标（含无变化的空 diff），以保「本轮触及了哪些目标」与整批撤销的语义。
+/// 单目标差异过大时记 `tooLarge` 并放弃其撤销能力，而不是塞一份巨大的 diff 进日志。
+fn build_change_diff(
+    before: &serde_json::Map<String, Value>,
+    document: &Value,
+    targets: &[String],
+) -> Value {
+    let mut result = serde_json::Map::new();
     for id in targets {
-        let value = read_change_value(document, id);
-        if serde_json::to_vec(&value)
+        let before_value = before.get(id).cloned().unwrap_or(Value::Null);
+        let after_value = read_change_value(document, id);
+        let entries: Vec<Value> = crate::library::change_diff::diff_values(&before_value, &after_value)
+            .iter()
+            .map(crate::library::change_diff::entry_to_json)
+            .collect();
+        let entry = serde_json::json!({ "diff": Value::Array(entries) });
+        if serde_json::to_vec(&entry)
             .map(|bytes| bytes.len())
             .unwrap_or(usize::MAX)
             > MAX_CHANGE_ENTRY_BYTES
         {
-            before.insert(id.clone(), serde_json::json!({ "tooLarge": true }));
+            result.insert(id.clone(), serde_json::json!({ "tooLarge": true }));
         } else {
-            before.insert(id.clone(), value);
+            result.insert(id.clone(), entry);
         }
     }
-    serde_json::json!({ "before": before })
-}
-
-fn with_after_snapshot(change: Value, document: &Value, targets: &[String]) -> Value {
-    let Value::Object(mut map) = change else {
-        return change;
-    };
-    let after = targets
-        .iter()
-        .map(|id| (id.clone(), read_change_value(document, id)))
-        .collect::<serde_json::Map<_, _>>();
-    map.insert("after".to_string(), Value::Object(after));
-    Value::Object(map)
+    serde_json::json!({ "format": "diff-v1", "targets": Value::Object(result) })
 }
 
 /// 在稿件里把 `id` 对应的对象**原位**替换成 `replacement`；`Value::Null` 表示删除该对象。
@@ -1325,22 +1335,67 @@ pub(crate) fn undo_cloud_repair_run(
         return Err("EDIT_REPAIR_UNDO_UNAVAILABLE".to_string());
     }
 
-    // 每个目标取「首个 before」与「最后 after」。
-    let mut first_before: serde_json::Map<String, Value> = serde_json::Map::new();
-    let mut last_after: serde_json::Map<String, Value> = serde_json::Map::new();
-    for raw in &rows {
-        let parsed: Value = serde_json::from_str(raw).map_err(|error| error.to_string())?;
-        if let Some(before) = parsed.get("before").and_then(Value::as_object) {
-            for (id, value) in before {
-                first_before
-                    .entry(id.clone())
-                    .or_insert_with(|| value.clone());
+    // 把该 run 各行合并成「每个目标、每条路径」的首个 before + 最后 after。兼容两种格式：
+    //   - diff-v1：{"targets":{id:{"diff":[…]}}}（新写入方）；
+    //   - 旧格式：{"before":{id:v},"after":{id:v}}（历史行）——每个目标折成一条根路径 `[]` 差异，
+    //     并入同一套合并/回填逻辑。历史行兼容读取即可，无需迁移（5 轮内自然淘汰）。
+    use crate::library::change_diff;
+    struct MergedEntry {
+        path: Vec<Value>,
+        first_before: Option<Value>,
+        last_after: Option<Value>,
+    }
+    type TargetMap = std::collections::BTreeMap<String, (bool, std::collections::BTreeMap<String, MergedEntry>)>;
+    let mut targets: TargetMap = TargetMap::new();
+    let absorb = |targets: &mut TargetMap, id: &str, entry: change_diff::DiffEntry| {
+        let key = serde_json::to_string(&entry.path).unwrap_or_default();
+        let slot = targets.entry(id.to_string()).or_insert_with(|| (false, std::collections::BTreeMap::new()));
+        match slot.1.get_mut(&key) {
+            Some(existing) => existing.last_after = entry.after,
+            None => {
+                slot.1.insert(key, MergedEntry { path: entry.path, first_before: entry.before, last_after: entry.after });
             }
         }
-        if let Some(after) = parsed.get("after").and_then(Value::as_object) {
-            for (id, value) in after {
-                last_after.insert(id.clone(), value.clone());
+    };
+    for raw in &rows {
+        let parsed: Value = serde_json::from_str(raw).map_err(|error| error.to_string())?;
+        if let Some(target_map) = parsed.get("targets").and_then(Value::as_object) {
+            for (id, target) in target_map {
+                // 即使 diff 为空也登记该目标：整批撤销覆盖「本轮触及的所有目标」，无变化目标
+                // 也算触及（回填是空操作，但仍进 restored，与历史整对象行为一致）。
+                targets.entry(id.clone()).or_insert_with(|| (false, std::collections::BTreeMap::new()));
+                if target.get("tooLarge").and_then(Value::as_bool) == Some(true) {
+                    if let Some(slot) = targets.get_mut(id.as_str()) {
+                        slot.0 = true;
+                    }
+                    continue;
+                }
+                for entry_json in target.get("diff").and_then(Value::as_array).into_iter().flatten() {
+                    if let Some(entry) = change_diff::entry_from_json(entry_json) {
+                        absorb(&mut targets, id.as_str(), entry);
+                    }
+                }
             }
+            continue;
+        }
+        let before = parsed.get("before").and_then(Value::as_object);
+        let after = parsed.get("after").and_then(Value::as_object);
+        let ids: BTreeSet<String> = before
+            .into_iter()
+            .flat_map(|map| map.keys().cloned())
+            .chain(after.into_iter().flat_map(|map| map.keys().cloned()))
+            .collect();
+        for id in ids {
+            let before_value = before.and_then(|map| map.get(&id));
+            if before_value.and_then(|value| value.get("tooLarge")).and_then(Value::as_bool) == Some(true) {
+                targets.entry(id.clone()).or_insert_with(|| (false, std::collections::BTreeMap::new())).0 = true;
+                continue;
+            }
+            absorb(&mut targets, id.as_str(), change_diff::DiffEntry {
+                path: Vec::new(),
+                before: before_value.cloned(),
+                after: after.and_then(|map| map.get(&id)).cloned(),
+            });
         }
     }
 
@@ -1365,24 +1420,39 @@ pub(crate) fn undo_cloud_repair_run(
     let mut restored = Vec::new();
     let mut skipped = Vec::new();
     let mut change_before = serde_json::Map::new();
-    let mut change_after = serde_json::Map::new();
-    for (id, before) in &first_before {
+    for (id, (too_large, entries)) in &targets {
+        if *too_large {
+            skipped.push(id.clone());
+            continue;
+        }
         let current = read_change_value(&ds, id);
-        let expected_after = last_after.get(id).cloned().unwrap_or(Value::Null);
-        if before.get("tooLarge").and_then(Value::as_bool) == Some(true) {
+        // 逐路径判据：本轮动过的每条路径当前值都必须仍等于本轮写下的 after，否则说明这条
+        // 路径之后被别处改过——跳过其所在目标，绝不覆盖后来的修改。
+        let unchanged = entries
+            .values()
+            .all(|entry| change_diff::value_at(&current, &entry.path) == entry.last_after.as_ref());
+        if !unchanged {
             skipped.push(id.clone());
             continue;
         }
-        if current != expected_after {
-            // 目标已被本轮修复之外的写入改过：保留现状，绝不强行恢复旧值。
+        // 从当前值出发，把每条路径回填成 first_before（浅路径先，保证父层先就位）。
+        let mut restored_value = current.clone();
+        let mut ordered: Vec<&MergedEntry> = entries.values().collect();
+        ordered.sort_by_key(|entry| entry.path.len());
+        let mut ok = true;
+        for entry in ordered {
+            if !change_diff::set_at(&mut restored_value, &entry.path, entry.first_before.as_ref()) {
+                ok = false;
+                break;
+            }
+        }
+        if !ok {
             skipped.push(id.clone());
             continue;
         }
-        change_before.insert(id.clone(), current.clone());
-        // 必须走 `write_change_value` 而不是 `replace_object_by_id`：`answerKey:<slotId>`
-        // 条目的值是普通 JSON（选项数组），内部没有任何身份字段，按 id 找对象永远找不到。
-        if write_change_value(&mut ds, id, before) {
-            change_after.insert(id.clone(), before.clone());
+        change_before.insert(id.clone(), current);
+        // 必须走 `write_change_value`：`answerKey:<slotId>` 条目内部没有身份字段，按 id 找对象找不到。
+        if write_change_value(&mut ds, id, &restored_value) {
             restored.push(id.clone());
         } else {
             // 稿件里已经没有这个对象（例如撤销一个新建对象）：什么都没改，如实跳过。
@@ -1406,10 +1476,8 @@ pub(crate) fn undo_cloud_repair_run(
         edit_status_for(&ds),
         &now,
     )?;
-    let change = serde_json::json!({
-        "before": Value::Object(change_before),
-        "after": Value::Object(change_after),
-    });
+    // 撤销自身也按 diff-v1 记账（此行不会被撤销读取方回读，仅为格式一致）。
+    let change = build_change_diff(&change_before, &ds, &restored);
     let result_summary = serde_json::json!({
         "status": "undone",
         "repairRunId": repair_run_id,
@@ -1724,10 +1792,10 @@ pub(crate) fn apply_editor_commands_tx_with(
         }
     }
 
-    // 可信来源需要的 before 快照：撤销整轮修复时，把每个目标的首个 before 与最后
-    // after 合并。只记命令直接点名的根对象，不下钻整棵子树。
+    // 可信来源需要的撤销依据：编辑前捕获目标整值（内存过渡），编辑后与之算路径级最小差异。
+    // 只记命令直接点名的根对象，不下钻整棵子树。
     let change_targets = capture_transaction_change_targets(&ds, &input.commands, origin);
-    let change = snapshot_change(&ds, &change_targets);
+    let change_before = capture_before_values(&ds, &change_targets);
 
     for command in &input.commands {
         apply_patch(&mut ds, command)?;
@@ -1767,9 +1835,9 @@ pub(crate) fn apply_editor_commands_tx_with(
             )
             .map_err(|error| format!("library_v2_tx_title:{error}"))?;
     }
-    // after 快照与 before 配对：撤销要的是「首个 before + 最后 after」，缺一半就无法
-    // 判断某个目标是否仍是本轮修复写下的值（那正是「能不能安全回滚」的判据）。
-    let change = with_after_snapshot(change, &ds, &change_targets);
+    // 路径级差异与 before 快照配对：撤销要的是「首个 before + 最后 after」的逐路径值，
+    // 据此判断某个目标的哪些路径仍是本轮修复写下的值（那正是「能否安全回滚」的判据）。
+    let change = build_change_diff(&change_before, &ds, &change_targets);
     let result_summary = serde_json::json!({
         "status": "applied",
         "appliedCount": input.commands.len(),
@@ -2466,6 +2534,126 @@ mod tests {
             ds.pointer("/answerKey/slot-15/values/0").unwrap(),
             "user_value",
             "无关目标的人工修改必须保留"
+        );
+    }
+
+    /// 增量日志：只改大目标里的一个小字段，change_json 应远小于整对象快照。
+    #[test]
+    fn a_small_field_edit_on_a_big_target_records_a_compact_change_log() {
+        let mut conn = grouped_item();
+        let filler = "x".repeat(6000);
+        let big = |answer: &str| {
+            serde_json::json!({
+                "op": "setAnswer", "slotId": "slot-14",
+                "value": { "kind": "text", "values": [answer], "filler": filler }
+            })
+        };
+        run_edit(&mut conn, vec![big("first")], EditOrigin::Human, None, 1).unwrap();
+        run_edit(&mut conn, vec![big("second")], EditOrigin::Human, None, 2).unwrap();
+        let size: i64 = conn
+            .query_row(
+                "SELECT LENGTH(change_json) FROM editor_journal_v1 WHERE library_item_id = 'it-1' ORDER BY id DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        eprintln!("[quant] 单字段编辑（6KB 值）change_json = {size} 字节");
+        assert!(
+            size < 1500,
+            "单字段编辑的 change_json 应远小于整对象快照，实测 {size} 字节"
+        );
+    }
+
+    /// 量化 + 回归护栏：连续 30 次单字段编辑的 change_json 合计仍应很小。
+    #[test]
+    fn change_log_stays_compact_over_thirty_edits() {
+        let mut conn = grouped_item();
+        let filler = "x".repeat(6000);
+        for i in 1..=30i64 {
+            let cmd = serde_json::json!({
+                "op": "setAnswer", "slotId": "slot-14",
+                "value": { "kind": "text", "values": [format!("v{i}")], "filler": filler }
+            });
+            run_edit(&mut conn, vec![cmd], EditOrigin::Human, None, i).unwrap();
+        }
+        let total: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(LENGTH(change_json)), 0) FROM editor_journal_v1 WHERE library_item_id = 'it-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        eprintln!("[quant] 30 次单字段编辑 change_json 合计 = {total} 字节");
+        assert!(
+            total < 20000,
+            "30 次单字段编辑的 change_json 合计应远小于整对象快照，实测 {total} 字节"
+        );
+    }
+
+    /// 逐路径撤销：只回滚本轮修复动过的路径，同一目标里用户后改的兄弟字段必须保留。
+    #[test]
+    fn undo_reverts_only_the_repaired_path_and_keeps_a_sibling_edit_in_the_same_target() {
+        // 种子答案已带 note，云端修复只改 values[0]、不碰 note——这样才能制造「同目标不同路径」。
+        let mut ds = grouped_ds();
+        ds["answerKey"]["slot-14"] = json!({ "kind": "text", "values": ["stencilling"], "note": "seed" });
+        let conn = memory_repo();
+        upsert_item_shell(
+            &conn,
+            &UpsertItemInput { id: "it-1", modality: "reading", title: "t", status: "action_required", source_asset_id: None },
+        )
+        .unwrap();
+        seed_canonical_ds(&conn, "it-1", &ds.to_string(), "action_required").unwrap();
+        let mut conn = conn;
+        let answer = |values: &str, note: &str| {
+            json!({ "op": "setAnswer", "slotId": "slot-14", "value": { "kind": "text", "values": [values], "note": note } })
+        };
+        // 云端修复只改 values[0]（note 保持 seed）。人工写入若在前会保护 slot-14、挡住云端写入。
+        run_edit(&mut conn, vec![answer("cloud", "seed")], EditOrigin::CloudRepair, Some("run-C"), 1).unwrap();
+        // 用户随后只改同一目标的另一路径 note（云端没碰过）。
+        run_edit(&mut conn, vec![answer("cloud", "user-note")], EditOrigin::Human, None, 2).unwrap();
+
+        undo_cloud_repair_run(&mut conn, "it-1", "run-C", 3, &noop_validate).unwrap();
+        let (ds, _) = get_canonical_ds(&conn, "it-1").unwrap().unwrap();
+        assert_eq!(
+            ds.pointer("/answerKey/slot-14/values/0").unwrap(),
+            "stencilling",
+            "本轮修复动过的路径必须回滚"
+        );
+        assert_eq!(
+            ds.pointer("/answerKey/slot-14/note").unwrap(),
+            "user-note",
+            "同一目标里用户后改的兄弟字段必须保留，不能被整对象跳过或整体覆盖"
+        );
+    }
+
+    /// 兼容读取：历史的整对象 before/after 格式 change_json 行也必须能被撤销回滚。
+    #[test]
+    fn undo_reads_legacy_whole_object_change_rows() {
+        let mut conn = grouped_item();
+        run_edit(&mut conn, vec![set_answer("slot-14", "cloudval")], EditOrigin::CloudRepair, Some("run-L"), 1).unwrap();
+        // 把该行改写成历史整对象格式，模拟旧数据（after 与当前稿一致，before 为修复前的值）。
+        let legacy = serde_json::json!({
+            "before": {
+                "answerKey:slot-14": { "kind": "text", "values": ["stencilling"] },
+                "slot-14": { "slotId": "slot-14", "questionNumber": 14, "interaction": "text" }
+            },
+            "after": {
+                "answerKey:slot-14": { "kind": "text", "values": ["cloudval"] },
+                "slot-14": { "slotId": "slot-14", "questionNumber": 14, "interaction": "text" }
+            }
+        });
+        conn.execute(
+            "UPDATE editor_journal_v1 SET change_json = ?1 WHERE library_item_id = 'it-1' AND repair_run_id = 'run-L'",
+            params![legacy.to_string()],
+        )
+        .unwrap();
+
+        undo_cloud_repair_run(&mut conn, "it-1", "run-L", 2, &noop_validate).unwrap();
+        let (ds, _) = get_canonical_ds(&conn, "it-1").unwrap().unwrap();
+        assert_eq!(
+            ds.pointer("/answerKey/slot-14/values/0").unwrap(),
+            "stencilling",
+            "旧整对象格式的 change_json 行也能被撤销回滚"
         );
     }
 
