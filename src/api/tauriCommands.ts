@@ -44,7 +44,6 @@ import type {
   LibraryMetaPatch,
   LibraryStats,
   AuthoringEditorSessionV2,
-  ApplyAuthoringV2PatchesInput,
   AuthoringV2ExportResultV2
 } from "../types";
 import type { IeltsAuthoringIRV2, JobDetail } from "../types";
@@ -180,10 +179,6 @@ export interface AuthoringAssetPreview {
 export async function resolveAuthoringAssetPreview(jobId: string, assetId: string): Promise<AuthoringAssetPreview | undefined> {
   if (!isTauriRuntime()) return undefined;
   return command("resolve_authoring_asset_preview", { jobId, assetId });
-}
-
-export async function applyAuthoringV2Patches(input: ApplyAuthoringV2PatchesInput): Promise<AuthoringEditorSessionV2> {
-  return command("apply_authoring_v2_patches", { input });
 }
 
 // M1：authoring 覆盖 + editVersion = DB 权威稿直通发布（typed preflight 路径）。

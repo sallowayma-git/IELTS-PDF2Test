@@ -83,7 +83,7 @@ for (const token of ["staleDerivedQualityCodes", "RUNTIME_COMPILER_FAILED", "blo
 }
 
 const rust = readFileSync("src-tauri/src/lib.rs", "utf8");
-for (const command of ["get_authoring_v2", "apply_authoring_v2_patches", "export_authoring_v2"]) {
+for (const command of ["get_authoring_v2", "export_authoring_v2"]) {
   if (!rust.includes(command)) throw new Error("Tauri command is not registered: " + command);
 }
 
