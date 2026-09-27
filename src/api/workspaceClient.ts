@@ -43,6 +43,10 @@ export interface LibraryItemSummaryV2 {
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
+  /** Part 标签（阅读 P1/P2/P3、听力 Part 1–4、写作 Task 1/2）；判不出为 null。 */
+  partLabel?: string | null;
+  /** 判定来源：manual | content | range | filename | none。 */
+  partSource?: string | null;
   processing?: ProcessingState | null;
 }
 

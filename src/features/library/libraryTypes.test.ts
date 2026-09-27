@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LibraryItemSummaryV2 } from "../../api/workspaceClient";
-import { STAGE_LABEL, buildRow, canRetryRow } from "./libraryTypes";
+import { STAGE_LABEL, buildRow, canRetryRow, matchesPart, type LibraryRowV1 } from "./libraryTypes";
 
 // 证据层级：pure unit（计划 §19.1 层 1）。
 // G1/A4-F03：重启恢复重试耗尽后，UI 必须诚实显示"已达自动恢复上限"，
@@ -159,5 +159,29 @@ describe("buildRow modality comes from the backend item", () => {
   it("keeps reading and writing rows unchanged", () => {
     expect(buildRow("r", undefined, undefined, {}, v2WithProcessing({ stage: "queued", localStatus: "x" })).modality).toBe("reading");
     expect(buildRow("w", undefined, { subject: "writing" } as never).modality).toBe("writing");
+  });
+});
+
+describe("buildRow surfaces the Part label and matchesPart filters by it (C4)", () => {
+  it("reads partLabel from the v2 summary onto the row", () => {
+    const v2 = { ...v2WithProcessing({ stage: "ready_for_review", localStatus: "succeeded" }), partLabel: "P2", partSource: "range" };
+    const row = buildRow("item-1", undefined, undefined, {}, v2 as LibraryItemSummaryV2);
+    expect(row.part).toBe("P2");
+  });
+
+  it("leaves part undefined when the backend has no label", () => {
+    const row = buildRow("item-2", undefined, undefined, {}, v2WithProcessing({ stage: "queued", localStatus: "x" }));
+    expect(row.part).toBeUndefined();
+  });
+
+  it("matchesPart passes everything when no filter, else exact-matches the label", () => {
+    const p1 = { part: "P1" } as LibraryRowV1;
+    const p2 = { part: "P2" } as LibraryRowV1;
+    const none = {} as LibraryRowV1;
+    expect(matchesPart(p1, undefined)).toBe(true);
+    expect(matchesPart(none, undefined)).toBe(true);
+    expect(matchesPart(p1, "P1")).toBe(true);
+    expect(matchesPart(p2, "P1")).toBe(false);
+    expect(matchesPart(none, "P1")).toBe(false);
   });
 });

@@ -3,7 +3,6 @@ import { AppShell } from "../components/AppShell";
 import { LibraryPage } from "../features/library/LibraryPage";
 import { ExamWorkspacePage } from "../features/editor/ExamWorkspacePage";
 import { SettingsPage } from "../features/settings/SettingsPage";
-import { WritingStudio } from "../pages/WritingStudio";
 import { applyLegacyRedirect, parseRoute, type RouteState } from "./router";
 
 export function App() {
@@ -23,14 +22,11 @@ export function App() {
 
   return (
     <AppShell route={route}>
-      {route.name === "library" ? <LibraryPage intent={route.intent} /> : null}
+      {route.name === "library" ? <LibraryPage intent={route.intent} initialModality={route.modality} /> : null}
       {route.name === "workspace" && route.itemId ? (
         <ExamWorkspacePage key={route.itemId} itemId={route.itemId} intent={route.intent} />
       ) : null}
       {route.name === "settings" ? <SettingsPage /> : null}
-      {route.name === "legacy" && route.legacyPage === "writing" ? (
-        <WritingStudio refresh={() => {}} />
-      ) : null}
     </AppShell>
   );
 }

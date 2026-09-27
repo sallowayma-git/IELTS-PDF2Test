@@ -29,6 +29,27 @@ export const STAGE_LABEL: Record<LibraryStageV1, string> = {
 /** 用户可选的筛选面，比内部阶段更粗。 */
 export type LibraryFilterTab = "all" | "processing" | "action_required" | "ready" | "failed" | "trash";
 
+/** 题型子标签，包住状态标签。写作子标签走独立的创作面板。 */
+export type LibraryModalityTab = "all" | "reading" | "listening" | "writing";
+
+export const MODALITY_TAB_LABEL: Record<LibraryModalityTab, string> = {
+  all: "全部",
+  reading: "阅读",
+  listening: "听力",
+  writing: "写作"
+};
+
+export const MODALITY_TABS: readonly LibraryModalityTab[] = ["all", "reading", "listening", "writing"];
+
+export function isModalityTab(value: string | undefined): value is LibraryModalityTab {
+  return value === "all" || value === "reading" || value === "listening" || value === "writing";
+}
+
+/** 题型子标签过滤。`all` 放行全部。 */
+export function matchesModality(row: LibraryRowV1, tab: LibraryModalityTab): boolean {
+  return tab === "all" || row.modality === tab;
+}
+
 export const FILTER_TAB_LABEL: Record<LibraryFilterTab, string> = {
   all: "全部",
   processing: "处理中",
@@ -64,6 +85,8 @@ export interface LibraryRowV1 {
   progressPercent?: number;
   actionableCount: number;
   category?: string;
+  /** Part 标签（P1/P2/P3 / Part 1–4 / Task 1/2）；判不出为 undefined，不显示。 */
+  part?: string;
   updatedAt: string;
   inTrash: boolean;
   /** 已发布，且那次发布时检查没有全部通过、由用户点击发布放行（后端 `published_forced`）。 */
@@ -215,6 +238,7 @@ export function buildRow(
     progressPercent: job && isProcessingStage(stage) ? STEP_PROGRESS[job.currentStep] : undefined,
     actionableCount: actionable,
     category: summary?.category ?? job?.category,
+    part: v2?.partLabel ?? undefined,
     updatedAt: v2?.updatedAt ?? job?.updatedAt ?? summary?.updatedAt ?? "",
     inTrash: Boolean(options.inTrash),
     publishedForced:
@@ -251,4 +275,17 @@ export function matchesSearch(row: LibraryRowV1, query: string): boolean {
   const trimmed = query.trim().toLowerCase();
   if (!trimmed) return true;
   return row.title.toLowerCase().includes(trimmed) || row.id.toLowerCase().includes(trimmed);
+}
+
+/** 某题型下可手动选择的 Part 标签。 */
+export const PART_OPTIONS: Record<LibraryModality, readonly string[]> = {
+  reading: ["P1", "P2", "P3"],
+  listening: ["Part 1", "Part 2", "Part 3", "Part 4"],
+  writing: ["Task 1", "Task 2"]
+};
+
+/** Part 筛选。`part` 为 undefined 表示不筛选。 */
+export function matchesPart(row: LibraryRowV1, part: string | undefined): boolean {
+  if (!part) return true;
+  return row.part === part;
 }

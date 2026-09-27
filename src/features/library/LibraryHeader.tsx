@@ -1,21 +1,33 @@
-import { FILTER_TAB_LABEL, type LibraryFilterTab } from "./libraryTypes";
+import {
+  FILTER_TAB_LABEL,
+  MODALITY_TABS,
+  MODALITY_TAB_LABEL,
+  type LibraryFilterTab,
+  type LibraryModalityTab
+} from "./libraryTypes";
 
 const TABS: readonly LibraryFilterTab[] = ["all", "processing", "action_required", "ready", "failed", "trash"];
 
 export function LibraryHeader({
   tab,
   counts,
+  modalityTab,
+  modalityCounts,
   search,
   backgroundCount,
   onTabChange,
+  onModalityChange,
   onSearchChange,
   onImport
 }: {
   tab: LibraryFilterTab;
   counts: Record<LibraryFilterTab, number>;
+  modalityTab: LibraryModalityTab;
+  modalityCounts: Record<LibraryModalityTab, number>;
   search: string;
   backgroundCount: number;
   onTabChange: (tab: LibraryFilterTab) => void;
+  onModalityChange: (tab: LibraryModalityTab) => void;
   onSearchChange: (value: string) => void;
   onImport: () => void;
 }) {
@@ -31,6 +43,22 @@ export function LibraryHeader({
           ) : null}
         </div>
         <button className="primary" data-testid="library-import" onClick={onImport}>导入</button>
+      </div>
+
+      <div className="library-modality-tabs" role="tablist" aria-label="题型">
+        {MODALITY_TABS.map((value) => (
+          <button
+            key={value}
+            role="tab"
+            aria-selected={modalityTab === value}
+            className={modalityTab === value ? "active" : ""}
+            data-testid={`library-modality-${value}`}
+            onClick={() => onModalityChange(value)}
+          >
+            {MODALITY_TAB_LABEL[value]}
+            <span className="tab-count">{modalityCounts[value]}</span>
+          </button>
+        ))}
       </div>
 
       <div className="library-controls">

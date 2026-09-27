@@ -2,16 +2,27 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { chooseExportDirectory } from "../../api/desktopDialogs";
 import { describeBatchPublishOutcome, publishItems } from "../../api/publishClient";
 import { describeRetryOutcome, retryProcessing } from "../../api/processingClient";
-import { go, legacyPath, workspacePath, type LibraryIntent } from "../../app/router";
+import { go, workspacePath, type LibraryIntent } from "../../app/router";
 import { ImportDrawer } from "../import/ImportDrawer";
 import { useImportFiles, type ImportRejection } from "../import/useImportFiles";
 import { LibraryBatchBar } from "./LibraryBatchBar";
 import { LibraryHeader } from "./LibraryHeader";
 import { LibraryItemList } from "./LibraryItemList";
+import { WritingPanel } from "./WritingPanel";
 import { readAppSettings, writeAppSettings } from "../settings/appSettings";
 import { toUserFacingError } from "../../utils/userFacingError";
 import { useLibraryStore } from "./libraryStore";
-import { matchesSearch, matchesTab, type LibraryFilterTab } from "./libraryTypes";
+import {
+  isModalityTab,
+  isProcessingStage,
+  matchesModality,
+  matchesPart,
+  matchesSearch,
+  matchesTab,
+  MODALITY_TABS,
+  type LibraryFilterTab,
+  type LibraryModalityTab
+} from "./libraryTypes";
 
 // 题库是产品中心（计划 §0.3 / §16.4）：导入、批量任务进度、搜索、打开、选择发布都在这一页完成。
 // 已退休的独立页面：Dashboard、JobList、ImportWizard、ExportPage、LibraryExamDetail。
@@ -24,10 +35,14 @@ function describeLibraryActionError(error: unknown, fallback: string): string {
   return facing.userMessage;
 }
 
-export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
+export function LibraryPage({ intent, initialModality }: { intent?: LibraryIntent; initialModality?: string }) {
   const store = useLibraryStore();
   const [tab, setTab] = useState<LibraryFilterTab>("all");
+  const [modalityTab, setModalityTab] = useState<LibraryModalityTab>(
+    isModalityTab(initialModality) ? initialModality : "all"
+  );
   const [search, setSearch] = useState("");
+  const [partFilter, setPartFilter] = useState<string | undefined>(undefined);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [drawerOpen, setDrawerOpen] = useState(intent === "import");
   const [rejected, setRejected] = useState<ImportRejection[]>([]);
@@ -39,16 +54,60 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
 
   const importer = useImportFiles(store.refresh);
 
-  const counts = useMemo(() => {
-    const result = Object.fromEntries(ALL_TABS.map((value) => [value, 0])) as Record<LibraryFilterTab, number>;
-    for (const value of ALL_TABS) result[value] = store.rows.filter((row) => matchesTab(row, value)).length;
+  // 路由携带 ?modality= 时（含 #/legacy/writing 重定向）切到对应题型子标签。
+  useEffect(() => {
+    if (isModalityTab(initialModality)) setModalityTab(initialModality);
+  }, [initialModality]);
+
+  // 题型子标签计数（活动条目，不含回收站）。
+  const modalityCounts = useMemo(() => {
+    const result = Object.fromEntries(MODALITY_TABS.map((value) => [value, 0])) as Record<LibraryModalityTab, number>;
+    for (const value of MODALITY_TABS) {
+      result[value] = store.rows.filter((row) => !row.inTrash && matchesModality(row, value)).length;
+    }
     return result;
   }, [store.rows]);
 
-  const visibleRows = useMemo(
-    () => store.rows.filter((row) => matchesTab(row, tab) && matchesSearch(row, search)),
-    [store.rows, tab, search]
+  // 状态标签计数：限定在当前题型子标签内。
+  const counts = useMemo(() => {
+    const result = Object.fromEntries(ALL_TABS.map((value) => [value, 0])) as Record<LibraryFilterTab, number>;
+    for (const value of ALL_TABS) {
+      result[value] = store.rows.filter((row) => matchesModality(row, modalityTab) && matchesTab(row, value)).length;
+    }
+    return result;
+  }, [store.rows, modalityTab]);
+
+  const tabRows = useMemo(
+    () => store.rows.filter((row) => matchesModality(row, modalityTab) && matchesTab(row, tab) && matchesSearch(row, search)),
+    [store.rows, modalityTab, tab, search]
   );
+
+  // 后台识别横幅与「清空回收站」都作用于全部题型，计数不能被题型子标签收敛。
+  const totalProcessingCount = useMemo(
+    () => store.rows.filter((row) => !row.inTrash && isProcessingStage(row.stage)).length,
+    [store.rows]
+  );
+  const totalTrashedCount = useMemo(
+    () => store.rows.filter((row) => row.inTrash).length,
+    [store.rows]
+  );
+
+  // 当前题面里实际出现的 Part（P1/P2/P3 / Part 1–4 / Task 1/2），用于渲染筛选按钮。
+  const availableParts = useMemo(() => {
+    const set = new Set<string>();
+    for (const row of tabRows) if (row.part) set.add(row.part);
+    return [...set].sort();
+  }, [tabRows]);
+
+  const visibleRows = useMemo(
+    () => tabRows.filter((row) => matchesPart(row, partFilter)),
+    [tabRows, partFilter]
+  );
+
+  // 选中的 Part 不再出现在当前列表时（切了标签/搜索/删除），清掉筛选，避免空列表卡死。
+  useEffect(() => {
+    if (partFilter && !availableParts.includes(partFilter)) setPartFilter(undefined);
+  }, [availableParts, partFilter]);
 
   // 行离开可见集合（被删除、被筛掉）后不应继续留在选择集中。
   useEffect(() => {
@@ -150,14 +209,63 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
     }
   }
 
+  /** 永久删除单个回收站条目（不可恢复），二次确认后执行。 */
+  async function permanentlyDelete(id: string) {
+    if (!window.confirm("永久删除后无法恢复，确定要彻底删除这道题吗？")) return;
+    try {
+      await store.permanentlyDelete(id);
+      setNotice("已永久删除。");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("ITEM_STILL_PROCESSING")) {
+        setNotice("这道题仍在识别/排队中，请先取消或等待完成，再永久删除。");
+        return;
+      }
+      setNotice(describeLibraryActionError(error, "永久删除失败，请稍后重试。"));
+    }
+  }
+
+  /** 清空回收站（不可恢复），二次确认后执行；仍在处理中的条目会被跳过并如实说明。 */
+  async function emptyTrash() {
+    if (!window.confirm("清空回收站会永久删除其中所有题目，无法恢复。确定继续吗？")) return;
+    try {
+      const result = await store.emptyTrash();
+      if (!result.skipped.length) {
+        setNotice(`已清空回收站，永久删除 ${result.deleted} 项。`);
+        return;
+      }
+      // 区分「仍在处理中」与「真的删除失败」——不要把后者也说成「请取消或等待」。
+      const stillProcessing = result.skipped.filter((s) => s.reason.includes("ITEM_STILL_PROCESSING")).length;
+      const otherFailed = result.skipped.length - stillProcessing;
+      const parts = [`已永久删除 ${result.deleted} 项`];
+      if (stillProcessing) parts.push(`${stillProcessing} 项仍在识别/排队中被跳过（请先取消或等待完成）`);
+      if (otherFailed) parts.push(`${otherFailed} 项删除失败（请稍后重试）`);
+      setNotice(parts.join("；") + "。");
+    } catch (error) {
+      setNotice(describeLibraryActionError(error, "清空回收站失败，请稍后重试。"));
+    }
+  }
+
+  /** 手动设置/清除某条目的 Part 标签。 */
+  async function setPart(id: string, label: string | null) {
+    try {
+      await store.setPart(id, label);
+    } catch (error) {
+      setNotice(describeLibraryActionError(error, "设置 Part 标签失败，请稍后重试。"));
+    }
+  }
+
   return (
     <section className="library-page" data-testid="library-page">
       <LibraryHeader
         tab={tab}
         counts={counts}
+        modalityTab={modalityTab}
+        modalityCounts={modalityCounts}
         search={search}
-        backgroundCount={counts.processing}
+        backgroundCount={totalProcessingCount}
         onTabChange={setTab}
+        onModalityChange={setModalityTab}
         onSearchChange={setSearch}
         onImport={() => {
           setRejected([]);
@@ -173,38 +281,75 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
           <button className="ghost small" onClick={() => setNotice(undefined)} aria-label="关闭提示">×</button>
         </p>
       ) : null}
-      {/* 导入抽屉一旦关闭，它自己的 reject-list 就随之卸载。导入期的音频绑定失败不能跟着
-          消失——「已建立 N 个题目」会和它同时出现，用户得能看见到底哪一段没绑上。 */}
-      {!drawerOpen && rejected.length ? (
-        <ul className="reject-list" data-testid="library-import-rejected" role="alert">
-          {rejected.map((item) => (
-            <li key={`${item.name}:${item.reason}`}>
-              <strong className="file-name">{item.name}</strong>
-              <span>{item.reason}</span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      {modalityTab === "writing" ? (
+        <WritingPanel refresh={store.refresh} />
+      ) : (
+        <>
+          {/* 导入抽屉一旦关闭，它自己的 reject-list 就随之卸载。导入期的音频绑定失败不能跟着
+              消失——「已建立 N 个题目」会和它同时出现，用户得能看见到底哪一段没绑上。 */}
+          {!drawerOpen && rejected.length ? (
+            <ul className="reject-list" data-testid="library-import-rejected" role="alert">
+              {rejected.map((item) => (
+                <li key={`${item.name}:${item.reason}`}>
+                  <strong className="file-name">{item.name}</strong>
+                  <span>{item.reason}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
 
-      <LibraryItemList
-        rows={visibleRows}
-        loading={store.loading}
-        tab={tab}
-        selectedIds={selectedIds}
-        onToggleSelect={toggleSelect}
-        onOpen={(id) => go(store.rows.find((row) => row.id === id)?.modality === "writing" ? legacyPath("writing", id) : workspacePath(id))}
-        onTrash={trash}
-        onRestore={restore}
-        onRetry={retry}
-      />
+          {tab !== "trash" && availableParts.length ? (
+            <div className="library-part-filter" data-testid="library-part-filter" role="group" aria-label="按 Part 筛选">
+              <button className={`chip small${!partFilter ? " is-active" : ""}`} onClick={() => setPartFilter(undefined)}>全部</button>
+              {availableParts.map((part) => (
+                <button
+                  key={part}
+                  className={`chip small${partFilter === part ? " is-active" : ""}`}
+                  data-testid={`library-part-chip-${part}`}
+                  onClick={() => setPartFilter(part)}
+                >
+                  {part}
+                </button>
+              ))}
+            </div>
+          ) : null}
 
-      <LibraryBatchBar
-        selectedCount={selectedIds.size}
-        publishing={publishing}
-        publishMessage={publishMessage}
-        onClear={() => setSelectedIds(new Set())}
-        onPublish={publishSelected}
-      />
+          {/* 清空回收站作用于全部题型，只在「全部」子标签下出现，避免计数与实际删除范围不符。 */}
+          {tab === "trash" && modalityTab === "all" && totalTrashedCount > 0 ? (
+            <div className="library-trash-toolbar" data-testid="library-trash-toolbar">
+              <button className="danger small" data-testid="library-empty-trash" onClick={emptyTrash}>
+                清空回收站（{totalTrashedCount}）
+              </button>
+            </div>
+          ) : null}
+
+          <LibraryItemList
+            rows={visibleRows}
+            loading={store.loading}
+            tab={tab}
+            selectedIds={selectedIds}
+            onToggleSelect={toggleSelect}
+            onOpen={(id) =>
+              store.rows.find((row) => row.id === id)?.modality === "writing"
+                ? setModalityTab("writing")
+                : go(workspacePath(id))
+            }
+            onTrash={trash}
+            onRestore={restore}
+            onPermanentDelete={permanentlyDelete}
+            onSetPart={setPart}
+            onRetry={retry}
+          />
+
+          <LibraryBatchBar
+            selectedCount={selectedIds.size}
+            publishing={publishing}
+            publishMessage={publishMessage}
+            onClear={() => setSelectedIds(new Set())}
+            onPublish={publishSelected}
+          />
+        </>
+      )}
 
       <ImportDrawer
         open={drawerOpen}
