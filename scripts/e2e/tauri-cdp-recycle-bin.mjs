@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 // C2 回收站真实应用 e2e：导入 → 删除进回收站 → 永久删除（二次确认）→ 断言列表消失、
 // get_workspace_item 查不到；再导入两份 → 都进回收站 → 清空回收站 → 断言清空。
-// 永久删除/清空回收站是 window.confirm 二次确认，CDP 点不了原生框，故先把 confirm 覆盖成 true。
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -27,15 +26,13 @@ async function libraryRowIds(session) {
   return (await session.evaluate(`[...document.querySelectorAll('[data-testid="library-row"]')].map(r => r.getAttribute('data-item-id'))`)) ?? [];
 }
 
-// 活动处理阶段：处于这些阶段说明仍有 worker 在写这道题（后端据此拒绝永久删除、软删也会被回写复活）。
 const ACTIVE_STAGES = new Set(["queued", "running", "local_recognition", "cloud_recognition", "reconciling"]);
 async function readStage(session, itemId) {
   const r = await session.invoke("list_library_items", { includeDeleted: true });
   if (!r?.ok || !Array.isArray(r.value)) return null;
   return r.value.find((i) => i?.id === itemId)?.processing?.stage ?? null;
 }
-// 删除只对识别落终态（ready_for_review/failed/cancelled）的条目稳定生效——运行中删行会与
-// worker 竞争、被 upsert 回写复活。故删前等它离开活动阶段，测的才是真实“删已完成条目”的路径。
+// 活动阶段的条目仍被 worker 回写、删了会复活，故删前先等它落终态，避免与 worker 竞争。
 async function waitUntilSettled(session, itemId, timeoutMs = 180000) {
   const deadline = Date.now() + timeoutMs;
   let stage = await readStage(session, itemId);
@@ -104,17 +101,13 @@ async function main() {
     // 二次确认是 window.confirm（原生框，CDP 点不了）——覆盖成恒真。
     await session.evaluate(`(() => { window.confirm = () => true; return true; })()`);
 
-    // 场景 A：导入 → 进回收站 → 永久删除。
     const id1 = await importOne(session, report);
     report.identity.itemId = id1;
-    const job1DirExistedBeforeDelete = fs.existsSync(jobDir(id1));
+    const jobDirExistedBefore = fs.existsSync(jobDir(id1));
     await moveToTrash(session, id1);
-    // 切到回收站标签，确认该条在回收站。
     await session.clickSelector('[data-testid="library-tab-trash"]');
     await session.waitFor(`!!document.querySelector('[data-item-id="${id1}"] [data-testid="library-row-permanent-delete"]')`, { timeoutMs: 15000, label: "in-trash" });
-    // 永久删除。
     await session.clickSelector(`[data-item-id="${id1}"] [data-testid="library-row-permanent-delete"]`);
-    // 断言：从回收站列表消失，且 get_workspace_item 查不到。
     const goneDeadline = Date.now() + 20000;
     let goneFromList = false;
     while (Date.now() < goneDeadline && !goneFromList) {
@@ -123,19 +116,15 @@ async function main() {
       if (!goneFromList) await sleep(400);
     }
     const stillFound = await itemFound(session, id1);
-    // 磁盘 job 目录也要随永久删除消失（不留孤儿）。仅当删除前确实存在该目录时才作为硬判据，
-    // 避免导入未落盘 job 目录时误红——落盘过就必须被清掉。
-    let jobDirGone = true;
-    if (job1DirExistedBeforeDelete) {
-      const dirDeadline = Date.now() + 20000;
-      while (Date.now() < dirDeadline && fs.existsSync(jobDir(id1))) await sleep(400);
-      jobDirGone = !fs.existsSync(jobDir(id1));
-    }
-    recordAssertion(report, "C2-1 permanent-delete-removes-item", goneFromList && !stillFound && jobDirGone,
+    // 删前必须已落盘 job 目录（否则判据落空），删后必须清掉，确保不留磁盘孤儿。
+    const dirDeadline = Date.now() + 20000;
+    while (Date.now() < dirDeadline && fs.existsSync(jobDir(id1))) await sleep(400);
+    const jobDirGone = !fs.existsSync(jobDir(id1));
+    recordAssertion(report, "C2-1 permanent-delete-removes-item",
+      goneFromList && !stillFound && jobDirExistedBefore && jobDirGone,
       `列表已无该条=${goneFromList}；get_workspace_item 查不到=${!stillFound}；` +
-      `job 目录删除前存在=${job1DirExistedBeforeDelete}、删除后已清=${jobDirGone}`);
+      `job 目录删前存在=${jobDirExistedBefore}（必须为真）、删后已清=${jobDirGone}`);
 
-    // 场景 B：导入两份 → 都进回收站 → 清空回收站。
     await session.evaluate(`(() => { window.location.hash = "#/library"; return true; })()`);
     await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, { timeoutMs: 20000, label: "library-again" });
     const id2 = await importOne(session, report);
