@@ -1,7 +1,44 @@
+use crate::schema::common::canonical_json_bytes_js;
 use crate::util::validate_path_segment;
 use crate::CommandResult;
 use chrono::{DateTime, FixedOffset, Local, SecondsFormat};
 use serde_json::{json, Value};
+
+/// 学生端题包 payload 里删除的编辑元数据键。
+///
+/// 学生端（`apps/student-exam`）与 NAS 服务端加载器都不读取这些字段：
+/// `sourceAnchors`/`provenanceStatus`/`evidenceAnchors` 是编辑器回跳定位用的来源锚；
+/// `instructionSignature`/`recognitionWarnings`/`reviewState`/`quality`/`displayRange`
+/// 是识别与审校的编辑元数据。学生渲染与判分必需的字段（节点 `id`、`hostNodeId`、
+/// `cue.confidence`、`answerKey`、`audit` 等）一律保留。
+const STUDENT_PACKAGE_STRIPPED_KEYS: &[&str] = &[
+    "sourceAnchors",
+    "provenanceStatus",
+    "evidenceAnchors",
+    "instructionSignature",
+    "recognitionWarnings",
+    "reviewState",
+    "quality",
+    "displayRange",
+];
+
+/// 正式稿投影成学生端题包 payload：剥离编辑元数据，保留学生运行时读取的一切。
+pub(crate) fn student_package_source(source: &Value) -> Value {
+    fn strip(value: &Value) -> Value {
+        match value {
+            Value::Array(items) => Value::Array(items.iter().map(strip).collect()),
+            Value::Object(object) => Value::Object(
+                object
+                    .iter()
+                    .filter(|(key, _)| !STUDENT_PACKAGE_STRIPPED_KEYS.contains(&key.as_str()))
+                    .map(|(key, child)| (key.clone(), strip(child)))
+                    .collect(),
+            ),
+            other => other.clone(),
+        }
+    }
+    strip(source)
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct ReadingAssetBundle {
@@ -34,7 +71,10 @@ pub(crate) fn safe_exam_id(source: &Value) -> CommandResult<String> {
 pub(crate) fn build_wrapper(source: &Value) -> CommandResult<String> {
     let exam_id = safe_exam_id(source)?;
     let exam_id_json = serde_json::to_string(&exam_id).map_err(|error| error.to_string())?;
-    let source_json = serde_json::to_string_pretty(source).map_err(|error| error.to_string())?;
+    // 学生端用 JSON.stringify 复算 runtimeSha256：嵌入文本必须是 canonical
+    // （键排序、紧凑）形态，见 schema::common::canonical_json_bytes_js。
+    let source_json = String::from_utf8(canonical_json_bytes_js(&student_package_source(source)))
+        .map_err(|error| error.to_string())?;
     Ok(format!("(function registerReadingExamData(global) {{\n  'use strict';\n  if (!global.__READING_EXAM_DATA__ || typeof global.__READING_EXAM_DATA__.register !== \"function\") {{\n    throw new Error(\"reading_exam_registry_missing\");\n  }}\n  global.__READING_EXAM_DATA__.register({}, {});\n}})(typeof window !== \"undefined\" ? window : globalThis);\n", exam_id_json, source_json))
 }
 
@@ -74,6 +114,95 @@ fn build_manifest_metadata(generated_at: &DateTime<FixedOffset>, asset_count: us
 mod tests {
     use super::*;
     use chrono::{TimeZone, Timelike};
+
+    fn anchor() -> Value {
+        json!({
+            "sourceFileId": "source-pdf-1",
+            "pageIndex": 0,
+            "nodeIds": ["region-1", "line-1"],
+            "bbox": {"x": 1.0, "y": 2.0, "width": 3.0, "height": 4.0, "unit": "pt", "origin": "top-left", "pageRotation": 0.0},
+            "extractionMode": "pdf_native",
+            "sourceHash": "a".repeat(64)
+        })
+    }
+
+    fn student_package_sample() -> Value {
+        json!({
+            "schemaVersion": "ReadingExamSourceV2",
+            "examId": "package-projection",
+            "meta": {"title": "Projection", "language": "en", "category": "P1"},
+            "assets": {"examId": "package-projection", "assets": []},
+            "passage": {"content": [{
+                "id": "p1",
+                "type": "paragraph",
+                "provenanceStatus": "source",
+                "sourceAnchors": [anchor()],
+                "children": [{"id": "t1", "type": "text", "provenanceStatus": "source", "sourceAnchors": [anchor()], "text": "Passage text."}]
+            }]},
+            "taskGroups": [{
+                "taskId": "task-1",
+                "taskType": "yes_no_not_given",
+                "displayRange": "Q1-2",
+                "instructions": [],
+                "instructionSignature": {"normalizedText": "Questions 1-2", "taskType": "yes_no_not_given", "expectedQuestionNumbers": [1, 2], "expectedSlotCount": 2, "evidenceAnchors": [anchor()], "confidence": 0.9},
+                "recognitionWarnings": ["warn-1"],
+                "optionBank": {"optionBankId": "bank-1", "scope": "task_group", "options": [
+                    {"optionId": "o-yes", "label": "YES", "content": [{"id": "c1", "type": "text", "provenanceStatus": "source", "sourceAnchors": [], "text": "YES"}], "sourceAnchors": []}
+                ], "allowReuse": false, "sourceAnchors": []},
+                "responseGroups": [{"responseGroupId": "rg-1", "kind": "choice", "prompt": [{"id": "prompt-1", "type": "paragraph", "provenanceStatus": "source", "sourceAnchors": [anchor()], "children": []}], "slotIds": ["q1"], "cardinality": {"min": 1, "max": 1, "exact": 1}, "assignment": "per_slot", "scoringPolicy": "per_slot_binary", "duplicatePolicy": "reject_submission", "allowOptionReuse": false, "sourceAnchors": []}],
+                "quality": {"score": 0.9, "sourceCoverage": 1.0, "hardFailures": []},
+                "reviewState": "confirmed",
+                "sourceAnchors": [anchor()]
+            }],
+            "answerSlots": {"q1": {"slotId": "q1", "questionNumber": 1, "displayLabel": "1", "hostNodeId": "prompt-1", "hostType": "prompt", "interaction": "select", "participation": "scoring", "confidence": 0.9, "provenanceStatus": "user_edited", "sourceAnchors": [anchor()]}},
+            "answerKey": {"q1": {"kind": "option", "labels": ["YES"], "assignment": "per_slot"}},
+            "questionOrder": ["q1"],
+            "questionDisplayMap": {"q1": "1"},
+            "audit": {"sourceSchemaVersion": "IeltsAuthoringIRV2", "sourceDocumentId": "doc-1", "sourceRevision": 3, "sourceRevisionKind": "user_edited"}
+        })
+    }
+
+    #[test]
+    fn student_package_wrapper_drops_editing_metadata_and_stays_compact() {
+        let wrapper = build_wrapper(&student_package_sample()).unwrap();
+        let marker = "__READING_EXAM_DATA__.register(";
+        let marker_pos = wrapper.find(marker).expect("wrapper registers exam data");
+        let payload_start = wrapper[marker_pos..].find('{').unwrap() + marker_pos;
+        let payload_text = &wrapper[payload_start..];
+        let payload: Value = serde_json::Deserializer::from_str(payload_text)
+            .into_iter::<Value>()
+            .next()
+            .expect("wrapper embeds a JSON payload")
+            .expect("wrapper payload is valid JSON");
+
+        for stripped in [
+            "sourceAnchors",
+            "provenanceStatus",
+            "instructionSignature",
+            "evidenceAnchors",
+            "recognitionWarnings",
+            "reviewState",
+            "quality",
+            "displayRange",
+        ] {
+            assert!(
+                serde_json::to_string(&payload).unwrap().contains(&format!("\"{stripped}\"")) == false,
+                "student payload must not carry editing metadata key {stripped}"
+            );
+        }
+        // 学生端按 JSON.stringify 复算 runtimeSha256：嵌入文本必须已是紧凑 canonical 形态。
+        assert!(!wrapper.contains("\n  \""), "wrapper payload must be compact");
+
+        // 学生端与 NAS 服务端读取器真正用到的字段必须原样保留。
+        assert_eq!(payload.pointer("/passage/content/0/children/0/text"), Some(&json!("Passage text.")));
+        assert_eq!(payload.pointer("/passage/content/0/id"), Some(&json!("p1")));
+        assert_eq!(payload.pointer("/taskGroups/0/optionBank/options/0/content/0/text"), Some(&json!("YES")));
+        assert_eq!(payload.pointer("/answerSlots/q1/hostNodeId"), Some(&json!("prompt-1")));
+        assert_eq!(payload.pointer("/answerSlots/q1/hostType"), Some(&json!("prompt")));
+        assert_eq!(payload.pointer("/taskGroups/0/responseGroups/0/prompt/0/id"), Some(&json!("prompt-1")));
+        assert_eq!(payload.pointer("/answerKey/q1/labels"), Some(&json!(["YES"])));
+        assert_eq!(payload.pointer("/audit/sourceRevision"), Some(&json!(3)));
+    }
 
     #[test]
     fn manifest_metadata_uses_one_local_timestamp_and_counts_assets() {

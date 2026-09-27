@@ -10,7 +10,7 @@ use crate::artifact_store::JobArtifactPaths;
 use crate::authoring_v2_commands::{
     validate_authoring_v2_publish_readiness, PublishMode, AUTHORING_V2_SHADOW_FILE,
 };
-use crate::export_artifacts::{build_wrapper, safe_exam_id};
+use crate::export_artifacts::{build_wrapper, safe_exam_id, student_package_source};
 use crate::export_nas_library::{nas_reading_exams_dir, normalize_nas_library_root};
 use crate::listening_source_v1::{compile_exam_source_v2, CompiledExamSourceV2};
 use crate::reading_runtime_v2::{
@@ -1128,10 +1128,10 @@ fn stage_package_files(
 
     // 学生端用 JSON.stringify 重算 runtimeSha256，manifest 里的值必须与之一致，
     // 不能是 serde_json 的数字写法（1.0 vs 1、1e21 vs 1e+21）。哈希操作数必须是
-    // wrapper 真正嵌入的那份磁盘 JSON（source_value），而不是对 source 重新序列化：
-    // 任何 `skip_serializing_if` 字段显式为 null 时，两者字节不同，学生端会
-    // 以 reading_source_integrity_failed 拒绝整个包。
-    let runtime_bytes = canonical_json_bytes_js(source_value);
+    // wrapper 真正嵌入的那份 payload（student_package_source 投影 + canonical 编码），
+    // 而不是对磁盘 source JSON 原样重编码：任何 `skip_serializing_if` 字段显式为
+    // null 时，两者字节不同，学生端会以 reading_source_integrity_failed 拒绝整个包。
+    let runtime_bytes = canonical_json_bytes_js(&student_package_source(source_value));
     let wrapper = build_wrapper(source_value)?;
     write_synced_file(&paths.staging_exam_path, wrapper.as_bytes())?;
     if input.fault.as_deref() == Some("after_assets") {
