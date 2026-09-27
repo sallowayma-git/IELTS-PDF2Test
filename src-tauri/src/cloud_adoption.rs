@@ -12,8 +12,9 @@ use std::path::Path;
 ///
 /// `quality.rs` also elevates recognition blockers dynamically, including unknown future codes.
 /// Therefore this is intentionally an exemption list: every code not named here is blocking.
-/// These three findings concern answer values that later stages can resolve; V1 compatibility is
-/// not the student-runtime gate (the V2 compiler probe is checked separately).
+/// Answer-value findings can be resolved by later stages. Runtime compilation is exempted only
+/// when its complete failure set consists of unresolved-answer findings; structural/compiler
+/// errors remain blocking.
 fn is_adoption_exempt_hard_failure(code: &str) -> bool {
     use crate::ielts_grammar::issue_codes::*;
 
@@ -24,6 +25,37 @@ fn is_adoption_exempt_hard_failure(code: &str) -> bool {
             | ANSWER_OPTION_NOT_IN_BANK
             | V1_COMPATIBILITY_COMPILER_FAILED
     )
+}
+
+fn runtime_failed_only_for_unresolved_answers(authoring: &Value) -> bool {
+    let Some(probe) = authoring.pointer("/quality/compilerProbes/v2Runtime") else {
+        return false;
+    };
+    if probe.get("status").and_then(Value::as_str) != Some("failed") {
+        return false;
+    }
+    let codes = probe
+        .get("issueCodes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    let details = probe
+        .get("details")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    !codes.is_empty()
+        && codes
+            .iter()
+            .all(|code| *code == "RUNTIME_ANSWER_UNRESOLVED")
+        && !details.is_empty()
+        && details
+            .iter()
+            .all(|detail| detail.starts_with("RUNTIME_ANSWER_UNRESOLVED:"))
 }
 
 fn question_numbers(value: &Value) -> BTreeSet<u32> {
@@ -88,11 +120,12 @@ pub(crate) fn adoption_rejection_reasons(candidate: &Value, local: &Value) -> Ve
     {
         reasons.push("云端候选仍有未解析的结构引用".to_string());
     }
-    if authoring
+    let answer_only_runtime_failure = runtime_failed_only_for_unresolved_answers(authoring);
+    let runtime_passed = authoring
         .pointer("/quality/compilerProbes/v2Runtime/status")
         .and_then(Value::as_str)
-        != Some("passed")
-    {
+        == Some("passed");
+    if !runtime_passed && !answer_only_runtime_failure {
         reasons.push("云端候选未通过学生端 V2 运行时编译".to_string());
     }
 
@@ -102,7 +135,10 @@ pub(crate) fn adoption_rejection_reasons(candidate: &Value, local: &Value) -> Ve
         .into_iter()
         .flatten()
         .filter_map(Value::as_str)
-        .filter(|code| !is_adoption_exempt_hard_failure(code))
+        .filter(|code| {
+            !is_adoption_exempt_hard_failure(code)
+                && !(*code == "RUNTIME_COMPILER_FAILED" && answer_only_runtime_failure)
+        })
         .collect::<BTreeSet<_>>();
     if !blocking_hard_failures.is_empty() {
         reasons.push(format!(
@@ -899,6 +935,43 @@ mod tests {
         let reasons = adoption_rejection_reasons(&cloud, &local());
         assert!(reasons.iter().any(|reason| reason.contains("未完整归一化")));
         assert!(reasons.iter().any(|reason| reason.contains("运行时编译")));
+    }
+
+    #[test]
+    fn only_unresolved_answer_failures_do_not_block_cloud_adoption() {
+        let mut cloud = candidate();
+        cloud["authoring"]["answerKey"]["q14"] = json!({"kind":"unresolved"});
+        cloud["authoring"]["quality"]["compilerProbes"]["v2Runtime"] = json!({
+            "status": "failed",
+            "issueCodes": ["RUNTIME_ANSWER_UNRESOLVED"],
+            "details": ["RUNTIME_ANSWER_UNRESOLVED:q14:No printed answer is available."]
+        });
+        cloud["authoring"]["quality"]["hardFailures"] = json!(["RUNTIME_COMPILER_FAILED"]);
+
+        assert!(
+            adoption_rejection_reasons(&cloud, &local()).is_empty(),
+            "答案未解析应交给后续答案页步骤，不得阻止结构合格候选整体采纳"
+        );
+    }
+
+    #[test]
+    fn runtime_failure_with_any_non_answer_error_still_rejects_cloud_adoption() {
+        let mut cloud = candidate();
+        cloud["authoring"]["quality"]["compilerProbes"]["v2Runtime"] = json!({
+            "status": "failed",
+            "issueCodes": ["RUNTIME_ANSWER_UNRESOLVED", "RUNTIME_OPTION_CONTENT_INVALID"],
+            "details": [
+                "RUNTIME_ANSWER_UNRESOLVED:q14:No printed answer is available.",
+                "RUNTIME_OPTION_CONTENT_INVALID:option-a:Option content is not renderable."
+            ]
+        });
+        cloud["authoring"]["quality"]["hardFailures"] = json!(["RUNTIME_COMPILER_FAILED"]);
+
+        let reasons = adoption_rejection_reasons(&cloud, &local());
+        assert!(reasons.iter().any(|reason| reason.contains("运行时编译")));
+        assert!(reasons
+            .iter()
+            .any(|reason| reason.contains("RUNTIME_COMPILER_FAILED")));
     }
 
     #[test]
