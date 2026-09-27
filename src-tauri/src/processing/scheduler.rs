@@ -393,10 +393,30 @@ async fn run_job(app: AppHandle, state: Arc<ProcessingState>, job: queue::Proces
 async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::ProcessingJobRow) {
     let job_id = job.id.clone();
     let recognition_attempt = job.retry_count;
+    let Ok(root) = app_root(&app) else { return };
+    // Capture the version before either recognition branch starts. The initial local authoring
+    // document is visible as soon as it is seeded, so a user can save while the local snapshot is
+    // still being persisted; reading the version later would move the baseline past that edit.
+    let baseline_root = root.clone();
+    let baseline_job_id = job_id.clone();
+    let baseline_result = tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_library_connection(&baseline_root)?;
+        crate::library::repository::current_edit_version(&conn, &baseline_job_id)?
+            .ok_or_else(|| format!("recognition_baseline_item_missing:{baseline_job_id}"))
+    })
+    .await
+    .unwrap_or_else(|error| Err(format!("processing_join:{error}")));
+    let (attempt_base_edit_version, mut freeze_error) = match baseline_result {
+        Ok(version) => (Some(version), None),
+        Err(error) => {
+            eprintln!("[processing] read recognition baseline failed for {job_id}: {error}");
+            (None, Some(error))
+        }
+    };
     // 认领即发一次事件（queued → running）。
     {
-        let Ok(root) = app_root(&app) else { return };
         let app = app.clone();
+        let root = root.clone();
         let job_id = job_id.clone();
         let _ = tauri::async_runtime::spawn_blocking(move || {
             let conn = open_library_connection(&root)?;
@@ -464,8 +484,6 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         finish_cancelled(&app, &state, &job_id).await;
         return;
     }
-
-    let Ok(root) = app_root(&app) else { return };
 
     // 解析云端 profile 一次（与 `generate_cloud_reading_outline` 的回退逻辑一致）：
     // 显式 `cloudProfileId` 优先，否则回退到 job 的 `active_llm_profile_id`；
@@ -597,7 +615,6 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     //
     // 「不打开工作区也能继续」正是靠这里：初始化由后台无条件完成，不依赖前端
     // 打开工作区触发按需迁移。
-    let mut freeze_error: Option<String> = None;
     let init_result = tauri::async_runtime::spawn_blocking({
         let root = root.clone();
         let job_id = job_id.clone();
@@ -637,19 +654,22 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         eprintln!("[processing] listening audio mirror skipped for {job_id}: {error}");
     }
 
-    // 批次基线：本地稿定稿时的编辑版本。**必须在草稿发布「可编辑」之前**冻结，
-    // 否则用户若在「发布」与「读 baseline」之间改稿，基线版本会被抬高，而后续
-    // 云端裁决若按当前稿重投影本地候选，就会把用户编辑误当成本地识别结果。
+    // 批次基线取自本次识别起飞之前，避免首稿播种后可编辑窗口里的保存被抬进基线。
     //
     // **读不到版本时不得退化成 0**：0 是一个合法的真实版本，用 0 顶替「读取失败」会
     // 让批次 id（由 job_id + 源文件哈希 + 版本三者派生）指向一个并不存在的批次，冻结出的
     // 快照与真实稿并不对应——这比「没有快照」更危险，因为它**看起来是可信的**。
     // 读取失败与冻结失败同等对待：不冻结、不裁决、不自动写入。
     //
-    // 版本与稿件**由冻结函数在同一次读取中取回**（`get_canonical_ds` 一次查询同时返回
-    // 两列），调用方无从"读新 DS 却贴旧版本"。
+    // 本地候选内容来自本次识别的 shadow；基线版本则在识别起飞前捕获。若用户期间保存，
+    // 冻结函数仍以 shadow 作本地挑战者，并用较早基线把那次保存纳入保护 journal。
     let base_edit_version = if freeze_error.is_none() {
-        match freeze_local_candidate_snapshot_for_attempt(&root, &job_id, recognition_attempt) {
+        match freeze_local_candidate_snapshot_for_attempt_with_baseline(
+            &root,
+            &job_id,
+            recognition_attempt,
+            Some(attempt_base_edit_version.expect("无基线错误时必须有任务起始版本")),
+        ) {
             Ok(version) => version,
             Err(error) => {
                 eprintln!(
@@ -1690,28 +1710,23 @@ fn summarize_cycle_report(report: Value) -> RecognitionCycleReport {
     }
 }
 
-// 原先这里有一个独立的 `current_edit_version_of`：先单独读版本，再由冻结函数单独读稿。
-// 那是「新稿 + 旧版本」的温床——两次读之间的一次保存就会让批次 id 指向内容不符的批次。
-// 现在版本与稿件由 `freeze_local_candidate_snapshot` 一趟查询同时取回，该函数已删除。
-// 与之配套的语义保留：读不到版本**不得**退化成 0（0 是合法版本），一律按「基线不可用」
-// 处理——上抛、不冻结、不裁决。
+// 任务调度器在识别起飞前冻结编辑版本；之后本地候选来自本次识别生成的 shadow 文件。
+// 下列直接调用入口仍可在未提供任务基线时，使用读取到的正式稿版本（供既有测试与本地周期复用）。
 
-/// 在草稿发布「可编辑」**之前**冻结本地候选快照（与 base_edit_version 同一时刻）。
+/// 冻结本地候选快照；生产调度器传入本次识别起飞前捕获的正式稿版本。
 ///
-/// 这是修复「先读 baseline 版本、再按当前稿重投影本地候选」的关键：把本地识别那一刻的
-/// 候选按 `batch_id = (job_id, source_sha256, base_edit_version)` 落盘。`run_recognition_cycle_core`
+/// 本地识别稿按 `batch_id = (job_id, source_sha256, base_edit_version)` 落盘。
+/// `run_recognition_cycle_core`
 /// 在裁决前会通过 `store::read_candidate` 读到这份快照，并因 `resolve_local_snapshot` 的
-/// 「同一批次复用已冻结候选」分支而采用它——于是稍后比对的是冻结时的本地结果，不是用户
-/// 编辑后的当前稿，「云端运行期间用户改了稿」才会被识别，迟到结果才不会覆盖用户修改。
+/// 「同一批次复用已冻结候选」分支而采用它——于是稍后比对的是本次识别的本地结果，而不是
+/// 用户编辑后的正式稿；迟到的云端结果也能把基线之后的保存识别为受保护目标。
 ///
 /// 初次处理的 `attempt = 0` 保持历史批次语义；用户重试传入新的 attempt，因而写入新的
 /// candidate/journal 身份，避免把旧的幂等记录误当成新识别结果。
 ///
-/// **版本来自这次读取本身**，不由调用方传入：`get_canonical_ds` 一趟查询同时取回
-/// 稿件与 `current_edit_version`，两者天生一致。若让调用方先单独读版本、函数再单独读稿，
-/// 两次读之间的一次保存就会产出「新稿 + 旧版本」的批次——批次 id 指向一个与快照内容
-/// 不对应的批次，比「没有快照」更危险，因为它看起来是可信的。返回冻结时采用的版本，
-/// 调用方必须用它（而不是任何先前读到的值）作为本次裁决的基线。
+/// 传入的基线只描述识别开始前的编辑版本；正式稿可能在此之后推进版本，这是要保护的
+/// 并发用户行为。若本地 shadow 缺失且正式稿已推进，不能把较新的正式稿伪装成本地快照，
+/// 必须失败并跳过自动裁决。
 ///
 /// **每一步失败都必须上抛，不得静默吞掉。** 调用方拿「冻结成功」当作「迟到结果不覆盖
 /// 用户修改」护栏的前提：一旦快照缺失，`resolve_local_snapshot`（`reconcile/engine.rs`）
@@ -1727,12 +1742,27 @@ pub(crate) fn freeze_local_candidate_snapshot_for_attempt(
     job_id: &str,
     attempt: i64,
 ) -> Result<i64, String> {
+    freeze_local_candidate_snapshot_for_attempt_with_baseline(root, job_id, attempt, None)
+}
+
+fn freeze_local_candidate_snapshot_for_attempt_with_baseline(
+    root: &Path,
+    job_id: &str,
+    attempt: i64,
+    attempt_base_edit_version: Option<i64>,
+) -> Result<i64, String> {
     let conn = open_library_connection(root)
         .map_err(|error| format!("open_library_connection_failed:{error}"))?;
-    let (canonical, base_edit_version) =
+    let (canonical, current_edit_version) =
         crate::library::repository::get_canonical_ds(&conn, job_id)
             .map_err(|error| format!("read_canonical_failed:{error}"))?
             .ok_or_else(|| format!("canonical_not_seeded:{job_id}"))?;
+    let base_edit_version = attempt_base_edit_version.unwrap_or(current_edit_version);
+    if base_edit_version > current_edit_version {
+        return Err(format!(
+            "recognition_baseline_ahead:baseline={base_edit_version}:current={current_edit_version}"
+        ));
+    }
     let source_sha256 = commands::source_sha256_for_job(root, job_id);
     let batch_id = commands::recognition_batch_id_for_attempt(
         job_id,
@@ -1747,7 +1777,12 @@ pub(crate) fn freeze_local_candidate_snapshot_for_attempt(
         &crate::util::job_dir(root, job_id)
             .join(crate::authoring_v2_commands::AUTHORING_V2_SHADOW_FILE),
     )?
-    .unwrap_or(canonical);
+    .or_else(|| (base_edit_version == current_edit_version).then_some(canonical))
+    .ok_or_else(|| {
+        format!(
+            "local_authoring_shadow_missing_after_edit:baseline={base_edit_version}:current={current_edit_version}"
+        )
+    })?;
     store::write_local_authoring_snapshot(
         root,
         &batch_id,
@@ -2439,6 +2474,102 @@ mod tests {
             answer,
             Some("frozen_answer"),
             "真函数落盘的快照必须优先于用户编辑后的当前稿"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn freeze_uses_attempt_start_version_when_user_edits_during_local_recognition() {
+        use crate::library::repository::{
+            open_library_connection, seed_canonical_ds, upsert_item_shell, UpsertItemInput,
+        };
+        use crate::reconcile::store;
+        use crate::util::{ensure_app_dirs, ensure_job_dirs, job_dir};
+        use uuid::Uuid;
+
+        let root = std::env::temp_dir().join(format!(
+            "pdf2test-freeze-race-{}",
+            Uuid::new_v4().simple()
+        ));
+        ensure_app_dirs(&root).unwrap();
+        let job_id = "freeze-race-job";
+        ensure_job_dirs(&job_dir(&root, job_id)).unwrap();
+        let conn = open_library_connection(&root).unwrap();
+        upsert_item_shell(
+            &conn,
+            &UpsertItemInput {
+                id: job_id,
+                modality: "reading",
+                title: "t",
+                status: "action_required",
+                source_asset_id: None,
+            },
+        )
+        .unwrap();
+        let authoring = |answer: &str| {
+            json!({
+                "schemaVersion": "IeltsAuthoringIRV2",
+                "answerSlots": { "q1": { "slotId":"q1", "questionNumber":1, "interaction":"text" } },
+                "answerKey": { "q1": { "kind":"text", "normalization":"ielts_default", "values":[answer] } },
+                "taskGroups": [{
+                    "taskId":"t1", "taskType":"short_answer",
+                    "displayRange":{"kind":"range", "start":1, "end":1},
+                    "responseGroups":[{"responseGroupId":"r1", "slotIds":["q1"]}]
+                }]
+            })
+        };
+        let initial = authoring("initial");
+        seed_canonical_ds(&conn, job_id, &initial.to_string(), "action_required").unwrap();
+
+        // The UI can save after the attempt baseline was captured but before the shadow snapshot
+        // is written. Its commit advances the canonical row; the batch must still use version 1.
+        let edited = authoring("human edit");
+        conn.execute(
+            "UPDATE library_items_v2 SET canonical_ds_json = ?2, current_edit_version = 2 WHERE id = ?1",
+            rusqlite::params![job_id, edited.to_string()],
+        )
+        .unwrap();
+        let local = authoring("local recognition");
+        std::fs::write(
+            job_dir(&root, job_id).join(crate::authoring_v2_commands::AUTHORING_V2_SHADOW_FILE),
+            serde_json::to_vec(&local).unwrap(),
+        )
+        .unwrap();
+        drop(conn);
+
+        let baseline = freeze_local_candidate_snapshot_for_attempt_with_baseline(
+            &root,
+            job_id,
+            0,
+            Some(1),
+        )
+        .expect("保存发生在基线之后时仍应按任务起始版本冻结本地挑战稿");
+        assert_eq!(baseline, 1);
+
+        let source_sha256 = commands::source_sha256_for_job(&root, job_id);
+        let batch_id = commands::recognition_batch_id_for_attempt(job_id, &source_sha256, 1, 0);
+        let snapshot = store::read_candidate(
+            &root,
+            job_id,
+            &batch_id,
+            store::LOCAL_CANDIDATE_FILE,
+        )
+        .expect("冻结快照必须按任务起始版本落盘");
+        assert_eq!(snapshot.base_edit_version, 1);
+        assert_eq!(snapshot.batch_id, batch_id);
+        assert_eq!(
+            snapshot
+                .slots
+                .iter()
+                .find(|slot| slot.slot_id == "q1")
+                .and_then(|slot| slot.answer.as_ref())
+                .and_then(|answer| answer.get("values"))
+                .and_then(Value::as_array)
+                .and_then(|values| values.first())
+                .and_then(Value::as_str),
+            Some("local recognition"),
+            "本地快照必须来自本次识别 shadow，而不是并发编辑后的正式稿"
         );
 
         let _ = std::fs::remove_dir_all(&root);
