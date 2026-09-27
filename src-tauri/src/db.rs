@@ -864,12 +864,8 @@ pub(crate) fn upsert_library_item(
     conn: &Connection,
     record: &LibraryItemRecord,
 ) -> CommandResult<String> {
-    // IMMEDIATE：这是「先读后写」事务（先查现有 item 与 MAX(revision_no)，再 INSERT）。
-    // WAL 下 DEFERRED 会在首条 SELECT 取读快照，随后写时若别的连接已提交，SQLite 直接返回
-    // SQLITE_BUSY_SNAPSHOT（文字为 "database is locked"），且**不受 busy_timeout 保护**
-    // （见 listening_audio/store.rs 同类修复）。这是 save_job/save_writing_job 的双写钩子，
-    // 导入/识别期与编辑保存并发正好制造这个条件——实测四段绑定只落三行、编辑保存变红。
-    // IMMEDIATE 在 BEGIN 即取写锁，争用退回成普通等待，由 busy_timeout=5000 吸收。
+    // 先读后写（先查 MAX(revision_no) 再 INSERT），用 IMMEDIATE 避免 WAL 下的
+    // SQLITE_BUSY_SNAPSHOT（不受 busy_timeout 保护）；详见 listening_audio/store.rs 的同类修复。
     let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
         .map_err(|e| format!("lib_item_begin:{}", e))?;
     // 查现有 item 与最大 revision_no。
@@ -948,35 +944,40 @@ pub(crate) fn restore_library_item(conn: &Connection, id: &str) -> CommandResult
     Ok(affected > 0)
 }
 
-/// 永久删除：把某个题库条目（item id == job id）在**所有表**里的行删干净（C2 §1）。
-///
-/// 做法：遍历 `sqlite_master` 里的全部用户表，凡带已知「条目/任务 id」列
-/// （library_item_id / item_id / linked_library_item_id / created_from_job_id /
-/// ingest_job_id，以及少数以 `id` 本身为条目 id 的主表）的，就按该 id 删行。
-/// 全程在一个 IMMEDIATE 事务里，并 `defer_foreign_keys=ON` 把外键检查推迟到 commit——
-/// 这样删除顺序无所谓，只要 commit 时不再有悬空引用即可：既不必手工拓扑排序，也不会
-/// 因将来新增表/改动引用而漏删或报错（枚举式清理天然覆盖后续新表）。
-///
-/// **不动 `source_assets`**：它的行可能被多个条目共享（`library_items.source_asset_id`
-/// 指向它），按条目 id 删会误伤；原文件由 job 目录清理覆盖。
-///
-/// 返回删除的总行数（供测试断言与日志）。
-pub(crate) fn purge_all_rows_for_item(conn: &Connection, id: &str) -> CommandResult<u64> {
-    const ID_COLUMNS: &[&str] = &[
-        "library_item_id",
-        "item_id",
-        "linked_library_item_id",
-        "created_from_job_id",
-        "ingest_job_id",
-    ];
-    const ID_PK_TABLES: &[&str] = &[
-        "library_items_v2",
-        "processing_jobs_v2",
-        "library_items",
-        "ingest_jobs",
-        "exams",
-    ];
+/// 值 = 条目/任务 id 的列名（`purge_all_rows_for_item` 按这些列删行）。
+/// 新增引用条目的表/列时必须同步更新，否则会漏删——由 `purge_column_coverage_is_exhaustive` 守卫。
+pub(crate) const PURGE_ID_COLUMNS: &[&str] = &[
+    "library_item_id",
+    "item_id",
+    "linked_library_item_id",
+    "created_from_job_id",
+    "ingest_job_id",
+];
 
+/// 这些表的主键 `id` 本身就是条目/任务 id。
+pub(crate) const PURGE_ID_PK_TABLES: &[&str] = &[
+    "library_items_v2",
+    "processing_jobs_v2",
+    "library_items",
+    "ingest_jobs",
+    "exams",
+];
+
+/// 永久删除：把某个题库条目（item id == job id）在所有表里的行删干净。
+///
+/// 遍历 `sqlite_master` 的用户表，凡带 `ID_COLUMNS` 里的列（library_item_id / item_id /
+/// linked_library_item_id / created_from_job_id / ingest_job_id），或本身以 `id` 为条目 id 的
+/// `ID_PK_TABLES`，就按该 id 删行。全程一个 IMMEDIATE 事务 + `defer_foreign_keys=ON`，把外键
+/// 检查推迟到 commit，删除顺序无所谓、无需拓扑排序。
+///
+/// 只认下面写死的列名/表名：将来新表若用别的列名（如 job_id）引用条目会被静默漏删，
+/// 由 `purge_column_coverage_is_exhaustive` 守卫——新增此类列不在清单里即测试失败。
+///
+/// 不动 `source_assets`：其行可能被多个条目共享（`library_items.source_asset_id` 指向它），
+/// 按条目 id 删会误伤；原文件由 job 目录清理覆盖。
+///
+/// 返回删除的总行数。
+pub(crate) fn purge_all_rows_for_item(conn: &Connection, id: &str) -> CommandResult<u64> {
     let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
         .map_err(|e| format!("purge_begin:{}", e))?;
     tx.execute_batch("PRAGMA defer_foreign_keys=ON;")
@@ -1012,8 +1013,8 @@ pub(crate) fn purge_all_rows_for_item(conn: &Connection, id: &str) -> CommandRes
             out
         };
         for column in &columns {
-            let matches = ID_COLUMNS.contains(&column.as_str())
-                || (column == "id" && ID_PK_TABLES.contains(&table.as_str()));
+            let matches = PURGE_ID_COLUMNS.contains(&column.as_str())
+                || (column == "id" && PURGE_ID_PK_TABLES.contains(&table.as_str()));
             if matches {
                 let sql = format!("DELETE FROM \"{table}\" WHERE \"{column}\" = ?1");
                 removed += tx
@@ -1149,6 +1150,58 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         ensure_schema(&conn).unwrap();
         conn
+    }
+
+    /// 守卫 `purge_all_rows_for_item` 的覆盖面：全 schema 里凡是 id 形态的列
+    /// （`*item_id` / `*job_id`）都必须在 `PURGE_ID_COLUMNS` 里，或在写明理由的豁免清单里。
+    /// 否则将来新增引用条目的表/列会被永久删除静默漏删、留下孤儿——这里让它在加表时就变红。
+    #[test]
+    fn purge_column_coverage_is_exhaustive() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+        crate::library::schema::ensure_v2_schema(&conn).unwrap();
+
+        // 不按自身删除的 id 形态列：删除已由同表其它键或「该行整体按 id 删」覆盖。
+        const EXEMPT: &[(&str, &str)] = &[
+            // 同表已有 library_item_id（按它删），job_id 只是冗余记录。
+            ("recognition_batches_v1", "job_id"),
+            // library_items 整行按主键 id 删；这是指向 ingest 任务的 FK，不单独定位行。
+            ("library_items", "linked_ingest_job_id"),
+        ];
+
+        let tables: Vec<String> = {
+            let mut stmt = conn
+                .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+                .unwrap();
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0)).unwrap();
+            rows.map(Result::unwrap).collect()
+        };
+
+        let mut uncovered = Vec::new();
+        for table in &tables {
+            let mut stmt = conn
+                .prepare(&format!("PRAGMA table_info(\"{table}\")"))
+                .unwrap();
+            let cols: Vec<String> = stmt
+                .query_map([], |r| r.get::<_, String>(1))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
+            for col in &cols {
+                let id_like = col.ends_with("item_id") || col.ends_with("job_id");
+                if !id_like
+                    || PURGE_ID_COLUMNS.contains(&col.as_str())
+                    || EXEMPT.contains(&(table.as_str(), col.as_str()))
+                {
+                    continue;
+                }
+                uncovered.push(format!("{table}.{col}"));
+            }
+        }
+        assert!(
+            uncovered.is_empty(),
+            "这些 id 列既不在 PURGE_ID_COLUMNS 也不在豁免清单，永久删除会漏删：{uncovered:?}"
+        );
     }
 
     fn sample_record(id: &str, subject: &str, status: &str) -> ExamRecord {
