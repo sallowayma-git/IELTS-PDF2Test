@@ -18,6 +18,7 @@ import type { AuthoringPatchV2, IeltsAuthoringIRV2 } from "../../types";
 
 const SAVE_DEBOUNCE_MS = 450;
 const RECOVERY_KEY_PREFIX = "ielts-author-studio.workspace-recovery.v1:";
+const HISTORY_LIMIT = 10;
 export type SaveState = "idle" | "saving" | "saved" | "failed" | "conflict";
 
 /** 文案分层（计划 §9.10）：机器码不进入正文，普通用户只看到可操作的人话。
@@ -28,6 +29,13 @@ function describeEditError(error: unknown): string {
 }
 
 interface HistoryEntry { patch: AuthoringPatchV2; inverse: AuthoringPatchV2 }
+
+/** 撤销/重做栈只保留最近 HISTORY_LIMIT 步，超出丢最早：无限历史会让长会话内存无界，
+ *  且产品上撤销就限定这么多步。 */
+function pushHistory(stack: HistoryEntry[], entry: HistoryEntry): void {
+  stack.push(entry);
+  if (stack.length > HISTORY_LIMIT) stack.shift();
+}
 interface SaveBatch {
   itemId: string;
   baseVersion: number;
@@ -428,7 +436,7 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
       draftRef.current = next;
       setDraft(next);
       if (inverse) {
-        undoStack.current.push({ patch, inverse });
+        pushHistory(undoStack.current, { patch, inverse });
         redoStack.current = [];
       }
       pendingRef.current.push(patch);
@@ -453,14 +461,14 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
     const entry = undoStack.current.pop();
     if (!entry) return;
     enqueue(entry.inverse, false);
-    redoStack.current.push(entry);
+    pushHistory(redoStack.current, entry);
     setHistoryDepth({ undo: undoStack.current.length, redo: redoStack.current.length });
   }, [enqueue]);
   const redo = useCallback(() => {
     const entry = redoStack.current.pop();
     if (!entry) return;
     enqueue(entry.patch, false);
-    undoStack.current.push(entry);
+    pushHistory(undoStack.current, entry);
     setHistoryDepth({ undo: undoStack.current.length, redo: redoStack.current.length });
   }, [enqueue]);
 
