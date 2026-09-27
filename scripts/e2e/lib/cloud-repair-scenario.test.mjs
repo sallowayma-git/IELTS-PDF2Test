@@ -110,6 +110,26 @@ describe("cloud-repair 场景装配", () => {
     });
   });
 
+  it("答案主张沿用恢复出的选项库答案类型", () => {
+    const draft = draftWith(annotated.localDraftContains);
+    draft.taskGroups[0].taskType = "summary_completion";
+    draft.taskGroups[0].responseGroups[0].slotIds = ["q27"];
+    draft.taskGroups[0].optionBank = {
+      optionBankId: "group-1-options",
+      options: [{ label: "A" }, { label: "B" }],
+    };
+    draft.answerSlots = { q27: {}, q40: {} };
+    draft.answerKey = { q40: { kind: "unresolved" } };
+
+    const derived = deriveRepairScenario(draft, golden);
+
+    expect(derived.ok).toBe(true);
+    expect(derived.claim).toMatchObject({ slotId: "q27", answerKind: "option" });
+    expect(derived.candidate.answerKey.q27).toMatchObject({ kind: "option", labels: ["A"] });
+    expect(derived.plan.answerClaim).not.toHaveProperty("labels");
+    expect(derived.plan.answerClaim).not.toHaveProperty("values");
+  });
+
   it("本地识别没有出错时：如实说不适用，**不注入**错误", () => {
     const draft = draftWith("The writer recommends that to be effective, social history must");
     const derived = deriveRepairScenario(draft, golden);

@@ -222,11 +222,21 @@ export function deriveRepairScenario(draft, golden) {
       return !answer || answer?.kind === 'unresolved';
     });
     if (!slotId) continue;
+    const optionLabels = (group.optionBank?.options ?? [])
+      .map((option) => option?.label)
+      .filter((label) => typeof label === 'string' && label.trim().length > 0);
     const words = (textOfNodes(group.stimulus ?? group.instructions ?? []) ?? '')
       .split(/\s+/u)
       .map((word) => word.toLowerCase())
       .filter((word) => /^[a-z]{5,}$/u.test(word));
-    claimWordCandidates.push({ taskId: group.taskId, slotId, questionNumber: Number((slotId.match(/\d+/u) ?? [])[0] ?? 0), words });
+    claimWordCandidates.push({
+      taskId: group.taskId,
+      slotId,
+      questionNumber: Number((slotId.match(/\d+/u) ?? [])[0] ?? 0),
+      answerKind: optionLabels.length > 0 ? 'option' : 'text',
+      optionLabels,
+      words,
+    });
     break;
   }
   // 主张组（至多一个）在这里定位；主张**值**要等剧本成型之后才选（见第 6 节）——
@@ -309,19 +319,38 @@ export function deriveRepairScenario(draft, golden) {
   let claim = null;
   if (claimTarget) {
     const serializedPlan = JSON.stringify(plan);
-    const claimWord = (claimTarget.words ?? []).find((word) => !serializedPlan.includes(word)) ?? null;
-    if (!claimWord) {
-      return {
-        ok: false,
-        reason: '主张组的文字里选不出一个不出现在剧本里的词，答案主张构造不了',
-        target: { taskId: claimTarget.taskId, slotId: claimTarget.slotId },
+    let claimAnswerValue;
+    if (claimTarget.answerKind === 'option') {
+      const optionLabel = claimTarget.optionLabels.find((label) =>
+        !serializedPlan.includes(JSON.stringify(label)),
+      ) ?? null;
+      if (!optionLabel) {
+        return {
+          ok: false,
+          reason: '主张组的选项标号无法与剧本隔离，答案主张构造不了',
+          target: { taskId: claimTarget.taskId, slotId: claimTarget.slotId },
+        };
+      }
+      claimAnswerValue = { kind: 'option', labels: [optionLabel], assignment: 'per_slot' };
+    } else {
+      const claimWord = (claimTarget.words ?? []).find((word) => !serializedPlan.includes(word)) ?? null;
+      if (!claimWord) {
+        return {
+          ok: false,
+          reason: '主张组的文字里选不出一个不出现在剧本里的词，答案主张构造不了',
+          target: { taskId: claimTarget.taskId, slotId: claimTarget.slotId },
+        };
+      }
+      claimAnswerValue = {
+        kind: 'text',
+        values: [claimWord],
+        normalization: 'ielts_default',
       };
     }
-    candidate.answerKey[claimTarget.slotId] = {
-      kind: 'text',
-      values: [claimWord],
-      normalization: 'ielts_default',
-    };
+    candidate.answerKey[claimTarget.slotId] = claimAnswerValue;
+    const answerValueForLeakCheck = claimTarget.answerKind === 'option'
+      ? JSON.stringify(claimAnswerValue.labels[0])
+      : claimAnswerValue.values[0];
     plan.answerClaim = {
       slotId: claimTarget.slotId,
       questionNumber: claimTarget.questionNumber,
@@ -334,7 +363,7 @@ export function deriveRepairScenario(draft, golden) {
         + '云端不能编造答案。请对照原文件或自行填写。',
       finishNote: '受控服务：答案主张无法在原文件里核实，已如实交还用户',
     };
-    if (JSON.stringify(plan).includes(claimWord)) {
+    if (JSON.stringify(plan).includes(answerValueForLeakCheck)) {
       return {
         ok: false,
         reason: '剧本里出现了答案主张的值：受控服务就不用抓取核实了，场景退回自证',
@@ -345,6 +374,7 @@ export function deriveRepairScenario(draft, golden) {
       taskId: claimTarget.taskId,
       slotId: claimTarget.slotId,
       questionNumber: claimTarget.questionNumber,
+      answerKind: claimTarget.answerKind,
       searchPages: plan.answerClaim.searchPages,
     };
   }

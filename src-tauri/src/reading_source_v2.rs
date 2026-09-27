@@ -1,10 +1,12 @@
 use crate::schema::common::AssetDescriptorV2;
-use crate::schema::content_doc_v2::ContentNodeV2;
+use crate::schema::content_doc_v2::{
+    BaseContentNodeV2, ContentNodeV2, ProvenanceStatusV2, TextNodeV2,
+};
 use crate::schema::ielts_authoring_v2::{
     AnswerAssignmentV2, AnswerSlotParticipationV2, AnswerSlotV2, AnswerValueV2, AssignmentV2,
     DuplicateSelectionPolicyV2, IeltsAuthoringIRV2, InteractionV2, OptionBankScopeV2,
     PassageCategoryV2, ResponseGroupKindV2, ResponseGroupV2, ResponseScoringPolicyV2,
-    RevisionSourceV2, TaskGroupV2,
+    RevisionSourceV2, TaskGroupV2, TaskTypeV2,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -125,6 +127,7 @@ pub(crate) fn compile_reading_source_v2(
             source_revision_kind: source.audit.source.clone(),
         },
     };
+    normalize_runtime_fixed_truth_option_content(&mut runtime.task_groups);
     // The student runtime submits `hotspotId` verbatim and the server validates
     // it against the slot's accepted answer values. Producers may only bind
     // regions that already carry a submittable value, so the compiler rewrites
@@ -136,6 +139,141 @@ pub(crate) fn compile_reading_source_v2(
         Ok(runtime)
     } else {
         Err(issues)
+    }
+}
+
+fn text_from_content_nodes(nodes: &[ContentNodeV2]) -> String {
+    fn collect_text(value: &serde_json::Value, output: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    collect_text(item, output);
+                }
+            }
+            serde_json::Value::Object(object) => {
+                if let Some(text) = object.get("text").and_then(serde_json::Value::as_str) {
+                    let text = text.trim();
+                    if !text.is_empty() {
+                        output.push(text.to_string());
+                    }
+                }
+                for (key, child) in object {
+                    if key != "text" {
+                        collect_text(child, output);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let Ok(value) = serde_json::to_value(nodes) else {
+        return String::new();
+    };
+    let mut text = Vec::new();
+    collect_text(&value, &mut text);
+    text.join(" ")
+}
+
+fn find_label_if_clause(text: &str, label: &str, search_from: usize) -> Option<(usize, usize)> {
+    if label.is_empty() || label.len() > text.len() || !text.is_char_boundary(search_from) {
+        return None;
+    }
+    let last_start = text.len() - label.len();
+    if search_from > last_start {
+        return None;
+    }
+    for start in search_from..=last_start {
+        let end = start + label.len();
+        if !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+            continue;
+        }
+        if !text[start..end].eq_ignore_ascii_case(label) {
+            continue;
+        }
+        let before = text[..start].chars().next_back();
+        let after = text[end..].chars().next();
+        if before.is_some_and(|ch| ch.is_ascii_alphanumeric())
+            || after.is_some_and(|ch| ch.is_ascii_alphanumeric())
+        {
+            continue;
+        }
+
+        let suffix = &text[end..];
+        let clause = suffix.trim_start_matches(|ch: char| {
+            ch.is_whitespace() || matches!(ch, ':' | '-' | '\u{2013}' | '\u{2014}')
+        });
+        if !clause
+            .get(..2)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("if"))
+            || clause[2..]
+                .chars()
+                .next()
+                .is_some_and(|ch| !ch.is_whitespace())
+        {
+            continue;
+        }
+        let skipped = suffix.len() - clause.len();
+        let after_if = end + skipped + 2;
+        let description = &text[after_if..];
+        let description_start = after_if + (description.len() - description.trim_start().len());
+        return Some((start, description_start));
+    }
+    None
+}
+
+fn fixed_option_description(instructions: &str, label: &str, labels: &[String]) -> Option<String> {
+    let (_, description_start) = find_label_if_clause(instructions, label, 0)?;
+    let end = labels
+        .iter()
+        .filter(|other| !other.eq_ignore_ascii_case(label))
+        .filter_map(|other| {
+            find_label_if_clause(instructions, other, description_start).map(|(start, _)| start)
+        })
+        .min()
+        .unwrap_or(instructions.len());
+    let description = instructions.get(description_start..end)?.trim();
+    (!description.is_empty()).then(|| description.to_string())
+}
+
+/// The authoring IR intentionally leaves fixed TRUE/FALSE/YES/NO option content empty: its
+/// labels carry the answer values and source definitions remain in the instructions. The
+/// deployed student loader also renders `option.content`, so this runtime-only projection
+/// carries each source-backed definition there (or the literal label when the source has no
+/// definition) without changing the canonical manuscript or answer-key semantics.
+fn normalize_runtime_fixed_truth_option_content(task_groups: &mut [TaskGroupV2]) {
+    for group in task_groups {
+        if !matches!(
+            &group.task_type,
+            TaskTypeV2::TrueFalseNotGiven | TaskTypeV2::YesNoNotGiven
+        ) {
+            continue;
+        }
+        let Some(bank) = group.option_bank.as_mut() else {
+            continue;
+        };
+        let instructions = text_from_content_nodes(&group.instructions);
+        let labels = bank
+            .options
+            .iter()
+            .map(|option| option.label.clone())
+            .collect::<Vec<_>>();
+        for option in &mut bank.options {
+            if !text_from_content_nodes(&option.content).trim().is_empty() {
+                continue;
+            }
+            let content_text = fixed_option_description(&instructions, &option.label, &labels)
+                .unwrap_or_else(|| option.label.clone());
+            option.content.push(ContentNodeV2::Text(TextNodeV2 {
+                base: BaseContentNodeV2 {
+                    id: format!("{}-runtime-content", option.option_id),
+                    source_anchors: option.source_anchors.clone(),
+                    provenance_status: ProvenanceStatusV2::Source,
+                },
+                text: content_text,
+                marks: None,
+            }));
+        }
     }
 }
 
@@ -972,7 +1110,7 @@ pub(crate) fn compiler_issue(code: &str, message: &str, target_id: &str) -> Comp
 mod tests {
     use super::*;
     use crate::schema::ielts_authoring_v2::{CardinalityV2, IeltsAuthoringIRV2};
-    use serde_json::Value;
+    use serde_json::{json, Value};
     use std::fs;
     use std::path::PathBuf;
 
@@ -1035,6 +1173,65 @@ mod tests {
             .answer_slots
             .values()
             .all(|slot| !slot.source_anchors.is_empty()));
+    }
+
+    #[test]
+    fn runtime_fixed_truth_options_use_source_definitions_as_renderable_content() {
+        let mut source = serde_json::to_value(fixture()).unwrap();
+        let instruction = "Questions 14-15 YES if the statement agrees with the views of the writer NO if the statement contradicts the views of the writer NOT GIVEN if it is impossible to say what the writer thinks about this";
+        source["taskGroups"][0]["taskType"] = json!("yes_no_not_given");
+        source["taskGroups"][0]["instructionSignature"]["taskType"] = json!("yes_no_not_given");
+        source["taskGroups"][0]["instructionSignature"]["normalizedText"] = json!(instruction);
+        source["taskGroups"][0]["instructionSignature"]["answerAssignment"] = json!("per_slot");
+        source["taskGroups"][0]["instructions"] = json!([{
+            "type":"text","id":"ynng-instruction","sourceAnchors":[],
+            "provenanceStatus":"source","text":instruction
+        }]);
+        source["taskGroups"][0]["optionBank"]["options"] = json!([
+            {"optionId":"ynng-yes","label":"YES","content":[],"sourceAnchors":[]},
+            {"optionId":"ynng-no","label":"NO","content":[],"sourceAnchors":[]},
+            {"optionId":"ynng-not-given","label":"NOT GIVEN","content":[],"sourceAnchors":[]}
+        ]);
+        let mut response = source["taskGroups"][0]["responseGroups"][0].clone();
+        response["kind"] = json!("choice");
+        response["assignment"] = json!("per_slot");
+        response["cardinality"] = json!({"min":1,"max":1,"exact":1});
+        response["scoringPolicy"] = json!("per_slot_binary");
+        response["slotIds"] = json!(["q14"]);
+        response["responseGroupId"] = json!("ynng-q14");
+        let mut second_response = response.clone();
+        second_response["slotIds"] = json!(["q15"]);
+        second_response["responseGroupId"] = json!("ynng-q15");
+        source["taskGroups"][0]["responseGroups"] = json!([response, second_response]);
+        for slot_id in ["q14", "q15"] {
+            source["answerSlots"][slot_id]["interaction"] = json!("select");
+            source["answerSlots"][slot_id]["constraints"]["acceptedOptionLabels"] =
+                json!(["YES", "NO", "NOT GIVEN"]);
+        }
+        source["answerKey"]["q14"] =
+            json!({"kind":"option","labels":["YES"],"assignment":"per_slot"});
+        source["answerKey"]["q15"] =
+            json!({"kind":"option","labels":["NO"],"assignment":"per_slot"});
+
+        let authoring = serde_json::from_value(source).unwrap();
+        let runtime = compile_reading_source_v2(&authoring).unwrap();
+        let options = &runtime.task_groups[0].option_bank.as_ref().unwrap().options;
+        let rendered_text = options
+            .iter()
+            .map(|option| match &option.content[0] {
+                ContentNodeV2::Text(node) => node.text.as_str(),
+                _ => panic!("fixed runtime option content must be a text node"),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            rendered_text,
+            [
+                "the statement agrees with the views of the writer",
+                "the statement contradicts the views of the writer",
+                "it is impossible to say what the writer thinks about this"
+            ]
+        );
     }
 
     #[test]

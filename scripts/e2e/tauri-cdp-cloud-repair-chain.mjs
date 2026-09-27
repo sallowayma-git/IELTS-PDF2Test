@@ -44,6 +44,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { isDeepStrictEqual } from "node:util";
 import {
   CDP_CHANNEL_LABEL,
   CDP_CHANNEL_NOTE,
@@ -1294,7 +1295,7 @@ async function main() {
         if (!edited?.ok) throw new Error(`云端候选仍在运行时保存用户答案失败：${edited?.error ?? "unknown"}`);
         const afterUserEdit = await readWorkspace();
         const observed = answerOf(afterUserEdit?.ds, humanProbe.slotId);
-        if (JSON.stringify(observed) !== JSON.stringify(humanProbe.userValue)) {
+        if (!isDeepStrictEqual(observed, humanProbe.userValue)) {
           throw new Error(`用户答案未落库：${JSON.stringify(observed)}`);
         }
         humanProbeApplied = true;
@@ -1445,14 +1446,16 @@ async function main() {
   }
   if (
     report.scenario.humanProtection
-    && JSON.stringify(humanPreservedValue) !== JSON.stringify(report.scenario.humanProtection.expectedUserValue)
+    && !isDeepStrictEqual(humanPreservedValue, report.scenario.humanProtection.expectedUserValue)
   ) {
     humanProtectionProblems.push(`用户答案没有保留：${JSON.stringify(humanPreservedValue)}`);
   }
   if (
     report.scenario.humanProtection
-    && JSON.stringify(report.scenario.humanProtection.cloudCandidateValue)
-      === JSON.stringify(report.scenario.humanProtection.expectedUserValue)
+    && isDeepStrictEqual(
+      report.scenario.humanProtection.cloudCandidateValue,
+      report.scenario.humanProtection.expectedUserValue,
+    )
   ) {
     humanProtectionProblems.push("测试前提错误：云端候选值与用户值相同，无法区分是否保留");
   }
@@ -1983,7 +1986,12 @@ async function main() {
       for (const slotId of response.slotIds ?? []) {
         const answer = answerOf(draft, slotId);
         if (answer?.kind === "unresolved") {
-          humanSlot = { slotId, interaction: draft.answerSlots?.[slotId]?.interaction ?? "text" };
+          humanSlot = {
+            slotId,
+            interaction: draft.answerSlots?.[slotId]?.interaction ?? "text",
+            options: group.optionBank?.options ?? response.options ?? [],
+            assignment: response.assignment ?? "per_slot",
+          };
           break;
         }
       }
@@ -1992,8 +2000,12 @@ async function main() {
     if (humanSlot) break;
   }
   if (humanSlot) {
-    const value = humanSlot.interaction === "radio" || humanSlot.interaction === "checkbox"
-      ? { kind: "option", labels: ["YES"] }
+    const value = ["radio", "checkbox", "select"].includes(humanSlot.interaction)
+      ? {
+          kind: "option",
+          labels: [humanSlot.options[1]?.label ?? humanSlot.options[0]?.label ?? "A"],
+          assignment: humanSlot.assignment,
+        }
       : { kind: "text", values: ["controlled-user-answer"] };
     const appliedHuman = await call("apply_editor_commands", {
       itemId,
@@ -2004,13 +2016,13 @@ async function main() {
     await sleep(1200);
     const afterHuman = await readWorkspace();
     const stored = answerOf(afterHuman?.ds, humanSlot.slotId);
-    if (JSON.stringify(stored) !== JSON.stringify(value)) {
+    if (!isDeepStrictEqual(stored, value)) {
       humanProblems.push(`用户补的答案没有落库：${JSON.stringify(stored)}`);
     }
     await reopenWorkspace();
     const reopened = await readWorkspace();
     const afterReopen = answerOf(reopened?.ds, humanSlot.slotId);
-    if (JSON.stringify(afterReopen) !== JSON.stringify(value)) {
+    if (!isDeepStrictEqual(afterReopen, value)) {
       humanProblems.push("重开之后用户的答案丢了");
     }
     const reopenedPrompt = promptTextOf(reopened?.ds, derived.fix.responseGroupId);
@@ -2058,7 +2070,7 @@ async function main() {
           const answer = answerOf(workspaceNow?.ds, slotId);
           if (answer?.kind !== "unresolved") continue;
           const interaction = workspaceNow?.ds?.answerSlots?.[slotId]?.interaction ?? "text";
-          if (interaction === "radio" || interaction === "checkbox") {
+          if (["radio", "checkbox", "select"].includes(interaction)) {
             const bank = group.optionBank?.options ?? response.options ?? [];
             const label = bank[0]?.label ?? "A";
             commands.push({
