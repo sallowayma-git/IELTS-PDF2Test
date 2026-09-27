@@ -168,16 +168,16 @@ fn to_library_item_status(exam_status: &str) -> &'static str {
 }
 
 /// 把 ExamRecord 转成 LibraryItemRecord 并写入 library_items + revisions。
-/// 尊重软删除：若该 item 已被软删除（deleted_at 非空），跳过本次写入，避免「复活」。
+/// 尊重软删除：识别完成回写时若该条目已被软删（v1 或 v2），新建/更新的 v1 行随后继承删除态，
+/// 不让「exams 行在、library_items 无删除标记」把已删条目复活回活动列表。
 fn upsert_library_item_from_exam(
     root: &Path,
     exam: &ExamRecord,
     schema_version: &str,
 ) -> CommandResult<()> {
-    let conn = open_connection(root)?;
-    if is_library_item_soft_deleted(&conn, &exam.id) {
-        return Ok(()); // 已软删除，不复活
-    }
+    // 需读 v2 判删除态，用 library 连接（含 v1+v2）。
+    let conn = crate::library::repository::open_library_connection(root)?;
+    let soft_deleted = is_library_item_soft_deleted(&conn, &exam.id);
     let content_type = if exam.subject == "writing" {
         "writing_task"
     } else {
@@ -203,6 +203,10 @@ fn upsert_library_item_from_exam(
         change_reason: Some("ingest_save".to_string()),
     };
     upsert_library_item(&conn, &item)?;
+    if soft_deleted {
+        // 让刚写入的 v1 行继承删除态（并补 v2），识别完成不复活已删条目。
+        soft_delete_library_item(&conn, &exam.id)?;
+    }
     Ok(())
 }
 
@@ -252,18 +256,16 @@ pub(crate) fn update_library_exam_meta_core(
 }
 
 pub(crate) fn delete_library_exam_core(root: &Path, id: &str) -> CommandResult<bool> {
-    let conn = open_connection(root)?;
-    // 删除入口统一落到 library_items 软删除；若历史数据尚未建 item，则先从旧 exams 回填一份。
-    // 旧 exams 行保留，活动查询通过 deleted_at 过滤，这样恢复只需清 deleted_at 即可回到活动列表。
-    if !ensure_library_item_for_exam(&conn, id)? {
-        return Ok(false);
-    }
-    let soft_deleted = soft_delete_library_item(&conn, id)?;
-    Ok(soft_deleted)
+    // 用 library 连接（含 v1+v2）：删除态以 library_items_v2 为准，识别中条目只有 v2 外壳、无 v1 行。
+    let conn = crate::library::repository::open_library_connection(root)?;
+    // 能从旧 exams 回填 v1 就顺带回填；回填不了也不早退——soft_delete 会标记 v2（及存在的 v1），
+    // 识别中的 v2-only 条目照样删得掉（旧代码在此 return Ok(false) 造成「识别中删除空操作」）。
+    ensure_library_item_for_exam(&conn, id)?;
+    soft_delete_library_item(&conn, id)
 }
 
 pub(crate) fn restore_library_exam_core(root: &Path, id: &str) -> CommandResult<bool> {
-    let conn = open_connection(root)?;
+    let conn = crate::library::repository::open_library_connection(root)?;
     let restored = restore_library_item(&conn, id)?;
     if restored {
         let _ = restore_exam_from_library_item(&conn, id)?;
@@ -342,16 +344,17 @@ pub(crate) fn empty_recycle_bin_core(root: &Path) -> CommandResult<(usize, Vec<(
     Ok((deleted, skipped))
 }
 
-/// 检查某 library_item 是否已被软删除（供双写钩子判断是否跳过复活）。
+/// 是否已软删除：v1 或 v2 任一表标记已删都算（识别中条目只有 v2 外壳）。永久删除门禁与
+/// 识别完成回写守卫共用，确保任何一张表都不把已删条目当活动。
 fn is_library_item_soft_deleted(conn: &Connection, id: &str) -> bool {
-    conn.query_row(
-        "SELECT 1 FROM library_items WHERE id=?1 AND deleted_at IS NOT NULL",
-        rusqlite::params![id],
-        |_| Ok(()),
-    )
-    .optional()
-    .map(|o| o.is_some())
-    .unwrap_or(false)
+    let marked = |sql: &str| {
+        conn.query_row(sql, rusqlite::params![id], |_| Ok(()))
+            .optional()
+            .map(|o: Option<()>| o.is_some())
+            .unwrap_or(false)
+    };
+    marked("SELECT 1 FROM library_items_v2 WHERE id=?1 AND deleted_at IS NOT NULL")
+        || marked("SELECT 1 FROM library_items WHERE id=?1 AND deleted_at IS NOT NULL")
 }
 
 /// 把题库元数据编辑回写对应的 JSON 源文件（jobs/<id>/job.json 或 writing-jobs/<id>/writing-job.json）。
@@ -891,6 +894,94 @@ mod tests {
         assert!(skipped.is_empty(), "不应有跳过项：{skipped:?}");
         assert!(list_trashed_exams_core(&root).unwrap().is_empty());
         assert!(!crate::util::job_dir(&root, "import-test-1").exists());
+        cleanup(&root);
+    }
+
+    // 识别进行中删除：此刻条目只有 v2 外壳（无 v1 library_items/exams）。删除必须生效，
+    // 且识别完成回写 v1 后不得复活——v1、v2 两个活动查询都不含它，回收站恰好一条。
+    #[test]
+    fn delete_during_recognition_hides_item_and_survives_recognition_completion() {
+        use crate::library::repository::{open_library_connection, upsert_item_shell, UpsertItemInput};
+        let root = make_reading_appdata(); // 仅磁盘 job 文件，DB 为空（未 migrate）
+        {
+            let conn = open_library_connection(&root).unwrap();
+            upsert_item_shell(
+                &conn,
+                &UpsertItemInput {
+                    id: "import-test-1",
+                    modality: "reading",
+                    title: "Recognizing",
+                    status: "processing",
+                    source_asset_id: None,
+                },
+            )
+            .unwrap();
+            crate::processing::queue::enqueue(
+                &conn,
+                "import-test-1",
+                "import-test-1",
+                "asset-1",
+                &serde_json::Value::Null,
+            )
+            .unwrap();
+        }
+
+        let v2_ids = |root: &std::path::Path| -> Vec<String> {
+            crate::library::commands::list_library_items_core(root, false)
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|v| v.get("id").and_then(|x| x.as_str()).map(String::from))
+                .collect()
+        };
+
+        assert!(
+            delete_library_exam_core(&root, "import-test-1").unwrap(),
+            "识别中删除应生效（v2 外壳条目），实得 false"
+        );
+        assert!(
+            !v2_ids(&root).contains(&"import-test-1".to_string()),
+            "删除后 v2 活动列表不应含该条：{:?}",
+            v2_ids(&root)
+        );
+        assert!(
+            !list_library_exams_core(&root, None)
+                .unwrap()
+                .iter()
+                .any(|s| s.id == "import-test-1"),
+            "删除后 v1 活动列表不应含该条"
+        );
+        assert_eq!(
+            list_trashed_exams_core(&root).unwrap().len(),
+            1,
+            "删除后回收站应恰好一条"
+        );
+
+        // 模拟识别完成：worker 经双写钩子把 exam 写入 v1（save_job → upsert_reading_job）。
+        let job: ImportJob = crate::util::read_json(
+            &crate::util::job_dir(&root, "import-test-1").join("job.json"),
+        )
+        .unwrap();
+        crate::job_store::save_job(&root, &job).unwrap();
+
+        assert!(
+            !v2_ids(&root).contains(&"import-test-1".to_string()),
+            "识别完成不得把条目复活回 v2 活动列表：{:?}",
+            v2_ids(&root)
+        );
+        assert!(
+            !list_library_exams_core(&root, None)
+                .unwrap()
+                .iter()
+                .any(|s| s.id == "import-test-1"),
+            "识别完成不得把条目复活回 v1 活动列表"
+        );
+        assert_eq!(
+            list_trashed_exams_core(&root).unwrap().len(),
+            1,
+            "识别完成后回收站应仍恰好一条（不重复）"
+        );
         cleanup(&root);
     }
 

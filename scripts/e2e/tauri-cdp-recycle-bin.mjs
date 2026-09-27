@@ -43,7 +43,7 @@ async function waitUntilSettled(session, itemId, timeoutMs = 180000) {
   return stage;
 }
 
-async function importOne(session, report) {
+async function startImportGetId(session) {
   await session.evaluate(`(() => { window.location.hash = "#/library"; return true; })()`);
   await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, { timeoutMs: 40000, label: "library" });
   const before = await libraryRowIds(session);
@@ -58,9 +58,14 @@ async function importOne(session, report) {
   while (Date.now() < deadline && !itemId) {
     const ids = await libraryRowIds(session);
     itemId = ids.find((id) => !before.includes(id)) ?? null;
-    if (!itemId) await sleep(500);
+    if (!itemId) await sleep(300);
   }
   if (!itemId) throw new Error("导入后未出现新的题库行");
+  return itemId;
+}
+
+async function importOne(session, report) {
+  const itemId = await startImportGetId(session);
   const settledStage = await waitUntilSettled(session, itemId);
   (report.settledStages ??= {})[itemId] = settledStage;
   if (settledStage === null || ACTIVE_STAGES.has(settledStage))
@@ -77,6 +82,17 @@ async function moveToTrash(session, itemId) {
 async function itemFound(session, itemId) {
   const r = await session.invoke("get_workspace_item", { itemId });
   return Boolean(r?.ok && r.value);
+}
+
+// 活动列表读 v2（list_library_items）、回收站读 v1∪v2（list_trashed_exams）——直接查后端权威源，
+// 不依赖前端合并/遮罩，精确验证「删除态在两表一致」。
+async function activeIds(session) {
+  const r = await session.invoke("list_library_items", { includeDeleted: false });
+  return r?.ok && Array.isArray(r.value) ? r.value.map((i) => i?.id) : [];
+}
+async function trashIds(session) {
+  const r = await session.invoke("list_trashed_exams", {});
+  return r?.ok && Array.isArray(r.value) ? r.value.map((i) => i?.id) : [];
 }
 const report = {
   task: "recycle-bin-permanent-delete-and-empty",
@@ -146,6 +162,35 @@ async function main() {
     const found3 = await itemFound(session, id3);
     recordAssertion(report, "C2-2 empty-recycle-bin-clears-all", trashCountBefore === 2 && cleared && !found2 && !found3,
       `清空前回收站含两条=${trashCountBefore === 2}；清空后列表无二者=${cleared}；get_workspace_item 均查不到=${!found2 && !found3}`);
+
+    // 场景 C：识别进行中删除。此刻条目只有 v2 外壳，旧代码软删是空操作→复活；修后应：
+    // 立刻离开活动列表并进回收站；识别落终态后仍如此且回收站恰一条；此时永久删除成功、job 目录清空。
+    const idR = await startImportGetId(session);
+    const stageAtDelete = await readStage(session, idR);
+    const jobDirExistedR = fs.existsSync(jobDir(idR));
+    // 直接调后端删除命令：识别中 UI 删除按钮态不定，这里测的正是真实命令 + 真实两表/两列表。
+    await session.invoke("delete_library_exam", { id: idR });
+    await sleep(500);
+    const goneActiveDuring = !(await activeIds(session)).includes(idR);
+    const inTrashDuring = (await trashIds(session)).includes(idR);
+    const settledR = await waitUntilSettled(session, idR);
+    (report.settledStages ??= {})[idR] = settledR;
+    const goneActiveAfter = !(await activeIds(session)).includes(idR);
+    const trashCountAfter = (await trashIds(session)).filter((x) => x === idR).length;
+    await session.clickSelector('[data-testid="library-tab-trash"]');
+    await session.waitFor(`!!document.querySelector('[data-item-id="${idR}"] [data-testid="library-row-permanent-delete"]')`, { timeoutMs: 15000, label: "in-trash-c3" });
+    await session.clickSelector(`[data-item-id="${idR}"] [data-testid="library-row-permanent-delete"]`);
+    let jobGoneR = true;
+    if (jobDirExistedR) {
+      const dl = Date.now() + 20000;
+      while (Date.now() < dl && fs.existsSync(jobDir(idR))) await sleep(400);
+      jobGoneR = !fs.existsSync(jobDir(idR));
+    }
+    const purgedR = !(await itemFound(session, idR)) && jobGoneR;
+    recordAssertion(report, "C2-3 delete-during-recognition-traps-in-trash",
+      ACTIVE_STAGES.has(stageAtDelete) && goneActiveDuring && inTrashDuring && goneActiveAfter && trashCountAfter === 1 && purgedR,
+      `删除时阶段=${stageAtDelete}（须活动）；识别中：活动列表无=${goneActiveDuring}、回收站有=${inTrashDuring}；` +
+      `落终态(${settledR})后：活动列表无=${goneActiveAfter}、回收站恰一条=${trashCountAfter === 1}；永久删除后已清=${purgedR}`);
 
     report.consoleErrors = session.cdp.events
       .filter((e) => e.method === "Runtime.consoleAPICalled" && ["error", "assert"].includes(e.params?.type))
