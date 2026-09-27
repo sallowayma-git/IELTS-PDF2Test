@@ -23,7 +23,6 @@ function recordAssertion(report, id, ok, detail) {
   console.log(`[assert] ${ok ? "PASS" : "FAIL"} ${id} — ${detail}`);
 }
 
-// 读题库行的 {id -> part 徽标文本}（卡片上的 library-row-part）。
 async function rowParts(session) {
   return await session.evaluate(`(() => {
     const out = {};
@@ -59,7 +58,6 @@ async function main() {
   let verdict = "failed";
   try {
     report.browserArgs = session.browserArgs;
-    // 一次导入文件夹（含两份 PDF）。
     await session.evaluate(`(() => { window.location.hash = "#/library"; return true; })()`);
     await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, { timeoutMs: 40000, label: "library" });
     await session.clickSelector('[data-testid="library-import"]');
@@ -68,7 +66,7 @@ async function main() {
     await session.clickSelector('[data-testid="import-pick-folder"]');
     await session.waitFor(`document.querySelectorAll('[data-testid="import-picked-files"] li').length >= 2`, { timeoutMs: 20000, label: "picked-2" });
     await session.clickSelector('[data-testid="import-start"]');
-    // 等两行出现且各自 part 徽标被回填（识别 seed 后 list 惰性回填 part）。
+    // part 徽标由 list 在识别 seed 后惰性回填，故须轮询等待而非一次读取。
     let parts = {};
     const deadline = Date.now() + 240000;
     while (Date.now() < deadline) {
@@ -91,7 +89,6 @@ async function main() {
     recordAssertion(report, "C4b-2 filter-P1-keeps-only-P1", afterFilter.length === 1 && afterFilter[0] === p1Id,
       `P1 筛选后可见行=${JSON.stringify(afterFilter)}（期望只剩 ${p1Id}）`);
 
-    // 取消筛选，手动把 P2 那份改成 P3。
     await session.clickByText('全部').catch(() => {});
     await sleep(400);
     await session.evaluate(`(() => {
@@ -100,13 +97,11 @@ async function main() {
       const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
       setter.call(el, 'P3'); el.dispatchEvent(new Event('change', { bubbles: true })); return true;
     })()`);
-    // 等回写生效（list 刷新后该项 partLabel=P3）。
     let manual = null;
     const md = Date.now() + 15000;
     while (Date.now() < md) { manual = await partViaList(session, p2Id); if (manual === "P3") break; await sleep(500); }
     recordAssertion(report, "C4b-3 manual-set-part", manual === "P3", `手动改后 partLabel=${JSON.stringify(manual)}（期望 P3）`);
 
-    // 筛选随手改的 Part 变化：这份从 P2 改成 P3 后，P3 筛选应只剩它。
     await session.clickByText('全部').catch(() => {});
     await sleep(300);
     await session.waitFor(`!!document.querySelector('[data-testid="library-part-chip-P3"]')`, { timeoutMs: 8000, label: "p3-chip" });
@@ -118,7 +113,7 @@ async function main() {
     await session.clickByText('全部').catch(() => {});
     await sleep(300);
 
-    // 持久化：重开题库（导航离开再回来），该项仍是 P3。
+    // 离开再回题库触发重新拉取，验证 P3 已落持久化而非仅在内存。
     await session.evaluate(`(() => { window.location.hash = "#/settings"; return true; })()`);
     await sleep(400);
     await session.evaluate(`(() => { window.location.hash = "#/library"; return true; })()`);
