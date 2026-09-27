@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 //
-// D3：崩溃恢复只存增量。checkpoint 不再把整份稿写进 localStorage；重开时从服务端
+// 崩溃恢复只存增量：checkpoint 不再把整份稿写进 localStorage；重开时从服务端
 // 权威稿 + 未提交命令重建，版本已变则走既有冲突流程。证据层级：hook 单元。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -49,7 +49,7 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
-describe("useCanonicalEditor 崩溃恢复只存增量（D3）", () => {
+describe("useCanonicalEditor 崩溃恢复只存增量", () => {
   it("checkpoint 不写整份稿，只存 version/pending", async () => {
     applyEditorCommands.mockRejectedValue(new Error("kept-pending")); // 保存不成功，恢复记录保留
     getWorkspaceItem.mockResolvedValue({ item: { title: "T" }, ds: sampleDs(), editVersion: 1, recentEdits: [] });

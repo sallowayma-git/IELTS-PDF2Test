@@ -1291,7 +1291,7 @@ async function main() {
           commands: [{ op: "setAnswer", slotId: humanProbe.slotId, value: humanProbe.userValue }],
           baseVersion,
         });
-        // D1 产品决定：云端校核运行期间人工编辑被后端拒绝。这里改的正是这一条：
+        // 云端校核运行期间人工编辑被后端拒绝。这里改的正是这一条：
         // 候选请求在途时保存必须失败，且拒绝码必须是 CLOUD_REVIEW_IN_PROGRESS——
         // 其它错误（版本冲突、schema 拒绝）都说明锁没有按预期生效。
         if (edited?.ok) {
@@ -1310,7 +1310,7 @@ async function main() {
           rejectionCode: "CLOUD_REVIEW_IN_PROGRESS",
           candidateRequestWasInFlight: true,
         };
-        // D1 阶段二：锁定期间工作区必须显示「云端正在校核」横幅（真实产品路径）。
+        // 锁定期间工作区必须显示「云端正在校核」横幅（真实产品路径）。
         // 单独 try：横幅探测失败不能污染上面的「被拒绝」证据。
         try {
           const bannerText = await session.waitFor(
@@ -1449,12 +1449,10 @@ async function main() {
   }
   }
 
-  // D1 产品决定：云端校核进行中（候选排队/运行、采纳、修复、答案页识别）人工编辑
-  // 被后端拒绝。用户改稿从此发生在云端结束后，所以「采纳事务保留云端运行期间手改」
-  // 无法再在真实链路里制造出来——那条兜底逻辑由 cloud_adoption.rs 的单测继续覆盖；
-  // 本场景改为验证锁定本身：期间被拒（正确拒绝码）、结束后同一条编辑可以保存并落库。
-  // 本场景改为验证锁定本身：期间被拒（正确拒绝码）、工作区显示锁定横幅、
-  // 结束后横幅消失且同一条编辑可以保存并落库。
+  // 云端校核进行中（候选排队/运行、采纳、修复、答案页识别）人工编辑被后端拒绝。用户改稿
+  // 从此发生在云端结束后，所以「采纳事务保留云端运行期间手改」无法再在真实链路里制造出来
+  // ——那条兜底逻辑由 cloud_adoption.rs 的单测继续覆盖；本场景改为验证锁定本身：期间被拒
+  // （正确拒绝码）、工作区显示锁定横幅、结束后横幅消失且同一条编辑可以保存并落库。
   const editLockProblems = [];
   if (!report.observed.userEditDuringCloud?.blockedDuringCloud) {
     editLockProblems.push(

@@ -248,7 +248,7 @@ pub(crate) fn advance_stage(
     Ok(Some((seq, effective_stage)))
 }
 
-/// 云端校核是否正在进行（D1 产品决定：此期间拒绝人工来源编辑）。
+/// 云端校核是否正在进行：此期间拒绝人工来源编辑。
 ///
 /// 以调度器的实际阶段/状态为准：
 /// - `cloud_status` 为 `queued`/`running`：云端候选已排队或拉取中（含与本地识别

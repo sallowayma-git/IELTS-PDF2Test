@@ -161,9 +161,8 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
     return () => { cancelled = true; };
   }, [itemId, processingTick]);
 
-  // 云端校核进行中则锁定人工编辑（产品决定 1）。用户已请求停止时本地先行解锁。
+  // 云端校核进行中锁定人工编辑；已请求停止则本地先行解锁。
   const cloudReviewing = cloudReviewInProgress(processingState) && !cloudStopRequested;
-  // 阶段离开校核集后复位「已请求停止」，让下一轮云端校核仍能重新锁上。
   useEffect(() => {
     if (!cloudReviewInProgress(processingState)) setCloudStopRequested(false);
   }, [processingState]);

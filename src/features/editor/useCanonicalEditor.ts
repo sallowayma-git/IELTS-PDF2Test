@@ -267,8 +267,8 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
         setSaveErrorDetail(undefined);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        // 云端校核锁：这不是保存失败。保留待保存队列、进入 locked 态（界面提示"暂缓保存"而非
-        // 变红报错），解锁后由工作区补发。绝不把用户的修改当成失败丢掉。
+        // 云端校核锁不是保存失败：保留待保存队列、进入 locked 态（提示"暂缓保存"而非变红），
+        // 解锁后由工作区补发。
         if (message.includes("CLOUD_REVIEW_IN_PROGRESS")) {
           setSaveState("locked");
           setSaveMessage(undefined);

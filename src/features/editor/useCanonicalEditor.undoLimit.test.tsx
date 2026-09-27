@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 //
-// D2：撤销/重做栈封顶 10 步，超出丢最早。证据层级：hook 单元（mock workspaceClient）。
+// 撤销/重做栈封顶 10 步，超出丢最早。证据层级：hook 单元（mock workspaceClient）。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
@@ -32,7 +32,7 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
-describe("useCanonicalEditor 撤销栈上限（D2）", () => {
+describe("useCanonicalEditor 撤销栈上限", () => {
   it("连续 12 次编辑后最多只能撤销 10 步，最早的两步被丢弃", async () => {
     getWorkspaceItem.mockResolvedValue({ item: { title: "T" }, ds: sampleDs(), editVersion: 1, recentEdits: [] });
     const { result } = renderHook(() => useCanonicalEditor("it-1"));

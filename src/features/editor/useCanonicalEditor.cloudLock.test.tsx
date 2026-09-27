@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 //
-// D1：云端校核期间后端返回 CLOUD_REVIEW_IN_PROGRESS。前端不得当普通"保存失败"变红，
+// 云端校核期间后端返回 CLOUD_REVIEW_IN_PROGRESS：前端不得当普通"保存失败"变红，
 // 也不得丢用户修改——保留待保存队列、进入 locked 态，解锁后由工作区补发。证据层级：hook 单元。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -32,7 +32,7 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
-describe("useCanonicalEditor 云端校核锁（D1）", () => {
+describe("useCanonicalEditor 云端校核锁", () => {
   it("CLOUD_REVIEW_IN_PROGRESS：进入 locked 态，不变红、不丢修改", async () => {
     getWorkspaceItem.mockResolvedValue({ item: { title: "T" }, ds: sampleDs(), editVersion: 1, recentEdits: [] });
     applyEditorCommands.mockRejectedValue(new Error("CLOUD_REVIEW_IN_PROGRESS:it-1"));

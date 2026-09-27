@@ -1169,7 +1169,7 @@ fn write_change_value(document: &mut Value, key: &str, replacement: &Value) -> b
     replace_object_by_id(document, key, replacement)
 }
 
-/// 编辑前捕获每个目标的整值（仅内存过渡，不落盘）：改后据此算路径级差异。
+/// 编辑前捕获各目标整值（仅内存，不落盘），供改后算路径级差异。
 fn capture_before_values(document: &Value, targets: &[String]) -> serde_json::Map<String, Value> {
     targets
         .iter()
@@ -1177,10 +1177,10 @@ fn capture_before_values(document: &Value, targets: &[String]) -> serde_json::Ma
         .collect()
 }
 
-/// 构造 diff-v1 的 change_json：对每个目标记 before→after 的路径级最小差异。
+/// 构造 diff-v1 的 change_json。
 ///
-/// 记录**所有**捕获目标（含无变化的空 diff），以保「本轮触及了哪些目标」与整批撤销的语义。
-/// 单目标差异过大时记 `tooLarge` 并放弃其撤销能力，而不是塞一份巨大的 diff 进日志。
+/// 记录**所有**捕获目标（含无变化的空 diff），整批撤销才能覆盖「本轮触及的所有目标」。
+/// 单目标差异过大时只记 `tooLarge` 弃其撤销能力，不把一份巨大的 diff 塞进日志。
 fn build_change_diff(
     before: &serde_json::Map<String, Value>,
     document: &Value,
@@ -1335,10 +1335,9 @@ pub(crate) fn undo_cloud_repair_run(
         return Err("EDIT_REPAIR_UNDO_UNAVAILABLE".to_string());
     }
 
-    // 把该 run 各行合并成「每个目标、每条路径」的首个 before + 最后 after。兼容两种格式：
-    //   - diff-v1：{"targets":{id:{"diff":[…]}}}（新写入方）；
-    //   - 旧格式：{"before":{id:v},"after":{id:v}}（历史行）——每个目标折成一条根路径 `[]` 差异，
-    //     并入同一套合并/回填逻辑。历史行兼容读取即可，无需迁移（5 轮内自然淘汰）。
+    // 合并该 run 各行为「每目标每路径」的首个 before + 最后 after，两种格式并入同一套逻辑：
+    // diff-v1 {"targets":{id:{"diff":[…]}}}（当前写入），旧行 {"before":{id:v},"after":{id:v}}
+    // 折成一条根路径 `[]` 差异。旧行兼容读取即可，无需迁移（5 轮内自然淘汰）。
     use crate::library::change_diff;
     struct MergedEntry {
         path: Vec<Value>,
@@ -1361,8 +1360,7 @@ pub(crate) fn undo_cloud_repair_run(
         let parsed: Value = serde_json::from_str(raw).map_err(|error| error.to_string())?;
         if let Some(target_map) = parsed.get("targets").and_then(Value::as_object) {
             for (id, target) in target_map {
-                // 即使 diff 为空也登记该目标：整批撤销覆盖「本轮触及的所有目标」，无变化目标
-                // 也算触及（回填是空操作，但仍进 restored，与历史整对象行为一致）。
+                // 空 diff 也登记：无变化目标仍算本轮触及，回填是空操作但仍进 restored。
                 targets.entry(id.clone()).or_insert_with(|| (false, std::collections::BTreeMap::new()));
                 if target.get("tooLarge").and_then(Value::as_bool) == Some(true) {
                     if let Some(slot) = targets.get_mut(id.as_str()) {
@@ -1435,7 +1433,7 @@ pub(crate) fn undo_cloud_repair_run(
             skipped.push(id.clone());
             continue;
         }
-        // 从当前值出发，把每条路径回填成 first_before（浅路径先，保证父层先就位）。
+        // 回填成 first_before，浅路径先——父层先就位。
         let mut restored_value = current.clone();
         let mut ordered: Vec<&MergedEntry> = entries.values().collect();
         ordered.sort_by_key(|entry| entry.path.len());
@@ -1769,7 +1767,7 @@ pub(crate) fn apply_editor_commands_tx_with(
     let mut ds: Value =
         serde_json::from_str(&ds_json).map_err(|error| format!("library_v2_ds_corrupt:{error}"))?;
 
-    // 云端校核期间锁定人工编辑（D1 产品决定）。检查放在同一个 Immediate 事务内：
+    // 云端校核期间锁定人工编辑。检查放在同一个 Immediate 事务内：
     // 前端的只读锁挡不住竞态，人工写入必须在提交点被后端兜底拒绝。机器来源
     // （云端采纳、修复、答案页识别、听力绑定）不受影响。
     if origin.writes_human_protection()
@@ -1792,8 +1790,7 @@ pub(crate) fn apply_editor_commands_tx_with(
         }
     }
 
-    // 可信来源需要的撤销依据：编辑前捕获目标整值（内存过渡），编辑后与之算路径级最小差异。
-    // 只记命令直接点名的根对象，不下钻整棵子树。
+    // 撤销依据：编辑前捕获目标整值，改后算路径级差异。只记命令点名的根对象，不下钻子树。
     let change_targets = capture_transaction_change_targets(&ds, &input.commands, origin);
     let change_before = capture_before_values(&ds, &change_targets);
 
@@ -1835,8 +1832,6 @@ pub(crate) fn apply_editor_commands_tx_with(
             )
             .map_err(|error| format!("library_v2_tx_title:{error}"))?;
     }
-    // 路径级差异与 before 快照配对：撤销要的是「首个 before + 最后 after」的逐路径值，
-    // 据此判断某个目标的哪些路径仍是本轮修复写下的值（那正是「能否安全回滚」的判据）。
     let change = build_change_diff(&change_before, &ds, &change_targets);
     let result_summary = serde_json::json!({
         "status": "applied",
@@ -2607,9 +2602,8 @@ mod tests {
         let answer = |values: &str, note: &str| {
             json!({ "op": "setAnswer", "slotId": "slot-14", "value": { "kind": "text", "values": [values], "note": note } })
         };
-        // 云端修复只改 values[0]（note 保持 seed）。人工写入若在前会保护 slot-14、挡住云端写入。
+        // 云端修复须在人工写入前：反序会让 slot-14 被人工保护，挡住云端写入。
         run_edit(&mut conn, vec![answer("cloud", "seed")], EditOrigin::CloudRepair, Some("run-C"), 1).unwrap();
-        // 用户随后只改同一目标的另一路径 note（云端没碰过）。
         run_edit(&mut conn, vec![answer("cloud", "user-note")], EditOrigin::Human, None, 2).unwrap();
 
         undo_cloud_repair_run(&mut conn, "it-1", "run-C", 3, &noop_validate).unwrap();
@@ -2631,7 +2625,7 @@ mod tests {
     fn undo_reads_legacy_whole_object_change_rows() {
         let mut conn = grouped_item();
         run_edit(&mut conn, vec![set_answer("slot-14", "cloudval")], EditOrigin::CloudRepair, Some("run-L"), 1).unwrap();
-        // 把该行改写成历史整对象格式，模拟旧数据（after 与当前稿一致，before 为修复前的值）。
+        // 改写成历史整对象格式模拟旧行：before 是修复前值，after 与当前稿一致。
         let legacy = serde_json::json!({
             "before": {
                 "answerKey:slot-14": { "kind": "text", "values": ["stencilling"] },

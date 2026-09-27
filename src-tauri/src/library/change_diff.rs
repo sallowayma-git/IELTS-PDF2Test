@@ -1,16 +1,14 @@
-//! editor_journal_v1.change_json 的 JSON 路径级最小差异（D2）。
+//! editor_journal_v1.change_json 的 JSON 路径级最小差异。
 //!
-//! 只记录改动叶子路径的改前/改后值，而不是整对象快照：拖一个选项从记整题组（约 400KB）
-//! 降到几十字节。撤销时按差异反向回填。数组只在长度相同时逐元素递归，长度变化的数组作为
-//! 整体记在其路径上——避免下标错位导致的错误对齐。
+//! 只记改动叶子路径的改前/改后值，而非整对象快照：拖一个选项从记整题组（约 400KB）降到
+//! 几十字节。数组仅在长度相同时逐元素递归，长度变化的数组整体记在其路径上——否则下标错位
+//! 会把不同元素错对齐。撤销时按差异反向回填。
 
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 
-/// 一条路径级差异。`path` 的每段是对象键（String）或数组下标（Number）。
-///
-/// `before`/`after` 用 `Option` 区分「该路径缺失」（None）与「存在且为 JSON null」（Some(Null)）：
-/// 缺失表示这一侧没有该路径（新增/删除），撤销据此增删。
+/// 一条路径级差异。`before`/`after` 用 `Option` 区分「路径缺失」（None，撤销据此增删）与
+/// 「存在且为 JSON null」（Some(Null)）。
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DiffEntry {
     pub path: Vec<Value>,
@@ -18,8 +16,7 @@ pub(crate) struct DiffEntry {
     pub after: Option<Value>,
 }
 
-/// 序列化为 JSON。`before`/`after` 仅在存在时写入键——serde 的 Option 会把 null 与缺失
-/// 混为一谈，所以手工按键的存在与否落盘，保住「存在且为 null」这一情形。
+/// 手工按键落盘：serde 的 `Option` 序列化会把 `Some(Null)` 与缺失混为一谈。
 pub(crate) fn entry_to_json(entry: &DiffEntry) -> Value {
     let mut object = Map::new();
     object.insert("path".to_string(), Value::Array(entry.path.clone()));
@@ -32,7 +29,6 @@ pub(crate) fn entry_to_json(entry: &DiffEntry) -> Value {
     Value::Object(object)
 }
 
-/// 从 JSON 还原一条差异：键存在（哪怕值是 null）→ Some；键缺失 → None。
 pub(crate) fn entry_from_json(value: &Value) -> Option<DiffEntry> {
     let object = value.as_object()?;
     let path = object.get("path")?.as_array()?.clone();
@@ -43,7 +39,6 @@ pub(crate) fn entry_from_json(value: &Value) -> Option<DiffEntry> {
     })
 }
 
-/// 计算 `before` → `after` 的路径级差异（两个整目标值之间）；相等返回空。
 pub(crate) fn diff_values(before: &Value, after: &Value) -> Vec<DiffEntry> {
     let mut out = Vec::new();
     let mut path = Vec::new();
@@ -81,7 +76,6 @@ fn diff_rec(before: Option<&Value>, after: Option<&Value>, path: &mut Vec<Value>
     }
 }
 
-/// 读取 `root` 在 `path` 处的值；任一段缺失/类型不符则 None。
 pub(crate) fn value_at<'a>(root: &'a Value, path: &[Value]) -> Option<&'a Value> {
     let mut current = root;
     for segment in path {
@@ -94,8 +88,8 @@ pub(crate) fn value_at<'a>(root: &'a Value, path: &[Value]) -> Option<&'a Value>
     Some(current)
 }
 
-/// 把 `root` 在 `path` 处设为 `value`（None = 该路径应缺失：对象键删除、数组元素置 null、
-/// 根整体置 null）。父路径必须已存在，否则返回 false（不凭空造中间层）。
+/// `value` 为 None 表示该路径应缺失（删对象键 / 数组元素置 null / 根置 null）。父路径不存在
+/// 则返回 false，不凭空造中间层。
 pub(crate) fn set_at(root: &mut Value, path: &[Value], value: Option<&Value>) -> bool {
     let Some((last, parents)) = path.split_last() else {
         *root = value.cloned().unwrap_or(Value::Null);
@@ -145,7 +139,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// 反向回填：从 after 出发把每条差异的 before 写回（浅路径先），复现 before。
+    /// 反向回填复现 before：浅路径先，父层先就位。
     fn apply_before(current: &Value, entries: &[DiffEntry]) -> Value {
         let mut out = current.clone();
         let mut ordered: Vec<&DiffEntry> = entries.iter().collect();

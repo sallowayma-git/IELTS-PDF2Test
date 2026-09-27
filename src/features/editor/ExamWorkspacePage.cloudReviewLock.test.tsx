@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 //
-// D1：云端校核进行中，工作区显示锁定横幅并禁用人工写入入口；结束后横幅消失。
-// 证据层级：组件级（mock 命令客户端与编辑器 hook；横幅/禁用的真实渲染保持真实）。
-// 集成的画布只读与"结束后可保存"由真实应用 e2e（cloud-repair-chain）验收。
+// 云端校核进行中：工作区显示锁定横幅并禁用人工写入入口，结束后横幅消失。
+// 证据层级：组件级（mock 命令客户端与编辑器 hook，横幅/禁用的真实渲染保持真实）；
+// 画布只读与"结束后可保存"由真实应用 e2e（cloud-repair-chain）验收。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -65,7 +65,7 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
-describe("ExamWorkspacePage 云端校核锁横幅（D1）", () => {
+describe("ExamWorkspacePage 云端校核锁横幅", () => {
   it("云端校核进行中：横幅可见、停止按钮调用取消、保存禁用", async () => {
     withProcessing("cloud_recognition", "running");
     render(<ExamWorkspacePage itemId={ITEM_ID} />);
