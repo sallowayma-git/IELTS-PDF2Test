@@ -78,9 +78,18 @@ export interface RecognitionPanelProps {
    * 那批历史数据得靠稿里的值认出来。
    */
   answerKey: Record<string, unknown> | undefined;
+  /**
+   * 提交识别决策（接受/驳回/撤销）**之前**先 flush 编辑器里的待保存修改。
+   *
+   * 接受建议是人工来源写入、会推进正式稿版本；若此时编辑器还有未保存修改，它们的基线
+   * 就被这次写入顶成过期，用户随后保存会撞上「和自己冲突」的红色提示。工作区其他写正式稿
+   * 的操作都会先 `await editor.flush()`，识别面板这条以前漏了。flush 失败（例如真有冲突）
+   * 时**不提交**决策、给出提示。
+   */
+  beforeApply?: () => Promise<void>;
 }
 
-export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, onOpenSource, onApplied, answerKey }: RecognitionPanelProps) {
+export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, onOpenSource, onApplied, answerKey, beforeApply }: RecognitionPanelProps) {
   const [view, setView] = useState<RecognitionDecisionViewV1 | undefined>();
   const [loadError, setLoadError] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | undefined>();
@@ -94,10 +103,12 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
       const next = await getRecognitionDecision(itemId);
       setView(next);
       setLoadError(undefined);
+      return next;
     } catch (error) {
       // 命令还不存在 / 云端不可用 / 后端失败都走这里：面板降级，编辑不受影响。
       setView(undefined);
       setLoadError(toUserFacingError(error, "暂时读不到识别建议。").userMessage);
+      return undefined;
     }
   }, [itemId]);
 
@@ -162,6 +173,14 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
   // 整轮修复撤销的忙碌键。与逐项的 groupKey 共用一个状态位，避免两个撤销并发写同一份稿。
   const REPAIR_UNDO_KEY = "cloud-repair-undo";
 
+  // 写正式稿的识别动作（接受/撤销）前先 flush 编辑器待保存修改并刷新到最新版本；
+  // flush 失败则抛给调用方，由它给提示、不提交决策。
+  async function flushEditorAndRefresh() {
+    if (!beforeApply) return view;
+    await beforeApply();
+    return (await load()) ?? view;
+  }
+
   async function submit(groupKey: string, items: RecognitionDecisionItemV1[], action: "accept" | "reject" | "undo") {
     if (!view || busyGroup) return;
     const key = `${view.batchId}:${groupKey}:${action}`;
@@ -169,10 +188,20 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
     setBusyGroup(groupKey);
     setNotice(undefined);
     try {
+      let current = view;
+      try {
+        const refreshed = await flushEditorAndRefresh();
+        if (refreshed) current = refreshed;
+      } catch (error) {
+        // flush 失败的语境是明确的（用户的待保存修改没存上），用固定人话，不要套用
+        // toUserFacingError 对 EDIT_VERSION_CONFLICT 的「在别处也被改过」文案（会误导）。
+        setNotice("有未保存的修改未能保存，请先在编辑区处理保存后再操作识别建议。");
+        return;
+      }
       const result: DecisionBatchOutcomeV1 = await applyRecognitionDecisions({
-        itemId: view.itemId,
-        batchId: view.batchId,
-        baseEditVersion: view.currentEditVersion,
+        itemId: current.itemId,
+        batchId: current.batchId,
+        baseEditVersion: current.currentEditVersion,
         requestId: requestIds.current.get(key)!,
         decisions: items.map((item) => ({ decisionId: item.decisionId, action }))
       });
@@ -235,7 +264,19 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
     setBusyGroup(REPAIR_UNDO_KEY);
     setNotice(undefined);
     try {
-      await undoCloudRepair(view.itemId, view.repair.repairRunId, view.currentEditVersion);
+      let current = view;
+      try {
+        const refreshed = await flushEditorAndRefresh();
+        if (refreshed) current = refreshed;
+      } catch (error) {
+        setNotice("有未保存的修改未能保存，请先在编辑区处理保存后再撤销本轮修复。");
+        return;
+      }
+      if (!current.repair?.repairRunId) {
+        setNotice("没有可撤销的本轮修复。");
+        return;
+      }
+      await undoCloudRepair(current.itemId, current.repair.repairRunId, current.currentEditVersion);
       setNotice("已撤销本轮自动修复，权威稿已改回修复前的值。");
       // 撤销改了权威稿、递增版本 → 外层必须重新加载。
       onApplied();

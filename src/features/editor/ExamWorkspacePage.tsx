@@ -782,6 +782,9 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
           // 唯一真能推进的动作就是打开原文件抽屉。
           onOpenSource={() => setSourceOpen(true)}
           onApplied={() => editor.reload()}
+          // 接受/驳回/撤销识别建议是人工来源写入、会推进正式稿版本；提交前先 flush 编辑器的
+          // 待保存修改，避免用户随后撞上「和自己冲突」。与本页其它写正式稿的操作一致。
+          beforeApply={editor.flush}
           // 「这一项撤销过了吗」的权威答案是后端持久化的 `status === "undone"`；
           // 权威稿的答案位只作为次要判据（兜住废弃编辑器补丁路径写下的历史数据）。
           // 撤销本身走正式后端命令，面板自己发，不再经由编辑器补丁。
