@@ -175,72 +175,9 @@ fn text_from_content_nodes(nodes: &[ContentNodeV2]) -> String {
     text.join(" ")
 }
 
-fn find_label_if_clause(text: &str, label: &str, search_from: usize) -> Option<(usize, usize)> {
-    if label.is_empty() || label.len() > text.len() || !text.is_char_boundary(search_from) {
-        return None;
-    }
-    let last_start = text.len() - label.len();
-    if search_from > last_start {
-        return None;
-    }
-    for start in search_from..=last_start {
-        let end = start + label.len();
-        if !text.is_char_boundary(start) || !text.is_char_boundary(end) {
-            continue;
-        }
-        if !text[start..end].eq_ignore_ascii_case(label) {
-            continue;
-        }
-        let before = text[..start].chars().next_back();
-        let after = text[end..].chars().next();
-        if before.is_some_and(|ch| ch.is_ascii_alphanumeric())
-            || after.is_some_and(|ch| ch.is_ascii_alphanumeric())
-        {
-            continue;
-        }
-
-        let suffix = &text[end..];
-        let clause = suffix.trim_start_matches(|ch: char| {
-            ch.is_whitespace() || matches!(ch, ':' | '-' | '\u{2013}' | '\u{2014}')
-        });
-        if !clause
-            .get(..2)
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("if"))
-            || clause[2..]
-                .chars()
-                .next()
-                .is_some_and(|ch| !ch.is_whitespace())
-        {
-            continue;
-        }
-        let skipped = suffix.len() - clause.len();
-        let after_if = end + skipped + 2;
-        let description = &text[after_if..];
-        let description_start = after_if + (description.len() - description.trim_start().len());
-        return Some((start, description_start));
-    }
-    None
-}
-
-fn fixed_option_description(instructions: &str, label: &str, labels: &[String]) -> Option<String> {
-    let (_, description_start) = find_label_if_clause(instructions, label, 0)?;
-    let end = labels
-        .iter()
-        .filter(|other| !other.eq_ignore_ascii_case(label))
-        .filter_map(|other| {
-            find_label_if_clause(instructions, other, description_start).map(|(start, _)| start)
-        })
-        .min()
-        .unwrap_or(instructions.len());
-    let description = instructions.get(description_start..end)?.trim();
-    (!description.is_empty()).then(|| description.to_string())
-}
-
-/// The authoring IR intentionally leaves fixed TRUE/FALSE/YES/NO option content empty: its
-/// labels carry the answer values and source definitions remain in the instructions. The
-/// deployed student loader also renders `option.content`, so this runtime-only projection
-/// carries each source-backed definition there (or the literal label when the source has no
-/// definition) without changing the canonical manuscript or answer-key semantics.
+/// 正式稿里判断题固定选项（TRUE/FALSE/YES/NO/NOT GIVEN）的 content 为空，语义由 label 承载。
+/// 学生端加载器要求每个选项的 content 可渲染，所以编译学生端题包时补上 label 本身；
+/// 学生端渲染器遇到 content 与 label 相同会只显示 label。说明区的定义句不进选项。
 fn normalize_runtime_fixed_truth_option_content(task_groups: &mut [TaskGroupV2]) {
     for group in task_groups {
         if !matches!(
@@ -252,18 +189,11 @@ fn normalize_runtime_fixed_truth_option_content(task_groups: &mut [TaskGroupV2])
         let Some(bank) = group.option_bank.as_mut() else {
             continue;
         };
-        let instructions = text_from_content_nodes(&group.instructions);
-        let labels = bank
-            .options
-            .iter()
-            .map(|option| option.label.clone())
-            .collect::<Vec<_>>();
         for option in &mut bank.options {
             if !text_from_content_nodes(&option.content).trim().is_empty() {
                 continue;
             }
-            let content_text = fixed_option_description(&instructions, &option.label, &labels)
-                .unwrap_or_else(|| option.label.clone());
+            let content_text = option.label.clone();
             option.content.push(ContentNodeV2::Text(TextNodeV2 {
                 base: BaseContentNodeV2 {
                     id: format!("{}-runtime-content", option.option_id),
@@ -1176,7 +1106,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_fixed_truth_options_use_source_definitions_as_renderable_content() {
+    fn runtime_fixed_truth_options_render_only_their_labels() {
         let mut source = serde_json::to_value(fixture()).unwrap();
         let instruction = "Questions 14-15 YES if the statement agrees with the views of the writer NO if the statement contradicts the views of the writer NOT GIVEN if it is impossible to say what the writer thinks about this";
         source["taskGroups"][0]["taskType"] = json!("yes_no_not_given");
@@ -1224,14 +1154,8 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(
-            rendered_text,
-            [
-                "the statement agrees with the views of the writer",
-                "the statement contradicts the views of the writer",
-                "it is impossible to say what the writer thinks about this"
-            ]
-        );
+        // 学生端只显示标签（渲染器会跳过与标签相同的 content）；说明区的定义句不进选项。
+        assert_eq!(rendered_text, ["YES", "NO", "NOT GIVEN"]);
     }
 
     #[test]
