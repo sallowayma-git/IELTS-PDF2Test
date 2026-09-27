@@ -50,7 +50,6 @@ export function WritingPanel({ refresh }: { refresh: () => void }) {
       showError(e, "写作任务列表加载失败，请稍后重试。");
     }
   }
-  // PLACEHOLDER_HANDLERS
 
   useEffect(() => {
     void reload();
