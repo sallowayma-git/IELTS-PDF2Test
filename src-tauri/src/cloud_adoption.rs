@@ -4,6 +4,7 @@
 //! Eligibility is a backend decision over the normalized candidate, compiler probe, stable
 //! question identities, and the hard-failure codes emitted by `ielts_grammar::quality`.
 
+use crate::reconcile::alignment::{AlignmentOutcome, AlignmentReport};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -373,6 +374,505 @@ pub(crate) fn plan_group_adoption(candidate: &Value, local: &Value) -> GroupAdop
         qualified_task_ids,
         unqualified: group_failures.into_iter().collect(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// 云端为主的采纳（依赖本地对齐校验：云端内容对上原卷即整体覆盖本地）
+// ---------------------------------------------------------------------------
+
+/// 说明里有明确图例、判型无歧义的题型；这些若与云端声明冲突即为「强反证」。
+fn is_strong_signature_type(wire: &str) -> bool {
+    matches!(
+        wire,
+        "true_false_not_given"
+            | "yes_no_not_given"
+            | "matching_headings"
+            | "matching_information"
+            | "matching_features"
+            | "matching_sentence_endings"
+            | "classification"
+    )
+}
+
+/// 递归取节点子树里的可见文本。
+fn gather_text(value: &Value, out: &mut String) {
+    match value {
+        Value::Object(map) => {
+            if let Some(text) = map.get("text").and_then(Value::as_str) {
+                if !text.is_empty() {
+                    if !out.is_empty() {
+                        out.push(' ');
+                    }
+                    out.push_str(text);
+                }
+            }
+            for (key, child) in map {
+                if key != "text" {
+                    gather_text(child, out);
+                }
+            }
+        }
+        Value::Array(items) => items.iter().for_each(|item| gather_text(item, out)),
+        _ => {}
+    }
+}
+
+fn group_instruction_text(group: &Value) -> String {
+    let mut out = String::new();
+    for node in group
+        .get("instructions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        gather_text(node, &mut out);
+    }
+    out
+}
+
+/// 本地确定性判型规则对云端说明文字的复核结论。
+enum TypeVerdict {
+    /// 规则与云端一致，或规则无判定：直接采纳云端题型。
+    Accept,
+    /// 规则判出的题型与云端不一致，但非强反证：采纳云端题型并留复核记录。
+    Review { detected: String, declared: String },
+    /// 强反证：不采纳该组题型。
+    StrongCounter { detected: String, declared: String },
+}
+
+fn recheck_task_type(group: &Value) -> TypeVerdict {
+    let declared = group
+        .get("taskType")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let text = group_instruction_text(group);
+    let Some(detected) =
+        crate::ielts_grammar::instruction_signature::classify_instruction_task_type(&text)
+    else {
+        return TypeVerdict::Accept;
+    };
+    let detected_wire = serde_json::to_value(&detected)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default();
+    if detected_wire.is_empty() || detected_wire == declared {
+        return TypeVerdict::Accept;
+    }
+    if is_strong_signature_type(&detected_wire) {
+        TypeVerdict::StrongCounter { detected: detected_wire, declared }
+    } else {
+        TypeVerdict::Review { detected: detected_wire, declared }
+    }
+}
+
+
+/// 云端为主的采纳判定。原文与各题组独立决定；`document_reasons` 非空表示文档级致命问题、整份拒。
+#[derive(Debug)]
+pub(crate) struct CloudPrimaryPlan {
+    /// 是否整体采用云端原文（段落切分/标签/paragraphMap）；否则保留本地原文。
+    pub adopt_passage: bool,
+    pub passage_reasons: Vec<String>,
+    pub qualified_task_ids: Vec<String>,
+    pub unqualified: Vec<(String, Vec<String>)>,
+    pub document_reasons: Vec<String>,
+    /// 采纳但需人复核的记录（题型规则不一致仍采纳、非题目内容未覆盖等）。
+    pub review_records: Vec<Value>,
+    /// 交给云端校核的清单雏形（对齐失败组、题型强反证、说明吞题）。
+    pub needs_cloud_review: Vec<Value>,
+}
+
+/// 采纳计划：有文本层走云端为主；扫描卷无文本层退回保守的按题组（本地基底）。
+pub(crate) enum AdoptionPlan {
+    Conservative(GroupAdoptionPlan),
+    CloudPrimary(CloudPrimaryPlan),
+}
+
+pub(crate) fn plan_adoption(
+    candidate: &Value,
+    local: &Value,
+    outcome: &AlignmentOutcome,
+) -> AdoptionPlan {
+    match outcome {
+        AlignmentOutcome::NoTextLayer => AdoptionPlan::Conservative(plan_group_adoption(candidate, local)),
+        AlignmentOutcome::Assessed(report) => {
+            AdoptionPlan::CloudPrimary(plan_cloud_primary_adoption(candidate, local, report))
+        }
+    }
+}
+
+/// heading 宿主段落可映射性。采纳云端原文时校验云端 passage；不采纳时暂保守——
+/// 有 passage_paragraph 宿主的组交人工/云端复核（按标签映射本地待后续细化）。
+fn heading_host_failures(authoring: &Value, adopt_passage: bool) -> Vec<(String, String)> {
+    if adopt_passage {
+        return groups_with_unmapped_passage_hosts(authoring);
+    }
+    let mut failures = Vec::new();
+    for (slot_id, slot) in authoring
+        .get("answerSlots")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+    {
+        if slot.get("hostType").and_then(Value::as_str) == Some("passage_paragraph") {
+            for owner in group_ids_owning_slot(authoring, slot_id) {
+                failures.push((owner, "未采纳云端原文，段落宿主需按标签映射本地或人工复核".to_string()));
+            }
+        }
+    }
+    failures
+}
+
+
+/// 逐节点/逐题组按对齐结果决定采纳，云端为主。
+pub(crate) fn plan_cloud_primary_adoption(
+    candidate: &Value,
+    local: &Value,
+    alignment: &AlignmentReport,
+) -> CloudPrimaryPlan {
+    let authoring = candidate.get("authoring").unwrap_or(&Value::Null);
+    let mut document_reasons = document_rejection_reasons(candidate, local);
+    let (mut group_failures, document_level_hard) = hard_failures_by_group(candidate);
+    document_reasons.extend(document_level_hard);
+
+    let adopt_passage = alignment.passage_pass
+        && alignment.monotonic
+        && alignment.coverage_ok
+        && alignment.length_ratio_ok;
+    let mut passage_reasons = Vec::new();
+    if !adopt_passage {
+        if !alignment.passage_pass {
+            passage_reasons.push(format!(
+                "原文命中率不足：{}/{}",
+                alignment.passage_sentence_matched, alignment.passage_sentence_total
+            ));
+        }
+        if !alignment.monotonic {
+            passage_reasons.push(format!("命中顺序非单调（逆序 {} 处）", alignment.order_violations));
+        }
+        if !alignment.coverage_ok {
+            passage_reasons.push(format!("显著源区域覆盖不足：{:.2}", alignment.coverage));
+        }
+        if !alignment.length_ratio_ok {
+            passage_reasons.push(format!("云端原文长度比异常：{:.2}", alignment.length_ratio));
+        }
+    }
+
+    // 每组说明 / 题干+选项 命中的源区域集合，用于「说明吞题」重叠检测。
+    let mut instruction_regions: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut prompt_regions: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for node in &alignment.nodes {
+        let Some(task_id) = &node.task_id else { continue };
+        let target = match node.kind_label {
+            "instruction" => &mut instruction_regions,
+            "prompt" | "option" => &mut prompt_regions,
+            _ => continue,
+        };
+        target
+            .entry(task_id.clone())
+            .or_default()
+            .extend(node.source_node_ids.iter().cloned());
+    }
+
+    let mut review_records = Vec::new();
+    let mut needs_cloud_review = Vec::new();
+    for group in authoring
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(task_id) = group.get("taskId").and_then(Value::as_str) else {
+            continue;
+        };
+        if group_failures.contains_key(task_id) {
+            continue;
+        }
+        // 题目内容（说明/题干/选项）未对齐 → 该组不采纳，进云端校核清单。
+        if alignment.group_aligned.get(task_id) == Some(&false) {
+            let mut reasons = alignment
+                .group_reasons
+                .get(task_id)
+                .cloned()
+                .unwrap_or_default();
+            if reasons.is_empty() {
+                reasons.push("题目内容未对齐原卷".to_string());
+            }
+            group_failures.entry(task_id.to_string()).or_default().extend(reasons);
+            needs_cloud_review.push(serde_json::json!({"taskId": task_id, "reason": "content_not_aligned"}));
+            continue;
+        }
+        // 说明与题干/选项落在同一源区域：疑似说明被识别成题目、或题目被吞进说明。
+        let overlap = instruction_regions
+            .get(task_id)
+            .zip(prompt_regions.get(task_id))
+            .is_some_and(|(instr, prompt)| !instr.is_disjoint(prompt));
+        if overlap {
+            group_failures
+                .entry(task_id.to_string())
+                .or_default()
+                .push("说明与题干在原卷上落于同一区域（疑似说明吞题或题目被吞进说明）".to_string());
+            needs_cloud_review.push(serde_json::json!({"taskId": task_id, "reason": "instruction_stem_overlap"}));
+            continue;
+        }
+        // 题型：以云端为准，本地规则复核；仅强反证不采纳该组题型。
+        match recheck_task_type(group) {
+            TypeVerdict::StrongCounter { detected, declared } => {
+                group_failures.entry(task_id.to_string()).or_default().push(format!(
+                    "题型强反证：说明判为 {detected}，云端声明 {declared}"
+                ));
+                needs_cloud_review.push(serde_json::json!({
+                    "taskId": task_id, "reason": "task_type_counterevidence",
+                    "detected": detected, "declared": declared
+                }));
+                continue;
+            }
+            TypeVerdict::Review { detected, declared } => {
+                review_records.push(serde_json::json!({
+                    "taskId": task_id, "kind": "task_type_review",
+                    "detected": detected, "declared": declared,
+                    "note": "采纳云端题型；本地规则判型不一致但云端说明已对齐原卷"
+                }));
+            }
+            TypeVerdict::Accept => {}
+        }
+    }
+
+
+    for (task_id, reason) in heading_host_failures(authoring, adopt_passage) {
+        group_failures.entry(task_id).or_default().push(reason);
+    }
+
+    let qualified_task_ids = authoring
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|group| group.get("taskId").and_then(Value::as_str))
+        .filter(|task_id| !group_failures.contains_key(*task_id))
+        .map(str::to_string)
+        .collect();
+
+    CloudPrimaryPlan {
+        adopt_passage,
+        passage_reasons,
+        qualified_task_ids,
+        unqualified: group_failures.into_iter().collect(),
+        document_reasons,
+        review_records,
+        needs_cloud_review,
+    }
+}
+
+
+/// 以云端为基底组装采纳后文档：不采纳云端原文时换回本地 passage；不合格题组换回本地题组。
+fn build_cloud_primary_document(current: &Value, cloud: &Value, plan: &CloudPrimaryPlan) -> Value {
+    let mut merged = cloud.clone();
+    if !plan.adopt_passage {
+        match current.get("passage") {
+            Some(passage) => {
+                merged["passage"] = passage.clone();
+            }
+            None => {
+                if let Some(map) = merged.as_object_mut() {
+                    map.remove("passage");
+                }
+            }
+        }
+    }
+    // 不合格题组：把本地题组（含其槽位与答案）换回到云端基底上。复用按题组换入原语。
+    let restore: Vec<String> = plan.unqualified.iter().map(|(id, _)| id.clone()).collect();
+    adopt_qualified_groups(&mut merged, current, &restore);
+    merged
+}
+
+/// 在对象树里找到 id 匹配的节点并盖上真实来源锚点与 provenanceStatus=source。
+fn set_node_provenance(value: &mut Value, id: &str, anchors: &[Value]) -> bool {
+    if let Value::Object(map) = value {
+        let matches = ["id", "optionId", "slotId"]
+            .iter()
+            .any(|key| map.get(*key).and_then(Value::as_str) == Some(id));
+        if matches {
+            map.insert("sourceAnchors".to_string(), Value::Array(anchors.to_vec()));
+            map.insert("provenanceStatus".to_string(), Value::String("source".to_string()));
+            return true;
+        }
+        for child in map.values_mut() {
+            if set_node_provenance(child, id, anchors) {
+                return true;
+            }
+        }
+        false
+    } else if let Value::Array(items) = value {
+        items.iter_mut().any(|item| set_node_provenance(item, id, anchors))
+    } else {
+        false
+    }
+}
+
+/// 把对齐产出的真实锚点盖到已采纳的云端节点上（采纳云端原文时含 passage，合格题组含说明/
+/// 题干/选项/槽位），并用说明节点锚点补齐题组的 instructionSignature.evidenceAnchors，
+/// 使既有来源类门禁在真实对齐证据上放行。
+fn stamp_alignment_provenance(
+    merged: &mut Value,
+    alignment: &AlignmentReport,
+    adopt_passage: bool,
+    qualified: &BTreeSet<String>,
+) {
+    let mut group_evidence: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    for node in &alignment.nodes {
+        if !node.aligned || node.anchors.is_empty() || node.node_id.is_empty() {
+            continue;
+        }
+        let adopted = match &node.task_id {
+            None => adopt_passage,
+            Some(task_id) => qualified.contains(task_id),
+        };
+        if !adopted {
+            continue;
+        }
+        set_node_provenance(merged, &node.node_id, &node.anchors);
+        if node.kind_label == "instruction" {
+            if let Some(task_id) = &node.task_id {
+                group_evidence
+                    .entry(task_id.clone())
+                    .or_default()
+                    .extend(node.anchors.iter().cloned());
+            }
+        }
+    }
+    for group in merged
+        .get_mut("taskGroups")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        let Some(task_id) = group.get("taskId").and_then(Value::as_str).map(str::to_string) else {
+            continue;
+        };
+        if let Some(anchors) = group_evidence.get(&task_id) {
+            let signature = group
+                .as_object_mut()
+                .unwrap()
+                .entry("instructionSignature")
+                .or_insert_with(|| serde_json::json!({}));
+            if let Some(object) = signature.as_object_mut() {
+                object.insert("evidenceAnchors".to_string(), Value::Array(anchors.clone()));
+            }
+        }
+    }
+}
+
+
+/// 以云端为主提交采纳：云端整体覆盖本地（原文不合格换回本地原文、不合格题组换回本地题组），
+/// 已采纳的云端节点盖上真实对齐锚点。走与人工编辑一致的 CAS/journal 事务，版本冲突重试。
+pub(crate) fn adopt_cloud_primary(
+    root: &Path,
+    item_id: &str,
+    batch_id: &str,
+    candidate_base_version: i64,
+    cloud_authoring: &Value,
+    plan: &CloudPrimaryPlan,
+    alignment: &AlignmentReport,
+) -> Result<AdoptionCommit, String> {
+    let run_id = crate::cloud_repair::repair_run_id_for(batch_id);
+    let request_id = format!("cloud-candidate-adoption:{batch_id}");
+    let qualified: BTreeSet<String> = plan.qualified_task_ids.iter().cloned().collect();
+    let mut last_conflict = None;
+    for _attempt in 0..3 {
+        let mut conn = crate::library::repository::open_library_connection(root)?;
+        let Some((current, current_version)) =
+            crate::library::repository::get_canonical_ds(&conn, item_id)?
+        else {
+            return Err("cloud_candidate_adoption_canonical_missing".to_string());
+        };
+        if candidate_base_version > current_version {
+            return Err(format!(
+                "cloud_candidate_adoption_base_ahead:base={candidate_base_version}:current={current_version}"
+            ));
+        }
+        let journal = crate::library::repository::human_editor_commands_since(
+            &conn,
+            item_id,
+            candidate_base_version,
+        )?;
+        // 云端为主：以云端 authoring 为基底组装，再盖真实对齐锚点，最后 rebase 用户编辑。
+        let mut merged = build_cloud_primary_document(&current, cloud_authoring, plan);
+        stamp_alignment_provenance(&mut merged, alignment, plan.adopt_passage, &qualified);
+        let preserved_group_ids = merge_human_edits(&current, &mut merged, &journal)?;
+        if let (Some(current_audit), Some(audit)) = (
+            current.get("audit").and_then(Value::as_object),
+            merged.get_mut("audit").and_then(Value::as_object_mut),
+        ) {
+            audit.insert(
+                "revision".to_string(),
+                serde_json::json!(current_audit
+                    .get("revision")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+                    .saturating_add(1)),
+            );
+            audit.insert("source".to_string(), serde_json::json!("cloud_candidate_adoption"));
+            audit.insert(
+                "humanVerified".to_string(),
+                current_audit
+                    .get("humanVerified")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Bool(false)),
+            );
+            audit.insert(
+                "updatedAt".to_string(),
+                serde_json::json!(chrono::Utc::now().to_rfc3339()),
+            );
+        }
+        let command = serde_json::json!({
+            "op": "replaceAuthoringDocument",
+            "authoring": merged,
+        });
+        let result = crate::library::repository::apply_editor_commands_tx_with(
+            &mut conn,
+            &crate::library::repository::ApplyEditorCommandsInput {
+                item_id: item_id.to_string(),
+                base_version: current_version,
+                request_id: Some(request_id.clone()),
+                commands: vec![command],
+                title: None,
+            },
+            crate::library::repository::EditOrigin::CloudCandidateAdoption,
+            Some(&run_id),
+            &|document, patch| {
+                if patch.get("op").and_then(Value::as_str) == Some("replaceAuthoringDocument") {
+                    let authoring = patch
+                        .get("authoring")
+                        .filter(|value| value.is_object())
+                        .ok_or_else(|| "cloud_candidate_adoption_document_invalid".to_string())?;
+                    *document = authoring.clone();
+                    Ok(())
+                } else {
+                    crate::authoring_v2_commands::apply_patch(document, patch)
+                }
+            },
+            &|document| {
+                crate::authoring_v2_commands::refresh_quality_report(root, item_id, document)?;
+                crate::authoring_v2_commands::validate_authoring(document)
+            },
+            &|_, _| Ok(()),
+        );
+        match result {
+            Ok(result) => {
+                return Ok(AdoptionCommit {
+                    edit_version: result.edit_version,
+                    preserved_group_ids,
+                    applied_targets: result.applied_targets,
+                });
+            }
+            Err(error) if error.starts_with("EDIT_VERSION_CONFLICT") => {
+                last_conflict = Some(error);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last_conflict.unwrap_or_else(|| "cloud_candidate_adoption_conflict".to_string()))
 }
 
 #[derive(Debug)]
@@ -1403,5 +1903,276 @@ mod tests {
             "heading 宿主段落映射不上的组应不合格：{:?}",
             plan.unqualified
         );
+    }
+
+    // ------- 云端为主采纳（M2）-------
+
+    use crate::reconcile::alignment::{AlignmentOutcome, AlignmentReport, NodeAlignment};
+
+    fn cp_node(
+        node_id: &str,
+        kind: &'static str,
+        task_id: Option<&str>,
+        src: &[&str],
+        aligned: bool,
+    ) -> NodeAlignment {
+        NodeAlignment {
+            node_id: node_id.to_string(),
+            kind_label: kind,
+            task_id: task_id.map(str::to_string),
+            sentence_count: 1,
+            matched_sentences: if aligned { 1 } else { 0 },
+            min_similarity: if aligned { 1.0 } else { 0.0 },
+            mean_similarity: if aligned { 1.0 } else { 0.0 },
+            source_node_ids: src.iter().map(|s| s.to_string()).collect(),
+            anchors: src.iter().map(|s| json!({"nodeIds": [s]})).collect(),
+            has_invented: !aligned,
+            aligned,
+        }
+    }
+
+    fn cp_report(passage_pass: bool, groups: &[(&str, bool)], nodes: Vec<NodeAlignment>) -> AlignmentReport {
+        AlignmentReport {
+            nodes,
+            passage_pass,
+            passage_sentence_total: 10,
+            passage_sentence_matched: if passage_pass { 10 } else { 4 },
+            length_ratio: 1.0,
+            length_ratio_ok: true,
+            coverage: 1.0,
+            coverage_ok: true,
+            order_violations: 0,
+            monotonic: true,
+            group_aligned: groups.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
+            group_reasons: BTreeMap::new(),
+            samples: Vec::new(),
+        }
+    }
+
+    const TFNG_INSTRUCTION: &str = "Do the following statements agree with the information given in the reading passage? Write TRUE if the statement agrees with the information, FALSE if the statement contradicts the information, NOT GIVEN if there is no information on this.";
+
+    fn cp_candidate(groups: Value, slots: Value) -> Value {
+        json!({
+            "status": "succeeded",
+            "unresolvedReferences": [],
+            "authoring": {
+                "passage": {"content": []},
+                "taskGroups": groups,
+                "answerSlots": slots,
+                "answerKey": {},
+                "quality": {"compilerProbes": {"v2Runtime": {"status": "passed"}}, "hardFailures": [], "issues": []}
+            }
+        })
+    }
+
+    fn cp_local(numbers: &[u32]) -> Value {
+        json!({"slots": numbers
+            .iter()
+            .map(|n| json!({"slotId": format!("q{n}"), "questionNumber": n}))
+            .collect::<Vec<_>>()})
+    }
+
+    // __M2_TEST_MARKER__
+
+    #[test]
+    fn cloud_primary_adopts_whole_candidate_when_aligned() {
+        let groups = json!([{
+            "taskId": "g1", "taskType": "true_false_not_given",
+            "instructions": [{"id": "i1", "type": "text", "text": TFNG_INSTRUCTION}],
+            "responseGroups": [{"responseGroupId": "rg1", "slotIds": ["q1"]}]
+        }]);
+        let candidate = cp_candidate(groups, json!({"q1": {"slotId": "q1", "questionNumber": 1}}));
+        let report = cp_report(
+            true,
+            &[("g1", true)],
+            vec![
+                cp_node("i1", "instruction", Some("g1"), &["r1"], true),
+                cp_node("p1", "prompt", Some("g1"), &["r2"], true),
+            ],
+        );
+        let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1]), &report);
+        assert!(plan.document_reasons.is_empty(), "{:?}", plan.document_reasons);
+        assert!(plan.adopt_passage, "对齐全过应整体采用云端原文");
+        assert_eq!(plan.qualified_task_ids, vec!["g1".to_string()]);
+        assert!(plan.unqualified.is_empty());
+    }
+
+    #[test]
+    fn cloud_primary_keeps_local_passage_but_still_adopts_aligned_groups() {
+        let groups = json!([{
+            "taskId": "g1", "taskType": "true_false_not_given",
+            "instructions": [{"id": "i1", "type": "text", "text": TFNG_INSTRUCTION}],
+            "responseGroups": [{"responseGroupId": "rg1", "slotIds": ["q1"]}]
+        }]);
+        let candidate = cp_candidate(groups, json!({"q1": {"slotId": "q1", "questionNumber": 1}}));
+        let report = cp_report(
+            false,
+            &[("g1", true)],
+            vec![
+                cp_node("i1", "instruction", Some("g1"), &["r1"], true),
+                cp_node("p1", "prompt", Some("g1"), &["r2"], true),
+            ],
+        );
+        let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1]), &report);
+        assert!(!plan.adopt_passage, "原文不达标应保留本地原文");
+        assert!(!plan.passage_reasons.is_empty(), "应给出原文不采纳原因");
+        assert_eq!(plan.qualified_task_ids, vec!["g1".to_string()], "题目仍应独立采纳");
+    }
+
+    #[test]
+    fn cloud_primary_rejects_group_on_strong_task_type_counterevidence() {
+        // 说明是 TFNG 图例，云端却声明单选 → 强反证，不采纳该组题型。
+        let groups = json!([{
+            "taskId": "g1", "taskType": "single_choice",
+            "instructions": [{"id": "i1", "type": "text", "text": TFNG_INSTRUCTION}],
+            "responseGroups": [{"responseGroupId": "rg1", "slotIds": ["q1"]}]
+        }]);
+        let candidate = cp_candidate(groups, json!({"q1": {"slotId": "q1", "questionNumber": 1}}));
+        let report = cp_report(
+            true,
+            &[("g1", true)],
+            vec![
+                cp_node("i1", "instruction", Some("g1"), &["r1"], true),
+                cp_node("p1", "prompt", Some("g1"), &["r2"], true),
+            ],
+        );
+        let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1]), &report);
+        assert!(!plan.qualified_task_ids.contains(&"g1".to_string()));
+        assert!(plan
+            .unqualified
+            .iter()
+            .any(|(id, reasons)| id == "g1" && reasons.iter().any(|r| r.contains("题型强反证"))));
+        assert!(plan
+            .needs_cloud_review
+            .iter()
+            .any(|item| item.get("reason").and_then(Value::as_str) == Some("task_type_counterevidence")));
+    }
+
+    // __M2_TEST_MARKER__
+
+    #[test]
+    fn cloud_primary_rejects_whole_document_when_question_numbers_uncovered() {
+        let groups = json!([{
+            "taskId": "g1", "taskType": "true_false_not_given",
+            "instructions": [{"id": "i1", "type": "text", "text": TFNG_INSTRUCTION}],
+            "responseGroups": [{"responseGroupId": "rg1", "slotIds": ["q1"]}]
+        }]);
+        // 云端只覆盖题号 1，本地声明 1、2 → 文档级题号覆盖失败。
+        let candidate = cp_candidate(groups, json!({"q1": {"slotId": "q1", "questionNumber": 1}}));
+        let report = cp_report(true, &[("g1", true)], vec![cp_node("i1", "instruction", Some("g1"), &["r1"], true)]);
+        let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1, 2]), &report);
+        assert!(
+            plan.document_reasons.iter().any(|r| r.contains("未覆盖本地题号")),
+            "题号覆盖不全应落文档级：{:?}",
+            plan.document_reasons
+        );
+    }
+
+    #[test]
+    fn cloud_primary_flags_instruction_swallowing_question() {
+        // 说明与题干命中同一源区域 → 疑似说明吞题 / 题目被吞进说明。
+        let groups = json!([{
+            "taskId": "g1", "taskType": "true_false_not_given",
+            "instructions": [{"id": "i1", "type": "text", "text": TFNG_INSTRUCTION}],
+            "responseGroups": [{"responseGroupId": "rg1", "prompt": [{"id": "p1", "type": "text", "text": "stem"}], "slotIds": ["q1"]}]
+        }]);
+        let candidate = cp_candidate(groups, json!({"q1": {"slotId": "q1", "questionNumber": 1}}));
+        let report = cp_report(
+            true,
+            &[("g1", true)],
+            vec![
+                cp_node("i1", "instruction", Some("g1"), &["shared-region"], true),
+                cp_node("p1", "prompt", Some("g1"), &["shared-region"], true),
+            ],
+        );
+        let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1]), &report);
+        assert!(plan
+            .unqualified
+            .iter()
+            .any(|(id, reasons)| id == "g1" && reasons.iter().any(|r| r.contains("同一区域"))));
+        assert!(plan
+            .needs_cloud_review
+            .iter()
+            .any(|item| item.get("reason").and_then(Value::as_str) == Some("instruction_stem_overlap")));
+    }
+
+    #[test]
+    fn scanned_pdf_falls_back_to_conservative_plan() {
+        let groups = json!([{
+            "taskId": "g1", "taskType": "true_false_not_given",
+            "instructions": [{"id": "i1", "type": "text", "text": TFNG_INSTRUCTION}],
+            "responseGroups": [{"responseGroupId": "rg1", "slotIds": ["q1"]}]
+        }]);
+        let candidate = cp_candidate(groups, json!({"q1": {"slotId": "q1", "questionNumber": 1}}));
+        let plan = plan_adoption(&candidate, &cp_local(&[1]), &AlignmentOutcome::NoTextLayer);
+        assert!(matches!(plan, AdoptionPlan::Conservative(_)), "扫描卷无文本层应退回保守按题组");
+    }
+
+    #[test]
+    fn build_cloud_primary_document_swaps_local_for_rejected_parts() {
+        let current = json!({
+            "passage": {"content": [{"id": "p", "type": "text", "text": "local passage"}]},
+            "taskGroups": [{"taskId": "g1", "responseGroups": [{"responseGroupId": "rg1", "slotIds": ["q1"]}]}],
+            "answerSlots": {"q1": {"slotId": "q1", "questionNumber": 1}},
+            "answerKey": {"q1": {"kind": "text", "values": ["local"]}}
+        });
+        let cloud = json!({
+            "passage": {"content": [{"id": "p", "type": "text", "text": "cloud passage"}]},
+            "taskGroups": [{"taskId": "g1", "responseGroups": [{"responseGroupId": "rg1", "slotIds": ["q1"]}]}],
+            "answerSlots": {"q1": {"slotId": "q1", "questionNumber": 1}},
+            "answerKey": {"q1": {"kind": "text", "values": ["cloud"]}}
+        });
+        let reject = CloudPrimaryPlan {
+            adopt_passage: false,
+            passage_reasons: vec!["x".into()],
+            qualified_task_ids: vec![],
+            unqualified: vec![("g1".to_string(), vec!["y".into()])],
+            document_reasons: vec![],
+            review_records: vec![],
+            needs_cloud_review: vec![],
+        };
+        let merged = build_cloud_primary_document(&current, &cloud, &reject);
+        assert_eq!(merged.pointer("/passage/content/0/text"), Some(&json!("local passage")));
+        assert_eq!(merged.pointer("/answerKey/q1/values/0"), Some(&json!("local")));
+
+        let adopt = CloudPrimaryPlan { adopt_passage: true, unqualified: vec![], ..reject_clone() };
+        let merged = build_cloud_primary_document(&current, &cloud, &adopt);
+        assert_eq!(merged.pointer("/passage/content/0/text"), Some(&json!("cloud passage")));
+        assert_eq!(merged.pointer("/answerKey/q1/values/0"), Some(&json!("cloud")));
+    }
+
+    fn reject_clone() -> CloudPrimaryPlan {
+        CloudPrimaryPlan {
+            adopt_passage: false,
+            passage_reasons: vec![],
+            qualified_task_ids: vec![],
+            unqualified: vec![],
+            document_reasons: vec![],
+            review_records: vec![],
+            needs_cloud_review: vec![],
+        }
+    }
+
+    #[test]
+    fn stamp_alignment_provenance_marks_adopted_cloud_nodes() {
+        let mut merged = json!({
+            "passage": {"content": []},
+            "taskGroups": [{"taskId": "g1", "instructions": [{"id": "i1", "type": "text", "text": "x"}]}]
+        });
+        let report = cp_report(true, &[("g1", true)], vec![cp_node("i1", "instruction", Some("g1"), &["r1"], true)]);
+        let qualified = BTreeSet::from(["g1".to_string()]);
+        stamp_alignment_provenance(&mut merged, &report, true, &qualified);
+        assert_eq!(
+            merged.pointer("/taskGroups/0/instructions/0/provenanceStatus"),
+            Some(&json!("source"))
+        );
+        assert!(merged
+            .pointer("/taskGroups/0/instructions/0/sourceAnchors")
+            .and_then(Value::as_array)
+            .is_some_and(|anchors| !anchors.is_empty()));
+        assert!(merged
+            .pointer("/taskGroups/0/instructionSignature/evidenceAnchors")
+            .and_then(Value::as_array)
+            .is_some_and(|anchors| !anchors.is_empty()));
     }
 }

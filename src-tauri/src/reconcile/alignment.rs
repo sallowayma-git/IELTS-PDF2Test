@@ -10,7 +10,7 @@
 //! 去断行，再抹掉所有空白。这样 pdfium 的字符间距（`D o t h e`）与普通排版空格差异一并消解，
 //! 云端整句多数能落成精确子串；落不上的走滑窗相似度回退。
 
-// 公共入口（assess_alignment / AlignmentReport 等）由 M2 的采纳策略接入；在此之前仅测试引用。
+// 采纳策略（cloud_adoption）已接入公共入口；少数内部字段仅测试/未来接入引用。
 #![allow(dead_code)]
 
 use serde_json::{json, Value};
