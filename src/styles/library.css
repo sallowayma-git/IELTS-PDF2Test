@@ -34,7 +34,17 @@
 
 .library-tabs { display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; }
 
-.library-tabs button {
+.library-modality-tabs,
+.library-part-filter {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.library-tabs button,
+.library-modality-tabs button,
+.library-part-filter .chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -45,7 +55,14 @@
   color: var(--muted);
 }
 
-.library-tabs button.active { border-color: var(--accent); background: var(--accent); color: var(--paper-2); }
+.library-tabs button.active,
+.library-modality-tabs button.active,
+.library-part-filter .chip.is-active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--paper-2);
+}
+
 .library-tabs .tab-count { font-variant-numeric: tabular-nums; opacity: 0.8; }
 
 .library-search {
