@@ -1251,6 +1251,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         let written = run_blocking({
             let root = root.clone();
             let batch_id = batch_id.clone();
+            let job_id = job_id.clone();
             move || {
                 let conn = open_library_connection(&root)?;
                 crate::reconcile::store::write_batch_cloud_stage(
@@ -1260,6 +1261,15 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                     &stage.stage_state,
                     stage.reason_code.as_deref(),
                     &stage.message,
+                )?;
+                // decision.json 是诊断产物、由本地周期以 cloud_enabled=false 写下
+                // not_run/CLOUD_DISABLED；云端真的跑过就必须同源纠正，别让产物谎称未启用云端。
+                crate::reconcile::store::update_decision_cloud_stage(
+                    &root,
+                    &job_id,
+                    &batch_id,
+                    &stage.chain_status,
+                    stage.reason_code.as_deref(),
                 )
             }
         })
