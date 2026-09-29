@@ -914,48 +914,101 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                 let candidate_value = serde_json::to_value(&candidate).unwrap_or_else(
                     |error| serde_json::json!({"serializationError":error.to_string()}),
                 );
-                let mut adoption_reasons = match local_snapshot.as_ref() {
-                    Some(local) => crate::cloud_adoption::adoption_rejection_reasons(
+                // 按题组采纳：文档级阻断整份拒；否则合格题组采纳、不合格保留本地并给原因。
+                let plan = local_snapshot.as_ref().map(|local| {
+                    crate::cloud_adoption::plan_group_adoption(
                         &candidate_value,
                         &serde_json::to_value(local).unwrap_or(serde_json::Value::Null),
-                    ),
-                    None => vec!["缺少冻结的本地候选，无法核对覆盖范围".to_string()],
-                };
+                    )
+                });
+                let mut document_reasons: Vec<String> = Vec::new();
+                let mut rejected_groups: Vec<(String, Vec<String>)> = Vec::new();
+                let mut qualified_task_ids: Vec<String> = Vec::new();
                 let mut adoption_result = None;
-                if adoption_reasons.is_empty() && announced.is_some() {
-                    match crate::cloud_adoption::adopt_cloud_candidate(
-                        &root,
-                        &job_id,
-                        &batch_id,
-                        candidate.base_edit_version,
-                        &serde_json::to_value(&candidate.authoring)
-                            .unwrap_or(serde_json::Value::Null),
-                    ) {
-                        Ok(result) => adoption_result = Some(result),
-                        Err(error) => adoption_reasons.push(format!(
-                            "云端候选未能通过并发版本与正式稿校验，已回退到本地稿校核：{error}"
-                        )),
+                match plan {
+                    None => {
+                        document_reasons.push("缺少冻结的本地候选，无法核对覆盖范围".to_string());
                     }
-                } else if adoption_reasons.is_empty() {
-                    adoption_reasons.push("云端校核租约已失效，未写入云端候选".to_string());
+                    Some(plan) => {
+                        document_reasons = plan.document_reasons;
+                        rejected_groups = plan.unqualified;
+                        qualified_task_ids = plan.qualified_task_ids;
+                        if document_reasons.is_empty()
+                            && !qualified_task_ids.is_empty()
+                            && announced.is_some()
+                        {
+                            match crate::cloud_adoption::adopt_cloud_candidate(
+                                &root,
+                                &job_id,
+                                &batch_id,
+                                candidate.base_edit_version,
+                                &serde_json::to_value(&candidate.authoring)
+                                    .unwrap_or(serde_json::Value::Null),
+                                &qualified_task_ids,
+                            ) {
+                                Ok(result) => adoption_result = Some(result),
+                                Err(error) => document_reasons.push(format!(
+                                    "云端候选未能通过并发版本与正式稿校验，已回退到本地稿校核：{error}"
+                                )),
+                            }
+                        } else if document_reasons.is_empty()
+                            && !qualified_task_ids.is_empty()
+                            && announced.is_none()
+                        {
+                            document_reasons
+                                .push("云端校核租约已失效，未写入云端候选".to_string());
+                        }
+                    }
                 }
                 let adopted = adoption_result.is_some();
                 if adopted {
                     adopted_cloud_candidate_for_answers = Some(candidate_value.clone());
                 }
+                let rejected_json = rejected_groups
+                    .iter()
+                    .map(|(task_id, reasons)| {
+                        serde_json::json!({ "taskId": task_id, "reasons": reasons })
+                    })
+                    .collect::<Vec<_>>();
                 let adoption_info = if let Some(result) = adoption_result.as_ref() {
+                    let status = if rejected_groups.is_empty() {
+                        "adopted"
+                    } else {
+                        "partially_adopted"
+                    };
+                    let reason = if rejected_groups.is_empty() {
+                        "云端候选整份采纳；用户在基线之后保存的目标已保留。".to_string()
+                    } else {
+                        format!(
+                            "按题组采纳：{} 组采纳了云端内容，{} 组因阻断保留本地稿。",
+                            qualified_task_ids.len(),
+                            rejected_groups.len()
+                        )
+                    };
                     serde_json::json!({
-                        "status": "adopted",
+                        "status": status,
                         "adopted": true,
                         "editVersion": result.edit_version,
+                        "adoptedTaskIds": qualified_task_ids,
+                        "rejectedGroups": rejected_json,
                         "preservedGroupIds": result.preserved_group_ids,
-                        "reason": "云端候选通过确定性结构与题号门槛；用户在基线之后保存的目标已保留。"
+                        "reason": reason
                     })
                 } else {
+                    let reason = if !document_reasons.is_empty() {
+                        format!(
+                            "未采纳云端候选，继续按本地稿校核：{}",
+                            document_reasons.join("；")
+                        )
+                    } else {
+                        "云端候选没有可采纳的合格题组，全部保留本地稿。".to_string()
+                    };
                     serde_json::json!({
                         "status": "not_adopted",
                         "adopted": false,
-                        "reason": adoption_reasons.join("；"),
+                        "documentReasons": document_reasons,
+                        "rejectedGroups": rejected_json,
+                        "reason": reason,
                         "fallback": "local_draft"
                     })
                 };
