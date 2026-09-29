@@ -24,4 +24,19 @@ export interface JobDetail {
   pipelineReport?: AutoPipelineReport;
   visionAnswerCandidates?: VisionAnswerCandidates;
   llmSuggestions: LlmSuggestion[];
+  llmUsage?: LlmUsageSummary;
+}
+
+export interface LlmUsageSummary {
+  tokenBudget: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cacheHitTokens: number;
+  cacheMissTokens: number;
+  callCount: number;
+  usageAvailable: boolean;
+  cacheUsageAvailable: boolean;
+  unknownUsageCalls: number;
+  budgetReached: boolean;
 }

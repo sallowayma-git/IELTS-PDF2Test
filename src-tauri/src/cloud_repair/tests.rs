@@ -438,6 +438,60 @@ fn read_draft_section_filters_by_task_group() {
     assert!(empty["answerSlots"].as_object().unwrap().is_empty());
 }
 
+#[test]
+fn read_draft_section_keeps_editable_structure_and_drops_model_unused_metadata() {
+    let canonical = json!({
+        "taskGroups": [{
+            "taskId": "tg-1",
+            "taskType": "sentence_completion",
+            "sourceAnchors": [{"sourceFileId": "source-1", "pageIndex": 2}],
+            "provenance": {"source": "local-recognition"},
+            "provenanceStatus": "verified",
+            "audit": {"revision": 4},
+            "quality": {"issues": [{"code": "detail"}]},
+            "instructions": [{"type": "paragraph", "id": "instruction-1", "children": [
+                {"type": "text", "id": "text-1", "text": "Complete each sentence."}
+            ]}],
+            "responseGroups": [{"responseGroupId": "rg-1", "slotIds": ["q1"]}]
+        }],
+        "answerSlots": {"q1": {
+            "slotId": "q1", "questionNumber": 1, "hostNodeId": "prompt-1",
+            "provenance": {"method": "local"}, "sourceAnchors": [{"pageIndex": 2}]
+        }},
+        "answerKey": {"q1": {"kind": "text", "values": ["word"], "audit": {"checked": true}}}
+    });
+    let section = read_draft_section(&canonical, 7, &json!({"taskGroupIds": ["tg-1"]}));
+    assert_eq!(
+        section.pointer("/taskGroups/0/taskId"),
+        Some(&json!("tg-1"))
+    );
+    assert_eq!(
+        section.pointer("/taskGroups/0/instructions/0/children/0/text"),
+        Some(&json!("Complete each sentence."))
+    );
+    assert_eq!(
+        section.pointer("/answerSlots/q1/slotId"),
+        Some(&json!("q1"))
+    );
+    assert_eq!(
+        section.pointer("/answerKey/q1/values/0"),
+        Some(&json!("word"))
+    );
+    let serialized = serde_json::to_string(&section).expect("serialize projected draft");
+    for forbidden in [
+        "sourceAnchors",
+        "provenance",
+        "provenanceStatus",
+        "audit",
+        "quality",
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "model draft retains {forbidden}: {serialized}"
+        );
+    }
+}
+
 /// 主闭环：非法编辑被拒（收到具体错误）→ 合法编辑真的落库 → finish 不等于产品完成。
 #[test]
 fn repair_loop_rejects_bad_edit_then_applies_the_real_fix() {
@@ -1194,10 +1248,18 @@ fn spawn_scripted_repair_service_with(
             };
 
             let content = script(&body, round);
+            let prompt_tokens = (body.len() as u64).saturating_add(3) / 4;
+            let completion_tokens = (content.len() as u64).saturating_add(3) / 4;
             let envelope = json!({
                 "id": "controlled-repair-0001",
                 "object": "chat.completion",
                 "model": "controlled-repair-v1",
+                "usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "prompt_cache_hit_tokens": 0,
+                    "prompt_cache_miss_tokens": prompt_tokens
+                },
                 "choices": [{
                     "index": 0,
                     "finish_reason": "stop",
@@ -1222,32 +1284,38 @@ fn spawn_scripted_repair_service() -> (String, std::sync::Arc<std::sync::Mutex<V
     spawn_scripted_repair_service_with(scripted_repair_reply)
 }
 
-/// 从请求体里取出网关嵌进 prompt 的那份输入 JSON（`Input JSON: {...}` 之后的全部内容）。
-///
-/// 必须**先按 JSON 解析信封**再取文本：prompt 是 `messages[1].content` 里的一个 text
-/// part，直接从原始字节里找 `Input JSON: ` 会拿到一层 `\"` 转义，解析必然失败——失败
-/// 的表现是版本号取成兜底值、`apply_edits` 被 CAS 拒，于是这条用例会「跑完了但什么都没改」，
-/// 看起来像产品没接通，其实是夹具没读懂请求。
+/// 按当前多消息请求布局取出 prompt 文本；受控服务据此使用真实读到的 editVersion。
+fn repair_prompt_texts(envelope: &Value) -> Vec<String> {
+    let mut texts = Vec::new();
+    for message in envelope
+        .get("messages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        match message.get("content") {
+            Some(Value::String(text)) => texts.push(text.clone()),
+            Some(Value::Array(parts)) => texts.extend(
+                parts
+                    .iter()
+                    .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
+                    .filter_map(|part| {
+                        part.get("text").and_then(Value::as_str).map(str::to_string)
+                    }),
+            ),
+            _ => {}
+        }
+    }
+    texts
+}
+
 fn repair_request_input(body: &str) -> Option<Value> {
     let envelope: Value = serde_json::from_str(body.get(body.find('{')?..)?).ok()?;
-    let text = envelope
-        .get("messages")?
-        .as_array()?
-        .iter()
-        .flat_map(|message| {
-            message
-                .get("content")
-                .and_then(Value::as_array)
-                .map(Vec::as_slice)
-                .unwrap_or(&[])
-        })
-        .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
-        .filter_map(|part| part.get("text").and_then(Value::as_str))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let text = repair_prompt_texts(&envelope).join("\n");
     let marker = "Input JSON: ";
     let at = text.rfind(marker)?;
-    serde_json::from_str(text[at + marker.len()..].trim()).ok()
+    let mut deserializer = serde_json::Deserializer::from_str(text[at + marker.len()..].trim());
+    serde::Deserialize::deserialize(&mut deserializer).ok()
 }
 
 /// 剧本：先读稿 → 再按**真实读到的版本**提交一批合法编辑 → 收尾。
@@ -2782,6 +2850,26 @@ fn adjudicated_count_only_counts_rulings_that_still_hold() {
 /// 选项库 id 的**摘要**。随后该组的 stimulus / 题面 / 选项文本 / 答案被改写，摘要一个字
 /// 没变、差异两侧也没变，旧代码于是继续 `continue`，这条已经变质的内容永远不进用户清单。
 #[test]
+fn adjudication_context_fingerprint_is_fixed_size() {
+    let canonical = golden_authoring();
+    let candidate = json!({
+        "taskGroups": [], "answerSlots": {}, "answerKey": {}, "assets": []
+    });
+    let difference = candidate_differences(&canonical, &candidate)
+        .into_iter()
+        .find(|difference| difference["field"] == "task_group")
+        .expect("the canonical fixture should produce a task-group difference");
+    let (_, _, context_digest) = difference_digests(&difference);
+
+    assert_eq!(
+        context_digest.len(),
+        64,
+        "context binding must be a compact SHA-256 digest"
+    );
+    assert!(context_digest.bytes().all(|byte| byte.is_ascii_hexdigit()));
+}
+
+#[test]
 fn a_ruling_stops_holding_once_the_content_it_depended_on_changes() {
     let canonical = golden_authoring();
     let task_id = canonical["taskGroups"][0]["taskId"]
@@ -4287,8 +4375,7 @@ fn a_packet_that_lacks_the_answer_page_says_so_and_gets_it_next_round() {
                     }
                 }))
             }
-            // 编辑落地 ⇒ 差异归零 ⇒ 重切出一个**只带索引**的收尾包（任务书 §4.1：一条
-            // 差异都没有时也给模型一次机会）。它的观察是空的，所以这一轮不碰 observations。
+            // 差异归零后不再生成空包；保留收尾动作以覆盖仍有真实后续包的情况。
             _ => Ok(json!({"callId": "c3", "tool": "finish_packet", "arguments": {}})),
         }
     })
@@ -4321,11 +4408,10 @@ fn a_packet_that_lacks_the_answer_page_says_so_and_gets_it_next_round() {
     );
     assert_eq!(
         report.packets.len(),
-        2,
-        "差异修完之后的收尾包也要出现在诊断里：{:#?}",
+        1,
+        "差异修完之后不应生成空的收尾包：{:#?}",
         report.packets
     );
-    assert_eq!(report.packets[1]["status"], json!("finished"));
     assert_eq!(
         report.status, REPAIR_STATUS_COMPLETED,
         "每包都收工、队列自然跑空 ⇒ 这是一次**完成**，不是预算耗尽"
@@ -5539,23 +5625,14 @@ fn seed_page_images(root: &Path, pages: &[u32]) {
 fn request_input_json(raw: &str) -> Value {
     let start = raw.find("{\"max_tokens").expect("请求体必须是 JSON");
     let body: Value = serde_json::from_str(&raw[start..]).expect("请求体必须是合法 JSON");
-    let text = body["messages"]
-        .as_array()
+    let text = repair_prompt_texts(&body)
         .into_iter()
-        .flatten()
-        .find_map(|message| {
-            message["content"].as_array().and_then(|parts| {
-                parts.iter().find_map(|part| {
-                    part["text"]
-                        .as_str()
-                        .filter(|text| text.contains("Input JSON: "))
-                })
-            })
-        })
+        .find(|text| text.contains("Input JSON: "))
         .expect("prompt 文本块必须存在");
     let marker = "Input JSON: ";
     let index = text.rfind(marker).expect("prompt 必须带输入 JSON") + marker.len();
-    serde_json::from_str(&text[index..]).expect("输入 JSON 必须合法")
+    let mut deserializer = serde_json::Deserializer::from_str(text[index..].trim());
+    serde::Deserialize::deserialize(&mut deserializer).expect("输入 JSON 必须合法")
 }
 
 /// 包模式真的会把区域图附上，并且**本机绝对路径绝不进 prompt**
@@ -6668,8 +6745,8 @@ fn ten_packets_with_fixed_round_delay_finish_within_a_deadline_scaled_to_the_pac
     store_candidate_for_canonical(&root, &canonical, multi_group_draft(10, "A", "D"));
     seed_packet_job(&root);
 
-    // 基础时限 2.5 秒、每轮固定消耗 400 毫秒（虚拟时间）。10 个包各走 1 轮 apply +
-    // 收尾包 finish ⇒ 11 轮 = 4.4 秒：未放宽的 2.5 秒装不下（改动前 budget_exhausted
+    // 基础时限 2.5 秒、每轮固定消耗 400 毫秒（虚拟时间）。10 个包各走 1 轮 apply，
+    // 10 轮 = 4 秒：未放宽的 2.5 秒装不下（改动前 budget_exhausted
     // 的原因），按包数放宽到封顶 3×（7.5 秒）装得下。
     let base_deadline_ms = 2500u64;
     let round_delay_ms = 400u64;
@@ -6736,10 +6813,10 @@ fn ten_packets_with_fixed_round_delay_finish_within_a_deadline_scaled_to_the_pac
     .expect("包模式循环必须返回结果");
 
     // 全部差异都改对 ⇒ 剩余任务为空 ⇒ completed，而不是 budget_exhausted。
-    // 11 轮 = 10 个 apply + 1 个收尾包（收尾包是整卷一个，不是每包一个）。
+    // 每个差异包只调用一次；全部修完后不再发送空的收尾调用。
     assert_eq!(
-        report.rounds, 11,
-        "10 个 apply + 1 个收尾包：{:#?}",
+        report.rounds, 10,
+        "10 个真实差异包各调用一次：{:#?}",
         report.packets
     );
     assert_eq!(report.applied_count, 10);

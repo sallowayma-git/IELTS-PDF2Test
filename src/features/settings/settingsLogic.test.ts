@@ -33,6 +33,10 @@ describe("设置里没有摆设", () => {
     expect(keys).not.toContain("cloudConcurrency");
     expect(Object.keys(readAppSettings())).toEqual(keys);
   });
+  it("云端 token 预算默认值与导入端一致", () => {
+    expect(DEFAULT_APP_SETTINGS.cloudTokenBudget).toBe(100_000);
+    expect(readAppSettings().cloudTokenBudget).toBe(100_000);
+  });
 });
 
 describe("导入抽屉的云端提示", () => {

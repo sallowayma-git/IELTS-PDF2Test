@@ -2895,23 +2895,42 @@ fn local_source_paragraph_targets(root: &Path, job_id: &str) -> CommandResult<Va
         }
     }
 
+    fn collect_node_targets(value: &Value, targets: &mut Vec<Value>) {
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    collect_node_targets(item, targets);
+                }
+            }
+            Value::Object(object) => {
+                if let (Some(node_type), Some(node_id)) = (
+                    object.get("type").and_then(Value::as_str),
+                    object.get("id").and_then(Value::as_str),
+                ) {
+                    targets.push(json!({"type": node_type, "nodeId": node_id}));
+                }
+                if let Some(children) = object.get("children") {
+                    collect_node_targets(children, targets);
+                }
+            }
+            _ => {}
+        }
+    }
+
     let path = job_dir(root, job_id).join(AUTHORING_V2_SHADOW_ARTIFACT_FILE);
     let Some(authoring) = read_json_opt(&path)? else {
-        return Ok(json!({"paragraphMap": {}, "paragraphs": []}));
+        return Ok(json!({"paragraphMap": {}, "paragraphs": [], "taskGroups": []}));
     };
-    let Some(paragraph_map) = authoring
+    let paragraph_map = authoring
         .pointer("/passage/paragraphMap")
-        .and_then(Value::as_object)
-    else {
-        return Ok(json!({"paragraphMap": {}, "paragraphs": []}));
-    };
+        .and_then(Value::as_object);
     let mut passage_paragraph_ids = std::collections::BTreeSet::new();
     if let Some(content) = authoring.pointer("/passage/content") {
         collect_paragraph_ids(content, &mut passage_paragraph_ids);
     }
     let mut valid_map = serde_json::Map::new();
     let mut paragraphs = Vec::new();
-    for (label, node_id) in paragraph_map {
+    for (label, node_id) in paragraph_map.into_iter().flatten() {
         let Some(node_id) = node_id.as_str() else {
             continue;
         };
@@ -2921,7 +2940,61 @@ fn local_source_paragraph_targets(root: &Path, job_id: &str) -> CommandResult<Va
         valid_map.insert(label.clone(), json!(node_id));
         paragraphs.push(json!({"label": label, "nodeId": node_id}));
     }
-    Ok(json!({"paragraphMap": valid_map, "paragraphs": paragraphs}))
+    let task_groups: Vec<Value> = authoring
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|group| {
+            let mut instructions = Vec::new();
+            let mut stimulus = Vec::new();
+            collect_node_targets(group.get("instructions").unwrap_or(&Value::Null), &mut instructions);
+            collect_node_targets(group.get("stimulus").unwrap_or(&Value::Null), &mut stimulus);
+            let questions: Vec<Value> = group
+                .get("responseGroups")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .map(|response| {
+                    let mut prompt_nodes = Vec::new();
+                    collect_node_targets(response.get("prompt").unwrap_or(&Value::Null), &mut prompt_nodes);
+                    let slot_ids = response.get("slotIds").cloned().unwrap_or_else(|| json!([]));
+                    let question_numbers: Vec<Value> = slot_ids
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|slot| {
+                            authoring
+                                .get("answerSlots")
+                                .and_then(Value::as_object)?
+                                .get(slot.as_str()?)
+                                .and_then(|answer_slot| answer_slot.get("questionNumber"))
+                                .cloned()
+                        })
+                        .collect();
+                    json!({
+                        "responseGroupId": response.get("responseGroupId").cloned().unwrap_or(Value::Null),
+                        "slotIds": slot_ids,
+                        "questionNumbers": question_numbers,
+                        "promptNodes": prompt_nodes,
+                    })
+                })
+                .collect();
+            let question_numbers = group
+                .get("displayRange")
+                .map(crate::reconcile::candidate::expand_question_numbers)
+                .unwrap_or_default();
+            json!({
+                "taskId": group.get("taskId").cloned().unwrap_or(Value::Null),
+                "taskType": group.get("taskType").cloned().unwrap_or(Value::Null),
+                "questionNumbers": question_numbers,
+                "instructionNodes": instructions,
+                "stimulusNodes": stimulus,
+                "questionPrompts": questions,
+            })
+        })
+        .collect();
+    Ok(json!({"paragraphMap": valid_map, "paragraphs": paragraphs, "taskGroups": task_groups}))
 }
 
 /// 云端**完整候选**识别的第一段：原文件证据面 + 真实网关调用。
@@ -2931,8 +3004,7 @@ fn local_source_paragraph_targets(root: &Path, job_id: &str) -> CommandResult<Va
 /// 派生、`base_edit_version` 要到本地冻结之后才成立。把「调用」与「定身份 + 落盘」分开，
 /// 既保持并发，又不让候选挂在一个并不存在的批次上（那比没有候选更危险，因为它看着可信）。
 ///
-/// 一次受约束修复：首次输出被结构校验拒了，把**被拒原因原样**回给模型再问一次。
-/// 不带原因地重试同一句话，只会再拿到同一种错误——那不是修复，只是多烧一次配额。
+/// 只有校验器指出必填字段缺失时才补字段；解析、传输和其他结构错误没有可安全合并的补丁。
 pub(crate) fn generate_cloud_authoring_candidate_raw(
     root: &Path,
     job_id: &str,
@@ -2963,7 +3035,14 @@ pub(crate) fn generate_cloud_authoring_candidate_raw(
         &extraction,
         &modality,
     );
-    input["sourceParagraphs"] = local_source_paragraph_targets(root, job_id)?;
+    let local_targets = local_source_paragraph_targets(root, job_id)?;
+    input["sourceParagraphs"] = json!({
+        "paragraphMap": local_targets.get("paragraphMap").cloned().unwrap_or_else(|| json!({})),
+        "paragraphs": local_targets.get("paragraphs").cloned().unwrap_or_else(|| json!([])),
+    });
+    input["localNodeTargets"] = json!({
+        "taskGroups": local_targets.get("taskGroups").cloned().unwrap_or_else(|| json!([])),
+    });
     // 分块计划的依据：**原文件自己的文本**（PDF 走独立的文本层抽取，DOCX/TXT 走同一份
     // 证据文本），绝不读本地识别的结论。
     let plan_text = if !is_pdf {
@@ -3026,8 +3105,7 @@ where
     crate::reconcile::candidate::merge_candidate_chunks(results)
 }
 
-/// 一次候选请求 + 至多一次受约束修复：首次输出被结构校验拒了，把**被拒原因原样**回给
-/// 模型再问一次。网络/配置类错误重试同一句话毫无意义，直接返回。
+/// 候选只在必填字段缺失时补一次；解析错误、网络错误和不可合并的结构错误直接返回。
 fn candidate_request_with_one_repair(
     root: &Path,
     job_id: &str,
@@ -3037,23 +3115,28 @@ fn candidate_request_with_one_repair(
     match run_llm_gateway(root, job_id, "generate_authoring_candidate", input, api_key) {
         Ok(value) => Ok(value),
         Err(first_error) => {
-            if !first_error.starts_with("cloud_authoring_output_")
-                && !first_error.starts_with("llm_json_parse_failed")
-            {
+            let Some(missing_field) =
+                crate::llm_gateway::candidate_missing_field_pointer(&first_error)
+            else {
                 return Err(first_error);
-            }
+            };
+            let Some(partial) =
+                crate::llm_gateway::read_rejected_authoring_candidate(root, job_id, &first_error)?
+            else {
+                return Err(first_error);
+            };
             let mut retry = input.clone();
-            if let Some(object) = retry.as_object_mut() {
-                object.insert("repairNote".to_string(), json!(first_error));
-            }
-            run_llm_gateway(
+            retry["repairMissingFields"] = json!([missing_field]);
+            let supplement = run_llm_gateway(
                 root,
                 job_id,
                 "generate_authoring_candidate",
                 &retry,
                 api_key,
             )
-            .map_err(|second_error| format!("cloud_authoring_candidate_rejected:{second_error}"))
+            .map_err(|second_error| format!("cloud_authoring_candidate_repair_rejected:{second_error}"))?;
+            crate::llm_gateway::merge_authoring_candidate_supplement(partial, supplement, &retry)
+                .map_err(|repair_error| format!("cloud_authoring_candidate_repair_rejected:{repair_error}"))
         }
     }
 }
@@ -5712,7 +5795,7 @@ mod tests {
             &BTreeSet::new(),
             &BTreeSet::new()
         )
-            .is_empty());
+        .is_empty());
     }
 
     #[test]

@@ -42,8 +42,8 @@ use crate::CommandResult;
 pub(crate) const DEFAULT_MAX_REPAIR_ROUNDS: u32 = 6;
 /// 整次修复的总超时（含 HTTP 重试时间，不叠加旧 A3/A4 的各自预算）。
 pub(crate) const DEFAULT_REPAIR_TIMEOUT_MS: u64 = 10 * 60 * 1000;
-/// 连续多少次「完全相同的工具调用且没有产生任何进展」就停下。
-const REPEAT_LIMIT: u32 = 2;
+/// 再次收到同一无进展工具调用时立即停下，避免重复消耗一次模型回合。
+const REPEAT_LIMIT: u32 = 1;
 /// 每个**校核包**的模型回合预算（包模式下按包独立计数）。
 const PACKET_MAX_ROUNDS: u32 = 5;
 /// 升级阶梯的最高级别（L4 = 后端代记 `cannot_resolve`，理由码 `CONTEXT_INSUFFICIENT`）。
@@ -511,7 +511,7 @@ fn target_context_fingerprint(canonical: &Value, target_type: &str, target_id: &
             .cloned()
             .unwrap_or(Value::Null)
     };
-    match target_type {
+    let context = match target_type {
         "slot" => {
             let slot = canonical.pointer(&format!("/answerSlots/{target_id}"));
             let answer = canonical.pointer(&format!("/answerKey/{target_id}"));
@@ -559,7 +559,9 @@ fn target_context_fingerprint(canonical: &Value, target_type: &str, target_id: &
             });
             canonical_json(&group)
         }
-    }
+    };
+    // Keep freshness binding verifiable without copying the whole dependency group into every packet.
+    crate::hash_bytes(context.as_bytes())
 }
 
 /// 一条差异的**完整**前提指纹 `(当前稿一侧, 候选一侧, 裁定依据)`。
@@ -1120,7 +1122,7 @@ pub(crate) fn read_draft_section(canonical: &Value, edit_version: i64, arguments
                         .iter()
                         .any(|number| requested_numbers.contains(number))
                 })
-                .cloned()
+                .map(project_model_draft_value)
                 .collect()
         })
         .unwrap_or_default();
@@ -1142,7 +1144,7 @@ pub(crate) fn read_draft_section(canonical: &Value, edit_version: i64, arguments
         let mut out = serde_json::Map::new();
         for (key, value) in entries {
             if selected_slots.contains(key) {
-                out.insert(key.clone(), value.clone());
+                out.insert(key.clone(), project_model_draft_value(value));
             }
         }
         Value::Object(out)
@@ -1154,6 +1156,29 @@ pub(crate) fn read_draft_section(canonical: &Value, edit_version: i64, arguments
         "answerSlots": filter_map("/answerSlots"),
         "answerKey": filter_map("/answerKey"),
     })
+}
+
+fn project_model_draft_value(value: &Value) -> Value {
+    const MODEL_UNUSED_KEYS: &[&str] = &[
+        "sourceAnchors",
+        "provenance",
+        "provenanceStatus",
+        "audit",
+        "quality",
+        "qualityIssues",
+        "reviewState",
+    ];
+    match value {
+        Value::Object(object) => Value::Object(
+            object
+                .iter()
+                .filter(|(key, _)| !MODEL_UNUSED_KEYS.contains(&key.as_str()))
+                .map(|(key, value)| (key.clone(), project_model_draft_value(value)))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(project_model_draft_value).collect()),
+        _ => value.clone(),
+    }
 }
 
 /// 原文件**逐页纯文本**（解析器层，不是语义识别结论）。
@@ -1820,9 +1845,9 @@ fn execute_tool(
                 == Some("adopted_cloud_vs_local_snapshot");
             let candidate =
                 comparison_challenger(request.root, request.job_id, request.batch_id, adopted)
-            .ok()
-            .flatten()
-            .unwrap_or(Value::Null);
+                    .ok()
+                    .flatten()
+                    .unwrap_or(Value::Null);
             if candidate.is_null() {
                 return (
                     CloudRepairToolResultV1::rejected(
@@ -2516,18 +2541,18 @@ fn remaining_tasks(
     // ── 2) 尚未裁定的内容差异 ─────────────────────────────────────────────
     if let Some(challenger) = challenger.as_ref() {
         for difference in candidate_differences(&canonical, challenger) {
-                let (target_type, target_id, field) = difference_key(&difference);
-                let task_id = format!("cloud-diff:{target_type}:{target_id}:{field}");
-                match fresh_ruling_for_difference(rulings, &difference) {
-                    // 已裁定「当前稿对、候选错」：差异**已了结**，不再问用户。
-                    Some(ruling)
-                        if ruling.get("ruling").and_then(Value::as_str)
-                            == Some(
-                                crate::schema::cloud_repair_v1::CLOUD_RULING_CURRENT_IS_CORRECT,
-                            ) =>
-                    {
-                        continue;
-                    }
+            let (target_type, target_id, field) = difference_key(&difference);
+            let task_id = format!("cloud-diff:{target_type}:{target_id}:{field}");
+            match fresh_ruling_for_difference(rulings, &difference) {
+                // 已裁定「当前稿对、候选错」：差异**已了结**，不再问用户。
+                Some(ruling)
+                    if ruling.get("ruling").and_then(Value::as_str)
+                        == Some(
+                            crate::schema::cloud_repair_v1::CLOUD_RULING_CURRENT_IS_CORRECT,
+                        ) =>
+                {
+                    continue;
+                }
                 Some(ruling)
                     if ruling.get("ruling").and_then(Value::as_str)
                         == Some(
@@ -2536,14 +2561,14 @@ fn remaining_tasks(
                 {
                     continue;
                 }
-                    // 已裁定「原文件不足以定论」：仍然要人看，但**带上模型的结论与出处**，
-                    // 而不是让用户从零开始重新判断一遍。
-                    Some(ruling) => {
-                        // 「上下文不足」与「查过但定不了」是两件事，必须分开说。
-                        let insufficient = ruling.get("reason").and_then(Value::as_str)
+                // 已裁定「原文件不足以定论」：仍然要人看，但**带上模型的结论与出处**，
+                // 而不是让用户从零开始重新判断一遍。
+                Some(ruling) => {
+                    // 「上下文不足」与「查过但定不了」是两件事，必须分开说。
+                    let insufficient = ruling.get("reason").and_then(Value::as_str)
                             == Some(crate::schema::cloud_repair_v1::CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT);
-                        let message = if insufficient {
-                            context_insufficient_message(&ruling)
+                    let message = if insufficient {
+                        context_insufficient_message(&ruling)
                     } else if adopted && field != "answer" {
                         format!(
                             "{}；原文无法裁定，已默认保留云端版本：{}",
@@ -2558,20 +2583,47 @@ fn remaining_tasks(
                             "{}；云端与本地答案不一致，原文无法判定，请核对",
                             describe_comparison_difference(&difference, true)
                         )
-                        } else {
-                            format!(
-                                "{}；云端已查过原文件但无法定论：{}",
-                                describe_difference(&difference),
-                                ruling
-                                    .get("reason")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or("未说明理由")
-                            )
-                        };
-                        let mut task = json!({
+                    } else {
+                        format!(
+                            "{}；云端已查过原文件但无法定论：{}",
+                            describe_difference(&difference),
+                            ruling
+                                .get("reason")
+                                .and_then(Value::as_str)
+                                .unwrap_or("未说明理由")
+                        )
+                    };
+                    let mut task = json!({
+                        "userTaskId": task_id,
+                        "targetIds": [target_id],
+                        "message": message,
+                        "action": "review_difference",
+                        "blocking": false,
+                        // 当前值与云端值一并给前端：任务里要能直接看到「现在是什么、云端读到的是什么」。
+                        "field": field.clone(),
+                        "currentValue": difference.get("canonical").cloned().unwrap_or(Value::Null),
+                        "cloudValue": difference.get("candidate").cloned().unwrap_or(Value::Null),
+                    "challengerValue": difference.get("candidate").cloned().unwrap_or(Value::Null),
+                    "challengerLabel": if adopted { "本地识别" } else { "云端识别" },
+                        "evidence": ruling.get("evidence").cloned().unwrap_or_else(|| json!([])),
+                        "repairFamily": repair_family_for_difference_field(&field),
+                    });
+                    if insufficient {
+                        // 明标出来：**这条差异没有被核对过**。三态不坍缩
+                        // （not_executed / insufficient_context / passed）靠的就是它。
+                        task["contextInsufficient"] = json!(true);
+                    }
+                    push_repair_task(&mut tasks, &mut by_key, task);
+                }
+                // 没裁定过，或裁定已被内容变化作废：这才是真正需要用户看的差异。
+                None => {
+                    push_repair_task(
+                        &mut tasks,
+                        &mut by_key,
+                        json!({
                             "userTaskId": task_id,
                             "targetIds": [target_id],
-                            "message": message,
+                        "message": describe_comparison_difference(&difference, adopted),
                             "action": "review_difference",
                             "blocking": false,
                             // 当前值与云端值一并给前端：任务里要能直接看到「现在是什么、云端读到的是什么」。
@@ -2580,40 +2632,13 @@ fn remaining_tasks(
                             "cloudValue": difference.get("candidate").cloned().unwrap_or(Value::Null),
                         "challengerValue": difference.get("candidate").cloned().unwrap_or(Value::Null),
                         "challengerLabel": if adopted { "本地识别" } else { "云端识别" },
-                            "evidence": ruling.get("evidence").cloned().unwrap_or_else(|| json!([])),
                             "repairFamily": repair_family_for_difference_field(&field),
-                        });
-                        if insufficient {
-                            // 明标出来：**这条差异没有被核对过**。三态不坍缩
-                            // （not_executed / insufficient_context / passed）靠的就是它。
-                            task["contextInsufficient"] = json!(true);
-                        }
-                        push_repair_task(&mut tasks, &mut by_key, task);
-                    }
-                    // 没裁定过，或裁定已被内容变化作废：这才是真正需要用户看的差异。
-                    None => {
-                        push_repair_task(
-                            &mut tasks,
-                            &mut by_key,
-                            json!({
-                                "userTaskId": task_id,
-                                "targetIds": [target_id],
-                            "message": describe_comparison_difference(&difference, adopted),
-                                "action": "review_difference",
-                                "blocking": false,
-                                // 当前值与云端值一并给前端：任务里要能直接看到「现在是什么、云端读到的是什么」。
-                                "field": field.clone(),
-                                "currentValue": difference.get("canonical").cloned().unwrap_or(Value::Null),
-                                "cloudValue": difference.get("candidate").cloned().unwrap_or(Value::Null),
-                            "challengerValue": difference.get("candidate").cloned().unwrap_or(Value::Null),
-                            "challengerLabel": if adopted { "本地识别" } else { "云端识别" },
-                                "repairFamily": repair_family_for_difference_field(&field),
-                            }),
-                        );
-                    }
+                        }),
+                    );
                 }
             }
         }
+    }
 
     // ── 3) 模型明确留下的未解疑问 ─────────────────────────────────────────
     //
@@ -3299,10 +3324,8 @@ where
     let mut incomplete = false;
     // 已经收工的包（按**稳定 id**）。重切之后按 id 过滤，已做完的不会被重新排队。
     let mut done_packets: BTreeSet<String> = BTreeSet::new();
-    // 全局回合上限按包数派生：任务书给的是「每包 5 轮」，而调用方的 `max_rounds`
-    // （legacy 默认 6）是**整卷**口径。若照搬，第二个包起就会被饿死——那会让「包」
-    // 反而比整卷更贵。真正的全局约束是总超时，这里只做一道防止无限重切的闸。
-    let mut global_round_cap = PACKET_MAX_ROUNDS * (queue.len().max(1) as u32);
+    // 以初始包数固定总上限，重切不能增加剩余请求额度，否则编辑循环会越跑越长。
+    let global_round_cap = PACKET_MAX_ROUNDS * (queue.len().max(1) as u32);
 
     let start_version = current_canonical(request)
         .ok()
@@ -3610,7 +3633,6 @@ where
                                     .is_some_and(|id| !done_packets.contains(id))
                             })
                             .collect();
-                        global_round_cap = rounds + PACKET_MAX_ROUNDS * (queue.len().max(1) as u32);
                     }
                     Err(error) => {
                         last_error = Some(error);
@@ -3759,7 +3781,7 @@ fn plan_repair_packets(
     let adopted = context.get("comparisonMode").and_then(Value::as_str)
         == Some("adopted_cloud_vs_local_snapshot");
     let candidate = comparison_challenger(request.root, request.job_id, request.batch_id, adopted)?
-            .unwrap_or(Value::Null);
+        .unwrap_or(Value::Null);
     let differences: Vec<Value> = context
         .get("differences")
         .and_then(Value::as_array)

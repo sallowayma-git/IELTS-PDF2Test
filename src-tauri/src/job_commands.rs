@@ -218,6 +218,7 @@ pub(crate) async fn get_job_core(job_id: String, app: AppHandle) -> CommandResul
         pipeline_report: read_json_opt(&dir.join("pipeline-report.json"))?,
         vision_answer_candidates: read_json_opt(&dir.join("vision-answer-candidates.json"))?,
         llm_suggestions: load_llm_suggestions(&root, &job_id)?,
+        llm_usage: Some(crate::llm_gateway::llm_usage_summary(&root, &job_id)?),
     })
 }
 
@@ -656,6 +657,7 @@ mod tests {
             cloud_enabled: Some(false),
             cloud_profile_id: None,
             modality: None,
+            cloud_token_budget: None,
         };
         let result = import_files_at_root(&root, input).unwrap();
         // 立刻还原环境变量：后面的断言失败也不该把钩子留给别的测试。

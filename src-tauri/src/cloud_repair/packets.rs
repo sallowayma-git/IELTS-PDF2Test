@@ -868,24 +868,6 @@ pub(crate) fn plan_packets(input: &PacketPlanInput<'_>) -> Vec<Value> {
             document_only: true,
         });
     }
-    // 一条差异都没有时也要给模型**一次**机会：它可能读到原文件后发现「本地和候选都错了」，
-    // 也可能留下疑问。这个包只带索引与诊断，不带任何稿件内容，代价很小。
-    //
-    // 注意（审计发现 A-11）：文档包 `task_ids` 是空的，因此 `read_draft` 在文档包里**永远
-    // 会被拒**（`mod.rs::scope_error`：空选择器 → `CLOUD_DRAFT_SCOPE_REQUIRED`）。这是有意
-    // 的——文档包没有「这个包内的稿件切片」可读，`draftSlice` 本身也是空的。想读稿的模型
-    // 必须用题号/题组 id 去 `read_draft`，而那会把目标落到真正拥有它的那个包上。
-    // 该行为由 `tests::a_document_packet_never_hands_out_a_draft_slice` 固定。
-    if drafts.is_empty() {
-        drafts.push(PacketDraft {
-            task_ids: BTreeSet::new(),
-            part_id: None,
-            differences: Vec::new(),
-            blocking_issues: Vec::new(),
-            document_only: true,
-        });
-    }
-
     // ── 3) 拆分（超预算时按 responseGroup）──────────────────────────────
     let mut split: Vec<PacketDraft> = Vec::new();
     for draft in drafts {
@@ -1008,9 +990,14 @@ fn draft_size(
         .iter()
         .map(|page| input.source.lines.get(page).map(Vec::len).unwrap_or(0))
         .sum();
+    let blocking_issues: Vec<Value> = draft
+        .blocking_issues
+        .iter()
+        .map(super::project_model_draft_value)
+        .collect();
     let payload = json!({
         "differences": draft.differences,
-        "blockingIssues": draft.blocking_issues,
+        "blockingIssues": blocking_issues,
         "groups": draft.task_ids.len(),
         "lines": lines,
     });
@@ -1247,6 +1234,11 @@ fn build_packet(
         .collect();
 
     let manifest = scope_manifest(draft, input, &pages, &numbers, &source_pages);
+    let blocking_issues: Vec<Value> = draft
+        .blocking_issues
+        .iter()
+        .map(super::project_model_draft_value)
+        .collect();
 
     let mut packet = json!({
         "contextMode": "packets",
@@ -1268,7 +1260,7 @@ fn build_packet(
             "answerPagesUnknown": !answer_pages_known,
         },
         "differences": draft.differences,
-        "blockingIssues": draft.blocking_issues,
+        "blockingIssues": blocking_issues,
         "protectedTargets": protected,
         "draftSlice": draft_slice,
         "candidateSlice": if input.adopted_cloud_canonical { Value::Null } else { candidate_slice.clone() },
@@ -1682,6 +1674,64 @@ mod tests {
             edit_version: 7,
             adopted_cloud_canonical: false,
         })
+    }
+
+    #[test]
+    fn blocking_issue_projection_drops_model_unused_metadata() {
+        let canonical = canonical_paper();
+        let candidate = Value::Null;
+        let source = index_with_pages(&[]);
+        let issue = json!({
+            "code": "ANSWER_KEY_MISSING_SLOT",
+            "issueId": "missing-q1",
+            "message": "answer missing",
+            "severity": "blocking",
+            "sourceAnchors": [{"sourceFileId": "src-1", "pageIndex": 0, "nodeIds": ["q1"]}],
+            "provenance": {"status": "source"},
+            "provenanceStatus": "source",
+            "suggestedActions": [{
+                "action": "inspect_answer_key",
+                "sourceAnchors": [{"sourceFileId": "src-1", "pageIndex": 0, "nodeIds": ["q1"]}],
+                "provenanceStatus": "source"
+            }],
+            "targetId": "tg-1-5",
+            "targetType": "task_group"
+        });
+        let packets = plan_packets(&PacketPlanInput {
+            canonical: &canonical,
+            candidate: &candidate,
+            differences: &[],
+            blocking_issues: &[issue],
+            protected: &BTreeSet::new(),
+            source: &source,
+            edit_version: 7,
+            adopted_cloud_canonical: false,
+        });
+
+        assert_eq!(packets.len(), 1);
+        let projected = &packets[0]["blockingIssues"][0];
+        assert_eq!(projected["code"], "ANSWER_KEY_MISSING_SLOT");
+        assert_eq!(projected["message"], "answer missing");
+        assert!(projected.get("sourceAnchors").is_none());
+        assert!(projected.get("provenance").is_none());
+        assert!(projected.get("provenanceStatus").is_none());
+        assert!(projected["suggestedActions"][0]
+            .get("sourceAnchors")
+            .is_none());
+        assert!(projected["suggestedActions"][0]
+            .get("provenanceStatus")
+            .is_none());
+    }
+
+    #[test]
+    fn identical_drafts_without_blockers_do_not_create_a_model_packet() {
+        let canonical = canonical_paper();
+        let source = index_with_pages(&[]);
+        let packets = plan(&canonical, &canonical, &[], &source);
+        assert!(
+            packets.is_empty(),
+            "no difference or blocker means no cloud call: {packets:#?}"
+        );
     }
 
     /// 每条差异归到它所属的题组；不同题组各自成包。

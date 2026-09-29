@@ -15,6 +15,10 @@ use crate::library::repository::{
 use crate::{app_root, CommandResult, CreateJobInput};
 
 const MAX_IMPORT_FILE_BYTES: u64 = 128 * 1024 * 1024;
+pub(crate) const DEFAULT_CLOUD_TOKEN_BUDGET: u64 = 100_000;
+pub(crate) const MIN_CLOUD_TOKEN_BUDGET: u64 = 10_000;
+pub(crate) const MAX_CLOUD_TOKEN_BUDGET: u64 = 20_000_000;
+pub(crate) const CLOUD_TOKEN_BUDGET_FILE: &str = "llm-token-budget.json";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,6 +42,8 @@ pub(crate) struct ImportFilesInput {
     /// `reading` (default) or `listening`; confirmed by the user in the import flow.
     #[serde(default)]
     pub modality: Option<String>,
+    #[serde(default)]
+    pub cloud_token_budget: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -77,6 +83,7 @@ pub(crate) fn import_files_at_root(
 ) -> CommandResult<ImportFilesResult> {
     let cloud_enabled = input.cloud_enabled.unwrap_or(false);
     let modality = normalize_import_modality(input.modality.as_deref())?;
+    let cloud_token_budget = normalize_cloud_token_budget(input.cloud_token_budget)?;
     let mut created = Vec::new();
     let mut rejected = Vec::new();
 
@@ -117,6 +124,12 @@ pub(crate) fn import_files_at_root(
         let job_id = job.job_id.clone();
         let staged = (|| -> CommandResult<()> {
             save_job(&root, &job)?;
+            let budget_path = crate::util::job_dir(root, &job_id).join(CLOUD_TOKEN_BUDGET_FILE);
+            std::fs::write(
+                budget_path,
+                json!({"tokenBudget": cloud_token_budget}).to_string(),
+            )
+            .map_err(|error| format!("import_cloud_token_budget_save:{error}"))?;
             // 2. 文件落地：staging + hash 全部同步完成（数据库事务外，计划 §12.2）。
             crate::job_commands::stage_source_file(root, &job_id, &file.path, "MainQuestion")?;
             Ok(())
@@ -140,6 +153,7 @@ pub(crate) fn import_files_at_root(
             &file.name,
             cloud_enabled,
             input.cloud_profile_id.as_deref(),
+            cloud_token_budget,
             modality,
         );
         if let Err(error) = queue_result {
@@ -203,6 +217,7 @@ fn queue_import(
     file_name: &str,
     cloud_enabled: bool,
     cloud_profile_id: Option<&str>,
+    cloud_token_budget: u64,
     modality: &str,
 ) -> CommandResult<()> {
     let conn = open_library_connection(root)?;
@@ -229,6 +244,7 @@ fn queue_import(
             "cloudEnabled": cloud_enabled,
             "fileName": file_name,
             "cloudProfileId": cloud_profile_id,
+            "cloudTokenBudget": cloud_token_budget,
             "modality": modality
         }),
     )?;
@@ -244,6 +260,16 @@ pub(crate) fn normalize_import_modality(modality: Option<&str>) -> CommandResult
         Some("listening") => Ok("listening"),
         Some(other) => Err(format!("import_modality_unsupported:{other}")),
     }
+}
+
+pub(crate) fn normalize_cloud_token_budget(budget: Option<u64>) -> CommandResult<u64> {
+    let budget = budget.unwrap_or(DEFAULT_CLOUD_TOKEN_BUDGET);
+    if !(MIN_CLOUD_TOKEN_BUDGET..=MAX_CLOUD_TOKEN_BUDGET).contains(&budget) {
+        return Err(format!(
+            "import_cloud_token_budget_out_of_range:{MIN_CLOUD_TOKEN_BUDGET}:{MAX_CLOUD_TOKEN_BUDGET}"
+        ));
+    }
+    Ok(budget)
 }
 
 fn format_bytes(bytes: u64) -> String {
@@ -272,6 +298,15 @@ mod tests {
         std::env::temp_dir().join(format!("import-comp-{}", Uuid::new_v4().simple()))
     }
 
+    #[test]
+    fn cloud_token_budget_uses_the_default_and_keeps_explicit_values() {
+        assert_eq!(
+            normalize_cloud_token_budget(None).unwrap(),
+            DEFAULT_CLOUD_TOKEN_BUDGET
+        );
+        assert_eq!(normalize_cloud_token_budget(Some(75_000)).unwrap(), 75_000);
+    }
+
     /// G1/A4-F01：queue 失败（DB 打不开）时补偿删除 job 目录与 DB 残留，
     /// 不留「磁盘有 job、DB 无可见行」的孤儿；用户拿到明确的 rejected 结果。
     #[test]
@@ -293,6 +328,7 @@ mod tests {
             cloud_enabled: Some(false),
             cloud_profile_id: None,
             modality: None,
+            cloud_token_budget: None,
         };
         let result = import_files_at_root(&root, input).unwrap();
         assert!(
@@ -322,6 +358,7 @@ mod tests {
             cloud_enabled: Some(false),
             cloud_profile_id: None,
             modality: modality.map(str::to_string),
+            cloud_token_budget: None,
         };
         let result = import_files_at_root(root, input).unwrap();
         assert_eq!(
@@ -429,6 +466,7 @@ mod tests {
             cloud_enabled: Some(false),
             cloud_profile_id: None,
             modality: Some("writing".to_string()),
+            cloud_token_budget: None,
         };
         assert!(import_files_at_root(&root, input).is_err());
         let _ = fs::remove_dir_all(&root);
@@ -454,6 +492,7 @@ mod tests {
             cloud_enabled: Some(false),
             cloud_profile_id: None,
             modality: None,
+            cloud_token_budget: None,
         };
         let result = import_files_at_root(&root, input).unwrap();
         assert!(result.created.is_empty());

@@ -30,7 +30,7 @@ export interface ProcessingItemUpdate {
 }
 
 export type ImportModality = "reading" | "listening";
-export function importFiles(input: { files: PickedPath[]; cloudEnabled: boolean; cloudProfileId?: string; modality?: ImportModality }) {
+export function importFiles(input: { files: PickedPath[]; cloudEnabled: boolean; cloudProfileId?: string; modality?: ImportModality; cloudTokenBudget: number }) {
   return command<{ created: Array<{ itemId: string; title: string }>; rejected: Array<{ name: string; reason: string }> }>("import_files", { input });
 }
 /** 后端 `retry_processing` 的返回：`queued = false` 表示任务正在跑 / 已在排队，这次没有新入队。 */

@@ -250,6 +250,20 @@ export function SettingsPage() {
         </label>
 
         <label className="settings-field">
+          单份导入的云端 token 上限
+          <input
+            type="number"
+            min={10_000}
+            max={20_000_000}
+            step={10_000}
+            value={settings.cloudTokenBudget}
+            data-testid="settings-cloud-token-budget"
+            onChange={(event) => updateSettings({ cloudTokenBudget: Number(event.target.value) })}
+          />
+          <small>按输入和输出 token 合计；达到上限后停止该份试卷后续云端请求。默认 100,000；当前五页卷离线估算约 28,000 token，留约 3.5 倍余量（输出按每次 1,024 token 估算）。</small>
+        </label>
+
+        <label className="settings-field">
           服务地址
           <input
             value={form.baseUrl}
