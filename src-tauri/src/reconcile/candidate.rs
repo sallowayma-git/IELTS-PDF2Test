@@ -2058,6 +2058,53 @@ fn canonical_option_id_for_label(canonical_bank: Option<&Value>, label: &str) ->
         .map(str::to_string)
 }
 
+/// 在权威题组**所有 responseGroups 的内联选项**里按标签找已有 optionId。
+/// 内联选项（如 TFNG 的 true/false/ng）不进选项库，身份要在响应组里按标签复用。
+fn canonical_response_option_id_for_label(
+    canonical_group: Option<&Value>,
+    label: &str,
+) -> Option<String> {
+    if label.is_empty() {
+        return None;
+    }
+    canonical_group?
+        .get("responseGroups")?
+        .as_array()?
+        .iter()
+        .flat_map(|rg| {
+            rg.get("options")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .find(|option| option.get("label").and_then(Value::as_str) == Some(label))?
+        .get("optionId")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// 同上，返回同标签内联选项的 `content`，供内容节点按位置复用本地稳定 id。
+fn canonical_response_option_content_for_label<'a>(
+    canonical_group: Option<&'a Value>,
+    label: &str,
+) -> Option<&'a Value> {
+    if label.is_empty() {
+        return None;
+    }
+    canonical_group?
+        .get("responseGroups")?
+        .as_array()?
+        .iter()
+        .flat_map(|rg| {
+            rg.get("options")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .find(|option| option.get("label").and_then(Value::as_str) == Some(label))?
+        .get("content")
+}
+
 /// 为一个云端题组内部的对象分配稳定 ID（内容节点、选项、提示等）。
 fn assign_group_inner_ids(
     cloud_group: &Value,
@@ -2140,9 +2187,42 @@ fn assign_group_inner_ids(
                 );
             }
             if let Some(options) = response_group.get("options").and_then(Value::as_array) {
-                for option in options {
+                let cloud_response_id = response_group
+                    .get("responseGroupId")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                for (index, option) in options.iter().enumerate() {
+                    let label = option.get("label").and_then(Value::as_str).unwrap_or("");
+                    // 内联选项的 optionId 是**新建身份**（TFNG 拆题、固定标签选项都在这里生成）。
+                    // 不登记进 id_map，重写阶段就会把它当成未映射的临时引用，落进
+                    // unresolvedReferences 让整份候选降级 partial。能对上本地同标签选项就复用其
+                    // 稳定 id，否则按（响应组稳定 id + 标签）生成确定性后端 id，保证跨题组不撞。
+                    if let Some(old) = option.get("optionId").and_then(Value::as_str) {
+                        let stable = canonical_response_option_id_for_label(canonical_group, label)
+                            .unwrap_or_else(|| {
+                                let base = id_map
+                                    .get(cloud_response_id)
+                                    .map(String::as_str)
+                                    .unwrap_or(cloud_response_id);
+                                let base = if base.is_empty() { stable_task_id } else { base };
+                                if label.is_empty() {
+                                    format!("{base}-opt-{}", index + 1)
+                                } else {
+                                    format!("{base}-opt-{}", to_snake_case(label))
+                                }
+                            });
+                        id_map.insert(old.to_string(), stable);
+                    }
                     if let Some(content) = option.get("content") {
-                        assign_node_ids(content, None, stable_task_id, &mut counter, id_map);
+                        let canonical_content =
+                            canonical_response_option_content_for_label(canonical_group, label);
+                        assign_node_ids(
+                            content,
+                            canonical_content,
+                            stable_task_id,
+                            &mut counter,
+                            id_map,
+                        );
                     }
                 }
             }
@@ -6308,6 +6388,71 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
             option_anchors.is_some_and(|anchors| !anchors.is_empty()),
             "对齐到本地选项的云端选项应继承本地来源锚点：{:?}",
             document.pointer("/taskGroups/0/optionBank/options/0")
+        );
+    }
+
+    /// T3.4：responseGroup 内联选项（TFNG 按题拆分后生成的 true/false/ng）新建的 optionId
+    /// 必须登记进 id_map，否则重写后残留临时 id → unresolvedReferences → 候选被判 partial。
+    #[test]
+    fn cloudfix_response_group_inline_option_ids_are_registered() {
+        let canonical = golden_authoring();
+        let inline_options = |q: u32| {
+            json!([
+                {"optionId": format!("cloud-tf{q}-true"), "label": "TRUE",
+                 "content": [{"type":"text","id":format!("cloud-tf{q}-true-text"),"sourceAnchors":[],"text":"TRUE"}],
+                 "sourceAnchors": []},
+                {"optionId": format!("cloud-tf{q}-false"), "label": "FALSE",
+                 "content": [{"type":"text","id":format!("cloud-tf{q}-false-text"),"sourceAnchors":[],"text":"FALSE"}],
+                 "sourceAnchors": []},
+                {"optionId": format!("cloud-tf{q}-ng"), "label": "NOT GIVEN",
+                 "content": [{"type":"text","id":format!("cloud-tf{q}-ng-text"),"sourceAnchors":[],"text":"NOT GIVEN"}],
+                 "sourceAnchors": []}
+            ])
+        };
+        let mut slots = Map::new();
+        for q in [1u32, 2] {
+            slots.insert(
+                format!("cloud-q{q}"),
+                json!({
+                    "slotId": format!("cloud-q{q}"), "questionNumber": q,
+                    "displayLabel": q.to_string(), "hostNodeId": format!("cloud-rg-q{q}"),
+                    "hostType": "prompt", "interaction": "radio",
+                    "participation": "scoring", "sourceAnchors": []
+                }),
+            );
+        }
+        let draft = json!({
+            "taskGroups": [{
+                "taskId": "cloud-tg-1",
+                "displayRange": {"kind":"range","start":1,"end":2},
+                "taskType": "true_false_not_given",
+                "instructions": [paragraph("cloud-ins", "cloud-ins-text", "Do the following statements agree?")],
+                "responseGroups": [
+                    {"responseGroupId":"cloud-rg-q1","kind":"choice","slotIds":["cloud-q1"],"options": inline_options(1)},
+                    {"responseGroupId":"cloud-rg-q2","kind":"choice","slotIds":["cloud-q2"],"options": inline_options(2)}
+                ],
+                "sourceAnchors": []
+            }],
+            "answerSlots": Value::Object(slots),
+            "answerKey": {
+                "cloud-q1": {"kind":"option","labels":["TRUE"],"assignment":"unordered_set"},
+                "cloud-q2": {"kind":"option","labels":["FALSE"],"assignment":"unordered_set"}
+            },
+            "assets": []
+        });
+        let raw = json!({ "authoring": draft });
+
+        let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), &raw)
+            .expect("标准化必须成功");
+        assert!(
+            normalized.unresolved_references.is_empty(),
+            "responseGroup 内联选项 id 未登记导致未解析引用：{:?}",
+            normalized.unresolved_references
+        );
+        let serialized = serde_json::to_string(&normalized.document).expect("候选必须可序列化");
+        assert!(
+            !serialized.contains("cloud-tf"),
+            "临时选项 id 必须被重写成后端稳定 id，不得残留：{serialized}"
         );
     }
 }
