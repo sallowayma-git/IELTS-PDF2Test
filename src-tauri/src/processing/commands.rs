@@ -15,7 +15,7 @@ use crate::library::repository::{
 use crate::{app_root, CommandResult, CreateJobInput};
 
 const MAX_IMPORT_FILE_BYTES: u64 = 128 * 1024 * 1024;
-pub(crate) const DEFAULT_CLOUD_TOKEN_BUDGET: u64 = 1_000_000;
+pub(crate) const DEFAULT_CLOUD_TOKEN_BUDGET: u64 = 100_000;
 pub(crate) const MIN_CLOUD_TOKEN_BUDGET: u64 = 10_000;
 pub(crate) const MAX_CLOUD_TOKEN_BUDGET: u64 = 20_000_000;
 pub(crate) const CLOUD_TOKEN_BUDGET_FILE: &str = "llm-token-budget.json";
@@ -296,6 +296,15 @@ mod tests {
 
     fn temp_root() -> PathBuf {
         std::env::temp_dir().join(format!("import-comp-{}", Uuid::new_v4().simple()))
+    }
+
+    #[test]
+    fn cloud_token_budget_uses_the_default_and_keeps_explicit_values() {
+        assert_eq!(
+            normalize_cloud_token_budget(None).unwrap(),
+            DEFAULT_CLOUD_TOKEN_BUDGET
+        );
+        assert_eq!(normalize_cloud_token_budget(Some(75_000)).unwrap(), 75_000);
     }
 
     /// G1/A4-F01：queue 失败（DB 打不开）时补偿删除 job 目录与 DB 残留，

@@ -3004,8 +3004,7 @@ fn local_source_paragraph_targets(root: &Path, job_id: &str) -> CommandResult<Va
 /// 派生、`base_edit_version` 要到本地冻结之后才成立。把「调用」与「定身份 + 落盘」分开，
 /// 既保持并发，又不让候选挂在一个并不存在的批次上（那比没有候选更危险，因为它看着可信）。
 ///
-/// 一次受约束修复：首次输出被结构校验拒了，把**被拒原因原样**回给模型再问一次。
-/// 不带原因地重试同一句话，只会再拿到同一种错误——那不是修复，只是多烧一次配额。
+/// 只有校验器指出必填字段缺失时才补字段；解析、传输和其他结构错误没有可安全合并的补丁。
 pub(crate) fn generate_cloud_authoring_candidate_raw(
     root: &Path,
     job_id: &str,
@@ -3106,8 +3105,7 @@ where
     crate::reconcile::candidate::merge_candidate_chunks(results)
 }
 
-/// 一次候选请求 + 至多一次受约束修复：首次输出被结构校验拒了，把**被拒原因原样**回给
-/// 模型再问一次。网络/配置类错误重试同一句话毫无意义，直接返回。
+/// 候选只在必填字段缺失时补一次；解析错误、网络错误和不可合并的结构错误直接返回。
 fn candidate_request_with_one_repair(
     root: &Path,
     job_id: &str,
@@ -3117,23 +3115,28 @@ fn candidate_request_with_one_repair(
     match run_llm_gateway(root, job_id, "generate_authoring_candidate", input, api_key) {
         Ok(value) => Ok(value),
         Err(first_error) => {
-            if !first_error.starts_with("cloud_authoring_output_")
-                && !first_error.starts_with("llm_json_parse_failed")
-            {
+            let Some(missing_field) =
+                crate::llm_gateway::candidate_missing_field_pointer(&first_error)
+            else {
                 return Err(first_error);
-            }
+            };
+            let Some(partial) =
+                crate::llm_gateway::read_rejected_authoring_candidate(root, job_id, &first_error)?
+            else {
+                return Err(first_error);
+            };
             let mut retry = input.clone();
-            if let Some(object) = retry.as_object_mut() {
-                object.insert("repairNote".to_string(), json!(first_error));
-            }
-            run_llm_gateway(
+            retry["repairMissingFields"] = json!([missing_field]);
+            let supplement = run_llm_gateway(
                 root,
                 job_id,
                 "generate_authoring_candidate",
                 &retry,
                 api_key,
             )
-            .map_err(|second_error| format!("cloud_authoring_candidate_rejected:{second_error}"))
+            .map_err(|second_error| format!("cloud_authoring_candidate_repair_rejected:{second_error}"))?;
+            crate::llm_gateway::merge_authoring_candidate_supplement(partial, supplement, &retry)
+                .map_err(|repair_error| format!("cloud_authoring_candidate_repair_rejected:{repair_error}"))
         }
     }
 }

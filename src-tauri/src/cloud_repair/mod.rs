@@ -42,8 +42,8 @@ use crate::CommandResult;
 pub(crate) const DEFAULT_MAX_REPAIR_ROUNDS: u32 = 6;
 /// 整次修复的总超时（含 HTTP 重试时间，不叠加旧 A3/A4 的各自预算）。
 pub(crate) const DEFAULT_REPAIR_TIMEOUT_MS: u64 = 10 * 60 * 1000;
-/// 连续多少次「完全相同的工具调用且没有产生任何进展」就停下。
-const REPEAT_LIMIT: u32 = 2;
+/// 再次收到同一无进展工具调用时立即停下，避免重复消耗一次模型回合。
+const REPEAT_LIMIT: u32 = 1;
 /// 每个**校核包**的模型回合预算（包模式下按包独立计数）。
 const PACKET_MAX_ROUNDS: u32 = 5;
 /// 升级阶梯的最高级别（L4 = 后端代记 `cannot_resolve`，理由码 `CONTEXT_INSUFFICIENT`）。
@@ -3324,10 +3324,8 @@ where
     let mut incomplete = false;
     // 已经收工的包（按**稳定 id**）。重切之后按 id 过滤，已做完的不会被重新排队。
     let mut done_packets: BTreeSet<String> = BTreeSet::new();
-    // 全局回合上限按包数派生：任务书给的是「每包 5 轮」，而调用方的 `max_rounds`
-    // （legacy 默认 6）是**整卷**口径。若照搬，第二个包起就会被饿死——那会让「包」
-    // 反而比整卷更贵。真正的全局约束是总超时，这里只做一道防止无限重切的闸。
-    let mut global_round_cap = PACKET_MAX_ROUNDS * (queue.len().max(1) as u32);
+    // 以初始包数固定总上限，重切不能增加剩余请求额度，否则编辑循环会越跑越长。
+    let global_round_cap = PACKET_MAX_ROUNDS * (queue.len().max(1) as u32);
 
     let start_version = current_canonical(request)
         .ok()
@@ -3635,7 +3633,6 @@ where
                                     .is_some_and(|id| !done_packets.contains(id))
                             })
                             .collect();
-                        global_round_cap = rounds + PACKET_MAX_ROUNDS * (queue.len().max(1) as u32);
                     }
                     Err(error) => {
                         last_error = Some(error);
