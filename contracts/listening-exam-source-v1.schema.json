@@ -120,7 +120,7 @@
         "sourceSchemaVersion": { "const": "IeltsAuthoringIRV2" },
         "sourceDocumentId": { "type": "string", "minLength": 1 },
         "sourceRevision": { "type": "integer", "minimum": 0 },
-        "sourceRevisionKind": { "type": "string", "enum": ["auto_extract", "user", "migration"] },
+        "sourceRevisionKind": { "type": "string", "enum": ["auto_extract", "user", "migration", "cloud_candidate_adoption"] },
         "minimumRuntimeVersion": { "type": "string", "minLength": 1 }
       }
     }

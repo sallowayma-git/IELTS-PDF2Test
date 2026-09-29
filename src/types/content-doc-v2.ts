@@ -40,6 +40,8 @@ export interface ParagraphNodeV2 extends BaseContentNodeV2 {
   children: ContentNodeV2[];
   align?: "left" | "center" | "right" | "justify";
   indentLevel?: number;
+  /** 原文段首字母（A/B/C…），只有原文段落带。 */
+  paragraphLabel?: string;
 }
 
 export interface HeadingNodeV2 extends BaseContentNodeV2 {

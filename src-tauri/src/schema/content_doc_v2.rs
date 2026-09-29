@@ -75,6 +75,9 @@ pub struct ParagraphNodeV2 {
     pub align: Option<ParagraphAlignV2>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub indent_level: Option<i32>,
+    /// 原文段首字母（A/B/C…），只有原文段落带。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paragraph_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -347,5 +350,60 @@ pub struct ContentDocV2 {
 impl ContentDocV2 {
     pub fn is_supported_schema_version(&self) -> bool {
         self.schema_version == CONTENT_DOC_V2_SCHEMA_VERSION
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ContentNodeV2;
+    use serde_json::{json, Value};
+
+    fn paragraph(extra: Value) -> Value {
+        let mut node = json!({
+            "type": "paragraph",
+            "id": "passage-p-a",
+            "sourceAnchors": [],
+            "provenanceStatus": "source",
+            "children": [{
+                "type": "text",
+                "id": "passage-p-a-text",
+                "sourceAnchors": [],
+                "provenanceStatus": "source",
+                "text": "Early approaches to organisational design..."
+            }]
+        });
+        if let (Some(target), Some(fields)) = (node.as_object_mut(), extra.as_object()) {
+            target.extend(fields.clone());
+        }
+        node
+    }
+
+    fn round_trip(value: &Value) -> (ContentNodeV2, Value) {
+        let typed: ContentNodeV2 =
+            serde_json::from_value(value.clone()).expect("段落节点必须可解析");
+        let encoded = serde_json::to_value(&typed).expect("段落节点必须可序列化");
+        (typed, encoded)
+    }
+
+    #[test]
+    fn legacy_paragraph_without_label_round_trips_without_new_keys() {
+        let legacy = paragraph(json!({}));
+        let (typed, encoded) = round_trip(&legacy);
+        let ContentNodeV2::Paragraph(node) = typed else {
+            panic!("必须解析为段落节点");
+        };
+        assert_eq!(node.paragraph_label, None);
+        assert_eq!(encoded, legacy, "旧稿往返不得多出 paragraphLabel 等新键");
+    }
+
+    #[test]
+    fn paragraph_label_survives_round_trip() {
+        let labelled = paragraph(json!({"paragraphLabel": "A"}));
+        let (typed, encoded) = round_trip(&labelled);
+        let ContentNodeV2::Paragraph(node) = typed else {
+            panic!("必须解析为段落节点");
+        };
+        assert_eq!(node.paragraph_label.as_deref(), Some("A"));
+        assert_eq!(encoded, labelled);
     }
 }

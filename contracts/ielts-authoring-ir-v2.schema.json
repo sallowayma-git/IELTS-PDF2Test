@@ -59,7 +59,7 @@
       "properties": {
         "title": { "type": "string" },
         "content": { "type": "array", "items": { "$ref": "./content-doc-v2.schema.json#/$defs/contentNode" } },
-        "paragraphMap": { "type": "object", "additionalProperties": { "type": "string", "minLength": 1 } },
+        "paragraphMap": { "type": "object", "description": "Paragraph label (A/B/C...) -> id of the passage paragraph node in content whose paragraphLabel equals the key.", "additionalProperties": { "type": "string", "minLength": 1 } },
         "sourceAnchors": { "type": "array", "items": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" } }
       }
     },
@@ -422,6 +422,7 @@
         "taskType": { "$ref": "#/$defs/taskType" },
         "instructions": { "type": "array", "items": { "$ref": "./content-doc-v2.schema.json#/$defs/contentNode" } },
         "instructionSignature": { "$ref": "#/$defs/instructionSignature" },
+        "recognitionWarnings": { "type": "array", "items": { "type": "string" }, "description": "Recognition evidence that requires author review; absent or empty on older drafts." },
         "stimulus": { "type": "array", "items": { "$ref": "./content-doc-v2.schema.json#/$defs/contentNode" } },
         "optionBank": { "$ref": "#/$defs/optionBank" },
         "responseGroups": { "type": "array", "items": { "$ref": "#/$defs/responseGroup" } },
@@ -439,7 +440,7 @@
         "questionNumber": { "type": "integer", "minimum": 1 },
         "displayLabel": { "type": "string", "minLength": 1 },
         "hostNodeId": { "type": "string", "minLength": 1 },
-        "hostType": { "type": "string", "enum": ["prompt", "paragraph", "table_cell", "figure_hotspot", "flow_step"] },
+        "hostType": { "type": "string", "enum": ["prompt", "paragraph", "table_cell", "figure_hotspot", "flow_step", "passage_paragraph"] },
         "interaction": { "type": "string", "enum": ["radio", "checkbox", "text", "select", "dragdrop", "hotspot"] },
         "participation": { "type": "string", "enum": ["scoring", "example", "non_scoring"] },
         "constraints": {
@@ -494,7 +495,7 @@
       "required": ["revision", "source", "humanVerified", "llmUsed", "updatedAt", "notes"],
       "properties": {
         "revision": { "type": "integer", "minimum": 0 },
-        "source": { "type": "string", "enum": ["auto_extract", "user", "migration"] },
+        "source": { "type": "string", "enum": ["auto_extract", "user", "migration", "cloud_candidate_adoption"] },
         "humanVerified": { "type": "boolean" },
         "llmUsed": { "type": "boolean" },
         "updatedAt": { "type": "string", "format": "date-time" },

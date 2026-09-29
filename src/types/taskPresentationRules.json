@@ -1,0 +1,397 @@
+[
+  {
+    "assignment": "per_slot",
+    "exampleSlotPolicy": "no_answer_control",
+    "fixedOptionLabels": [
+      "TRUE",
+      "FALSE",
+      "NOT GIVEN"
+    ],
+    "groupGranularity": "per_slot",
+    "hostPlacement": "prompt_after_question_number",
+    "hostTypes": [
+      "prompt"
+    ],
+    "interaction": "radio",
+    "optionAlphabet": "fixed_truth",
+    "optionReuseDefault": true,
+    "optionReusePolicy": "always",
+    "optionSource": "fixed_truth_labels",
+    "presentation": "radio_list",
+    "responseKind": "choice",
+    "taskType": "true_false_not_given",
+    "variant": "default"
+  },
+  {
+    "assignment": "per_slot",
+    "exampleSlotPolicy": "no_answer_control",
+    "fixedOptionLabels": [
+      "YES",
+      "NO",
+      "NOT GIVEN"
+    ],
+    "groupGranularity": "per_slot",
+    "hostPlacement": "prompt_after_question_number",
+    "hostTypes": [
+      "prompt"
+    ],
+    "interaction": "radio",
+    "optionAlphabet": "fixed_truth",
+    "optionReuseDefault": true,
+    "optionReusePolicy": "always",
+    "optionSource": "fixed_truth_labels",
+    "presentation": "radio_list",
+    "responseKind": "choice",
+    "taskType": "yes_no_not_given",
+    "variant": "default"
+  },
+  {
+    "assignment": "per_slot",
+    "exampleSlotPolicy": "no_answer_control",
+    "fixedOptionLabels": [],
+    "groupGranularity": "per_slot",
+    "hostPlacement": "prompt_after_question_number",
+    "hostTypes": [
+      "prompt"
+    ],
+    "interaction": "radio",
+    "optionAlphabet": "letters_abcd",
+    "optionReuseDefault": false,
+    "optionReusePolicy": "not_applicable",
+    "optionSource": "per_slot_options",
+    "presentation": "radio_list",
+    "responseKind": "choice",
+    "taskType": "single_choice",
+    "variant": "default"
+  },
+  {
+    "assignment": "unordered_set",
+    "exampleSlotPolicy": "no_answer_control",
+    "fixedOptionLabels": [],
+    "groupGranularity": "task_group",
+    "hostPlacement": "prompt_after_question_number",
+    "hostTypes": [
+      "prompt"
+    ],
+    "interaction": "checkbox",
+    "optionAlphabet": "letters",
+    "optionReuseDefault": false,
+    "optionReusePolicy": "not_applicable",
+    "optionSource": "option_bank",
+    "presentation": "checkbox_set",
+    "responseKind": "choice",
+    "taskType": "multiple_choice",
+    "variant": "default"
+  },
+  {
+    "assignment": "per_slot",
+    "exampleSlotPolicy": "no_answer_control",
+    "fixedOptionLabels": [],
+    "groupGranularity": "task_group",
+    "hostPlacement": "passage_before_paragraph",
+    "hostTypes": [
+      "passage_paragraph"
+    ],
+    "interaction": "dragdrop",
+    "optionAlphabet": "roman",
+    "optionReuseDefault": false,
+    "optionReusePolicy": "never",
+    "optionSource": "option_bank",
+    "presentation": "paragraph_dropzone",
+    "responseKind": "matching",
+    "taskType": "matching_headings",
+    "variant": "default"
+  },
+  {
+    "assignment": "per_slot",
+    "exampleSlotPolicy": "no_answer_control",
+    "fixedOptionLabels": [],
+    "groupGranularity": "per_slot",
+    "hostPlacement": "question_row",
+    "hostTypes": [
+      "prompt"
+    ],
+    "interaction": "radio",
+    "optionAlphabet": "paragraph_letters",
+    "optionReuseDefault": true,
+    "optionReusePolicy": "always",
+    "optionSource": "paragraph_map",
+    "presentation": "radio_matrix",
+    "responseKind": "matching",
+    "taskType": "matching_information",
+    "variant": "default"
+  },
+  {
+    "assignment": "per_slot",
+    "exampleSlotPolicy": "no_answer_control",
+    "fixedOptionLabels": [],
+    "groupGranularity": "task_group",
+    "hostPlacement": "question_row",
+    "hostTypes": [
+      "prompt"
+    ],
+    "interaction": "dragdrop",
+    "optionAlphabet": "letters",
+    "optionReuseDefault": false,
+    "optionReusePolicy": "instruction_controlled",
+    "optionSource": "option_bank",
+    "presentation": "row_dropzone",
+    "responseKind": "matching",
+    "taskType": "matching_features",
+    "variant": "default"
+  },
+  {
+    "assignment": "per_slot",
+    "exampleSlotPolicy": "no_answer_control",
+    "fixedOptionLabels": [],
+    "groupGranularity": "task_group",
+    "hostPlacement": "question_row",
+    "hostTypes": [
+      "prompt"
+    ],
+    "interaction": "dragdrop",
+    "optionAlphabet": "letters",
+    "optionReuseDefault": false,
+    "optionReusePolicy": "instruction_controlled",
+    "optionSource": "option_bank",
+    "presentation": "row_dropzone",
+    "responseKind": "matching",
+    "taskType": "classification",
+    "variant": "default"
+  },
+  {
+    "assignment": "per_slot",
+    "exampleSlotPolicy": "no_answer_control",
+    "fixedOptionLabels": [],
+    "groupGranularity": "task_group",
+    "hostPlacement": "question_row",
+    "hostTypes": [
+      "prompt"
+    ],
+    "interaction": "dragdrop",
+    "optionAlphabet": "letters",
+    "optionReuseDefault": false,
+    "optionReusePolicy": "instruction_controlled",
+    "optionSource": "option_bank",
+    "presentation": "row_dropzone",
+    "responseKind": "matching",
+    "taskType": "matching_sentence_endings",
+    "variant": "default"
+  },
+  {
+    "assignment": "per_slot",
+    "exampleSlotPolicy": "no_answer_control",
+    "fixedOptionLabels": [],
+    "groupGranularity": "task_group",
+    "hostPlacement": "inline_stimulus",
+    "hostTypes": [
+      "paragraph",
+      "prompt"
+    ],
+    "interaction": "text",
+    "optionAlphabet": "none",
+    "optionReuseDefault": false,
+    "optionReusePolicy": "not_applicable",
+    "optionSource": "none",
+    "presentation": "inline_text",
+    "responseKind": "text_entry",
+    "taskType": "summary_completion",
+    "variant": "default"
+  },
+  {
+    "assignment": "per_slot",
+    "exampleSlotPolicy": "no_answer_control",
+    "fixedOptionLabels": [],
+    "groupGranularity": "task_group",
+    "hostPlacement": "inline_stimulus",
+    "hostTypes": [
+      "paragraph",
+      "prompt"
+    ],
+    "interaction": "dragdrop",
+    "optionAlphabet": "letters",
+    "optionReuseDefault": false,
+    "optionReusePolicy": "never",
+    "optionSource": "option_bank",
+    "presentation": "inline_dropzone",
+    "responseKind": "matching",
+    "taskType": "summary_completion",
+    "variant": "word_bank"
+  },
+  {
+    "assignment": "per_slot",
+    "exampleSlotPolicy": "no_answer_control",
+    "fixedOptionLabels": [],
+    "groupGranularity": "task_group",
+    "hostPlacement": "inline_stimulus",
+    "hostTypes": [
+      "prompt",
+      "paragraph"
+    ],
+    "interaction": "text",
+    "optionAlphabet": "none",
+    "optionReuseDefault": false,
+    "optionReusePolicy": "not_applicable",
+    "optionSource": "none",
+    "presentation": "inline_text",
+    "responseKind": "text_entry",
+    "taskType": "sentence_completion",
+    "variant": "default"
+  },
+  {
+    "assignment": "per_slot",
+    "exampleSlotPolicy": "no_answer_control",
+    "fixedOptionLabels": [],
+    "groupGranularity": "task_group",
+    "hostPlacement": "inline_stimulus",
+    "hostTypes": [
+      "paragraph",
+      "prompt"
+    ],
+    "interaction": "text",
+    "optionAlphabet": "none",
+    "optionReuseDefault": false,
+    "optionReusePolicy": "not_applicable",
+    "optionSource": "none",
+    "presentation": "inline_text",
+    "responseKind": "text_entry",
+    "taskType": "note_completion",
+    "variant": "default"
+  },
+  {
+    "assignment": "per_slot",
+    "exampleSlotPolicy": "no_answer_control",
+    "fixedOptionLabels": [],
+    "groupGranularity": "task_group",
+    "hostPlacement": "table_cell",
+    "hostTypes": [
+      "table_cell"
+    ],
+    "interaction": "text",
+    "optionAlphabet": "none",
+    "optionReuseDefault": false,
+    "optionReusePolicy": "not_applicable",
+    "optionSource": "none",
+    "presentation": "inline_text",
+    "responseKind": "text_entry",
+    "taskType": "table_completion",
+    "variant": "default"
+  },
+  {
+    "assignment": "per_slot",
+    "exampleSlotPolicy": "no_answer_control",
+    "fixedOptionLabels": [],
+    "groupGranularity": "task_group",
+    "hostPlacement": "table_cell",
+    "hostTypes": [
+      "table_cell",
+      "paragraph",
+      "prompt"
+    ],
+    "interaction": "text",
+    "optionAlphabet": "none",
+    "optionReuseDefault": false,
+    "optionReusePolicy": "not_applicable",
+    "optionSource": "none",
+    "presentation": "inline_text",
+    "responseKind": "text_entry",
+    "taskType": "form_completion",
+    "variant": "default"
+  },
+  {
+    "assignment": "per_slot",
+    "exampleSlotPolicy": "no_answer_control",
+    "fixedOptionLabels": [],
+    "groupGranularity": "task_group",
+    "hostPlacement": "flow_step",
+    "hostTypes": [
+      "flow_step",
+      "paragraph"
+    ],
+    "interaction": "text",
+    "optionAlphabet": "none",
+    "optionReuseDefault": false,
+    "optionReusePolicy": "not_applicable",
+    "optionSource": "none",
+    "presentation": "inline_text",
+    "responseKind": "text_entry",
+    "taskType": "flowchart_completion",
+    "variant": "default"
+  },
+  {
+    "assignment": "per_slot",
+    "exampleSlotPolicy": "no_answer_control",
+    "fixedOptionLabels": [],
+    "groupGranularity": "task_group",
+    "hostPlacement": "figure_below",
+    "hostTypes": [
+      "prompt"
+    ],
+    "interaction": "text",
+    "optionAlphabet": "none",
+    "optionReuseDefault": false,
+    "optionReusePolicy": "not_applicable",
+    "optionSource": "none",
+    "presentation": "figure_inputs",
+    "responseKind": "text_entry",
+    "taskType": "diagram_label_completion",
+    "variant": "default"
+  },
+  {
+    "assignment": "per_slot",
+    "exampleSlotPolicy": "no_answer_control",
+    "fixedOptionLabels": [],
+    "groupGranularity": "task_group",
+    "hostPlacement": "question_row",
+    "hostTypes": [
+      "prompt"
+    ],
+    "interaction": "text",
+    "optionAlphabet": "none",
+    "optionReuseDefault": false,
+    "optionReusePolicy": "not_applicable",
+    "optionSource": "none",
+    "presentation": "inline_text",
+    "responseKind": "text_entry",
+    "taskType": "plan_map_label_completion",
+    "variant": "default"
+  },
+  {
+    "assignment": "per_slot",
+    "exampleSlotPolicy": "no_answer_control",
+    "fixedOptionLabels": [],
+    "groupGranularity": "task_group",
+    "hostPlacement": "question_row",
+    "hostTypes": [
+      "prompt"
+    ],
+    "interaction": "dragdrop",
+    "optionAlphabet": "letters",
+    "optionReuseDefault": false,
+    "optionReusePolicy": "never",
+    "optionSource": "option_bank",
+    "presentation": "row_dropzone",
+    "responseKind": "matching",
+    "taskType": "plan_map_label_completion",
+    "variant": "letters"
+  },
+  {
+    "assignment": "per_slot",
+    "exampleSlotPolicy": "no_answer_control",
+    "fixedOptionLabels": [],
+    "groupGranularity": "task_group",
+    "hostPlacement": "prompt_after_question_number",
+    "hostTypes": [
+      "prompt"
+    ],
+    "interaction": "text",
+    "optionAlphabet": "none",
+    "optionReuseDefault": false,
+    "optionReusePolicy": "not_applicable",
+    "optionSource": "none",
+    "presentation": "inline_text",
+    "responseKind": "text_entry",
+    "taskType": "short_answer",
+    "variant": "default"
+  }
+]

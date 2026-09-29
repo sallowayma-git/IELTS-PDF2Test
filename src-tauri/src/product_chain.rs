@@ -471,7 +471,11 @@ fn product_chain_docx_import_materializes_the_physical_document_ir_v2() {
                 .flatten()
         })
         .collect::<Vec<_>>();
-    assert_eq!(responses.len(), 2, "complex DOCX response groups drifted");
+    assert_eq!(
+        responses.len(),
+        4,
+        "three per-question TFNG groups plus one table group expected"
+    );
     let mut prompt_texts = Vec::new();
     for response in responses {
         let prompt = response.get("prompt").cloned().unwrap_or(Value::Null);

@@ -108,52 +108,81 @@ fn task_type_name(task_type: TaskTypeV2) -> &'static str {
     }
 }
 
-fn interaction_for(task_type: &TaskTypeV2, bank_bound: bool) -> &'static str {
-    match task_type {
-        TaskTypeV2::SingleChoice | TaskTypeV2::TrueFalseNotGiven | TaskTypeV2::YesNoNotGiven => {
-            "radio"
-        }
-        TaskTypeV2::MultipleChoice => "checkbox",
-        TaskTypeV2::MatchingHeadings
-        | TaskTypeV2::MatchingInformation
-        | TaskTypeV2::MatchingFeatures
-        | TaskTypeV2::MatchingSentenceEndings
-        | TaskTypeV2::Classification => "select",
-        TaskTypeV2::DiagramLabelCompletion | TaskTypeV2::PlanMapLabelCompletion => "hotspot",
-        _ if bank_bound => "select",
-        _ => "text",
-    }
+fn interaction_for(task_type: &TaskTypeV2, bank_bound: bool) -> String {
+    crate::schema::task_presentation::wire_name(
+        &crate::schema::task_presentation::rule_for(task_type, bank_bound).interaction,
+    )
 }
 
-fn response_kind(task_type: &TaskTypeV2, bank_bound: bool) -> &'static str {
-    if bank_bound
-        && matches!(
-            task_type,
-            TaskTypeV2::SummaryCompletion
-                | TaskTypeV2::NoteCompletion
-                | TaskTypeV2::TableCompletion
-                | TaskTypeV2::FormCompletion
-                | TaskTypeV2::SentenceCompletion
-                | TaskTypeV2::FlowchartCompletion
-        )
-    {
-        return "matching";
+fn response_kind(task_type: &TaskTypeV2, bank_bound: bool) -> String {
+    crate::schema::task_presentation::wire_name(
+        &crate::schema::task_presentation::rule_for(task_type, bank_bound).response_kind,
+    )
+}
+
+fn append_response_group(
+    response_groups: &mut Vec<Value>,
+    mut response: Value,
+    task_group_granularity: bool,
+    exact_cardinality: Option<u32>,
+) {
+    if !task_group_granularity {
+        response_groups.push(response);
+        return;
     }
-    match task_type {
-        TaskTypeV2::SingleChoice
-        | TaskTypeV2::MultipleChoice
-        | TaskTypeV2::TrueFalseNotGiven
-        | TaskTypeV2::YesNoNotGiven => "choice",
-        TaskTypeV2::MatchingInformation
-        | TaskTypeV2::MatchingHeadings
-        | TaskTypeV2::MatchingFeatures
-        | TaskTypeV2::MatchingSentenceEndings
-        | TaskTypeV2::Classification => "matching",
-        TaskTypeV2::DiagramLabelCompletion | TaskTypeV2::PlanMapLabelCompletion => {
-            "diagram_hotspot"
+    let slot_count = response
+        .get("slotIds")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(1) as u32;
+    response["cardinality"] = exact_cardinality
+        .map(|exact| json!({"min": exact, "max": exact, "exact": exact}))
+        .unwrap_or_else(|| json!({"min": slot_count, "max": slot_count, "exact": slot_count}));
+    let Some(existing) = response_groups.first_mut() else {
+        response_groups.push(response);
+        return;
+    };
+    for key in ["prompt", "slotIds", "sourceAnchors"] {
+        let existing_values = existing
+            .get_mut(key)
+            .and_then(Value::as_array_mut)
+            .map(std::mem::take)
+            .unwrap_or_default();
+        let mut merged = existing_values;
+        if let Some(values) = response.get(key).and_then(Value::as_array) {
+            merged.extend(values.iter().cloned());
         }
-        _ => "text_entry",
+        existing[key] = json!(merged);
     }
+    if let Some(options) = response.get("options").cloned() {
+        existing["options"] = options;
+    }
+    if let Some(bank_ref) = response.get("optionBankRef").cloned() {
+        existing["optionBankRef"] = bank_ref;
+    }
+    let merged_count = existing
+        .get("slotIds")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(1) as u32;
+    existing["cardinality"] = exact_cardinality
+        .map(|exact| json!({"min": exact, "max": exact, "exact": exact}))
+        .unwrap_or_else(
+            || json!({"min": merged_count, "max": merged_count, "exact": merged_count}),
+        );
+}
+
+fn paragraph_label_in_question(text: &str) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    let start = lower.find("paragraph")? + "paragraph".len();
+    let tail = text.get(start..)?.trim_start();
+    let mut chars = tail.chars();
+    let label = chars.next()?;
+    let after = chars.next();
+    (label.is_ascii_alphabetic()
+        && after
+            .is_none_or(|ch| ch.is_ascii_whitespace() || matches!(ch, ')' | ']' | ':' | '.' | ',')))
+    .then(|| label.to_ascii_uppercase().to_string())
 }
 
 /// 指令文本中的选择数量（"Choose TWO letters" / "Choose 2"）。
@@ -232,12 +261,17 @@ fn option_value(
     })
 }
 
-fn option_bank_value(ctx: &AnchorContext, scope: &str, bank: &OptionBankCandidateV1) -> Value {
+fn option_bank_value(
+    ctx: &AnchorContext,
+    scope: &str,
+    bank: &OptionBankCandidateV1,
+    allow_reuse: bool,
+) -> Value {
     json!({
         "optionBankId": bank.bank_id.clone(),
         "scope": "task_group",
         "options": bank.options.iter().map(|option| option_value(ctx, scope, option, bank.page_index as i32)).collect::<Vec<_>>(),
-        "allowReuse": true,
+        "allowReuse": allow_reuse,
         "sourceAnchors": bank.options.first().map(|first| {
             let mut ids = first.text_node_ids.clone();
             ids.push(first.label_node_id.clone());
@@ -318,6 +352,8 @@ fn build_task_group(
     banks_by_id: &BTreeMap<String, &OptionBankCandidateV1>,
     tables_by_id: &BTreeMap<String, &TableStimulusCandidateV1>,
     visuals_by_id: &BTreeMap<String, &VisualStimulusCandidateV1>,
+    passage_content: &[Value],
+    paragraph_map: &Value,
     slots_out: &mut Vec<Value>,
     ctx: &AnchorContext,
 ) -> Value {
@@ -325,12 +361,19 @@ fn build_task_group(
     let has_resolved_type = resolved_type.is_some();
     let task_type = resolved_type.unwrap_or(TaskTypeV2::ShortAnswer);
     let type_name = task_type_name(task_type.clone());
-    let bank = group
+    let bank_candidate = group
         .option_bank_ref
         .as_deref()
         .and_then(|bank_id| banks_by_id.get(bank_id))
         .copied();
+    let expected_rule =
+        crate::schema::task_presentation::rule_for(&task_type, bank_candidate.is_some());
+    let bank = (expected_rule.option_source
+        == crate::schema::task_presentation::OptionSource::OptionBank)
+        .then_some(bank_candidate)
+        .flatten();
     let bank_bound = bank.is_some();
+    let rule = crate::schema::task_presentation::rule_for(&task_type, bank_bound);
     let scope = group.group_id.as_str();
 
     let zone = graph
@@ -373,7 +416,8 @@ fn build_task_group(
         vec![instruction_anchor.clone()],
     )];
 
-    // 组 1-2：Multiple choice cardinality 来自指令解析；无法确定 → blocker，不默认 1。
+    // Multiple choice cardinality comes from an explicit TWO/THREE cue; never
+    // infer a multi-select task from roman-numbered answer examples.
     let mut extra_blockers: Vec<String> = Vec::new();
     let selection_cardinality = if matches!(task_type, TaskTypeV2::MultipleChoice) {
         match zone.and_then(|zone| parse_choose_cardinality(&zone.text)) {
@@ -387,11 +431,18 @@ fn build_task_group(
     } else {
         None
     };
+    let allow_option_reuse = crate::ielts_grammar::option_reuse_for_instruction(
+        &instruction_text,
+        &task_type,
+        rule.option_reuse_default,
+    );
     let mut signature = json!({
         "normalizedText": instruction_text,
         "taskType": type_name,
         "expectedQuestionNumbers": group.question_numbers,
         "expectedSlotCount": group.question_numbers.len() as u32,
+        "answerAssignment": crate::schema::task_presentation::wire_name(&rule.assignment),
+        "allowOptionReuse": allow_option_reuse,
         "evidenceAnchors": [instruction_anchor],
         "confidence": zone.map(|zone| zone.confidence).unwrap_or(0.0)
     });
@@ -399,7 +450,7 @@ fn build_task_group(
         signature["selectionCardinality"] = cardinality;
     }
 
-    let option_bank = bank.map(|bank| option_bank_value(ctx, scope, bank));
+    let option_bank = bank.map(|bank| option_bank_value(ctx, scope, bank, allow_option_reuse));
 
     let mut stimulus = Vec::new();
     for stimulus_ref in &group.stimulus_refs {
@@ -408,20 +459,39 @@ fn build_task_group(
         }
     }
 
-    // 组 1-3：题块按声明题号驱动；缺失题块保留题号 + 稳定 blocker，不消失。
+    // The rule table controls interaction, host, grouping, and assignment.
+    let task_group_granularity = matches!(
+        rule.group_granularity,
+        crate::schema::task_presentation::GroupGranularity::TaskGroup
+    );
+    let assignment = crate::schema::task_presentation::wire_name(&rule.assignment);
+    let response_kind = response_kind(&task_type, bank_bound);
+    let interaction = interaction_for(&task_type, bank_bound);
+    let host_type = rule
+        .host_types
+        .first()
+        .map(crate::schema::task_presentation::wire_name)
+        .unwrap_or_else(|| "prompt".to_string());
+    let multiple_choice_exact = signature
+        .get("selectionCardinality")
+        .and_then(|cardinality| cardinality.get("exact"))
+        .and_then(Value::as_u64)
+        .map(|value| value as u32);
+
+    // Questions drive scoring slots. Task-group rules share a single response
+    // group; per-slot rules produce exactly one group for each scoring slot.
     let mut response_groups = Vec::new();
     let mut missing_numbers = Vec::new();
     for number in &group.question_numbers {
         let slot_id = format!("q{number}");
         let Some(block) = blocks_by_number.get(number).copied() else {
             missing_numbers.push(*number);
-            slots_out.push(json!({
+            let slot = json!({
                 "slotId": slot_id,
                 "questionNumber": number,
                 "displayLabel": number.to_string(),
-                "hostNodeId": group.group_id,
-                "hostType": "prompt",
-                "interaction": interaction_for(&task_type, bank_bound),
+                "hostType": host_type.clone(),
+                "interaction": interaction.clone(),
                 "participation": "scoring",
                 "sourceAnchors": if group_anchor_ids.is_empty() {
                     Vec::new()
@@ -429,19 +499,32 @@ fn build_task_group(
                     vec![anchor(ctx, group_anchor_ids.clone(), group.page_indices.first().copied().unwrap_or(0) as i32)]
                 },
                 "confidence": group.confidence
-            }));
-            response_groups.push(json!({
+            });
+            if host_type == "passage_paragraph" {
+                extra_blockers.push(issue_codes::PASSAGE_PARAGRAPH_ANCHOR_INVALID.to_string());
+            }
+            slots_out.push(slot);
+            let mut response = json!({
                 "responseGroupId": format!("{}-response-{number}", group.group_id),
-                "kind": response_kind(&task_type, bank_bound),
+                "kind": response_kind.clone(),
                 "prompt": [],
                 "slotIds": [slot_id],
                 "cardinality": {"min": 1, "max": 1, "exact": 1},
-                "assignment": "per_slot",
+                "assignment": assignment.clone(),
                 "scoringPolicy": "per_slot_binary",
                 "duplicatePolicy": "reject_submission",
-                "allowOptionReuse": bank_bound,
+                "allowOptionReuse": allow_option_reuse,
                 "sourceAnchors": []
-            }));
+            });
+            if let Some(bank) = bank {
+                response["optionBankRef"] = json!(bank.bank_id);
+            }
+            append_response_group(
+                &mut response_groups,
+                response,
+                task_group_granularity,
+                multiple_choice_exact,
+            );
             continue;
         };
         let stem_anchors = vec![anchor(
@@ -449,23 +532,21 @@ fn build_task_group(
             block.stem_node_ids.clone(),
             block.page_index as i32,
         )];
-        let is_bank_bound = bank_bound
-            || matches!(
-                task_type,
-                TaskTypeV2::MatchingHeadings
-                    | TaskTypeV2::MatchingInformation
-                    | TaskTypeV2::MatchingFeatures
-                    | TaskTypeV2::MatchingSentenceEndings
-                    | TaskTypeV2::Classification
-            );
         let response_scope = format!("{}-response-{number}", group.group_id);
-        let mut options = match (block.option_run.as_ref(), bank) {
-            (Some(run), _) => run
-                .options
-                .iter()
-                .map(|option| option_value(ctx, &response_scope, option, block.page_index as i32))
-                .collect::<Vec<_>>(),
-            (None, Some(_)) if !is_bank_bound => Vec::new(),
+        let mut options = match rule.option_source {
+            crate::schema::task_presentation::OptionSource::PerSlotOptions
+            | crate::schema::task_presentation::OptionSource::GroupOptions => block
+                .option_run
+                .as_ref()
+                .map(|run| {
+                    run.options
+                        .iter()
+                        .map(|option| {
+                            option_value(ctx, &response_scope, option, block.page_index as i32)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
             _ => Vec::new(),
         };
         // 语句选项按题型生成，不依赖共享库（组 1-1）；不伪造 source node（组 1-5）。
@@ -477,45 +558,100 @@ fn build_task_group(
         {
             options = statement_options(task_type.clone(), &slot_id);
         }
+        let prompt_node_id = format!("{}-stem", block.candidate_id);
         let prompt_nodes = vec![text_node(
-            &format!("{}-stem", block.candidate_id),
+            &prompt_node_id,
             &block.stem_text,
             stem_anchors.clone(),
         )];
+        let mut slot_host_node_id = None;
+        let mut slot_source_anchors = vec![block
+            .number_anchor
+            .as_ref()
+            .map(typed_anchor_value)
+            .unwrap_or_else(|| {
+                anchor(
+                    ctx,
+                    vec![block.candidate_id.clone()],
+                    block.page_index as i32,
+                )
+            })];
+        if task_type == TaskTypeV2::MatchingHeadings {
+            let target_id = paragraph_label_in_question(&block.stem_text)
+                .and_then(|label| paragraph_map.get(&label).and_then(Value::as_str))
+                .map(ToString::to_string);
+            if let Some(target_id) = target_id {
+                slot_host_node_id = Some(target_id.clone());
+                if let Some(target) = passage_content
+                    .iter()
+                    .find(|node| node.get("id").and_then(Value::as_str) == Some(target_id.as_str()))
+                {
+                    slot_source_anchors.extend(
+                        target
+                            .get("sourceAnchors")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .cloned(),
+                    );
+                }
+            } else {
+                extra_blockers.push(issue_codes::PASSAGE_PARAGRAPH_ANCHOR_INVALID.to_string());
+            }
+        } else if matches!(
+            rule.presentation,
+            crate::schema::task_presentation::PresentationKind::InlineDropzone
+        ) {
+            let node_id = format!("inline-stimulus-{}-{number}", group.group_id);
+            stimulus.push(json!({
+                "id": node_id,
+                "type": "paragraph",
+                "sourceAnchors": stem_anchors.clone(),
+                "provenanceStatus": "source",
+                "children": [text_node(&format!("{node_id}-text"), &block.stem_text, stem_anchors.clone())]
+            }));
+            slot_host_node_id = Some(node_id);
+        } else {
+            slot_host_node_id = Some(prompt_node_id);
+        }
         let mut response = json!({
             "responseGroupId": format!("{}-response-{number}", group.group_id),
-            "kind": response_kind(&task_type, bank_bound),
+                "kind": response_kind.clone(),
             "prompt": prompt_nodes,
             "slotIds": [slot_id],
             "cardinality": {"min": 1, "max": 1, "exact": 1},
-            "assignment": "per_slot",
+            "assignment": assignment.clone(),
             "scoringPolicy": "per_slot_binary",
             "duplicatePolicy": "reject_submission",
-            "allowOptionReuse": bank_bound,
-            "sourceAnchors": stem_anchors
+            "allowOptionReuse": allow_option_reuse,
+            "sourceAnchors": stem_anchors.clone()
         });
         if !options.is_empty() {
             response["options"] = json!(options);
         }
-        if bank.is_some() {
-            response["optionBankRef"] = json!(group.option_bank_ref.clone().unwrap_or_default());
+        if let Some(bank) = bank {
+            response["optionBankRef"] = json!(bank.bank_id);
         }
-        response_groups.push(response);
-        slots_out.push(json!({
+        append_response_group(
+            &mut response_groups,
+            response,
+            task_group_granularity,
+            multiple_choice_exact,
+        );
+        let mut slot = json!({
             "slotId": slot_id,
             "questionNumber": number,
             "displayLabel": number.to_string(),
-            "hostNodeId": block.stem_node_ids.first().cloned().unwrap_or(block.candidate_id.clone()),
-            "hostType": "prompt",
-            "interaction": interaction_for(&task_type, is_bank_bound),
+            "hostType": host_type.clone(),
+            "interaction": interaction.clone(),
             "participation": "scoring",
-            "sourceAnchors": [block
-                .number_anchor
-                .as_ref()
-                .map(typed_anchor_value)
-                .unwrap_or_else(|| anchor(ctx, vec![block.candidate_id.clone()], block.page_index as i32))],
+            "sourceAnchors": slot_source_anchors,
             "confidence": block.boundary_confidence
-        }));
+        });
+        if let Some(host_node_id) = slot_host_node_id {
+            slot["hostNodeId"] = json!(host_node_id);
+        }
+        slots_out.push(slot);
     }
     if !missing_numbers.is_empty() {
         warnings.push(QUESTION_BLOCK_MISSING.to_string());
@@ -694,49 +830,65 @@ pub(crate) fn build_direct_canonical(
         source_hash: physical_hash,
     };
 
-    // passage：物理 passage 角色区域行文本，chunks(4) 含尾块，不丢行（P1-a 修复）。
-    let mut passage_content = Vec::new();
+    // Passage paragraphs come from the source's explicit A/B/C markers. Keep
+    // each source line and its physical anchor; do not synthesize targets from
+    // arbitrary four-line chunks.
+    let mut passage_lines = Vec::new();
+    let mut seen_passage_lines = BTreeSet::new();
     for (page_index, page) in graph.pages.iter().enumerate() {
         for region in &page.regions {
             if region.role != super::local::SemanticRegionRole::Passage {
                 continue;
             }
-            for (paragraph_index, line_slice) in region.child_line_ids.chunks(4).enumerate() {
-                if line_slice.is_empty() {
+            for line_id in &region.child_line_ids {
+                if !seen_passage_lines.insert(line_id.clone()) {
                     continue;
                 }
-                let text = line_slice
-                    .iter()
-                    .filter_map(|line_id| {
-                        physical
-                            .pointer(&format!("/pages/{page_index}/lines"))
-                            .and_then(Value::as_array)
-                            .into_iter()
-                            .flatten()
-                            .find(|line| {
-                                line.get("id").and_then(Value::as_str) == Some(line_id.as_str())
-                            })
-                            .and_then(|line| line.get("text").and_then(Value::as_str))
-                            .map(str::to_string)
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                let Some(line) = physical
+                    .pointer(&format!("/pages/{page_index}/lines"))
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .find(|line| line.get("id").and_then(Value::as_str) == Some(line_id.as_str()))
+                else {
+                    continue;
+                };
+                let Some(text) = line.get("text").and_then(Value::as_str) else {
+                    continue;
+                };
                 if text.trim().is_empty() {
                     continue;
                 }
-                passage_content.push(text_node(
-                    &format!("passage-p{page_index}-{paragraph_index}"),
-                    &text,
-                    vec![anchor(&ctx, line_slice.to_vec(), page_index as i32)],
-                ));
+                passage_lines.push(crate::ielts_grammar::instruction_zone::SemanticLine {
+                    id: line_id.clone(),
+                    text: text.to_string(),
+                    source_anchor: anchor(&ctx, vec![line_id.clone()], page_index as i32),
+                    page_index: page_index as i32,
+                    order: passage_lines.len(),
+                    role: "passage".to_string(),
+                    bbox: None,
+                });
             }
         }
     }
+    let passage_anchors = passage_lines
+        .iter()
+        .map(|line| line.source_anchor.clone())
+        .collect::<Vec<_>>();
+    let passage_content = crate::ielts_grammar::reading::passage_nodes(
+        &job.title,
+        &passage_lines,
+        passage_anchors.clone(),
+    )
+    .into_iter()
+    .filter(|node| node.get("type").and_then(Value::as_str) == Some("paragraph"))
+    .collect::<Vec<_>>();
+    let paragraph_map = crate::ielts_grammar::reading::paragraph_map_from_nodes(&passage_content);
     let passage = json!({
         "title": job.title,
-        "content": passage_content,
-        "paragraphMap": {},
-        "sourceAnchors": []
+        "content": passage_content.clone(),
+        "paragraphMap": paragraph_map.clone(),
+        "sourceAnchors": passage_anchors
     });
 
     let mut slot_values: Vec<Value> = Vec::new();
@@ -752,6 +904,8 @@ pub(crate) fn build_direct_canonical(
                 &banks_by_id,
                 &tables_by_id,
                 &visuals_by_id,
+                &passage_content,
+                &paragraph_map,
                 &mut slot_values,
                 &ctx,
             )
@@ -1087,6 +1241,82 @@ mod tests {
         assert_eq!(labels, vec!["YES", "NO", "NOT GIVEN"]);
     }
 
+    #[test]
+    fn heading_slots_use_the_contract_dragdrop_interaction() {
+        assert_eq!(
+            interaction_for(&TaskTypeV2::MatchingHeadings, true),
+            "dragdrop"
+        );
+        assert_eq!(
+            interaction_for(&TaskTypeV2::MatchingFeatures, true),
+            "dragdrop"
+        );
+        assert_eq!(
+            interaction_for(&TaskTypeV2::TrueFalseNotGiven, false),
+            "radio"
+        );
+    }
+
+    #[test]
+    fn heading_task_uses_real_labelled_paragraph_targets_and_one_group() {
+        let job = sample_job();
+        let mut graph = sample_graph();
+        graph.task_groups[0].task_type = Some(TaskTypeV2::MatchingHeadings);
+        graph.task_groups[0].question_numbers = vec![1];
+        graph.task_groups[0].display_range = Some([1, 1]);
+        graph.task_groups[0].option_bank_ref = Some("heading-bank".to_string());
+        graph.question_blocks.truncate(1);
+        graph.question_blocks[0].stem_text = "Paragraph A".to_string();
+        graph.instruction_zones[0].text =
+            "Choose the correct heading for each paragraph from the list of headings.".to_string();
+        graph.option_banks.push(
+            serde_json::from_value(json!({
+                "bankId": "heading-bank", "pageIndex": 0, "regionId": "line-6",
+                "title": "List of Headings", "labels": ["i", "ii"],
+                "options": [
+                    {"label": "i", "labelNodeId": "line-6", "text": "First title", "textNodeIds": ["line-6"],
+                     "bbox": {"x":0.0,"y":0.0,"width":1.0,"height":1.0,"unit":"pt","origin":"top-left","pageRotation":0}},
+                    {"label": "ii", "labelNodeId": "line-7", "text": "Second title", "textNodeIds": ["line-7"],
+                     "bbox": {"x":0.0,"y":0.0,"width":1.0,"height":1.0,"unit":"pt","origin":"top-left","pageRotation":0}}
+                ],
+                "confidence": 0.9
+            }))
+            .expect("heading bank must deserialize"),
+        );
+        let mut physical = sample_physical();
+        physical["pages"][0]["lines"][1]["text"] = json!("A");
+        physical["pages"][0]["lines"][2]["text"] = json!("The first source paragraph.");
+        physical["pages"][0]["lines"][3]["text"] = json!("B");
+        physical["pages"][0]["lines"][4]["text"] = json!("The second source paragraph.");
+
+        let built = build_direct_canonical(&job, &graph, &physical, &sample_split(), &no_assets)
+            .expect("must build");
+        assert_eq!(
+            built.pointer("/passage/paragraphMap/A"),
+            Some(&json!("passage-paragraph-A"))
+        );
+        assert_eq!(
+            built.pointer("/passage/paragraphMap/B"),
+            Some(&json!("passage-paragraph-B"))
+        );
+        let slot = &built["answerSlots"]["q1"];
+        assert_eq!(slot["hostType"], "passage_paragraph");
+        assert_eq!(slot["hostNodeId"], "passage-paragraph-A");
+        assert_eq!(slot["interaction"], "dragdrop");
+        assert_eq!(
+            built["taskGroups"][0]["responseGroups"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            built["taskGroups"][0]["responseGroups"][0]["optionBankRef"],
+            "heading-bank"
+        );
+        assert_eq!(built["taskGroups"][0]["optionBank"]["allowReuse"], false);
+    }
+
     /// 组 1-2 正反：Choose TWO → exact=2；无法解析 → blocker 且不写默认 cardinality。
     #[test]
     fn multiple_choice_cardinality_from_instruction() {
@@ -1386,7 +1616,7 @@ mod tests {
 
     /// verifier P1-a 复审：passage 分段含尾块，行数非 4 倍数不丢行。
     #[test]
-    fn passage_chunks_preserve_tail_lines() {
+    fn unlabelled_passage_keeps_source_lines_without_invented_targets() {
         let job = sample_job();
         let mut graph = sample_graph();
         graph.pages[0].regions[0].child_line_ids =
@@ -1406,7 +1636,8 @@ mod tests {
             .unwrap();
         let text = content
             .iter()
-            .map(|node| node["text"].as_str().unwrap_or(""))
+            .flat_map(|node| node["children"].as_array().into_iter().flatten())
+            .filter_map(|node| node["text"].as_str())
             .collect::<Vec<_>>()
             .join(" ");
         for index in 0..7 {
@@ -1415,6 +1646,7 @@ mod tests {
                 "丢行 {index}"
             );
         }
-        assert_eq!(content.len(), 2, "7 行按 4 行分段应为 2 段（含尾块）");
+        assert_eq!(content.len(), 7, "每条物理源行都应保留，且不能合成段落标签");
+        assert_eq!(built.pointer("/passage/paragraphMap"), Some(&json!({})));
     }
 }

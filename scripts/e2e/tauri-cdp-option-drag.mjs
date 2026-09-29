@@ -717,14 +717,32 @@ async function runOnce({ round, identity }) {
       if (!picked || picked.error) throw new Error(`找不到可拖动的选项列表：${JSON.stringify(picked)}`);
       const beforeAdd = resolveOptionsForRg((await readWorkspaceItem(session, itemId))?.ds, picked.responseGroupId);
       const addBtn = await session.evaluate(`(() => {
-        const section = document.querySelector('[data-response-group-id="' + ${JSON.stringify(picked.responseGroupId)} + '"]');
+        const section = document.querySelector('.v2-response-group[data-response-group-id="' + ${JSON.stringify(picked.responseGroupId)} + '"]');
         const btn = section?.querySelector(':scope > .v2-option-add') ?? section?.querySelector('.v2-option-add');
         if (!btn) return null;
         btn.scrollIntoView({ block: 'center' });
         const r = btn.getBoundingClientRect();
         return { x: r.x + r.width / 2, y: r.y + r.height / 2, text: btn.textContent.trim() };
       })()`);
-      if (!addBtn) throw new Error("本组没有「＋ 添加选项」按钮");
+      if (!addBtn) {
+        const state = await session.evaluate(`(() => {
+          const root = document.querySelector('.exam-canvas-v2');
+          const section = document.querySelector('.v2-response-group[data-response-group-id="' + ${JSON.stringify(picked.responseGroupId)} + '"]');
+          const task = section?.closest('[data-group-id]');
+          return {
+            canvasClass: root?.className ?? null,
+            canvasInert: root?.hasAttribute('inert') ?? null,
+            responseGroupExists: Boolean(section),
+            responseGroupChildren: section ? [...section.children].map((node) => node.className || node.tagName) : [],
+            addButtonCount: document.querySelectorAll('.v2-option-add').length,
+            deleteButtonCount: document.querySelectorAll('.v2-option-delete').length,
+            taskType: task?.querySelector('.v2-task-header h2')?.textContent?.trim() ?? null,
+            activeMode: document.querySelector('[data-testid="workspace-mode-edit"]')?.getAttribute('aria-selected') ?? null,
+            notice: document.querySelector('[data-testid="workspace-notice"]')?.textContent?.trim() ?? null,
+          };
+        })()`);
+        throw new Error(`本组没有「＋ 添加选项」按钮：${JSON.stringify(state)}`);
+      }
       await move({ x: addBtn.x, y: addBtn.y }, false);
       await sleep(250);
       await session.cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: Math.round(addBtn.x), y: Math.round(addBtn.y), button: "left", buttons: 1, clickCount: 1 });

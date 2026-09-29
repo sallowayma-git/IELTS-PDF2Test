@@ -1480,6 +1480,7 @@ pub(crate) fn apply_patch(document: &mut Value, patch: &Value) -> CommandResult<
         "setOptionBank" => set_option_bank(document, object),
         "insertAnswerSlot" => insert_answer_slot(document, object),
         "deleteAnswerSlot" => delete_answer_slot(document, object),
+        "setAnswerSlotHost" => set_answer_slot_host(document, object),
         "setAnswer" => set_answer(document, object),
         "bindSource" => bind_source(document, object),
         "resolveIssue" => resolve_issue(document, object),
@@ -1803,20 +1804,445 @@ fn set_task_type(document: &mut Value, patch: &Map<String, Value>) -> CommandRes
     if !is_supported_task_type(task_type) {
         return Err(format!("AUTHORING_PATCH_TASK_TYPE_INVALID:{task_type}"));
     }
-    let task = find_object_by_field_mut(document, "taskId", task_id)
+    let parsed_task_type = serde_json::from_value::<crate::schema::ielts_authoring_v2::TaskTypeV2>(
+        json!(task_type),
+    )
+    .map_err(|_| format!("AUTHORING_PATCH_TASK_TYPE_INVALID:{task_type}"))?;
+    let mut next_document = document.clone();
+    let mut task = find_value_by_field(&next_document, "taskId", task_id)
+        .cloned()
         .ok_or_else(|| format!("AUTHORING_PATCH_TASK_NOT_FOUND:{task_id}"))?;
-    task.insert("taskType".to_string(), Value::String(task_type.to_string()));
+    let has_option_bank = task.get("optionBank").is_some_and(Value::is_object);
+    let rule = crate::schema::task_presentation::rule_for(&parsed_task_type, has_option_bank);
+    let response_groups = task
+        .get("responseGroups")
+        .and_then(Value::as_array)
+        .cloned()
+        .ok_or_else(|| format!("AUTHORING_PATCH_TASK_RESPONSE_GROUPS_REQUIRED:{task_id}"))?;
+    if response_groups.is_empty() {
+        return Err(format!("AUTHORING_PATCH_TASK_RESPONSE_GROUPS_REQUIRED:{task_id}"));
+    }
+    let slot_ids = response_groups
+        .iter()
+        .flat_map(|group| {
+            group
+                .get("slotIds")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+        })
+        .collect::<Vec<_>>();
+    let unique_slot_ids = slot_ids.iter().cloned().collect::<BTreeSet<_>>();
+    if slot_ids.is_empty() || unique_slot_ids.len() != slot_ids.len() {
+        return Err(format!("AUTHORING_PATCH_TASK_SLOT_STRUCTURE_INVALID:{task_id}"));
+    }
+    match rule.group_granularity {
+        crate::schema::task_presentation::GroupGranularity::PerSlot
+            if response_groups.iter().any(|group| {
+                group.get("slotIds").and_then(Value::as_array).map(Vec::len) != Some(1)
+            }) =>
+        {
+            return Err(format!(
+                "AUTHORING_PATCH_TASK_GROUP_REBUILD_REQUIRED:{task_id}:per_slot"
+            ));
+        }
+        crate::schema::task_presentation::GroupGranularity::TaskGroup
+            if response_groups.len() != 1 =>
+        {
+            return Err(format!(
+                "AUTHORING_PATCH_TASK_GROUP_REBUILD_REQUIRED:{task_id}:task_group"
+            ));
+        }
+        _ => {}
+    }
+
+    let option_source = crate::schema::task_presentation::wire_name(&rule.option_source);
+    let interaction = crate::schema::task_presentation::wire_name(&rule.interaction);
+    let response_kind = crate::schema::task_presentation::wire_name(&rule.response_kind);
+    let assignment = crate::schema::task_presentation::wire_name(&rule.assignment);
+    let host_type = rule
+        .host_types
+        .first()
+        .map(crate::schema::task_presentation::wire_name)
+        .unwrap_or_else(|| "prompt".to_string());
+    let allow_option_reuse = match rule.option_reuse_policy {
+        crate::schema::task_presentation::OptionReusePolicy::Always => true,
+        crate::schema::task_presentation::OptionReusePolicy::Never
+        | crate::schema::task_presentation::OptionReusePolicy::NotApplicable => false,
+        crate::schema::task_presentation::OptionReusePolicy::InstructionControlled => task
+            .pointer("/instructionSignature/allowOptionReuse")
+            .and_then(Value::as_bool)
+            .unwrap_or(rule.option_reuse_default),
+    };
+    let bank = task.get("optionBank").cloned();
+    if option_source == "option_bank"
+        && bank.as_ref().and_then(|value| value.get("optionBankId")).and_then(Value::as_str).is_none()
+    {
+        return Err(format!("AUTHORING_PATCH_TASK_OPTION_BANK_REQUIRED:{task_id}"));
+    }
+    let paragraph_map = canonical_paragraph_map(&next_document);
+    let options = match option_source.as_str() {
+        "fixed_truth_labels" => fixed_task_options(task_id, rule.fixed_option_labels),
+        "paragraph_map" => paragraph_map
+            .keys()
+            .map(|label| task_option(task_id, label, &format!("Paragraph {label}")))
+            .collect::<Vec<_>>(),
+        "per_slot_options" | "group_options" => bank
+            .as_ref()
+            .and_then(|value| value.get("options"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_else(|| {
+                response_groups
+                    .first()
+                    .and_then(|group| group.get("options"))
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default()
+            }),
+        "option_bank" => Vec::new(),
+        _ => Vec::new(),
+    };
+    let option_labels = if option_source == "option_bank" {
+        bank.as_ref()
+            .and_then(|value| value.get("options"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|option| option.get("label").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>()
+    } else {
+        options
+            .iter()
+            .filter_map(|option| option.get("label").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>()
+    };
+
+    let mut slot_updates = Vec::<(String, Value)>::new();
+    for slot_id in &slot_ids {
+        let Some(mut slot) = next_document
+            .get("answerSlots")
+            .and_then(|slots| slots.get(slot_id))
+            .cloned()
+        else {
+            return Err(format!("AUTHORING_PATCH_TASK_SLOT_NOT_FOUND:{slot_id}"));
+        };
+        if host_type == "passage_paragraph" {
+            let target = passage_target_for_slot(
+                &next_document,
+                &task,
+                &response_groups,
+                slot_id,
+                slot.get("hostNodeId").and_then(Value::as_str),
+                &paragraph_map,
+            )?;
+            slot["hostNodeId"] = json!(target);
+        }
+        slot["hostType"] = json!(host_type);
+        slot["interaction"] = json!(interaction);
+        let constraints = slot
+            .as_object_mut()
+            .and_then(|object| object.entry("constraints").or_insert_with(|| json!({})).as_object_mut());
+        if let Some(constraints) = constraints {
+            if option_labels.is_empty() {
+                constraints.remove("acceptedOptionLabels");
+            } else {
+                constraints.insert(
+                    "acceptedOptionLabels".to_string(),
+                    json!(option_labels.iter().collect::<Vec<_>>()),
+                );
+            }
+        }
+        slot_updates.push((slot_id.to_string(), slot));
+    }
+
+    if let Some(answer_key) = next_document.get("answerKey").and_then(Value::as_object) {
+        for slot_id in &slot_ids {
+            let Some(value) = answer_key.get(slot_id) else {
+                continue;
+            };
+            validate_task_answer_preservation(value, &option_labels, &assignment, task_id, slot_id)?;
+        }
+    }
+
+    let mut updated_groups = response_groups;
+    for group in &mut updated_groups {
+        group["kind"] = json!(response_kind);
+        group["assignment"] = json!(assignment);
+        group["allowOptionReuse"] = json!(allow_option_reuse);
+        if let Some(cardinality) = task
+            .pointer("/instructionSignature/selectionCardinality")
+            .filter(|value| value.get("min").and_then(Value::as_u64).is_some())
+        {
+            group["cardinality"] = cardinality.clone();
+        }
+        match option_source.as_str() {
+            "option_bank" => {
+                group["optionBankRef"] = bank.as_ref().unwrap()["optionBankId"].clone();
+                if let Some(object) = group.as_object_mut() {
+                    object.remove("options");
+                }
+            }
+            "fixed_truth_labels" | "paragraph_map" | "per_slot_options" | "group_options" => {
+                group["options"] = json!(options);
+                if let Some(object) = group.as_object_mut() {
+                    object.remove("optionBankRef");
+                }
+            }
+            _ => {
+                if let Some(object) = group.as_object_mut() {
+                    object.remove("optionBankRef");
+                    object.remove("options");
+                }
+            }
+        }
+    }
+    task["taskType"] = json!(task_type);
+    task["responseGroups"] = json!(updated_groups);
     if let Some(signature) = task
         .get_mut("instructionSignature")
         .and_then(Value::as_object_mut)
     {
-        signature.insert("taskType".to_string(), Value::String(task_type.to_string()));
+        signature.insert("taskType".to_string(), json!(task_type));
+        signature.insert("answerAssignment".to_string(), json!(assignment));
+        signature.insert("allowOptionReuse".to_string(), json!(allow_option_reuse));
     }
-    mark_user_edited(
-        task,
-        preserve_provenance(patch),
-        restore_provenance_status(patch),
-    );
+    if option_source == "option_bank" {
+        if let Some(bank) = task.get_mut("optionBank").and_then(Value::as_object_mut) {
+            bank.insert("allowReuse".to_string(), json!(allow_option_reuse));
+        }
+    } else if let Some(object) = task.as_object_mut() {
+        object.remove("optionBank");
+    }
+    if let Some(task_target) = find_object_by_field_mut(&mut next_document, "taskId", task_id) {
+        let mut task_object = task
+            .as_object()
+            .cloned()
+            .ok_or_else(|| format!("AUTHORING_PATCH_TASK_NOT_FOUND:{task_id}"))?;
+        mark_user_edited(
+            &mut task_object,
+            preserve_provenance(patch),
+            restore_provenance_status(patch),
+        );
+        *task_target = task_object;
+    }
+    if let Some(slots) = next_document.get_mut("answerSlots").and_then(Value::as_object_mut) {
+        for (slot_id, slot) in slot_updates {
+            slots.insert(slot_id, slot);
+        }
+    }
+    *document = next_document;
+    Ok(())
+}
+
+fn find_value_by_field<'a>(value: &'a Value, field: &str, expected: &str) -> Option<&'a Value> {
+    match value {
+        Value::Array(items) => items
+            .iter()
+            .find_map(|item| find_value_by_field(item, field, expected)),
+        Value::Object(object) => {
+            if object.get(field).and_then(Value::as_str) == Some(expected) {
+                return Some(value);
+            }
+            object
+                .values()
+                .find_map(|child| find_value_by_field(child, field, expected))
+        }
+        _ => None,
+    }
+}
+
+fn find_value_by_id<'a>(value: &'a Value, id: &str) -> Option<&'a Value> {
+    match value {
+        Value::Array(items) => items.iter().find_map(|item| find_value_by_id(item, id)),
+        Value::Object(object) => {
+            if object.get("id").and_then(Value::as_str) == Some(id) {
+                return Some(value);
+            }
+            object
+                .values()
+                .find_map(|child| find_value_by_id(child, id))
+        }
+        _ => None,
+    }
+}
+
+fn task_option(task_id: &str, label: &str, text: &str) -> Value {
+    let slug = label
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '-' })
+        .collect::<String>();
+    json!({
+        "optionId": format!("{task_id}-rule-option-{slug}"),
+        "label": label,
+        "content": [{"type":"text","id":format!("{task_id}-rule-option-{slug}-text"),"text":text,"sourceAnchors":[]}],
+        "sourceAnchors": []
+    })
+}
+
+fn fixed_task_options(task_id: &str, labels: &[&str]) -> Vec<Value> {
+    labels
+        .iter()
+        .map(|label| task_option(task_id, label, label))
+        .collect()
+}
+
+fn canonical_paragraph_map(document: &Value) -> BTreeMap<String, String> {
+    fn paragraph_ids(value: &Value, ids: &mut BTreeSet<String>) {
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    paragraph_ids(item, ids);
+                }
+            }
+            Value::Object(object) => {
+                if object.get("type").and_then(Value::as_str) == Some("paragraph") {
+                    if let Some(id) = object.get("id").and_then(Value::as_str) {
+                        ids.insert(id.to_string());
+                    }
+                }
+                for child in object.values() {
+                    paragraph_ids(child, ids);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut ids = BTreeSet::new();
+    if let Some(content) = document.pointer("/passage/content") {
+        paragraph_ids(content, &mut ids);
+    }
+    document
+        .pointer("/passage/paragraphMap")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter_map(|(label, node_id)| {
+            let node_id = node_id.as_str()?;
+            ids.contains(node_id).then(|| (label.clone(), node_id.to_string()))
+        })
+        .collect()
+}
+
+fn flatten_task_content(value: &Value, output: &mut String) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                flatten_task_content(item, output);
+            }
+        }
+        Value::Object(object) => {
+            if object.get("type").and_then(Value::as_str) == Some("text") {
+                if let Some(text) = object.get("text").and_then(Value::as_str) {
+                    output.push(' ');
+                    output.push_str(text);
+                }
+                return;
+            }
+            for child in object.values() {
+                flatten_task_content(child, output);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn paragraph_label_from_task_text(text: &str) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    let mut cursor = 0;
+    while let Some(relative) = lower[cursor..].find("paragraph") {
+        let start = cursor + relative + "paragraph".len();
+        let candidate = text.get(start..)?.trim_start();
+        let label = candidate.chars().next()?;
+        if label.is_ascii_alphabetic() {
+            return Some(label.to_ascii_uppercase().to_string());
+        }
+        cursor = start;
+        if cursor >= lower.len() {
+            break;
+        }
+    }
+    None
+}
+
+fn passage_target_for_slot(
+    document: &Value,
+    task: &Value,
+    response_groups: &[Value],
+    slot_id: &str,
+    existing_host_id: Option<&str>,
+    paragraph_map: &BTreeMap<String, String>,
+) -> CommandResult<String> {
+    if let Some(existing) = existing_host_id {
+        if paragraph_map.values().any(|node_id| node_id == existing) {
+            return Ok(existing.to_string());
+        }
+    }
+    let mut text = String::new();
+    if let Some(existing) = existing_host_id.and_then(|id| find_value_by_id(document, id)) {
+        flatten_task_content(existing, &mut text);
+    }
+    for group in response_groups {
+        if group
+            .get("slotIds")
+            .and_then(Value::as_array)
+            .is_some_and(|slots| slots.iter().any(|slot| slot.as_str() == Some(slot_id)))
+        {
+            if let Some(prompt) = group.get("prompt") {
+                flatten_task_content(prompt, &mut text);
+            }
+        }
+    }
+    if let Some(instructions) = task.get("instructions") {
+        flatten_task_content(instructions, &mut text);
+    }
+    let label = paragraph_label_from_task_text(&text)
+        .ok_or_else(|| format!("AUTHORING_PATCH_TASK_TYPE_ANCHOR_REQUIRED:{slot_id}"))?;
+    paragraph_map
+        .get(&label)
+        .cloned()
+        .ok_or_else(|| format!("AUTHORING_PATCH_TASK_TYPE_PARAGRAPH_LABEL_UNKNOWN:{slot_id}:{label}"))
+}
+
+fn validate_task_answer_preservation(
+    answer: &Value,
+    allowed_labels: &BTreeSet<String>,
+    assignment: &str,
+    task_id: &str,
+    slot_id: &str,
+) -> CommandResult<()> {
+    match answer.get("kind").and_then(Value::as_str) {
+        Some("option") => {
+            let labels = answer.get("labels").and_then(Value::as_array).cloned().unwrap_or_default();
+            for label in labels.iter().filter_map(Value::as_str) {
+                if !allowed_labels.contains(label) {
+                    return Err(format!(
+                        "AUTHORING_PATCH_TASK_TYPE_ANSWER_UNPRESERVABLE:{task_id}:{slot_id}:{label}"
+                    ));
+                }
+            }
+        }
+        Some("text") if !allowed_labels.is_empty() => {
+            let values = answer.get("values").and_then(Value::as_array).cloned().unwrap_or_default();
+            for value in values.iter().filter_map(Value::as_str) {
+                if !allowed_labels.contains(value) {
+                    return Err(format!(
+                        "AUTHORING_PATCH_TASK_TYPE_ANSWER_UNPRESERVABLE:{task_id}:{slot_id}:{value}"
+                    ));
+                }
+            }
+        }
+        Some("text") if assignment != "per_slot" => {
+            return Err(format!(
+                "AUTHORING_PATCH_TASK_TYPE_ANSWER_UNPRESERVABLE:{task_id}:{slot_id}:text_to_option"
+            ));
+        }
+        _ => {}
+    }
     Ok(())
 }
 
@@ -2080,6 +2506,36 @@ fn delete_answer_slot(document: &mut Value, patch: &Map<String, Value>) -> Comma
         *document = backup;
     }
     result
+}
+
+fn set_answer_slot_host(document: &mut Value, patch: &Map<String, Value>) -> CommandResult<()> {
+    let slot_id = required_string(patch, "slotId")?;
+    let host_node_id = required_string(patch, "hostNodeId")?;
+    let paragraph_map = canonical_paragraph_map(document);
+    if !paragraph_map.values().any(|node_id| node_id == host_node_id) {
+        return Err(format!(
+            "AUTHORING_PATCH_SLOT_HOST_PARAGRAPH_UNMAPPED:{slot_id}:{host_node_id}"
+        ));
+    }
+    let slot = document
+        .get_mut("answerSlots")
+        .and_then(Value::as_object_mut)
+        .and_then(|slots| slots.get_mut(slot_id))
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| format!("AUTHORING_PATCH_SLOT_NOT_FOUND:{slot_id}"))?;
+    if slot.get("interaction").and_then(Value::as_str) != Some("dragdrop") {
+        return Err(format!(
+            "AUTHORING_PATCH_SLOT_HOST_REQUIRES_DRAGDROP:{slot_id}"
+        ));
+    }
+    slot.insert("hostType".to_string(), json!("passage_paragraph"));
+    slot.insert("hostNodeId".to_string(), json!(host_node_id));
+    mark_user_edited(
+        slot,
+        preserve_provenance(patch),
+        restore_provenance_status(patch),
+    );
+    Ok(())
 }
 
 fn set_answer(document: &mut Value, patch: &Map<String, Value>) -> CommandResult<()> {
@@ -3166,6 +3622,89 @@ mod tests {
             vec![14, 15, 16]
         );
         assert!(expand_question_expression(&json!({"kind":"range","start":9,"end":8})).is_err());
+    }
+
+    #[test]
+    fn set_task_type_rebuilds_heading_presentation_and_keeps_the_answer() {
+        let mut document = json!({
+            "passage": {
+                "content": [{
+                    "type": "paragraph", "id": "passage-a", "paragraphLabel": "A",
+                    "sourceAnchors": [], "provenanceStatus": "source", "children": []
+                }],
+                "paragraphMap": {"A": "passage-a"},
+                "sourceAnchors": []
+            },
+            "taskGroups": [{
+                "taskId": "task-heading",
+                "taskType": "single_choice",
+                "instructionSignature": {"taskType": "single_choice"},
+                "optionBank": {
+                    "optionBankId": "heading-bank", "scope": "task_group", "allowReuse": false,
+                    "sourceAnchors": [],
+                    "options": [
+                        {"optionId":"heading-i","label":"i","content":[],"sourceAnchors":[]},
+                        {"optionId":"heading-iv","label":"iv","content":[],"sourceAnchors":[]}
+                    ]
+                },
+                "responseGroups": [{
+                    "responseGroupId": "response-1", "kind": "choice",
+                    "prompt": [{"type":"paragraph","id":"prompt-q1","sourceAnchors":[],"provenanceStatus":"source","children":[{"type":"text","id":"prompt-q1-text","sourceAnchors":[],"provenanceStatus":"source","text":"Paragraph A"}]}],
+                    "slotIds": ["q1"], "optionBankRef": "heading-bank",
+                    "cardinality": {"min":1,"max":1,"exact":1}, "assignment": "per_slot",
+                    "scoringPolicy": "per_slot_ielts_normalized", "duplicatePolicy": "reject_submission",
+                    "allowOptionReuse": false, "sourceAnchors": []
+                }],
+                "sourceAnchors": [], "provenanceStatus": "source"
+            }],
+            "answerSlots": {"q1": {
+                "slotId":"q1", "questionNumber":1, "displayLabel":"1", "hostNodeId":"prompt-q1",
+                "hostType":"prompt", "interaction":"radio", "participation":"scoring",
+                "constraints":{"acceptedOptionLabels":["A","B"]}, "sourceAnchors":[], "confidence":0.9
+            }},
+            "answerKey": {"q1":{"kind":"option","labels":["i"],"assignment":"per_slot"}}
+        });
+
+        apply_patch(
+            &mut document,
+            &json!({"op":"setTaskType","taskId":"task-heading","taskType":"matching_headings"}),
+        )
+        .expect("a heading target resolved by paragraphMap should be convertible");
+
+        assert_eq!(document["taskGroups"][0]["taskType"], "matching_headings");
+        assert_eq!(document["taskGroups"][0]["instructionSignature"]["taskType"], "matching_headings");
+        assert_eq!(document["taskGroups"][0]["responseGroups"][0]["kind"], "matching");
+        assert_eq!(document["answerSlots"]["q1"]["interaction"], "dragdrop");
+        assert_eq!(document["answerSlots"]["q1"]["hostType"], "passage_paragraph");
+        assert_eq!(document["answerSlots"]["q1"]["hostNodeId"], "passage-a");
+        assert_eq!(document["answerKey"]["q1"]["labels"], json!(["i"]));
+    }
+
+    #[test]
+    fn set_answer_slot_host_requires_a_real_mapped_passage_paragraph() {
+        let mut document = json!({
+            "passage": {
+                "content": [
+                    {"type":"paragraph","id":"passage-a","paragraphLabel":"A","children":[],"sourceAnchors":[]},
+                    {"type":"paragraph","id":"passage-b","paragraphLabel":"B","children":[],"sourceAnchors":[]}
+                ],
+                "paragraphMap": {"A":"passage-a","B":"passage-b"},
+                "sourceAnchors": []
+            },
+            "taskGroups": [{"taskId":"headings","responseGroups":[{"responseGroupId":"rg","slotIds":["q1"]}]}],
+            "answerSlots": {"q1":{"slotId":"q1","hostNodeId":"passage-a","hostType":"passage_paragraph","interaction":"dragdrop","provenanceStatus":"source","sourceAnchors":[]}},
+            "answerKey": {"q1":{"kind":"unresolved"}}
+        });
+
+        apply_patch(&mut document, &json!({"op":"setAnswerSlotHost","slotId":"q1","hostNodeId":"passage-b"}))
+            .expect("a mapped passage paragraph can become the target");
+        assert_eq!(document["answerSlots"]["q1"]["hostNodeId"], "passage-b");
+        assert_eq!(document["answerSlots"]["q1"]["hostType"], "passage_paragraph");
+        assert_eq!(document["answerSlots"]["q1"]["provenanceStatus"], "user_edited");
+
+        let error = apply_patch(&mut document, &json!({"op":"setAnswerSlotHost","slotId":"q1","hostNodeId":"missing"}))
+            .expect_err("unmapped passage IDs are rejected");
+        assert!(error.contains("SLOT_HOST_PARAGRAPH_UNMAPPED"), "{error}");
     }
 
     #[test]

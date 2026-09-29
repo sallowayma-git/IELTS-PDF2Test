@@ -136,10 +136,7 @@ pub(crate) fn detect_completion_option_bank(
     // declared label unless multiple explicitly labelled options close the
     // alphabet across at least two compact source rows. This still rejects a
     // single prose line such as `A study compared B with C`.
-    if !has_structural_heading
-        && distinct_label_rows < expected.len()
-        && !compact_rows_are_closed
-    {
+    if !has_structural_heading && distinct_label_rows < expected.len() && !compact_rows_are_closed {
         return None;
     }
     let options = expected

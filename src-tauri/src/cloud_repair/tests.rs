@@ -1435,7 +1435,9 @@ fn real_docx_import_reaches_cloud_repair_with_original_source_evidence() {
                 .flatten()
         })
         .collect::<Vec<_>>();
-    assert_eq!(responses.len(), 2);
+    // TFNG now has one response group per question; the two-question table
+    // remains one group, so the three TFNG rows plus table total four.
+    assert_eq!(responses.len(), 4);
     for response in &responses {
         let (_, text) = first_text_in_value(response.get("prompt").unwrap())
             .expect("DOCX prompt must contain real text before cloud repair");
@@ -3875,7 +3877,9 @@ fn adopted_cloud_keeps_undecidable_non_answer_but_leaves_answer_for_the_user() {
                 "arguments": {}
             }));
         }
-        let differences = context["differences"].as_array().expect("comparison deltas");
+        let differences = context["differences"]
+            .as_array()
+            .expect("comparison deltas");
         if calls == 2 {
             let answer = differences
                 .iter()
@@ -3947,13 +3951,15 @@ fn adopted_cloud_keeps_undecidable_non_answer_but_leaves_answer_for_the_user() {
         .find(|observation| observation["callId"] == "reject-answer-cloud-default")
         .expect("answer cannot use the cloud-default ruling");
     assert_eq!(rejected_answer_default["status"], "rejected");
-    assert!(rejected_answer_default["errors"].as_array().is_some_and(|errors| {
-        errors.iter().any(|error| {
-            error
-                .as_str()
-                .is_some_and(|error| error.starts_with("CLOUD_RULING_KEPT_CLOUD_DEFAULT_NOT_ALLOWED"))
-        })
-    }));
+    assert!(rejected_answer_default["errors"]
+        .as_array()
+        .is_some_and(|errors| {
+            errors.iter().any(|error| {
+                error.as_str().is_some_and(|error| {
+                    error.starts_with("CLOUD_RULING_KEPT_CLOUD_DEFAULT_NOT_ALLOWED")
+                })
+            })
+        }));
     let prompt_target_id = prompt_target_id.expect("prompt difference target id");
     assert!(
         !report.remaining_tasks.iter().any(|task| {

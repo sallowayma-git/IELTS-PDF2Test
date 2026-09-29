@@ -32,7 +32,7 @@ export interface RuntimeAuditV2 {
   sourceSchemaVersion: "IeltsAuthoringIRV2";
   sourceDocumentId: string;
   sourceRevision: number;
-  sourceRevisionKind: "auto_extract" | "user" | "migration";
+  sourceRevisionKind: "auto_extract" | "user" | "migration" | "cloud_candidate_adoption";
 }
 
 /** The serialized V2 source consumed by a student loader. */

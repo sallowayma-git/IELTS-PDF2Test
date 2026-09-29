@@ -220,6 +220,76 @@
 /* 行内答案位 */
 .exam-canvas-v2 .v2-answer-slot { display: inline-flex; gap: 8px; align-items: center; }
 
+/* 拖放题共用可拖选项池；投放框依照原段落、题行或摘要内容的位置渲染。 */
+.exam-canvas-v2 .v2-answer-option-pool { min-width: 0; margin: 14px 0 18px; }
+.exam-canvas-v2 .v2-answer-option-pool > h3 { margin: 0 0 8px; font-size: 0.95rem; }
+.exam-canvas-v2 .v2-answer-option-list { display: flex; flex-wrap: wrap; gap: 7px; min-width: 0; }
+.exam-canvas-v2 .v2-answer-option {
+  position: relative;
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+.exam-canvas-v2 .v2-answer-option-token {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-height: 34px;
+  max-width: 100%;
+  padding: 5px 9px;
+  border: 1px solid var(--paper-line, #aeb7bf);
+  border-radius: 3px;
+  background: #fff;
+  color: var(--paper-ink, #111);
+  font: inherit;
+  text-align: left;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.exam-canvas-v2 .v2-answer-option-token:active { cursor: grabbing; }
+.exam-canvas-v2 .v2-answer-option-token:disabled { opacity: 0.42; background: #eef0f2; cursor: not-allowed; }
+.exam-canvas-v2 .v2-answer-option-token.is-answer-dragging { opacity: 0.45; }
+.exam-canvas-v2 .v2-answer-option-token:focus-visible,
+.exam-canvas-v2 .v2-answer-dropzone:focus-visible { outline: 2px solid var(--paper-focus, #1f6387); outline-offset: 2px; }
+.exam-canvas-v2 .v2-answer-dropzone-wrap { vertical-align: middle; }
+.exam-canvas-v2 .v2-answer-dropzone-wrap.is-passage,
+.exam-canvas-v2 .v2-answer-dropzone-wrap.is-row { display: block; width: fit-content; max-width: 100%; margin: 0 0 8px; }
+.exam-canvas-v2 .v2-answer-dropzone-wrap.is-inline { display: inline-flex; max-width: 100%; }
+.exam-canvas-v2 .v2-answer-dropzone {
+  display: inline-flex;
+  min-width: 142px;
+  min-height: 38px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 5px 9px;
+  border: 1px dashed #71808d;
+  border-radius: 3px;
+  background: #fbfcfd;
+  color: var(--paper-ink, #111);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: none;
+}
+.exam-canvas-v2 .v2-answer-dropzone.is-filled { border-style: solid; background: #fff; }
+.exam-canvas-v2 .v2-answer-dropzone.is-drop-hover,
+.exam-canvas-v2 [data-answer-drop-pool].is-drop-hover { outline: 2px solid var(--paper-focus, #1f6387); outline-offset: 2px; }
+.exam-canvas-v2 .v2-answer-dropzone-label { font-weight: 700; white-space: nowrap; }
+.exam-canvas-v2 .v2-answer-dropzone-value { min-width: 54px; color: #5e6670; }
+.exam-canvas-v2 .v2-answer-dropzone.is-filled .v2-answer-dropzone-value { color: var(--paper-ink, #111); font-weight: 700; }
+.exam-canvas-v2 .v2-answer-dropzone-content { flex: 1 1 100%; min-width: 0; }
+.exam-canvas-v2 .v2-answer-target-editor { display: inline-flex; gap: 5px; align-items: center; margin: 4px 0 0; font-size: 0.78rem; }
+.exam-canvas-v2 .v2-answer-target-editor select,
+.exam-canvas-v2 .v2-select-answer,
+.exam-canvas-v2 .v2-answer-slot-select select { max-width: 100%; font: inherit; }
+.exam-canvas-v2 .v2-passage-target-reference { color: #626d76; font-size: 0.88rem; }
+.exam-canvas-v2 .v2-answer-dropzone.is-answer-dragging { opacity: 0.5; }
+.exam-canvas-v2 .v2-answer-option-pool.is-drop-hover { background: rgba(65, 143, 198, 0.08); }
+
 /* ---------------- 选项库 ---------------- */
 .exam-canvas-v2 .v2-option-bank { min-width: 0; margin: 14px 0; }
 .exam-canvas-v2 .v2-option-bank h4 { margin: 0 0 6px; font-size: 15px; font-weight: 700; }

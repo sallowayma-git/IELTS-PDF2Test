@@ -12,7 +12,7 @@ mod completion;
 mod diagram;
 mod evidence;
 mod instruction_signature;
-mod instruction_zone;
+pub(crate) mod instruction_zone;
 pub(crate) mod issue_codes;
 // Listening part boundaries (SECTION/PART 1–4).
 pub(crate) mod listening_draft;
@@ -23,7 +23,7 @@ mod option_run;
 mod prompt_assembler;
 pub(crate) mod quality;
 pub(crate) mod question_number;
-mod reading;
+pub(crate) mod reading;
 #[cfg(test)]
 mod real_pdf_acceptance;
 pub(crate) mod source_coverage;
@@ -32,6 +32,9 @@ pub(crate) use quality::evaluate_quality;
 
 use crate::artifact_store::write_canonical_json_atomic;
 use crate::schema::ielts_authoring_v2::{ExamModalityV2, QuestionNumberExpressionV2, TaskTypeV2};
+use crate::schema::task_presentation::{
+    rule_for as task_presentation_rule_for, GroupGranularity, OptionReusePolicy, OptionSource,
+};
 use crate::schema::IeltsAuthoringIRV2;
 use crate::{CommandResult, ImportJob, SourceFile};
 use serde_json::{json, Map, Value};
@@ -42,11 +45,14 @@ use anchors::{detect_question_anchors, QuestionAnchor};
 use answer_key::{answer_key_from_v1, answer_value_for_slot};
 use completion::{
     answer_slot_node, completion_blanks_from_shadow, completion_context_nodes_with_slots,
-    completion_flowchart_node, completion_host_type, completion_placeholder, completion_table_node,
+    completion_flowchart_node, completion_placeholder, completion_table_node,
     recover_completion_structure_with_blanks, CompletionStructureCandidate,
 };
 use diagram::diagram_candidate;
 use evidence::{anchor_from_value, source_anchor_from_job};
+pub(crate) use instruction_signature::{
+    classify_instruction_task_type, option_reuse_for_instruction, task_type_from_kind_hint,
+};
 use instruction_signature::{infer_instruction_signature, is_completion_task, task_type_label};
 use instruction_zone::{
     collect_instruction_zone, normalize_instruction_text, semantic_lines_from_v1_document,
@@ -208,6 +214,7 @@ pub(crate) fn build_authoring_v2_shadow_for_modality(
             &page_number_block_ids,
         )
     };
+    let passage_presentation_source = passage.clone();
     let mut task_groups = Vec::new();
     let mut answer_slots = Map::new();
     let answer_key_v1 = answer_key_from_v1(v1_authoring);
@@ -274,7 +281,7 @@ pub(crate) fn build_authoring_v2_shadow_for_modality(
             zone.text.clone()
         };
         let kind_hint = candidate.get("kindHint").and_then(Value::as_str);
-        let signature_result = infer_instruction_signature(
+        let mut signature_result = infer_instruction_signature(
             &zone_text,
             &expression,
             kind_hint,
@@ -282,28 +289,29 @@ pub(crate) fn build_authoring_v2_shadow_for_modality(
         );
         let task_type = signature_result.signature.task_type.clone();
         let task_type_name = task_type_label(&task_type);
+        let presentation_rule = task_presentation_rule_for(&task_type, true);
+        let allow_option_reuse = option_reuse_from_rule(
+            presentation_rule.option_reuse_policy,
+            signature_result.signature.allow_option_reuse,
+            presentation_rule.option_reuse_default,
+        );
+        signature_result.signature.allow_option_reuse = Some(allow_option_reuse);
         let question_anchors = detect_question_anchors(&group_lines, &expected_numbers);
         let v1_group = find_v1_group(v1_authoring, &task_id);
         let option_runs = detect_option_runs(&group_lines);
+        let option_source_is_bank = presentation_rule.option_source == OptionSource::OptionBank;
         let option_bank = detect_option_bank(
             &group_lines,
             &zone_text,
-            signature_result.signature.allow_option_reuse,
-            matches!(
-                task_type,
-                TaskTypeV2::MatchingInformation
-                    | TaskTypeV2::MatchingHeadings
-                    | TaskTypeV2::MatchingFeatures
-                    | TaskTypeV2::MatchingSentenceEndings
-                    | TaskTypeV2::Classification
-            ),
+            Some(allow_option_reuse),
+            option_source_is_bank && !is_completion_task(&task_type),
         )
         .or_else(|| {
-            is_completion_task(&task_type).then(|| {
+            (is_completion_task(&task_type) && option_source_is_bank).then(|| {
                 detect_completion_option_bank(
                     &group_lines,
                     &zone_text,
-                    signature_result.signature.allow_option_reuse,
+                    Some(allow_option_reuse),
                     expected_numbers.len(),
                 )
             })?
@@ -317,7 +325,8 @@ pub(crate) fn build_authoring_v2_shadow_for_modality(
             source_hash,
             source_type,
         );
-        let option_bank_value = option_bank
+        let mut option_bank_value = option_bank
+            .filter(|_| option_source_is_bank)
             .as_ref()
             .map(|bank| option_bank_value(bank, &task_id))
             .or_else(|| {
@@ -331,25 +340,13 @@ pub(crate) fn build_authoring_v2_shadow_for_modality(
                     &task_source_anchors,
                 )
             });
+        if let Some(bank) = option_bank_value.as_mut() {
+            bank["allowReuse"] = json!(allow_option_reuse);
+        }
         let option_bank_ref = option_bank_value
             .as_ref()
             .and_then(|bank| bank.get("optionBankId"))
             .and_then(Value::as_str);
-        // Keep the response-level reuse contract in lockstep with the
-        // resolved bank.  Completion banks can infer reuse from cardinality
-        // (more slots than choices), even when the instruction omitted an
-        // explicit reuse sentence; leaving this at the signature default
-        // would make the runtime reject a valid repeated selection.
-        let option_bank_allow_reuse = option_bank_value
-            .as_ref()
-            .and_then(|bank| bank.get("allowReuse"))
-            .and_then(Value::as_bool)
-            .unwrap_or_else(|| {
-                signature_result
-                    .signature
-                    .allow_option_reuse
-                    .unwrap_or(false)
-            });
         let completion_structure = is_completion_task(&task_type).then(|| {
             recover_completion_structure_with_blanks(
                 &task_type,
@@ -372,10 +369,10 @@ pub(crate) fn build_authoring_v2_shadow_for_modality(
             candidate,
             v1_group,
             option_bank_ref,
-            option_bank_allow_reuse,
             &option_runs,
             &answer_key_v1,
             &task_source_anchors,
+            &passage_presentation_source,
             structured_completion_slots,
             completion_structure
                 .as_ref()
@@ -646,6 +643,7 @@ fn build_passage(
     anchors.extend(passage_preamble_anchors(physical_lines, &passage_pages));
     let anchors = valid_anchors(&anchors);
     let mut content = passage_nodes(title, &passage_lines, anchors.clone());
+    let paragraph_map = reading::paragraph_map_from_nodes(&content);
     for asset in assets.iter().filter(|asset| {
         asset.get("kind").and_then(Value::as_str) == Some("raster_image")
             && asset.get("extractionMode").and_then(Value::as_str) == Some("embedded")
@@ -677,7 +675,7 @@ fn build_passage(
     json!({
         "title": title,
         "content": content,
-        "paragraphMap": {},
+        "paragraphMap": paragraph_map,
         "sourceAnchors": anchors
     })
 }
@@ -995,10 +993,10 @@ fn build_responses_and_slots(
     candidate: &Value,
     v1_group: Option<&Value>,
     option_bank_ref: Option<&str>,
-    option_bank_allow_reuse: bool,
     option_runs: &[OptionRun],
     answer_key: &Map<String, Value>,
     task_anchors: &[Value],
+    passage: &Value,
     structured_completion_slots: bool,
     completion_slot_line_ids: Option<&std::collections::BTreeMap<u32, String>>,
 ) -> (Vec<Value>, Map<String, Value>, Map<String, Value>) {
@@ -1014,11 +1012,17 @@ fn build_responses_and_slots(
     // recovered question range is inconsistent: the quality gate must expose
     // that mismatch instead of multiplying the instruction cardinality across
     // one response group per recovered slot.
+    let option_bank_bound = option_bank_ref.is_some();
+    let rule = task_presentation_rule_for(task_type, option_bank_bound);
+    let task_granularity = rule.group_granularity;
+    let allow_option_reuse = option_reuse_from_rule(
+        rule.option_reuse_policy,
+        signature.allow_option_reuse,
+        rule.option_reuse_default,
+    );
     let shared = matches!(task_type, TaskTypeV2::MultipleChoice)
-        && exact_selection_count.is_some_and(|count| count > 1)
-        || matches!(task_type, TaskTypeV2::ShortAnswer)
-            && exact_selection_count
-                .is_some_and(|count| count as usize == expected_numbers.len() && count > 1);
+        && task_granularity == GroupGranularity::TaskGroup
+        && exact_selection_count.is_some();
     let shared_option_values = if let Some(run) = option_runs
         .iter()
         .find(|run| run_matches_alphabet(run, signature.option_alphabet.as_deref()))
@@ -1072,7 +1076,7 @@ fn build_responses_and_slots(
         }
         responses.push(response_value(
             &group_id,
-            "choice",
+            &task_response_kind(task_type, option_bank_ref.is_some()),
             prompt,
             slot_ids,
             if option_bank_ref.is_some() {
@@ -1081,7 +1085,7 @@ fn build_responses_and_slots(
                 Some(shared_option_values)
             },
             option_bank_ref,
-            option_bank_allow_reuse,
+            allow_option_reuse,
             signature,
             task_type,
             task_anchors,
@@ -1089,16 +1093,7 @@ fn build_responses_and_slots(
         return (responses, slots, used_answers);
     }
 
-    let aggregate_per_slot = matches!(
-        task_type,
-        TaskTypeV2::TrueFalseNotGiven
-            | TaskTypeV2::YesNoNotGiven
-            | TaskTypeV2::MatchingInformation
-            | TaskTypeV2::MatchingHeadings
-            | TaskTypeV2::MatchingFeatures
-            | TaskTypeV2::MatchingSentenceEndings
-            | TaskTypeV2::Classification
-    ) || is_completion_task(task_type);
+    let aggregate_per_slot = task_granularity == GroupGranularity::TaskGroup;
     let mut aggregate_prompt = Vec::new();
     let mut aggregate_slot_ids = Vec::new();
     let mut aggregate_options = None;
@@ -1122,24 +1117,32 @@ fn build_responses_and_slots(
         let next_anchor = expected_numbers
             .get(index + 1)
             .and_then(|next| question_anchor(question_anchors, *next));
-        let option_values = option_run_for_question(
-            option_runs,
-            lines,
-            current_anchor,
-            next_anchor,
-            index,
-            signature.option_alphabet.as_deref(),
-        )
-        .map(|run| option_run_value(run, &format!("{task_id}-option-{number}")))
-        .unwrap_or_else(|| {
-            fixed_options_from_v1(
-                &format!("{task_id}-{number}"),
-                candidate,
-                v1_group,
-                v1_question,
-                task_anchors,
-            )
-        });
+        let option_values = match rule.option_source {
+            OptionSource::FixedTruthLabels => fixed_truth_options(task_id, rule, task_anchors),
+            OptionSource::PerSlotOptions | OptionSource::GroupOptions => {
+                option_run_for_question(
+                    option_runs,
+                    lines,
+                    current_anchor,
+                    next_anchor,
+                    index,
+                    signature.option_alphabet.as_deref(),
+                )
+                .map(|run| option_run_value(run, &format!("{task_id}-option-{number}")))
+                .unwrap_or_else(|| {
+                    fixed_options_from_v1(
+                        &format!("{task_id}-{number}"),
+                        candidate,
+                        v1_group,
+                        v1_question,
+                        task_anchors,
+                    )
+                })
+            }
+            OptionSource::None
+            | OptionSource::OptionBank
+            | OptionSource::ParagraphMap => Vec::new(),
+        };
         let prompt_result = assemble_prompt(
             candidate_prompt,
             *number,
@@ -1187,7 +1190,12 @@ fn build_responses_and_slots(
                     | TaskTypeV2::DiagramLabelCompletion
                     | TaskTypeV2::PlanMapLabelCompletion
             );
-        let host_id = if structured_completion_slots && is_completion_task(task_type) {
+        let default_host_type = rule
+            .host_types
+            .first()
+            .map(crate::schema::task_presentation::wire_name)
+            .unwrap_or_else(|| "prompt".to_string());
+        let mut host_id = if structured_completion_slots && is_completion_task(task_type) {
             completion_slot_line_ids
                 .and_then(|line_ids| line_ids.get(number))
                 .map(|line_id| format!("{task_id}-stimulus-{line_id}"))
@@ -1195,6 +1203,38 @@ fn build_responses_and_slots(
         } else {
             format!("{task_id}-prompt-{number}")
         };
+        let mut slot_host_type = default_host_type;
+        let mut slot_anchor = anchor.clone();
+        let heading_target = if matches!(task_type, TaskTypeV2::MatchingHeadings) {
+            let label = paragraph_label_in_question(
+                candidate_prompt.unwrap_or(prompt_result.text.as_str()),
+            );
+            label.and_then(|label| {
+                let node_id = passage
+                    .pointer(&format!("/paragraphMap/{label}"))
+                    .and_then(Value::as_str)?;
+                let node = passage
+                    .get("content")
+                    .and_then(Value::as_array)?
+                    .iter()
+                    .find(|node| node.get("id").and_then(Value::as_str) == Some(node_id))?;
+                let source_anchor = node
+                    .get("sourceAnchors")
+                    .and_then(Value::as_array)
+                    .and_then(|anchors| anchors.first())
+                    .cloned();
+                Some((node_id.to_string(), source_anchor))
+            })
+        } else {
+            None
+        };
+        if matches!(task_type, TaskTypeV2::MatchingHeadings) {
+            slot_host_type = "passage_paragraph".to_string();
+            if let Some((node_id, source_anchor)) = heading_target {
+                host_id = node_id;
+                slot_anchor = source_anchor.unwrap_or(anchor.clone());
+            }
+        }
         let mut children = Vec::new();
         if !prompt_text.is_empty() {
             children.push(text_node(
@@ -1228,24 +1268,32 @@ fn build_responses_and_slots(
                 children,
             )]
         };
-        let slot = slot_value(
+        let mut slot = slot_value(
             &slot_id,
             *number,
             task_type,
             &host_id,
-            anchor,
+            slot_anchor,
             signature,
             option_bank_ref.is_some(),
         );
+        slot["hostType"] = json!(slot_host_type);
         let answer = answer_value_for_slot(answer_key, &slot_id, *number);
         used_answers.insert(slot_id.clone(), answer);
         slots.insert(slot_id.clone(), slot);
-        let group_kind = response_kind(task_type, option_bank_ref.is_some());
+        let group_kind = task_response_kind(task_type, option_bank_ref.is_some());
         if aggregate_per_slot {
-            aggregate_prompt.extend(prompt);
+            if !matches!(task_type, TaskTypeV2::MatchingHeadings) {
+                aggregate_prompt.extend(prompt);
+            }
             aggregate_slot_ids.push(slot_id);
             if !is_completion_task(task_type)
-                && option_bank_ref.is_none()
+                && matches!(
+                    rule.option_source,
+                    OptionSource::PerSlotOptions
+                        | OptionSource::GroupOptions
+                        | OptionSource::FixedTruthLabels
+                )
                 && aggregate_options.is_none()
             {
                 aggregate_options = Some(option_values);
@@ -1253,16 +1301,19 @@ fn build_responses_and_slots(
         } else {
             responses.push(response_value(
                 &format!("{task_id}-response-{}", number),
-                group_kind,
+                &group_kind,
                 prompt,
                 vec![slot_id],
-                if option_bank_ref.is_some() {
-                    None
-                } else {
-                    Some(option_values)
+                match rule.option_source {
+                    OptionSource::PerSlotOptions
+                    | OptionSource::GroupOptions
+                    | OptionSource::FixedTruthLabels => Some(option_values),
+                    OptionSource::None
+                    | OptionSource::OptionBank
+                    | OptionSource::ParagraphMap => None,
                 },
                 option_bank_ref.clone(),
-                option_bank_allow_reuse,
+                allow_option_reuse,
                 signature,
                 task_type,
                 task_anchors,
@@ -1272,7 +1323,7 @@ fn build_responses_and_slots(
     if aggregate_per_slot && !aggregate_slot_ids.is_empty() {
         responses.push(response_value(
             &format!("{task_id}-responses"),
-            response_kind(task_type, option_bank_ref.is_some()),
+            &task_response_kind(task_type, option_bank_ref.is_some()),
             aggregate_prompt,
             aggregate_slot_ids,
             if option_bank_ref.is_some() {
@@ -1281,7 +1332,7 @@ fn build_responses_and_slots(
                 aggregate_options
             },
             option_bank_ref,
-            option_bank_allow_reuse,
+            allow_option_reuse,
             signature,
             task_type,
             task_anchors,
@@ -1348,11 +1399,8 @@ fn response_value(
             .then_some(1)
         })
         .or(Some(1));
-    let assignment = signature
-        .answer_assignment
-        .as_ref()
-        .map(assignment_label)
-        .unwrap_or("per_slot");
+    let rule = task_presentation_rule_for(task_type, option_bank_ref.is_some());
+    let assignment = crate::schema::task_presentation::wire_name(&rule.assignment);
     let mut response = json!({
         "responseGroupId": response_id,
         "kind": kind,
@@ -1362,11 +1410,7 @@ fn response_value(
         "assignment": assignment,
         "scoringPolicy": if assignment == "unordered_set" || is_completion_task(task_type) { "per_slot_ielts_normalized" } else { "per_slot_binary" },
         "duplicatePolicy": "reject_submission",
-        "allowOptionReuse": if option_bank_ref.is_some() {
-            option_bank_allow_reuse
-        } else {
-            signature.allow_option_reuse.unwrap_or(false)
-        },
+        "allowOptionReuse": option_bank_allow_reuse,
         "sourceAnchors": anchors
     });
     let object = response
@@ -1390,27 +1434,13 @@ fn slot_value(
     signature: &crate::schema::ielts_authoring_v2::InstructionSignatureV2,
     option_bank_bound: bool,
 ) -> Value {
-    let interaction = if option_bank_bound && completion_bank_uses_select(task_type) {
-        "select"
-    } else {
-        match task_type {
-            TaskTypeV2::SingleChoice
-            | TaskTypeV2::TrueFalseNotGiven
-            | TaskTypeV2::YesNoNotGiven => "radio",
-            TaskTypeV2::MultipleChoice => "checkbox",
-            TaskTypeV2::MatchingHeadings
-            | TaskTypeV2::MatchingInformation
-            | TaskTypeV2::MatchingFeatures
-            | TaskTypeV2::MatchingSentenceEndings
-            | TaskTypeV2::Classification => "select",
-            TaskTypeV2::DiagramLabelCompletion | TaskTypeV2::PlanMapLabelCompletion => "hotspot",
-            _ if is_completion_task(task_type) || matches!(task_type, TaskTypeV2::ShortAnswer) => {
-                "text"
-            }
-            _ => "text",
-        }
-    };
-    let host_type = completion_host_type(task_type);
+    let rule = task_presentation_rule_for(task_type, option_bank_bound);
+    let interaction = crate::schema::task_presentation::wire_name(&rule.interaction);
+    let host_type = rule
+        .host_types
+        .first()
+        .map(crate::schema::task_presentation::wire_name)
+        .unwrap_or_else(|| "prompt".to_string());
     let mut slot = json!({
         "slotId": slot_id,
         "questionNumber": number,
@@ -1508,25 +1538,8 @@ fn fixed_response_option_bank(
     lines: &[SemanticLine],
     anchors: &[Value],
 ) -> Option<Value> {
-    let canonical_labels = match task_type {
-        TaskTypeV2::TrueFalseNotGiven => Some(["TRUE", "FALSE", "NOT GIVEN"]),
-        TaskTypeV2::YesNoNotGiven => Some(["YES", "NO", "NOT GIVEN"]),
-        _ => None,
-    };
-    let is_matching = matches!(
-        task_type,
-        TaskTypeV2::MatchingInformation
-            | TaskTypeV2::MatchingHeadings
-            | TaskTypeV2::MatchingFeatures
-            | TaskTypeV2::MatchingSentenceEndings
-            | TaskTypeV2::Classification
-    );
-    let is_shared_unordered = matches!(task_type, TaskTypeV2::MultipleChoice)
-        && signature
-            .answer_assignment
-            .as_ref()
-            .is_some_and(|assignment| assignment_label(assignment) == "unordered_set");
-    if canonical_labels.is_none() && !is_matching && !is_shared_unordered {
+    let rule = task_presentation_rule_for(task_type, true);
+    if rule.option_source != OptionSource::OptionBank {
         return None;
     }
     let first_v1_question = v1_group
@@ -1536,34 +1549,9 @@ fn fixed_response_option_bank(
     let mut options =
         fixed_options_from_v1(task_id, candidate, v1_group, first_v1_question, anchors);
     if options.is_empty() {
-        let canonical_labels = canonical_labels?;
-        let anchor = anchors.first().cloned().unwrap_or_else(empty_anchor);
-        options = canonical_labels
-            .into_iter()
-            .enumerate()
-            .map(|(index, label)| {
-                json!({
-                    "optionId": format!("{task_id}-fixed-option-{}", index + 1),
-                    "label": label,
-                    // 判断题固定选项的语义完全由 label 承载，content 恒为空数组：
-                    // 说明区解释文字（“TRUE if the statement agrees…”）属于 instructions，
-                    // 塞进选项 content 会让渲染器出现 “TRUE TRUE”。
-                    "content": [],
-                    "sourceAnchors": [anchor.clone()]
-                })
-            })
-            .collect();
+        return None;
     }
-    if canonical_labels.is_some() {
-        // TrueFalseNotGiven / YesNoNotGiven：无论 label 来自 v1 还是 canonical，content
-        // 一律清空，且不做 enrich。判断题的解释文字是 instructions 的一部分，不是选项
-        // 内容；其他题型（matching 等）的 enrich 行为保持不变。
-        for option in options.iter_mut() {
-            option["content"] = json!([]);
-        }
-    } else {
-        enrich_fixed_options_from_source_lines(task_id, &mut options, lines);
-    }
+    enrich_fixed_options_from_source_lines(task_id, &mut options, lines);
     let title = lines
         .iter()
         .map(|line| {
@@ -1587,11 +1575,11 @@ fn fixed_response_option_bank(
                 Some(anchor),
             )]
         });
-    let allow_reuse = if canonical_labels.is_some() {
-        true
-    } else {
-        signature.allow_option_reuse.unwrap_or(false)
-    };
+    let allow_reuse = option_reuse_from_rule(
+        rule.option_reuse_policy,
+        signature.allow_option_reuse,
+        rule.option_reuse_default,
+    );
     let mut bank = json!({
         "optionBankId": format!("{task_id}-option-bank"),
         "scope": "task_group",
@@ -1872,10 +1860,7 @@ fn rehost_structured_slots(task_id: &str, task_type: &TaskTypeV2, slots: &mut Ma
                 slot["hostNodeId"] = json!(format!("{task_id}-flow-step-{slot_id}"));
                 slot["hostType"] = json!("flow_step");
             }
-            TaskTypeV2::DiagramLabelCompletion | TaskTypeV2::PlanMapLabelCompletion => {
-                slot["hostNodeId"] = json!(format!("{task_id}-hotspot-{slot_id}"));
-                slot["hostType"] = json!("figure_hotspot");
-            }
+            TaskTypeV2::DiagramLabelCompletion | TaskTypeV2::PlanMapLabelCompletion => {}
             _ => {}
         }
     }
@@ -2215,44 +2200,53 @@ fn expression_from_candidate(candidate: &Value) -> Option<QuestionNumberExpressi
     }
 }
 
-fn response_kind(task_type: &TaskTypeV2, option_bank_bound: bool) -> &'static str {
-    if option_bank_bound && completion_bank_uses_select(task_type) {
-        return "matching";
-    }
-    match task_type {
-        TaskTypeV2::SingleChoice
-        | TaskTypeV2::MultipleChoice
-        | TaskTypeV2::TrueFalseNotGiven
-        | TaskTypeV2::YesNoNotGiven => "choice",
-        TaskTypeV2::MatchingInformation
-        | TaskTypeV2::MatchingHeadings
-        | TaskTypeV2::MatchingFeatures
-        | TaskTypeV2::MatchingSentenceEndings
-        | TaskTypeV2::Classification => "matching",
-        TaskTypeV2::DiagramLabelCompletion | TaskTypeV2::PlanMapLabelCompletion => {
-            "diagram_hotspot"
-        }
-        _ => "text_entry",
+fn task_response_kind(task_type: &TaskTypeV2, option_bank_bound: bool) -> String {
+    let rule = task_presentation_rule_for(task_type, option_bank_bound);
+    crate::schema::task_presentation::wire_name(&rule.response_kind)
+}
+
+fn option_reuse_from_rule(
+    policy: OptionReusePolicy,
+    instruction_value: Option<bool>,
+    default: bool,
+) -> bool {
+    match policy {
+        OptionReusePolicy::Always => true,
+        OptionReusePolicy::Never | OptionReusePolicy::NotApplicable => false,
+        OptionReusePolicy::InstructionControlled => instruction_value.unwrap_or(default),
     }
 }
 
-/// A word/phrase bank turns textual completion into a selectable matching
-/// response. Diagram/plan/map tasks are different: their answer slot remains
-/// a figure hotspot even when the labels are supplied from a shared bank.
-fn completion_bank_uses_select(task_type: &TaskTypeV2) -> bool {
-    is_completion_task(task_type)
-        && !matches!(
-            task_type,
-            TaskTypeV2::DiagramLabelCompletion | TaskTypeV2::PlanMapLabelCompletion
-        )
+fn fixed_truth_options(
+    task_id: &str,
+    rule: &crate::schema::task_presentation::TaskPresentationRule,
+    anchors: &[Value],
+) -> Vec<Value> {
+    let anchor = anchors.first().cloned().unwrap_or_else(empty_anchor);
+    rule.fixed_option_labels
+        .iter()
+        .enumerate()
+        .map(|(index, label)| json!({
+            "optionId": format!("{task_id}-fixed-option-{}", index + 1),
+            "label": label,
+            "content": [],
+            "sourceAnchors": [anchor.clone()]
+        }))
+        .collect()
 }
 
-fn assignment_label(value: &crate::schema::ielts_authoring_v2::AssignmentV2) -> &'static str {
-    match value {
-        crate::schema::ielts_authoring_v2::AssignmentV2::PerSlot => "per_slot",
-        crate::schema::ielts_authoring_v2::AssignmentV2::UnorderedSet => "unordered_set",
-        crate::schema::ielts_authoring_v2::AssignmentV2::OrderedSlots => "ordered_slots",
-    }
+fn paragraph_label_in_question(text: &str) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    let start = lower.find("paragraph")? + "paragraph".len();
+    let tail = text.get(start..)?.trim_start();
+    let mut chars = tail.chars();
+    let label = chars.next()?;
+    let after = chars.next();
+    (label.is_ascii_alphabetic()
+        && after.is_none_or(|ch| {
+            ch.is_ascii_whitespace() || matches!(ch, ')' | ']' | ':' | '.' | ',')
+        }))
+    .then(|| label.to_ascii_uppercase().to_string())
 }
 
 fn empty_anchor() -> Value {
@@ -2781,22 +2775,26 @@ mod tests {
     #[test]
     fn tfng_fixed_options_carry_no_content_and_instructions_keep_explanation() {
         let instruction_text = "Questions 1-3 Do the following statements agree with the information given in the passage? TRUE if the statement agrees with the information FALSE if the statement contradicts the information NOT GIVEN if there is no information on this";
-        let value = tfng_shadow(instruction_text, "true_false_not_given", ["TRUE", "FALSE", "NOT GIVEN"]);
+        let value = tfng_shadow(
+            instruction_text,
+            "true_false_not_given",
+            ["TRUE", "FALSE", "NOT GIVEN"],
+        );
         let group = &value["taskGroups"][0];
-        let options = group["optionBank"]["options"]
-            .as_array()
-            .expect("TFNG 需要固定选项 bank");
-        let labels: Vec<_> = options
-            .iter()
-            .filter_map(|option| option.get("label").and_then(Value::as_str))
-            .collect();
-        assert_eq!(labels, vec!["TRUE", "FALSE", "NOT GIVEN"]);
-        for option in options {
-            assert_eq!(
-                option["content"],
-                json!([]),
-                "判断题固定选项 content 必须为空数组（说明文字归 instructions，不归选项）"
-            );
+        assert!(group.get("optionBank").is_none(), "固定判断标签不是共享 option bank");
+        let responses = group["responseGroups"].as_array().unwrap();
+        assert_eq!(responses.len(), 3, "每道判断题应有独立 response group");
+        for response in responses {
+            let options = response["options"].as_array().expect("判断题需要固定标签");
+            let labels: Vec<_> = options
+                .iter()
+                .filter_map(|option| option.get("label").and_then(Value::as_str))
+                .collect();
+            assert_eq!(labels, vec!["TRUE", "FALSE", "NOT GIVEN"]);
+            for option in options {
+                assert_eq!(option["content"], json!([]));
+            }
+            assert_eq!(response["slotIds"].as_array().unwrap().len(), 1);
         }
         let instructions = flatten_ir_text(group.get("instructions").unwrap_or(&Value::Null));
         assert!(
@@ -2812,22 +2810,26 @@ mod tests {
     #[test]
     fn ynng_fixed_options_carry_no_content_and_instructions_keep_explanation() {
         let instruction_text = "Questions 1-3 Do the following statements agree with the views of the writer? YES if the statement agrees with the views of the writer NO if the statement contradicts the views of the writer NOT GIVEN if it is impossible to say what the writer thinks about this";
-        let value = tfng_shadow(instruction_text, "yes_no_not_given", ["YES", "NO", "NOT GIVEN"]);
+        let value = tfng_shadow(
+            instruction_text,
+            "yes_no_not_given",
+            ["YES", "NO", "NOT GIVEN"],
+        );
         let group = &value["taskGroups"][0];
-        let options = group["optionBank"]["options"]
-            .as_array()
-            .expect("YNNG 需要固定选项 bank");
-        let labels: Vec<_> = options
-            .iter()
-            .filter_map(|option| option.get("label").and_then(Value::as_str))
-            .collect();
-        assert_eq!(labels, vec!["YES", "NO", "NOT GIVEN"]);
-        for option in options {
-            assert_eq!(
-                option["content"],
-                json!([]),
-                "判断题固定选项 content 必须为空数组（说明文字归 instructions，不归选项）"
-            );
+        assert!(group.get("optionBank").is_none(), "固定判断标签不是共享 option bank");
+        let responses = group["responseGroups"].as_array().unwrap();
+        assert_eq!(responses.len(), 3, "每道判断题应有独立 response group");
+        for response in responses {
+            let options = response["options"].as_array().expect("判断题需要固定标签");
+            let labels: Vec<_> = options
+                .iter()
+                .filter_map(|option| option.get("label").and_then(Value::as_str))
+                .collect();
+            assert_eq!(labels, vec!["YES", "NO", "NOT GIVEN"]);
+            for option in options {
+                assert_eq!(option["content"], json!([]));
+            }
+            assert_eq!(response["slotIds"].as_array().unwrap().len(), 1);
         }
         let instructions = flatten_ir_text(group.get("instructions").unwrap_or(&Value::Null));
         assert!(
@@ -2835,9 +2837,110 @@ mod tests {
             "说明区必须保留 YES 的解释文字，实际：{instructions}"
         );
         assert!(
-            instructions.contains("NOT GIVEN if it is impossible to say what the writer thinks about this"),
+            instructions
+                .contains("NOT GIVEN if it is impossible to say what the writer thinks about this"),
             "说明区必须保留 NOT GIVEN 的解释文字，实际：{instructions}"
         );
+    }
+
+    #[test]
+    fn matching_information_uses_each_slot_and_real_paragraph_map() {
+        let questions = (1..=2)
+            .map(|number| json!({
+                "id":format!("q{number}"),
+                "displayNumber":number.to_string(),
+                "prompt":format!("Statement {number}"),
+                "interaction":{"options":["A","B","C"]}
+            }))
+            .collect::<Vec<_>>();
+        let v1 = json!({
+            "schemaVersion":"ReadingAuthoringIRV1",
+            "groups":[{"groupId":"group-1","questionRange":[1,2],"questions":questions}],
+            "answerKey":{"q1":"A","q2":"C"},
+            "passage":{"htmlBlocks":[
+                {"blockId":"label-a","html":"A"},
+                {"blockId":"paragraph-a","html":"The first source paragraph."},
+                {"blockId":"label-b","html":"B"},
+                {"blockId":"paragraph-b","html":"The second source paragraph."},
+                {"blockId":"label-c","html":"C"},
+                {"blockId":"paragraph-c","html":"The third source paragraph."}
+            ]}
+        });
+        let split = json!({
+            "questionGroupCandidates":[{
+                "groupId":"group-1",
+                "heading":"Questions 1-2",
+                "instructionText":"Questions 1-2 Which paragraph contains the following information? Choose the correct letter, A-C.",
+                "questionRange":[1,2],
+                "kindHint":"matching_information",
+                "sectionEvidence":[
+                    {"blockId":"h","textPreview":"Which paragraph contains the following information? Choose the correct letter, A-C.","pageIndex":1},
+                    {"blockId":"q1","textPreview":"1 First statement","pageIndex":1},
+                    {"blockId":"q2","textPreview":"2 Second statement","pageIndex":1}
+                ]
+            }],
+            "passageCandidates":[]
+        });
+        let value = build_authoring_v2_shadow(&job(), &v1, &split, None, None).unwrap();
+        let group = &value["taskGroups"][0];
+        assert_eq!(group["responseGroups"].as_array().unwrap().len(), 2);
+        assert!(group.get("optionBank").is_none());
+        for response in group["responseGroups"].as_array().unwrap() {
+            assert_eq!(response["kind"], json!("matching"));
+            assert_eq!(response["slotIds"].as_array().unwrap().len(), 1);
+            assert!(response.get("options").is_none());
+            assert!(response.get("optionBankRef").is_none());
+        }
+        assert_eq!(value["answerSlots"]["q1"]["interaction"], json!("radio"));
+        assert_eq!(value["answerSlots"]["q2"]["interaction"], json!("radio"));
+        assert_eq!(value.pointer("/passage/paragraphMap/A"), Some(&json!("passage-paragraph-A")));
+        assert_eq!(value.pointer("/passage/paragraphMap/B"), Some(&json!("passage-paragraph-B")));
+        assert_eq!(value.pointer("/passage/paragraphMap/C"), Some(&json!("passage-paragraph-C")));
+    }
+
+    #[test]
+    fn heading_slots_reference_the_mapped_passage_paragraph_nodes() {
+        let v1 = json!({
+            "schemaVersion":"ReadingAuthoringIRV1",
+            "groups":[{"groupId":"group-1","questionRange":[14,15],"questions":[
+                {"id":"q14","displayNumber":"14","prompt":"Paragraph A","interaction":{"options":["i","ii"]}},
+                {"id":"q15","displayNumber":"15","prompt":"Paragraph B","interaction":{"options":["i","ii"]}}
+            ]}],
+            "answerKey":{"q14":"i","q15":"ii"},
+            "passage":{"htmlBlocks":[
+                {"blockId":"label-a","html":"A"},
+                {"blockId":"paragraph-a","html":"First paragraph text."},
+                {"blockId":"label-b","html":"B"},
+                {"blockId":"paragraph-b","html":"Second paragraph text."}
+            ]}
+        });
+        let split = json!({
+            "questionGroupCandidates":[{
+                "groupId":"group-1",
+                "heading":"Questions 14-15",
+                "instructionText":"Questions 14-15 Which heading from the list below is most suitable for each paragraph?",
+                "questionRange":[14,15],
+                "kindHint":"matching_headings",
+                "sectionEvidence":[
+                    {"blockId":"h","textPreview":"Which heading from the list below is most suitable for each paragraph?","pageIndex":1},
+                    {"blockId":"q14","textPreview":"14 Paragraph A","pageIndex":1},
+                    {"blockId":"q15","textPreview":"15 Paragraph B","pageIndex":1}
+                ]
+            }],
+            "passageCandidates":[]
+        });
+        let value = build_authoring_v2_shadow(&job(), &v1, &split, None, None).unwrap();
+        let group = &value["taskGroups"][0];
+        assert_eq!(group["responseGroups"].as_array().unwrap().len(), 1);
+        assert_eq!(group.pointer("/responseGroups/0/slotIds"), Some(&json!(["q14", "q15"])));
+        for (slot, node_id, label) in [
+            ("q14", "passage-paragraph-A", "A"),
+            ("q15", "passage-paragraph-B", "B"),
+        ] {
+            assert_eq!(value["answerSlots"][slot]["hostType"], json!("passage_paragraph"));
+            assert_eq!(value["answerSlots"][slot]["hostNodeId"], json!(node_id));
+            assert_eq!(value.pointer(&format!("/passage/paragraphMap/{label}")), Some(&json!(node_id)));
+        }
     }
 
     #[test]
@@ -2986,13 +3089,8 @@ mod tests {
             ]
         });
         let q37 = &v1_group["questions"][1];
-        let options = fixed_options_from_v1(
-            "group-1-37",
-            &candidate,
-            Some(&v1_group),
-            Some(q37),
-            &[],
-        );
+        let options =
+            fixed_options_from_v1("group-1-37", &candidate, Some(&v1_group), Some(q37), &[]);
         assert_eq!(options[0]["label"], "A");
         assert_eq!(options[0]["content"][0]["text"], "q37 A text");
         assert_eq!(options[1]["content"][0]["text"], "q37 B text");
@@ -3052,7 +3150,7 @@ mod tests {
         );
         assert_eq!(group["responseGroups"][0]["kind"], json!("matching"));
         assert_eq!(group["responseGroups"][0]["allowOptionReuse"], json!(false));
-        assert_eq!(value["answerSlots"]["q36"]["interaction"], json!("select"));
+        assert_eq!(value["answerSlots"]["q36"]["interaction"], json!("dragdrop"));
         let stimulus_json = serde_json::to_string(&group["stimulus"]).unwrap();
         assert!(!stimulus_json.contains("cover"));
         assert!(!stimulus_json.contains("shoot"));

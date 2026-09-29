@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { InlineTextEditor } from "./editors/InlineTextEditor";
 import { MatchingMatrix, matchingRowsFor } from "./renderers/MatchingMatrix";
 import { resolveAuthoringAssetPreview, type AuthoringAssetPreview } from "../api/tauriCommands";
@@ -25,7 +25,8 @@ export type ExamCanvasStructureAction =
   | { type: "table.column.add"; tableId: string; afterColumnIndex?: number }
   | { type: "table.column.delete"; tableId: string; columnIndex: number }
   | { type: "answer-slot.insert"; afterNodeId: string }
-  | { type: "answer-slot.delete"; nodeId: string; slotId: string };
+  | { type: "answer-slot.delete"; nodeId: string; slotId: string }
+  | { type: "answer-slot.host.set"; slotId: string; hostNodeId: string };
 
 export interface ExamCanvasProps {
   authoring: IeltsAuthoringIRV2;
@@ -51,6 +52,23 @@ const CanvasAnswersContext = createContext<{
   setText: (slotId: string, value: string) => void;
   setOption: (slotId: string, label: string, checked: boolean, multiple: boolean, assignment?: "per_slot" | "unordered_set") => void;
 }>({ answers: {}, setText: () => {}, setOption: () => {} });
+
+interface AnswerDragSession {
+  taskId: string;
+  responseGroupId: string;
+  label: string;
+  sourceSlotId?: string;
+  source: HTMLElement;
+  target: HTMLElement | null;
+  startX?: number;
+  startY?: number;
+}
+
+interface AnswerDragController {
+  begin: (init: Omit<AnswerDragSession, "target">) => void;
+}
+
+const AnswerDragContext = createContext<AnswerDragController | null>(null);
 
 const assetPreviewCache = new Map<string, Promise<AuthoringAssetPreview | undefined>>();
 
@@ -408,8 +426,16 @@ function ContentNodes({ nodes, canvas }: { nodes: ContentNodeV2[] | undefined; c
         return <EditableTextNode key={node.id} node={node} canvas={canvas} />;
       case "hard_break":
         return <br key={node.id} />;
-      case "paragraph":
-        return <p key={node.id} data-editor-id={node.id} className={`v2-paragraph${authorClass}${selectedClass}`} style={nodeStyle(node)} onClick={select}><ContentNodes nodes={node.children} canvas={canvas} /></p>;
+      case "paragraph": {
+        const targetSlots = Object.values(canvas.authoring.answerSlots).filter((slot) =>
+          slot.interaction === "dragdrop" && slot.hostType === "passage_paragraph" && slot.hostNodeId === node.id,
+        );
+        const label = node.paragraphLabel ?? paragraphLabelFor(canvas.authoring, node.id);
+        return <Fragment key={node.id}>
+          {targetSlots.map((slot) => <AnswerDropTarget key={slot.slotId} canvas={canvas} slotId={slot.slotId} placement="passage" paragraphLabel={label} />)}
+          <p data-editor-id={node.id} data-paragraph-label={node.paragraphLabel} className={`v2-paragraph${authorClass}${selectedClass}`} style={nodeStyle(node)} onClick={select}><ContentNodes nodes={node.children} canvas={canvas} /></p>
+        </Fragment>;
+      }
       case "heading": {
         const Heading = `h${Math.min(6, Math.max(1, node.level))}` as "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
         return <Heading key={node.id} data-editor-id={node.id} className={`v2-heading${authorClass}${selectedClass}`} onClick={select}><ContentNodes nodes={node.children} canvas={canvas} /></Heading>;
@@ -455,6 +481,18 @@ function ContentNodes({ nodes, canvas }: { nodes: ContentNodeV2[] | undefined; c
           // 学生预览也要能真实输入（与学生 AnswerSlotNode 行为一致），不再是无回显的 uncontrolled 输入框。
           return withTools(<label key={node.id} data-editor-id={node.id} className={`v2-answer-slot v2-answer-slot-text${authorClass}${selectedClass}`} onClick={select}><span className="v2-slot-label">{slot.displayLabel}</span><input type="text" name={slot.slotId} value={values[0] ?? ""} placeholder={node.placeholder || "Answer"} onChange={(event) => canvasState.setText(slot.slotId, event.target.value)} /></label>);
         }
+        if (slot.interaction === "select") {
+          const binding = slotPresentationFor(canvas.authoring, slot.slotId);
+          if (!binding) return null;
+          return withTools(<label key={node.id} data-editor-id={node.id} className={`v2-answer-slot v2-answer-slot-select${authorClass}${selectedClass}`} onClick={select}>
+            <span className="v2-slot-label">{slot.displayLabel}</span>
+            <select aria-label={`Answer ${slot.displayLabel}`} value={values[0] ?? ""} onChange={(event) => canvasState.setOption(slot.slotId, event.target.value, true, false)}>
+              <option value="">Select…</option>
+              {binding.options.map((option) => <option key={option.optionId} value={option.label}>{option.label}</option>)}
+            </select>
+          </label>);
+        }
+        if (slot.interaction === "dragdrop") return withTools(<AnswerDropTarget key={node.id} canvas={canvas} slotId={slot.slotId} placement="inline" />);
         if (slot.interaction === "hotspot") {
           return withTools(<button key={node.id} type="button" data-editor-id={node.id} className={`v2-answer-slot v2-answer-slot-hotspot${authorClass}${selectedClass}`} onClick={select}>{slot.displayLabel}{values[0] ? `: ${values[0]}` : ""}</button>);
         }
@@ -477,6 +515,142 @@ function ContentNodes({ nodes, canvas }: { nodes: ContentNodeV2[] | undefined; c
 
 function optionValue(option: OptionV2): string {
   return contentText(option.content);
+}
+
+function slotPresentationFor(authoring: IeltsAuthoringIRV2, slotId: string) {
+  for (const task of authoring.taskGroups) {
+    for (const response of task.responseGroups) {
+      if (!response.slotIds.includes(slotId)) continue;
+      return { task, response, options: response.options?.length ? response.options : task.optionBank?.options ?? [] };
+    }
+  }
+  return undefined;
+}
+
+function paragraphLabelFor(authoring: IeltsAuthoringIRV2, nodeId: string): string | undefined {
+  return Object.entries(authoring.passage?.paragraphMap ?? {}).find(([, targetId]) => targetId === nodeId)?.[0]
+    ?? authoring.passage?.content
+      .flatMap((node) => node.type === "paragraph" && node.id === nodeId ? [node.paragraphLabel] : [])
+      .find((label): label is string => Boolean(label));
+}
+
+function AnswerDropTarget({
+  canvas,
+  slotId,
+  placement,
+  paragraphLabel
+}: {
+  canvas: ExamCanvasProps;
+  slotId: string;
+  placement: "passage" | "row" | "inline";
+  paragraphLabel?: string;
+}) {
+  const answers = useContext(CanvasAnswersContext);
+  const drag = useContext(AnswerDragContext);
+  const slot = canvas.authoring.answerSlots[slotId];
+  const binding = slotPresentationFor(canvas.authoring, slotId);
+  if (!slot || !binding) return null;
+  const value = answers.answers[slotId]?.[0] ?? "";
+  const selectedOption = binding.options.find((option) => option.label === value);
+  const targetLabel = paragraphLabel ? `Paragraph ${paragraphLabel}` : `Response ${slot.displayLabel}`;
+  const emptyLabel = /heading/iu.test(binding.task.taskType) ? "Drop heading here" : "Drop option here";
+  const start = (event: React.PointerEvent<HTMLElement>) => {
+    if (!value || event.button > 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    drag?.begin({
+      taskId: binding.task.taskId,
+      responseGroupId: binding.response.responseGroupId,
+      label: value,
+      sourceSlotId: slotId,
+      source: event.currentTarget,
+      startX: event.clientX,
+      startY: event.clientY
+    });
+  };
+  const paragraphOptions = Object.entries(canvas.authoring.passage?.paragraphMap ?? {});
+  return <span className={`v2-answer-dropzone-wrap is-${placement}`}>
+    <button
+      type="button"
+      className={`v2-answer-dropzone${value ? " is-filled" : " is-empty"}`}
+      data-answer-drop-slot={slotId}
+      data-task-id={binding.task.taskId}
+      data-response-group-id={binding.response.responseGroupId}
+      aria-label={placement === "passage" ? `${targetLabel} (${slot.displayLabel})` : `Answer ${slot.displayLabel}`}
+      aria-pressed={Boolean(value)}
+      onPointerDown={start}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (value) answers.setOption(slotId, value, false, false, "per_slot");
+        if (canvas.mode === "author") canvas.onSelect?.(slotId);
+      }}
+    >
+      {placement === "passage" ? <span className="v2-answer-dropzone-label">{targetLabel} ({slot.displayLabel})</span> : <span className="v2-answer-dropzone-label">{slot.displayLabel}</span>}
+      <span className="v2-answer-dropzone-value">{(selectedOption?.label ?? value) || emptyLabel}</span>
+      {selectedOption?.content.length ? <span className="v2-answer-dropzone-content"><ContentNodes nodes={selectedOption.content} canvas={canvas} /></span> : null}
+    </button>
+    {canvas.mode === "author" && canvas.onStructureAction && slot.hostType === "passage_paragraph" && paragraphOptions.length ? <label className="v2-answer-target-editor">
+      <span>Target</span>
+      <select
+        aria-label={`Paragraph target for ${slot.displayLabel}`}
+        value={slot.hostNodeId ?? ""}
+        onChange={(event) => canvas.onStructureAction?.({ type: "answer-slot.host.set", slotId, hostNodeId: event.target.value })}
+      >
+        {paragraphOptions.map(([label, nodeId]) => <option key={nodeId} value={nodeId}>Paragraph {label}</option>)}
+      </select>
+    </label> : null}
+  </span>;
+}
+
+function AnswerOptionPool({
+  canvas,
+  task,
+  response,
+  options
+}: {
+  canvas: ExamCanvasProps;
+  task: TaskGroupV2;
+  response: ResponseGroupV2;
+  options: OptionV2[];
+}) {
+  const answers = useContext(CanvasAnswersContext);
+  const drag = useContext(AnswerDragContext);
+  const used = new Set(response.slotIds.flatMap((slotId) => answers.answers[slotId] ?? []));
+  return <section className="v2-answer-option-pool" data-option-pool-task={task.taskId} data-answer-drop-pool={response.responseGroupId} data-task-id={task.taskId} data-response-group-id={response.responseGroupId}>
+    <h3>Options</h3>
+    <div className="v2-answer-option-list" data-option-list={canvas.mode === "author" ? "" : undefined}>
+      {options.map((option, index) => {
+        const disabled = !response.allowOptionReuse && used.has(option.label);
+        return <div key={option.optionId} className={`v2-answer-option${disabled ? " is-consumed" : ""}`} {...(canvas.mode === "author" && canvas.onStructureAction ? { "data-option-row": "", "data-option-id": option.optionId } : {})}>
+          <OptionDragHandle canvas={canvas} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} index={index} />
+          <button
+            type="button"
+            className="v2-answer-option-token"
+            data-option-label={option.label}
+            aria-label={`Drag option ${option.label}`}
+            disabled={disabled}
+            onPointerDown={(event) => {
+              if (event.button > 0 || disabled) return;
+              event.preventDefault();
+              event.stopPropagation();
+              drag?.begin({
+                taskId: task.taskId,
+                responseGroupId: response.responseGroupId,
+                label: option.label,
+                source: event.currentTarget,
+                startX: event.clientX,
+                startY: event.clientY
+              });
+            }}
+          >
+            <strong>{option.label}</strong>{optionContentDuplicatesLabel(option) ? null : <ContentNodes nodes={option.content} canvas={canvas} />}
+          </button>
+          <OptionDeleteButton canvas={canvas} taskId={task.taskId} responseGroupId={response.responseGroupId} option={option} count={options.length} />
+        </div>;
+      })}
+    </div>
+  </section>;
 }
 
 function isInlineCompletionTask(task: TaskGroupV2): boolean {
@@ -698,13 +872,122 @@ export function ExamCanvas(props: ExamCanvasProps) {
       dragRef.current = null;
     };
   }, []);
+  const answerValuesRef = useRef(canvasAnswers);
+  answerValuesRef.current = canvasAnswers;
+  const answerDragRef = useRef<AnswerDragSession | null>(null);
+  const answerDrag = useMemo<AnswerDragController>(() => ({
+    begin: (init) => {
+      const current = canvasPropsRef.current;
+      if (current.locked || answerDragRef.current) return;
+      answerDragRef.current = { ...init, target: null };
+      init.source.classList.add("is-answer-dragging");
+    }
+  }), []);
+  useEffect(() => {
+    const targetSelector = "[data-answer-drop-slot], [data-answer-drop-pool]";
+    const targetFrom = (event: PointerEvent) => {
+      const eventTarget = event.target instanceof Element ? event.target.closest<HTMLElement>(targetSelector) : null;
+      if (eventTarget) return eventTarget;
+      return typeof document.elementFromPoint === "function"
+        ? document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>(targetSelector) ?? null
+        : null;
+    };
+    const clearTarget = (target: HTMLElement | null) => target?.classList.remove("is-drop-hover");
+    const detach = () => {
+      const session = answerDragRef.current;
+      if (!session) return;
+      answerDragRef.current = null;
+      clearTarget(session.target);
+      session.source.classList.remove("is-answer-dragging");
+    };
+    const onMove = (event: PointerEvent) => {
+      const session = answerDragRef.current;
+      if (!session) return;
+      const next = targetFrom(event);
+      const matches = next?.dataset.taskId === session.taskId
+        && next?.dataset.responseGroupId === session.responseGroupId;
+      const resolved = matches ? next : null;
+      if (session.target === resolved) return;
+      clearTarget(session.target);
+      session.target = resolved;
+      session.target?.classList.add("is-drop-hover");
+    };
+    const onUp = (event: PointerEvent) => {
+      const session = answerDragRef.current;
+      if (!session) return;
+      const moved = Number.isFinite(session.startX) && Number.isFinite(session.startY)
+        && Math.hypot(event.clientX - session.startX!, event.clientY - session.startY!) >= 4;
+      const releaseTarget = targetFrom(event);
+      const target = session.target ?? (moved ? releaseTarget : null);
+      const validTarget = target?.dataset.taskId === session.taskId
+        && target?.dataset.responseGroupId === session.responseGroupId
+        ? target
+        : null;
+      detach();
+      if (!moved || !validTarget) return;
+
+      const currentProps = canvasPropsRef.current;
+      const binding = slotPresentationFor(currentProps.authoring, session.sourceSlotId ?? "")
+        ?? currentProps.authoring.taskGroups
+          .flatMap((task) => task.responseGroups.map((response) => ({ task, response, options: response.options?.length ? response.options : task.optionBank?.options ?? [] })))
+          .find(({ task, response }) => task.taskId === session.taskId && response.responseGroupId === session.responseGroupId);
+      if (!binding) return;
+      const assignment = binding.response.assignment === "unordered_set" ? "unordered_set" : "per_slot";
+      const writeAnswer = (slotId: string, labels: string[]) => {
+        answerValuesRef.current = { ...answerValuesRef.current, [slotId]: labels };
+        if (currentProps.mode === "author") {
+          currentProps.onAnswerChange?.(slotId, { kind: "option", labels, assignment });
+        } else {
+          setStudentAnswers((current) => ({ ...current, [slotId]: labels }));
+        }
+      };
+
+      const targetSlotId = validTarget.dataset.answerDropSlot;
+      if (targetSlotId) {
+        if (session.sourceSlotId) {
+          if (session.sourceSlotId === targetSlotId) return;
+          const sourceValue = answerValuesRef.current[session.sourceSlotId] ?? [];
+          const targetValue = answerValuesRef.current[targetSlotId] ?? [];
+          const moving = sourceValue[0] ?? session.label;
+          writeAnswer(session.sourceSlotId, targetValue.length ? [targetValue[0]] : []);
+          writeAnswer(targetSlotId, [moving]);
+          return;
+        }
+        if (!binding.response.allowOptionReuse) {
+          const usedElsewhere = binding.response.slotIds.some((slotId) =>
+            slotId !== targetSlotId && (answerValuesRef.current[slotId] ?? []).includes(session.label),
+          );
+          if (usedElsewhere) return;
+        }
+        writeAnswer(targetSlotId, [session.label]);
+        return;
+      }
+      if (validTarget.dataset.answerDropPool && session.sourceSlotId) writeAnswer(session.sourceSlotId, []);
+    };
+    const onCancel = () => detach();
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") detach(); };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    window.addEventListener("blur", onCancel);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      window.removeEventListener("blur", onCancel);
+      window.removeEventListener("keydown", onKey);
+      answerDragRef.current = null;
+    };
+  }, []);
   // 只在作者模式挂拖动排序需要的定位属性，学生预览的 DOM 保持不变。
   const optionRowProps = (option: OptionV2) => props.mode === "author" && props.onStructureAction
     ? { "data-option-row": "", "data-option-id": option.optionId }
     : {};
   const optionsFor = (task: TaskGroupV2, response: ResponseGroupV2) => interactionModel.responseGroups[response.responseGroupId]?.options ?? task.optionBank?.options ?? [];
 
-  return <CanvasAnswersContext.Provider value={{ answers: canvasAnswers, setText, setOption }}>
+  return <AnswerDragContext.Provider value={answerDrag}>
+  <CanvasAnswersContext.Provider value={{ answers: canvasAnswers, setText, setOption }}>
     <OptionDragContext.Provider value={optionDrag}>
     <div className={`exam-canvas-v2 ${props.mode === "author" ? "is-author" : "is-student"}${listening ? " is-listening" : ""}`} data-testid={`exam-canvas-v2-${props.mode}`} inert={props.locked || undefined}>
     {listening ? (
@@ -755,6 +1038,13 @@ export function ExamCanvas(props: ExamCanvasProps) {
               onSelectTarget={props.mode === "author" ? props.onSelect : undefined}
             />;
           })()}
+          {task.responseGroups.map((response) => {
+            const options = optionsFor(task as TaskGroupV2, response);
+            const usesDragDrop = response.slotIds.some((slotId) => runtime.answerSlots[slotId]?.interaction === "dragdrop");
+            return usesDragDrop && options.length
+              ? <AnswerOptionPool key={`pool-${response.responseGroupId}`} canvas={props} task={task as TaskGroupV2} response={response} options={options} />
+              : null;
+          })}
           {matrixHandled(task as TaskGroupV2, runtime) ? null : task.responseGroups.map((response) => {
             const options = optionsFor(task as TaskGroupV2, response);
             const unordered = response.assignment === "unordered_set";
@@ -790,7 +1080,21 @@ export function ExamCanvas(props: ExamCanvasProps) {
                 const values = canvasAnswers[slotId] ?? [];
                 const textEntry = slot.interaction === "text" || response.kind === "text_entry";
                 const hostPromptNode = perSlot?.hostNodeBySlotId.get(slotId);
-                return <div key={slotId} className={`v2-slot-question${props.selectedId === slotId ? " is-selected" : ""}`} data-question-id={slotId} onClick={(event) => { if (props.mode === "author") { event.stopPropagation(); props.onSelect?.(slotId); } }}><div className="v2-slot-question-label"><span className="v2-slot-number">{runtime.questionDisplayMap[slotId]}</span>{hostPromptNode ? <span className="v2-slot-prompt" style={{ flex: 1, minWidth: 0 }}><ContentNodes nodes={[hostPromptNode]} canvas={props} /></span> : null}{response.kind === "text_entry" || response.kind === "matching" ? <span>Response {index + 1}</span> : null}</div>{textEntry ? <input className="v2-text-answer" type="text" name={slotId} value={values[0] ?? ""} maxLength={slot.constraints?.maxCharacters} aria-label={`Answer ${runtime.questionDisplayMap[slotId]}`} onChange={(event) => setText(slotId, event.target.value)} /> : options.length ? <div className={`v2-choice-options${isTfngOptionSet(options) ? " v2-tfng-options" : ""}`} data-option-list={props.mode === "author" ? "" : undefined}>{options.map((option, optionIndex) => <label key={`${slotId}-${option.optionId}`} className={`v2-choice-item${values.includes(option.label) ? " is-checked" : ""}`} {...optionRowProps(option)}><OptionDragHandle canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} index={optionIndex} /><input type={slot.interaction === "checkbox" ? "checkbox" : "radio"} name={slotId} value={option.label} checked={values.includes(option.label)} onChange={(event) => setOption(slotId, option.label, event.target.checked, slot.interaction === "checkbox")} /><span><strong>{option.label}</strong>{optionContentDuplicatesLabel(option) ? null : <> <ContentNodes nodes={option.content} canvas={props} /></>}</span><OptionDeleteButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} option={option} count={options.length} /></label>)}</div> : <input className="v2-text-answer" type="text" name={slotId} value={values[0] ?? ""} aria-label={`Answer ${runtime.questionDisplayMap[slotId]}`} onChange={(event) => setText(slotId, event.target.value)} />}</div>;
+                const paragraphLabel = slot.hostType === "passage_paragraph" && slot.hostNodeId
+                  ? paragraphLabelFor(props.authoring, slot.hostNodeId)
+                  : undefined;
+                const answerControl = textEntry
+                  ? <input className="v2-text-answer" type="text" name={slotId} value={values[0] ?? ""} maxLength={slot.constraints?.maxCharacters} aria-label={`Answer ${runtime.questionDisplayMap[slotId]}`} onChange={(event) => setText(slotId, event.target.value)} />
+                  : slot.interaction === "select"
+                    ? <select className="v2-select-answer" data-question-id={slotId} aria-label={`Answer ${runtime.questionDisplayMap[slotId]}`} value={values[0] ?? ""} onChange={(event) => setOption(slotId, event.target.value, true, false)}><option value="">Select…</option>{options.map((option) => <option key={option.optionId} value={option.label}>{option.label}</option>)}</select>
+                    : slot.interaction === "dragdrop"
+                      ? slot.hostType === "passage_paragraph"
+                        ? <span className="v2-passage-target-reference">{paragraphLabel ? `Paragraph ${paragraphLabel}` : "Passage paragraph"}</span>
+                        : <AnswerDropTarget canvas={props} slotId={slotId} placement="row" />
+                      : options.length
+                        ? <div className={`v2-choice-options${isTfngOptionSet(options) ? " v2-tfng-options" : ""}`} data-option-list={props.mode === "author" ? "" : undefined}>{options.map((option, optionIndex) => <label key={`${slotId}-${option.optionId}`} className={`v2-choice-item${values.includes(option.label) ? " is-checked" : ""}`} {...optionRowProps(option)}><OptionDragHandle canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} index={optionIndex} /><input type={slot.interaction === "checkbox" ? "checkbox" : "radio"} name={slotId} value={option.label} checked={values.includes(option.label)} onChange={(event) => setOption(slotId, option.label, event.target.checked, slot.interaction === "checkbox")} /><span><strong>{option.label}</strong>{optionContentDuplicatesLabel(option) ? null : <> <ContentNodes nodes={option.content} canvas={props} /></>}</span><OptionDeleteButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} option={option} count={options.length} /></label>)}</div>
+                        : <input className="v2-text-answer" type="text" name={slotId} value={values[0] ?? ""} aria-label={`Answer ${runtime.questionDisplayMap[slotId]}`} onChange={(event) => setText(slotId, event.target.value)} />;
+                return <div key={slotId} className={`v2-slot-question${props.selectedId === slotId ? " is-selected" : ""}`} data-question-id={slotId} onClick={(event) => { if (props.mode === "author") { event.stopPropagation(); props.onSelect?.(slotId); } }}><div className="v2-slot-question-label"><span className="v2-slot-number">{runtime.questionDisplayMap[slotId]}</span>{hostPromptNode ? <span className="v2-slot-prompt" style={{ flex: 1, minWidth: 0 }}><ContentNodes nodes={[hostPromptNode]} canvas={props} /></span> : null}{slot.hostType === "passage_paragraph" ? <span className="v2-passage-target-reference">{paragraphLabel ? `Paragraph ${paragraphLabel}` : "Passage paragraph"}</span> : response.kind === "text_entry" || response.kind === "matching" ? <span>Response {index + 1}</span> : null}</div>{answerControl}</div>;
               })}</div>}
               {options.length || (props.mode === "author" && (response.kind === "choice" || response.kind === "matching")) ? <OptionAddButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} /> : null}
             </section>;
@@ -806,9 +1110,10 @@ export function ExamCanvas(props: ExamCanvasProps) {
       onSelectSlot={props.onSelect}
       onSelectPart={setSelectedPart}
     />
-    </div>
+  </div>
     </OptionDragContext.Provider>
-  </CanvasAnswersContext.Provider>;
+  </CanvasAnswersContext.Provider>
+  </AnswerDragContext.Provider>;
 }
 
 /** 兼容期别名：`StructuredAuthoringEditorV2` 仍以旧名导入，P10 删除旧页面时一并移除。 */

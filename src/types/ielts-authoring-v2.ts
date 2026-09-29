@@ -40,6 +40,7 @@ export interface ExamMetaV2 {
 export interface ReadingPassageV2 {
   title?: string;
   content: ContentNodeV2[];
+  /** 段落标签（A/B/C…）→ content 里原文段落节点 id；该节点的 paragraphLabel 与键相同。 */
   paragraphMap?: Record<string, string>;
   sourceAnchors: SourceAnchorV2[];
 }
@@ -217,7 +218,8 @@ export interface AnswerSlotV2 {
   questionNumber: number;
   displayLabel: string;
   hostNodeId?: string;
-  hostType: "prompt" | "paragraph" | "table_cell" | "figure_hotspot" | "flow_step";
+  /** passage_paragraph：槽位渲染在原文段落之前，hostNodeId 为该原文段落节点 id。 */
+  hostType: "prompt" | "paragraph" | "table_cell" | "figure_hotspot" | "flow_step" | "passage_paragraph";
   interaction: "radio" | "checkbox" | "text" | "select" | "dragdrop" | "hotspot";
   participation: "scoring" | "example" | "non_scoring";
   constraints?: {
@@ -244,7 +246,7 @@ export interface GroupQualityV2 {
 
 export interface AuthoringAuditV2 {
   revision: number;
-  source: "auto_extract" | "user" | "migration";
+  source: "auto_extract" | "user" | "migration" | "cloud_candidate_adoption";
   humanVerified: boolean;
   llmUsed: boolean;
   updatedAt: string;

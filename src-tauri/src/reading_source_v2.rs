@@ -5,7 +5,7 @@ use crate::schema::content_doc_v2::{
 use crate::schema::ielts_authoring_v2::{
     AnswerAssignmentV2, AnswerSlotParticipationV2, AnswerSlotV2, AnswerValueV2, AssignmentV2,
     DuplicateSelectionPolicyV2, IeltsAuthoringIRV2, InteractionV2, OptionBankScopeV2,
-    PassageCategoryV2, ResponseGroupKindV2, ResponseGroupV2, ResponseScoringPolicyV2,
+    OptionV2, PassageCategoryV2, ResponseGroupKindV2, ResponseGroupV2, ResponseScoringPolicyV2,
     RevisionSourceV2, TaskGroupV2, TaskTypeV2,
 };
 use serde::{Deserialize, Serialize};
@@ -187,23 +187,58 @@ fn normalize_runtime_fixed_truth_option_content(task_groups: &mut [TaskGroupV2])
             continue;
         }
         let Some(bank) = group.option_bank.as_mut() else {
+            for response in &mut group.response_groups {
+                if let Some(options) = response.options.as_mut() {
+                    normalize_runtime_fixed_truth_options(options);
+                }
+            }
             continue;
         };
-        for option in &mut bank.options {
-            if !text_from_content_nodes(&option.content).trim().is_empty() {
-                continue;
+        normalize_runtime_fixed_truth_options(&mut bank.options);
+        for response in &mut group.response_groups {
+            if let Some(options) = response.options.as_mut() {
+                normalize_runtime_fixed_truth_options(options);
             }
-            let content_text = option.label.clone();
-            option.content.push(ContentNodeV2::Text(TextNodeV2 {
-                base: BaseContentNodeV2 {
-                    id: format!("{}-runtime-content", option.option_id),
-                    source_anchors: option.source_anchors.clone(),
-                    provenance_status: ProvenanceStatusV2::Source,
-                },
-                text: content_text,
-                marks: None,
-            }));
         }
+    }
+}
+
+fn normalize_runtime_fixed_truth_options(options: &mut [OptionV2]) {
+    for option in options {
+        if !text_from_content_nodes(&option.content).trim().is_empty() {
+            continue;
+        }
+        let content_text = option.label.clone();
+        option.content.push(ContentNodeV2::Text(TextNodeV2 {
+            base: BaseContentNodeV2 {
+                id: format!("{}-runtime-content", option.option_id),
+                source_anchors: option.source_anchors.clone(),
+                provenance_status: ProvenanceStatusV2::Source,
+            },
+            text: content_text,
+            marks: None,
+        }));
+    }
+}
+
+fn collect_runtime_paragraph_ids(value: &serde_json::Value, into: &mut BTreeSet<String>) {
+    match value {
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_runtime_paragraph_ids(item, into);
+            }
+        }
+        serde_json::Value::Object(object) => {
+            if object.get("type").and_then(serde_json::Value::as_str) == Some("paragraph") {
+                if let Some(id) = object.get("id").and_then(serde_json::Value::as_str) {
+                    into.insert(id.to_string());
+                }
+            }
+            for child in object.values() {
+                collect_runtime_paragraph_ids(child, into);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -248,6 +283,29 @@ pub(crate) fn validate_reading_source_v2(source: &ReadingExamSourceV2) -> Vec<Co
             "questionDisplayMap must contain exactly every answer slot.",
             &source.exam_id,
         ));
+    }
+    let passage_content = serde_json::to_value(&source.passage.content)
+        .expect("typed reading passage content serializes to JSON");
+    let mut passage_paragraph_ids = BTreeSet::new();
+    collect_runtime_paragraph_ids(&passage_content, &mut passage_paragraph_ids);
+    let mut mapped_paragraph_ids = BTreeSet::new();
+    if let Some(paragraph_map) = source.passage.paragraph_map.as_ref() {
+        for (label, node_id) in paragraph_map {
+            if label.trim().is_empty() || node_id.trim().is_empty() || !passage_paragraph_ids.contains(node_id) {
+                issues.push(compiler_issue(
+                    "RUNTIME_PARAGRAPH_MAP_TARGET_INVALID",
+                    "Every paragraphMap entry must target a real paragraph node in passage.content.",
+                    label,
+                ));
+            }
+            if !mapped_paragraph_ids.insert(node_id.clone()) {
+                issues.push(compiler_issue(
+                    "RUNTIME_PARAGRAPH_MAP_TARGET_DUPLICATE",
+                    "A passage paragraph may have only one paragraph label.",
+                    label,
+                ));
+            }
+        }
     }
     if source
         .answer_key
@@ -356,6 +414,25 @@ pub(crate) fn validate_reading_source_v2(source: &ReadingExamSourceV2) -> Vec<Co
         ));
     }
     for (slot_id, slot) in &source.answer_slots {
+        if matches!(&slot.host_type, crate::schema::ielts_authoring_v2::AnswerSlotHostTypeV2::PassageParagraph) {
+            let mapped = slot.host_node_id.as_deref().is_some_and(|host_id| {
+                passage_paragraph_ids.contains(host_id) && mapped_paragraph_ids.contains(host_id)
+            });
+            if !mapped {
+                issues.push(compiler_issue(
+                    "RUNTIME_PASSAGE_HOST_UNMAPPED",
+                    "A passage paragraph answer target must reference a real paragraphMap entry.",
+                    slot_id,
+                ));
+            }
+            if !matches!(&slot.interaction, InteractionV2::Dragdrop) {
+                issues.push(compiler_issue(
+                    "RUNTIME_PASSAGE_HOST_INTERACTION_INVALID",
+                    "A passage paragraph answer target requires dragdrop interaction.",
+                    slot_id,
+                ));
+            }
+        }
         if slot.slot_id != *slot_id || !source.question_order.contains(slot_id) {
             issues.push(compiler_issue(
                 "RUNTIME_SLOT_ID_MISMATCH",
@@ -1106,6 +1183,49 @@ mod tests {
     }
 
     #[test]
+    fn heading_runtime_keeps_mapped_passage_hosts_dragdrop_and_shared_bank() {
+        let mut authoring = fixture();
+        authoring.passage.as_mut().unwrap().paragraph_map =
+            Some(BTreeMap::from([("A".to_string(), "passage-p1".to_string())]));
+        let slot = authoring.answer_slots.get_mut("q14").unwrap();
+        slot.host_node_id = Some("passage-p1".to_string());
+        slot.host_type = crate::schema::ielts_authoring_v2::AnswerSlotHostTypeV2::PassageParagraph;
+        slot.interaction = InteractionV2::Dragdrop;
+
+        let runtime = compile_reading_source_v2(&authoring).unwrap();
+        assert_eq!(runtime.passage.paragraph_map.as_ref().unwrap()["A"], "passage-p1");
+        assert_eq!(runtime.answer_slots["q14"].host_node_id.as_deref(), Some("passage-p1"));
+        assert!(matches!(&runtime.answer_slots["q14"].interaction, InteractionV2::Dragdrop));
+        assert!(runtime.task_groups[0].response_groups[0].option_bank_ref.is_some());
+        let runtime_value = serde_json::to_value(runtime).unwrap();
+        assert_eq!(runtime_value.pointer("/answerSlots/q14/hostType"), Some(&json!("passage_paragraph")));
+        assert_eq!(runtime_value.pointer("/answerSlots/q14/interaction"), Some(&json!("dragdrop")));
+        assert!(runtime_value.pointer("/taskGroups/0/optionBank/options").is_some());
+        assert!(runtime_value.pointer("/taskGroups/0/responseGroups/0/optionBankRef").is_some());
+    }
+
+    #[test]
+    fn passage_paragraph_runtime_target_must_exist_in_the_real_paragraph_map() {
+        let mut authoring = fixture();
+        authoring.passage.as_mut().unwrap().paragraph_map =
+            Some(BTreeMap::from([("A".to_string(), "passage-p1-text".to_string())]));
+        let slot = authoring.answer_slots.get_mut("q14").unwrap();
+        slot.host_node_id = Some("passage-p1-text".to_string());
+        slot.host_type = crate::schema::ielts_authoring_v2::AnswerSlotHostTypeV2::PassageParagraph;
+        slot.interaction = InteractionV2::Dragdrop;
+
+        let issues = compile_reading_source_v2(&authoring).unwrap_err();
+        assert!(
+            issues.iter().any(|issue| issue.code == "RUNTIME_PARAGRAPH_MAP_TARGET_INVALID"),
+            "{issues:?}"
+        );
+        assert!(
+            issues.iter().any(|issue| issue.code == "RUNTIME_PASSAGE_HOST_UNMAPPED"),
+            "{issues:?}"
+        );
+    }
+
+    #[test]
     fn runtime_fixed_truth_options_render_only_their_labels() {
         let mut source = serde_json::to_value(fixture()).unwrap();
         let instruction = "Questions 14-15 YES if the statement agrees with the views of the writer NO if the statement contradicts the views of the writer NOT GIVEN if it is impossible to say what the writer thinks about this";
@@ -1155,6 +1275,67 @@ mod tests {
             .collect::<Vec<_>>();
 
         // 学生端只显示标签（渲染器会跳过与标签相同的 content）；说明区的定义句不进选项。
+        assert_eq!(rendered_text, ["YES", "NO", "NOT GIVEN"]);
+    }
+
+    #[test]
+    fn runtime_fixed_truth_inline_options_render_only_their_labels() {
+        let mut source = serde_json::to_value(fixture()).unwrap();
+        let instruction = "Questions 14-15 YES if the statement agrees with the views of the writer NO if the statement contradicts the views of the writer NOT GIVEN if it is impossible to say what the writer thinks about this";
+        source["taskGroups"][0]["taskType"] = json!("yes_no_not_given");
+        source["taskGroups"][0]["instructionSignature"]["taskType"] =
+            json!("yes_no_not_given");
+        source["taskGroups"][0]["instructionSignature"]["normalizedText"] = json!(instruction);
+        source["taskGroups"][0]["instructionSignature"]["answerAssignment"] =
+            json!("per_slot");
+        source["taskGroups"][0]["instructions"] = json!([{
+            "type":"text","id":"ynng-instruction","sourceAnchors":[],
+            "provenanceStatus":"source","text":instruction
+        }]);
+        source["taskGroups"][0]["optionBank"]["options"] = json!([
+            {"optionId":"ynng-yes","label":"YES","content":[],"sourceAnchors":[]},
+            {"optionId":"ynng-no","label":"NO","content":[],"sourceAnchors":[]},
+            {"optionId":"ynng-not-given","label":"NOT GIVEN","content":[],"sourceAnchors":[]}
+        ]);
+        let options = source["taskGroups"][0]["optionBank"]["options"].clone();
+        source["taskGroups"][0]["optionBank"] = Value::Null;
+
+        let mut response = source["taskGroups"][0]["responseGroups"][0].clone();
+        response["kind"] = json!("choice");
+        response["assignment"] = json!("per_slot");
+        response["cardinality"] = json!({"min":1,"max":1,"exact":1});
+        response["scoringPolicy"] = json!("per_slot_binary");
+        response["slotIds"] = json!(["q14"]);
+        response["responseGroupId"] = json!("ynng-q14-inline");
+        response["optionBankRef"] = Value::Null;
+        response["options"] = options;
+        let mut second_response = response.clone();
+        second_response["slotIds"] = json!(["q15"]);
+        second_response["responseGroupId"] = json!("ynng-q15-inline");
+        source["taskGroups"][0]["responseGroups"] = json!([response, second_response]);
+        for slot_id in ["q14", "q15"] {
+            source["answerSlots"][slot_id]["interaction"] = json!("select");
+            source["answerSlots"][slot_id]["constraints"]["acceptedOptionLabels"] =
+                json!(["YES", "NO", "NOT GIVEN"]);
+        }
+        source["answerKey"]["q14"] =
+            json!({"kind":"option","labels":["YES"],"assignment":"per_slot"});
+        source["answerKey"]["q15"] =
+            json!({"kind":"option","labels":["NO"],"assignment":"per_slot"});
+
+        let authoring = serde_json::from_value(source).unwrap();
+        let runtime = compile_reading_source_v2(&authoring).unwrap();
+        let options = runtime.task_groups[0].response_groups[0]
+            .options
+            .as_ref()
+            .unwrap();
+        let rendered_text = options
+            .iter()
+            .map(|option| match &option.content[0] {
+                ContentNodeV2::Text(node) => node.text.as_str(),
+                _ => panic!("fixed runtime option content must be a text node"),
+            })
+            .collect::<Vec<_>>();
         assert_eq!(rendered_text, ["YES", "NO", "NOT GIVEN"]);
     }
 

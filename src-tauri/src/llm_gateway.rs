@@ -675,7 +675,7 @@ fn vision_prompt(input: &Value) -> String {
 
 fn vision_answer_prompt(input: &Value) -> String {
     format!(
-        "You are extracting the answer key from scanned/image-only IELTS Reading answer-page images.\nReturn JSON only. Do not return Markdown, explanations, HTML, JavaScript, or prose outside JSON.\nReturn exactly one JSON object with this shape: {{\"answers\":{{\"8\":\"answer text\",\"9\":\"answer text\"}},\"confidence\":0.0,\"warnings\":[],\"evidence\":[{{\"questionNumber\":\"8\",\"pageIndex\":1,\"quote\":\"short visible source text\"}}]}}.\nUse question number strings without q prefix. Normalize TRUE/FALSE/NOT GIVEN/YES/NO and single-letter options to uppercase. Multi-answer questions may use arrays. Do not invent answers; omit uncertain numbers and add a warning. Only use answers visibly printed on the supplied answer pages. answers must contain at least one entry and evidence at least one item: a reply without any answer is rejected and recorded as \"no answer key found\" — that is the honest outcome when the pages show no readable answer key, so never fill answers from anywhere else. Every emitted answer must have a non-empty visible quote and the one-based rendered image pageIndex where it appears.\nJob JSON: {}\nOutput contract JSON: {}",
+        "You are extracting the answer key from scanned/image-only IELTS Reading answer-page images.\nReturn JSON only. Do not return Markdown, explanations, HTML, JavaScript, or prose outside JSON.\nReturn exactly one JSON object with this shape: {{\"answers\":{{\"8\":\"answer text\",\"9\":\"answer text\"}},\"confidence\":0.0,\"warnings\":[],\"evidence\":[{{\"questionNumber\":\"8\",\"pageIndex\":1,\"quote\":\"short visible source text\"}}]}}.\nUse question number strings without q prefix. Normalize TRUE/FALSE/NOT GIVEN/YES/NO to uppercase. Uppercase A-Z option letters only when the printed answer is a single-letter option from a Latin-letter bank; preserve lowercase Roman labels such as i, iv, and viii exactly as printed. Multi-answer questions may use arrays. Do not invent answers; omit uncertain numbers and add a warning. Only use answers visibly printed on the supplied answer pages. answers must contain at least one entry and evidence at least one item: a reply without any answer is rejected and recorded as \"no answer key found\" — that is the honest outcome when the pages show no readable answer key, so never fill answers from anywhere else. Every emitted answer must have a non-empty visible quote and the one-based rendered image pageIndex where it appears.\nJob JSON: {}\nOutput contract JSON: {}",
         serde_json::to_string(input.get("job").unwrap_or(&Value::Null)).unwrap_or_default(),
         serde_json::to_string(input.get("outputContract").unwrap_or(&Value::Null)).unwrap_or_default()
     )
@@ -1196,6 +1196,7 @@ fn authoring_candidate_prompt(input: &Value) -> String {
             .unwrap_or("reading"),
     );
     let paper = ielts_paper_label(modality);
+    let task_presentation_rules = crate::schema::task_presentation::rules_prompt_table();
     let repair = input
         .get("repairNote")
         .and_then(Value::as_str)
@@ -1215,6 +1216,12 @@ fn authoring_candidate_prompt(input: &Value) -> String {
             ))
         })
         .unwrap_or_default();
+    let source_paragraphs = serde_json::to_string(
+        input
+            .get("sourceParagraphs")
+            .unwrap_or(&json!({"paragraphMap": {}, "paragraphs": []})),
+    )
+    .unwrap_or_default();
     let (envelope_extra, modality_rules) = if modality == "listening" {
         (
             ", \"listeningParts\"",
@@ -1231,22 +1238,26 @@ Return exactly one JSON object with the top-level keys \"taskGroups\", \"answerS
 This is NOT an outline and NOT a comparison summary: transcribe the FULL question content so it can be rendered.\n\
 {repair}\n\
 Rules that matter most:\n\
+Authoritative generated task-presentation rules (use the outputContract examples only as examples):\n{task_presentation_rules}\n\
 {chunk_rules}\
 {modality_rules}\
+- Follow the generated `taskPresentationRules` table in outputContract as the authoritative taskType → response kind, assignment, interaction, host, option source, option alphabet, reuse and grouping contract. Do not fold distinct task types together.\n\
 - Transcribe every question's FULL prompt text; never abbreviate or summarise a question.\n\
-- Transcribe every option label and its FULL text; keep one option bank per task group.\n\
+- Transcribe every option label and its FULL text. Put choices only where the rule table says; fixed TFNG/YNNG labels are response options and have no optionBank.\n\
 - Do NOT transcribe the passage or script body. Transcribe the instructions and the notes / tables / diagrams / form text a task group depends on (into stimulus).\n\
+- For Reading, the sourceParagraphs below are existing node IDs and labels from the local first draft; use them only as anchor references, not as question content or source evidence. `paragraphMap` maps a label to its nodeId (for example, Paragraph A uses the ID mapped from label A). For a matching_headings slot, hostType MUST be passage_paragraph, interaction MUST be dragdrop, and hostNodeId MUST be the existing nodeId mapped to that paragraph label. Never invent a passage ID. If no supplied paragraph target can anchor a heading slot, report that coverage gap instead of fabricating an ID.\n\
 - Give EVERY question an answerKey entry; use {{\"kind\":\"unresolved\"}} when the file gives no answer. Never invent answers.\n\
 - answerPageEvidence may cite only an answer visibly printed in this original file's answer key/page: {{\"questionNumber\":1,\"pageIndex\":6,\"quote\":\"1 B\"}}. Quotes must reproduce the visible line exactly; use [] when there is no printed answer.\n\
 - Use TEMPORARY ids only (cloud-tg-1, cloud-q14, cloud-opt-a ...). Never copy a real database id.\n\
-- Every responseGroups[].slotIds entry MUST be a key of answerSlots; every hostNodeId MUST be an id you defined here.\n\
+- Every responseGroups[].slotIds entry MUST be a key of answerSlots. A hostNodeId must be an id defined here, except passage_paragraph hosts must copy an existing ID from sourceParagraphs.paragraphMap.\n\
 - Every responseGroup needs kind, cardinality, assignment, scoringPolicy, duplicatePolicy and allowOptionReuse; every answerSlot needs slotId, questionNumber, displayLabel, hostType, interaction, participation and confidence; every content node needs type and id.\n\
 - NEVER output jobId, schemaVersion, exam, quality, audit, reviewState, sourceDocumentId, provenanceStatus or any publish/verification flag — the backend owns those.\n\
 - Report unreadable areas in unresolvedRegions (sourceFileId, 1-based pageIndex, reason, detail) and unverified coverage in sourceCoverageNotes.\n\
 - Use only the enum values listed in outputContract.enums.\n\
-Job JSON: {}\nSource file JSON: {}\nOutput contract JSON: {}",
+Job JSON: {}\nSource file JSON: {}\nSource paragraph targets (labels and existing local node IDs only): {}\nOutput contract JSON: {}",
         serde_json::to_string(input.get("job").unwrap_or(&Value::Null)).unwrap_or_default(),
         serde_json::to_string(input.get("sourceFile").unwrap_or(&Value::Null)).unwrap_or_default(),
+        source_paragraphs,
         serde_json::to_string(input.get("outputContract").unwrap_or(&Value::Null)).unwrap_or_default()
     )
 }
@@ -1321,13 +1332,14 @@ fn run_openai_compatible_authoring_candidate_llm(
     )?;
     let content = openai_chat_content(&payload)?;
     let mut parsed = parse_llm_json_content(&content)?;
-    validate_authoring_candidate_output_for_chunk(
+    validate_authoring_candidate_output_for_chunk_with_source_paragraphs(
         &mut parsed,
         input
             .get("modality")
             .and_then(Value::as_str)
             .unwrap_or("reading"),
         input.get("chunk"),
+        input.get("sourceParagraphs"),
     )?;
     if !warnings.is_empty() {
         if let Some(items) = parsed.get_mut("warnings").and_then(Value::as_array_mut) {
@@ -1352,6 +1364,17 @@ fn validate_authoring_candidate_output_for_chunk(
     output: &mut Value,
     modality: &str,
     chunk: Option<&Value>,
+) -> CommandResult<()> {
+    validate_authoring_candidate_output_for_chunk_with_source_paragraphs(
+        output, modality, chunk, None,
+    )
+}
+
+fn validate_authoring_candidate_output_for_chunk_with_source_paragraphs(
+    output: &mut Value,
+    modality: &str,
+    chunk: Option<&Value>,
+    source_paragraphs: Option<&Value>,
 ) -> CommandResult<()> {
     if let Some(allowed) = chunk
         .and_then(|chunk| chunk.get("questionNumbers"))
@@ -1381,10 +1404,18 @@ fn validate_authoring_candidate_output_for_chunk(
             }
         }
     }
-    validate_authoring_candidate_output(output, modality)
+    validate_authoring_candidate_output_with_source_paragraphs(output, modality, source_paragraphs)
 }
 
 fn validate_authoring_candidate_output(output: &mut Value, modality: &str) -> CommandResult<()> {
+    validate_authoring_candidate_output_with_source_paragraphs(output, modality, None)
+}
+
+fn validate_authoring_candidate_output_with_source_paragraphs(
+    output: &mut Value,
+    modality: &str,
+    source_paragraphs: Option<&Value>,
+) -> CommandResult<()> {
     let modality = crate::llm_suggestions::candidate_modality(modality);
     let Some(object) = output.as_object() else {
         return Err("cloud_authoring_output_not_object".to_string());
@@ -1399,6 +1430,11 @@ fn validate_authoring_candidate_output(output: &mut Value, modality: &str) -> Co
         .get("answerSlots")
         .and_then(Value::as_object)
         .map(|slots| slots.keys().cloned().collect())
+        .unwrap_or_default();
+    let mut output_node_ids = std::collections::BTreeSet::<String>::new();
+    collect_authoring_candidate_node_ids(output, &mut output_node_ids);
+    let source_paragraph_ids = source_paragraphs
+        .map(candidate_source_paragraph_ids)
         .unwrap_or_default();
     if slot_keys.is_empty() {
         return Err("cloud_authoring_output_answer_slots_empty".to_string());
@@ -1552,6 +1588,26 @@ fn validate_authoring_candidate_output(output: &mut Value, modality: &str) -> Co
                 if non_empty_str(slot_object.get(field)).is_none() {
                     return Err(format!(
                         "cloud_authoring_output_slot_field_missing:{key}:{field}"
+                    ));
+                }
+            }
+            let host_type = slot_object.get("hostType").and_then(Value::as_str);
+            let host_node_id = slot_object.get("hostNodeId").and_then(Value::as_str);
+            if host_type == Some("passage_paragraph") {
+                let Some(host_node_id) = host_node_id else {
+                    return Err(format!(
+                        "cloud_authoring_output_passage_host_node_missing:{key}"
+                    ));
+                };
+                if !source_paragraph_ids.contains(host_node_id) {
+                    return Err(format!(
+                        "cloud_authoring_output_passage_host_node_unknown:{key}:{host_node_id}"
+                    ));
+                }
+            } else if let Some(host_node_id) = host_node_id {
+                if !output_node_ids.contains(host_node_id) {
+                    return Err(format!(
+                        "cloud_authoring_output_host_node_unknown:{key}:{host_node_id}"
                     ));
                 }
             }
@@ -1713,6 +1769,51 @@ fn validate_candidate_nodes(nodes: &[Value], location: &str) -> CommandResult<()
     Ok(())
 }
 
+fn collect_authoring_candidate_node_ids(
+    value: &Value,
+    ids: &mut std::collections::BTreeSet<String>,
+) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_authoring_candidate_node_ids(item, ids);
+            }
+        }
+        Value::Object(object) => {
+            if object.get("type").and_then(Value::as_str).is_some() {
+                if let Some(id) = object.get("id").and_then(Value::as_str) {
+                    ids.insert(id.to_string());
+                }
+            }
+            for child in object.values() {
+                collect_authoring_candidate_node_ids(child, ids);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn candidate_source_paragraph_ids(source_paragraphs: &Value) -> std::collections::BTreeSet<String> {
+    let Some(paragraph_map) = source_paragraphs
+        .get("paragraphMap")
+        .and_then(Value::as_object)
+    else {
+        return std::collections::BTreeSet::new();
+    };
+    source_paragraphs
+        .get("paragraphs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|paragraph| {
+            let label = paragraph.get("label").and_then(Value::as_str)?;
+            let node_id = paragraph.get("nodeId").and_then(Value::as_str)?;
+            (paragraph_map.get(label).and_then(Value::as_str) == Some(node_id))
+                .then(|| node_id.to_string())
+        })
+        .collect()
+}
+
 fn validate_candidate_option_bank(bank: &Value, index: usize) -> CommandResult<()> {
     let Some(bank) = bank.as_object() else {
         return Err(format!(
@@ -1801,6 +1902,7 @@ fn dry_run_candidate_finalize(output: &Value, modality: &'static str) -> Command
 /// 提示词里写一个、分发器不认，是这类循环最典型的漂移；这里刻意引用同一份常量。
 fn repair_step_prompt(input: &Value) -> String {
     let tools = crate::schema::cloud_repair_v1::CLOUD_REPAIR_TOOLS.join(", ");
+    let task_presentation_rules = crate::schema::task_presentation::rules_prompt_table();
     let paper = ielts_paper_label(
         input
             .get("modality")
@@ -1948,6 +2050,7 @@ Call `finish_packet` when this packet is done.\n"
 Return JSON only: exactly one object shaped like {draft_example} (replace sample values with values from this request; arguments must follow the selected tool entry in the tools table).\n\
 Do not return Markdown, prose, or several objects.\n\
 Allowed tools (and nothing else): {tools}.\n\
+Apply this generated task-presentation rule table whenever changing a task type or rebuilding its response structure:\n{task_presentation_rules}\n\
 {packet}\n\
 {repair}\n\
 Work like an editor: read what you need, then submit ONE batch of domain commands per turn, then read the result.\n\
@@ -1986,7 +2089,7 @@ Input JSON: {}",
             difference_guidance,
             finish_unresolved_rule,
             &prompt[input_start..]
-    )
+        )
     } else {
         prompt
     }
@@ -4444,6 +4547,116 @@ mod tests {
         for key in ["\"kind\"", "\"questions\"", "\"evidence\""] {
             assert!(group.contains(key), "group prompt 缺少 {key}");
         }
+    }
+
+    #[test]
+    fn candidate_contract_covers_presentation_rules_and_source_paragraph_targets() {
+        let contract = crate::llm_suggestions::authoring_candidate_output_contract("reading");
+        assert_eq!(
+            contract["enums"]["optionBank.scope"],
+            json!(["task_group", "document"])
+        );
+        let rules = crate::schema::task_presentation::rules_prompt_table();
+        assert!(contract["taskPresentationRules"]
+            .as_str()
+            .unwrap()
+            .contains(&rules));
+
+        let examples = &contract["presentationExamples"];
+        assert!(examples["tfng"]["taskGroup"].get("optionBank").is_none());
+        assert_eq!(
+            examples["tfng"]["answerSlot"]["constraints"]["acceptedOptionLabels"],
+            json!(["TRUE", "FALSE", "NOT GIVEN"])
+        );
+        assert_eq!(
+            examples["headings"]["answerSlot"]["hostType"],
+            "passage_paragraph"
+        );
+        assert_eq!(
+            examples["headings"]["answerSlot"]["interaction"],
+            "dragdrop"
+        );
+        assert_eq!(
+            examples["headings"]["taskGroup"]["optionBank"]["options"][0]["label"],
+            "i"
+        );
+        assert_eq!(
+            examples["summaryWordBank"]["answerSlot"]["hostType"],
+            "paragraph"
+        );
+        assert_eq!(
+            examples["summaryWordBank"]["answerSlot"]["interaction"],
+            "dragdrop"
+        );
+        assert_eq!(
+            examples["chooseTwo"]["responseGroup"]["assignment"],
+            "unordered_set"
+        );
+
+        let prompt = authoring_candidate_prompt(&json!({
+            "modality": "reading",
+            "sourceParagraphs": {
+                "paragraphMap": {"A": "local-passage-a"},
+                "paragraphs": [{"label": "A", "nodeId": "local-passage-a"}]
+            }
+        }));
+        assert!(prompt.contains("local-passage-a"), "{prompt}");
+        assert!(prompt.contains("Paragraph A"), "{prompt}");
+        assert!(prompt.contains("hostNodeId"), "{prompt}");
+        assert!(prompt.contains("TRUE / FALSE / NOT GIVEN"), "{prompt}");
+        assert!(prompt.contains("unordered_set"), "{prompt}");
+
+        let repair = repair_step_prompt(&json!({"draft": {}, "observations": []}));
+        assert!(
+            repair.contains(&rules),
+            "repair prompt must use the same generated table"
+        );
+
+        let vision = vision_answer_prompt(&json!({}));
+        assert!(vision.contains("preserve lowercase Roman labels such as i, iv, and viii"));
+        let legacy_gateway = include_str!("../../sidecars/llm-gateway/gateway.mjs");
+        assert!(
+            legacy_gateway.contains("preserve lowercase Roman numeral labels exactly as printed"),
+            "the V1 sidecar answer prompt must keep Roman labels case-preserving"
+        );
+    }
+
+    #[test]
+    fn candidate_host_node_references_must_resolve() {
+        let mut output =
+            crate::llm_suggestions::authoring_candidate_output_contract("reading")["shape"].clone();
+        output["answerSlots"]["cloud-q1"]["hostNodeId"] = json!("missing-from-output");
+        let error = validate_authoring_candidate_output(&mut output, "reading")
+            .expect_err("hostNodeId not defined by the candidate must be rejected");
+        assert!(error.contains("host_node"), "{error}");
+    }
+
+    #[test]
+    fn heading_candidate_host_must_match_a_supplied_paragraph_map_entry() {
+        let mut output =
+            crate::llm_suggestions::authoring_candidate_output_contract("reading")["shape"].clone();
+        output["answerSlots"]["cloud-q1"]["hostNodeId"] = json!("local-passage-A");
+        output["answerSlots"]["cloud-q1"]["hostType"] = json!("passage_paragraph");
+        output["answerSlots"]["cloud-q1"]["interaction"] = json!("dragdrop");
+        let source_paragraphs = json!({
+            "paragraphMap": {"A": "local-passage-A"},
+            "paragraphs": [{"label": "A", "nodeId": "local-passage-A"}]
+        });
+        validate_authoring_candidate_output_with_source_paragraphs(
+            &mut output,
+            "reading",
+            Some(&source_paragraphs),
+        )
+        .expect("existing local paragraph IDs are allowed for passage hosts");
+
+        output["answerSlots"]["cloud-q1"]["hostNodeId"] = json!("fabricated-passage");
+        let error = validate_authoring_candidate_output_with_source_paragraphs(
+            &mut output,
+            "reading",
+            Some(&source_paragraphs),
+        )
+        .expect_err("an invented or unmapped passage host must be rejected");
+        assert!(error.contains("passage_host_node_unknown"), "{error}");
     }
 
     /// 模态钩子：listening 候选 / 修复用 Listening 的措辞与部分结构，reading 保持原样。
