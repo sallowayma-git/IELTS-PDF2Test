@@ -33,3 +33,6 @@ src-tauri/lib/pdfium-linux/
 customer-delivery/
 .zcodeignore
 authoring_hub.db*
+
+# Real-model replay captures from private papers (never commit)
+fixtures/golden/private-cloud-replay/

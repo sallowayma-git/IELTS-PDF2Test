@@ -6,7 +6,7 @@
 [CmdletBinding()]
 param(
   [string]$JobsDir = (Join-Path $env:APPDATA 'com.ielts.author.studio\jobs'),
-  [string]$Dest    = 'F:\workspace\PDF2Test-cloudfix\fixtures\golden\private-cloud-replay',
+  [string]$Dest    = (Join-Path $PSScriptRoot '..\fixtures\golden\private-cloud-replay'),
   [double]$IntervalSec = 0.5,
   [int]$RunMinutes = 30
 )
