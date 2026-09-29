@@ -17,6 +17,7 @@
 //! - [`engine`]：把上述环节连成端到端流水线（供调度与命令层调用）。
 
 pub(crate) mod adjudicate;
+pub(crate) mod alignment;
 pub(crate) mod candidate;
 pub(crate) mod commands;
 pub(crate) mod engine;
