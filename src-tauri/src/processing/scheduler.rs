@@ -1024,6 +1024,22 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                         serde_json::json!({ "taskId": task_id, "reasons": reasons })
                     })
                     .collect::<Vec<_>>();
+                let covered_question_numbers =
+                    crate::cloud_adoption::adopted_question_numbers(&authoring_value, &qualified_task_ids);
+                if adopted {
+                    // 云端内容已整体覆盖：把被覆盖的识别决策置为作废，用户不再本地/云端二选一。
+                    match crate::reconcile::commands::supersede_cloud_adopted_decisions(
+                        &root,
+                        &batch_id,
+                        &covered_question_numbers,
+                        &qualified_task_ids,
+                    ) {
+                        Ok(_) => {}
+                        Err(error) => eprintln!(
+                            "[processing] supersede cloud-adopted decisions failed for {job_id}: {error}"
+                        ),
+                    }
+                }
                 let adoption_info = if let Some(result) = adoption_result.as_ref() {
                     let status = if rejected_groups.is_empty() {
                         "adopted"
@@ -1045,6 +1061,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                         "editVersion": result.edit_version,
                         "passageAdopted": passage_adopted,
                         "adoptedTaskIds": qualified_task_ids,
+                        "coveredQuestionNumbers": covered_question_numbers,
                         "rejectedGroups": rejected_json,
                         "preservedGroupIds": result.preserved_group_ids,
                         "reviewRecords": review_records,

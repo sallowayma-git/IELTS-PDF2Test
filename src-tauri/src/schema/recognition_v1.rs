@@ -88,6 +88,8 @@ pub mod reason {
     pub const EVIDENCE_MISSING: &str = "EVIDENCE_MISSING";
     /// 目标已被用户修改，迟到结果不得覆盖。
     pub const USER_EDITED: &str = "USER_EDITED";
+    /// 云端识别已被采纳并整体覆盖该内容：本地这条建议随之作废，不再要求用户在本地/云端间二选一。
+    pub const CLOUD_ADOPTED: &str = "CLOUD_ADOPTED";
     /// **修正写入之后**用户又改动了同一目标：原修正不再生效，其 resolution 随之失效。
     ///
     /// 与 [`USER_EDITED`] 区分：后者是「决策当时目标已被改」（迟到结果不得覆盖），

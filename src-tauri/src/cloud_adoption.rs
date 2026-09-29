@@ -665,6 +665,26 @@ pub(crate) fn plan_cloud_primary_adoption(
 }
 
 
+/// 已采纳（合格题组）覆盖的题号清单，供采纳记录与后续修复循环使用。
+pub(crate) fn adopted_question_numbers(authoring: &Value, qualified_task_ids: &[String]) -> Vec<u32> {
+    let qualified: BTreeSet<&str> = qualified_task_ids.iter().map(String::as_str).collect();
+    let mut numbers = BTreeSet::new();
+    for group in authoring
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(task_id) = group.get("taskId").and_then(Value::as_str) else {
+            continue;
+        };
+        if qualified.contains(task_id) {
+            numbers.extend(group_question_numbers(authoring, group));
+        }
+    }
+    numbers.into_iter().collect()
+}
+
 /// 以云端为基底组装采纳后文档：不采纳云端原文时换回本地 passage；不合格题组换回本地题组。
 fn build_cloud_primary_document(current: &Value, cloud: &Value, plan: &CloudPrimaryPlan) -> Value {
     let mut merged = cloud.clone();
@@ -1972,7 +1992,6 @@ mod tests {
             .collect::<Vec<_>>()})
     }
 
-    // __M2_TEST_MARKER__
 
     #[test]
     fn cloud_primary_adopts_whole_candidate_when_aligned() {
@@ -2048,7 +2067,6 @@ mod tests {
             .any(|item| item.get("reason").and_then(Value::as_str) == Some("task_type_counterevidence")));
     }
 
-    // __M2_TEST_MARKER__
 
     #[test]
     fn cloud_primary_rejects_whole_document_when_question_numbers_uncovered() {
