@@ -4470,6 +4470,12 @@ fn source_coverage_summary(
         });
         if let Some(reason) = reason {
             entry["reason"] = Value::String(reason);
+        } else if disposition == "unassigned" {
+            // 来源补齐后仍未被任何候选锚点认领的显著区域：逐条给出稳定原因。用**独立**字段
+            // `unassignedReason`，不占用 `reason`——`reason` 语义是「被有理由地忽略」，
+            // 两者不能混，否则未认领会被误读成已忽略。
+            entry["unassignedReason"] =
+                Value::String("no_candidate_anchor_references_source_region".to_string());
         }
         ledger.push(entry);
     }
@@ -6855,6 +6861,41 @@ mod tests {
             details.get("unassignedSourceNodeIds"),
             Some(&json!(["line-2"]))
         );
+    }
+
+    /// T3.6：来源补齐后仍未认领的显著区域，coverageLedger 里必须逐条带上原因，
+    /// 而不是只给一个空的 unassigned 条目。
+    #[test]
+    fn cloudfix_unassigned_significant_regions_carry_per_item_reason() {
+        let authoring = json!({"sourceAnchors":[{"nodeIds":["line-1"]}]});
+        let physical = json!({
+            "schemaVersion":"DocumentIRV2","documentId":"document-1","jobId":"job-1",
+            "sourceFiles":[{"sourceFileId":"source-1"}],
+            "pages":[{"regions":[],"lines":[{"id":"line-1"},{"id":"line-2"}]}],
+            "assets":[]
+        });
+        let report = evaluate_quality(&authoring, Some(&physical));
+        let ledger = report
+            .get("coverageLedger")
+            .and_then(Value::as_array)
+            .expect("必须有 coverageLedger");
+        let unassigned = ledger
+            .iter()
+            .find(|entry| entry.get("sourceNodeId").and_then(Value::as_str) == Some("line-2"))
+            .expect("line-2 应在 ledger 里");
+        assert_eq!(
+            unassigned.get("disposition").and_then(Value::as_str),
+            Some("unassigned")
+        );
+        assert!(
+            unassigned
+                .get("unassignedReason")
+                .and_then(Value::as_str)
+                .is_some_and(|reason| !reason.is_empty()),
+            "未认领的显著区域必须逐条带原因：{unassigned:?}"
+        );
+        // `reason` 语义是「被有理由地忽略」，未认领不能占用它。
+        assert_eq!(unassigned.get("reason"), None);
     }
 
     #[test]

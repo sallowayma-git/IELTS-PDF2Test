@@ -717,6 +717,42 @@ pub(crate) fn write_batch_cloud_stage(
     Ok(())
 }
 
+/// 云端**真的跑过**后，把 decision.json 里被本地周期写死的 cloud 阶段改写成真实终态。
+///
+/// 本地识别周期以 `cloud_enabled = false` 运行，写下的 decision.json 里
+/// `chainStatus.cloud = not_run`、`cloudReasonCode = CLOUD_DISABLED`。云端实际生成候选 /
+/// 跑修复后，批次行（DB）已由 `write_batch_cloud_stage` 纠正，但 decision.json 这份诊断
+/// 产物没人碰，于是产物里写着「未启用云端」而链路其实跑了云端（cloudfix 第 7 条证据）。
+/// 这里按批次行同一判定纠正 decision.json。文件不存在则无操作。
+pub(crate) fn update_decision_cloud_stage(
+    root: &Path,
+    job_id: &str,
+    batch_id: &str,
+    chain_status: &str,
+    reason_code: Option<&str>,
+) -> CommandResult<()> {
+    let path = artifact_path(root, job_id, batch_id, DECISION_FILE)?;
+    let Some(mut decision) = read_json_opt(&path)? else {
+        return Ok(());
+    };
+    let Some(chain) = decision
+        .get_mut("chainStatus")
+        .and_then(Value::as_object_mut)
+    else {
+        return Ok(());
+    };
+    chain.insert("cloud".to_string(), json!(chain_status));
+    match reason_code {
+        Some(code) => {
+            chain.insert("cloudReasonCode".to_string(), json!(code));
+        }
+        None => {
+            chain.remove("cloudReasonCode");
+        }
+    }
+    write_json(&path, &decision)
+}
+
 /// 批次基线之后，**人**有没有改过这份稿。
 ///
 /// 「过期」的产品含义是「这批建议是针对你修改之前的内容做的」。云端修复、答案页识别
@@ -1160,6 +1196,47 @@ mod tests {
 
     fn temp_root() -> std::path::PathBuf {
         std::env::temp_dir().join(format!("reconcile-store-{}", uuid::Uuid::new_v4().simple()))
+    }
+
+    /// T4：云端真的跑过后，decision.json 的 chainStatus.cloud 不能停留在本地周期写下的
+    /// not_run/CLOUD_DISABLED。
+    #[test]
+    fn cloudfix_update_decision_cloud_stage_corrects_local_cycle_cloud_disabled() {
+        let root = temp_root();
+        let path = artifact_path(&root, "job-1", "batch-1", DECISION_FILE).unwrap();
+        write_json(
+            &path,
+            &json!({
+                "chainStatus": {
+                    "local": "succeeded",
+                    "cloud": "not_run",
+                    "source": "succeeded",
+                    "cloudReasonCode": "CLOUD_DISABLED"
+                }
+            }),
+        )
+        .unwrap();
+
+        // 云端跑成功：cloud 改为 succeeded，清掉 CLOUD_DISABLED。
+        update_decision_cloud_stage(&root, "job-1", "batch-1", "succeeded", None).unwrap();
+        let decision = read_json_opt(&path).unwrap().unwrap();
+        assert_eq!(decision.pointer("/chainStatus/cloud"), Some(&json!("succeeded")));
+        assert_eq!(decision.pointer("/chainStatus/cloudReasonCode"), None);
+
+        // 云端部分完成并带原因码：原因码如实写入。
+        update_decision_cloud_stage(&root, "job-1", "batch-1", "partial", Some("CLOUD_REPAIR_CANCELLED"))
+            .unwrap();
+        let decision = read_json_opt(&path).unwrap().unwrap();
+        assert_eq!(decision.pointer("/chainStatus/cloud"), Some(&json!("partial")));
+        assert_eq!(
+            decision.pointer("/chainStatus/cloudReasonCode"),
+            Some(&json!("CLOUD_REPAIR_CANCELLED"))
+        );
+
+        // decision.json 不存在时不报错（无操作）。
+        update_decision_cloud_stage(&root, "job-1", "batch-missing", "succeeded", None).unwrap();
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
