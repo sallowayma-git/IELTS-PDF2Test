@@ -6,3 +6,53 @@
 .button-row { display: flex; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .tag-row { display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; }
 .file-name { min-width: 0; overflow-wrap: anywhere; }
+
+/* 共享按钮层级：.primary / .ghost / .danger 是实体按钮，.link-button 是文字链接动作。 */
+.link-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 2px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.link-button:hover { color: var(--ink); text-decoration-thickness: 2px; }
+.link-button:disabled { color: var(--muted); cursor: not-allowed; }
+
+/* 图标按钮保留独立的点击面，颜色与边框沿用现有表面令牌。 */
+.icon-button {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--ink);
+}
+
+.icon-button:hover { border-color: var(--accent); background: rgba(31, 138, 112, 0.08); }
+.icon-button:disabled { opacity: 0.48; cursor: not-allowed; }
+
+.workspace-page .icon-button {
+  border-color: var(--paper-line);
+  border-radius: 3px;
+  background: var(--paper-control-bg);
+  color: var(--paper-ink);
+}
+
+.workspace-page .workspace-back-button.icon-button {
+  width: 40px;
+  height: 40px;
+}
+
+.workspace-page .icon-button:hover { background: var(--paper-control-hover); }

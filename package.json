@@ -58,6 +58,7 @@
     "e2e:recog-buttons": "node scripts/e2e/tauri-cdp-recognition-buttons.mjs --diagnostic-args",
     "e2e:recog-write-path": "node scripts/e2e/tauri-cdp-recognition-write-path.mjs",
     "e2e:issue-list": "node scripts/e2e/tauri-cdp-issue-list.mjs --diagnostic-args",
+    "e2e:ui-audit": "node scripts/e2e/tauri-cdp-ui-audit.mjs",
     "e2e:tfng-layout": "node scripts/e2e/tauri-cdp-tfng-layout.mjs",
     "e2e:option-drag": "node scripts/e2e/tauri-cdp-option-drag.mjs",
     "e2e:edit-save-stress": "node scripts/e2e/tauri-cdp-edit-save-stress.mjs",
