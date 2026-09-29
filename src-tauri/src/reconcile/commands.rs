@@ -732,6 +732,51 @@ fn run_recognition_cycle_core_with_channels_for_batch(
 
 // ── 人工决策（接受 / 拒绝）──────────────────────────────────────────────
 
+/// 云端为主采纳后：把被采纳内容覆盖的识别决策项置为 `Superseded`（理由 `CLOUD_ADOPTED`），
+/// 使用户不再在面板上看到「本地 vs 云端」二选一。按题号或题组 id 匹配；只动仍可操作
+/// （Open/Failed）的项，不碰用户已处理的决策。返回置为作废的条数。
+pub(crate) fn supersede_cloud_adopted_decisions(
+    root: &Path,
+    batch_id: &str,
+    covered_question_numbers: &[u32],
+    adopted_task_ids: &[String],
+) -> CommandResult<usize> {
+    let conn = open_library_connection(root)?;
+    let mut items = store::load_decision_items(&conn, batch_id)?;
+    let mut count = 0usize;
+    for item in &mut items {
+        if !item.is_actionable() {
+            continue;
+        }
+        let by_number = item
+            .target
+            .question_numbers
+            .iter()
+            .any(|number| covered_question_numbers.contains(number));
+        let by_task = item
+            .target
+            .task_id
+            .as_deref()
+            .is_some_and(|task_id| adopted_task_ids.iter().any(|adopted| adopted.as_str() == task_id));
+        if !by_number && !by_task {
+            continue;
+        }
+        item.status = DecisionStatusV1::Superseded;
+        item.reason_code = reason::CLOUD_ADOPTED.to_string();
+        item.user_message = format!("{}（云端识别已采纳该内容，本地建议作废）", item.user_message);
+        store::set_decision_status(
+            &conn,
+            batch_id,
+            &item.decision_id,
+            DecisionStatusV1::Superseded.as_str(),
+            &serde_json::to_string(item).map_err(|error| error.to_string())?,
+            None,
+        )?;
+        count += 1;
+    }
+    Ok(count)
+}
+
 /// `apply_recognition_decisions` 的实现。
 pub(crate) fn apply_recognition_decisions_core(
     root: &Path,

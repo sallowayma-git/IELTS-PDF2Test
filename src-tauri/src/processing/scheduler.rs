@@ -914,22 +914,42 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                 let candidate_value = serde_json::to_value(&candidate).unwrap_or_else(
                     |error| serde_json::json!({"serializationError":error.to_string()}),
                 );
-                // 按题组采纳：文档级阻断整份拒；否则合格题组采纳、不合格保留本地并给原因。
+                // 采纳编排：有文本层走云端为主（对齐校验后整体覆盖本地），无文本层退回保守按题组。
+                let authoring_value =
+                    serde_json::to_value(&candidate.authoring).unwrap_or(serde_json::Value::Null);
+                let physical_shadow = crate::util::read_json_opt(
+                    &crate::util::job_dir(&root, &job_id)
+                        .join(crate::pdf_facts_shadow::SHADOW_ARTIFACT_FILE),
+                )
+                .ok()
+                .flatten();
+                let alignment_outcome = match physical_shadow.as_ref() {
+                    Some(shadow) => crate::reconcile::alignment::assess_alignment(
+                        shadow,
+                        &authoring_value,
+                        &crate::reconcile::alignment::AlignmentConfig::default(),
+                    ),
+                    None => crate::reconcile::alignment::AlignmentOutcome::NoTextLayer,
+                };
                 let plan = local_snapshot.as_ref().map(|local| {
-                    crate::cloud_adoption::plan_group_adoption(
+                    crate::cloud_adoption::plan_adoption(
                         &candidate_value,
                         &serde_json::to_value(local).unwrap_or(serde_json::Value::Null),
+                        &alignment_outcome,
                     )
                 });
                 let mut document_reasons: Vec<String> = Vec::new();
                 let mut rejected_groups: Vec<(String, Vec<String>)> = Vec::new();
                 let mut qualified_task_ids: Vec<String> = Vec::new();
                 let mut adoption_result = None;
+                let mut passage_adopted = false;
+                let mut review_records: Vec<serde_json::Value> = Vec::new();
+                let mut needs_cloud_review: Vec<serde_json::Value> = Vec::new();
                 match plan {
                     None => {
                         document_reasons.push("缺少冻结的本地候选，无法核对覆盖范围".to_string());
                     }
-                    Some(plan) => {
+                    Some(crate::cloud_adoption::AdoptionPlan::Conservative(plan)) => {
                         document_reasons = plan.document_reasons;
                         rejected_groups = plan.unqualified;
                         qualified_task_ids = plan.qualified_task_ids;
@@ -942,8 +962,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                                 &job_id,
                                 &batch_id,
                                 candidate.base_edit_version,
-                                &serde_json::to_value(&candidate.authoring)
-                                    .unwrap_or(serde_json::Value::Null),
+                                &authoring_value,
                                 &qualified_task_ids,
                             ) {
                                 Ok(result) => adoption_result = Some(result),
@@ -953,6 +972,41 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                             }
                         } else if document_reasons.is_empty()
                             && !qualified_task_ids.is_empty()
+                            && announced.is_none()
+                        {
+                            document_reasons
+                                .push("云端校核租约已失效，未写入云端候选".to_string());
+                        }
+                    }
+                    Some(crate::cloud_adoption::AdoptionPlan::CloudPrimary(plan)) => {
+                        document_reasons = plan.document_reasons.clone();
+                        rejected_groups = plan.unqualified.clone();
+                        qualified_task_ids = plan.qualified_task_ids.clone();
+                        passage_adopted = plan.adopt_passage;
+                        review_records = plan.review_records.clone();
+                        needs_cloud_review = plan.needs_cloud_review.clone();
+                        let has_adoptable = plan.adopt_passage || !qualified_task_ids.is_empty();
+                        if document_reasons.is_empty() && has_adoptable && announced.is_some() {
+                            if let crate::reconcile::alignment::AlignmentOutcome::Assessed(report) =
+                                &alignment_outcome
+                            {
+                                match crate::cloud_adoption::adopt_cloud_primary(
+                                    &root,
+                                    &job_id,
+                                    &batch_id,
+                                    candidate.base_edit_version,
+                                    &authoring_value,
+                                    &plan,
+                                    report,
+                                ) {
+                                    Ok(result) => adoption_result = Some(result),
+                                    Err(error) => document_reasons.push(format!(
+                                        "云端候选未能通过并发版本与正式稿校验，已回退到本地稿校核：{error}"
+                                    )),
+                                }
+                            }
+                        } else if document_reasons.is_empty()
+                            && has_adoptable
                             && announced.is_none()
                         {
                             document_reasons
@@ -970,6 +1024,22 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                         serde_json::json!({ "taskId": task_id, "reasons": reasons })
                     })
                     .collect::<Vec<_>>();
+                let covered_question_numbers =
+                    crate::cloud_adoption::adopted_question_numbers(&authoring_value, &qualified_task_ids);
+                if adopted {
+                    // 云端内容已整体覆盖：把被覆盖的识别决策置为作废，用户不再本地/云端二选一。
+                    match crate::reconcile::commands::supersede_cloud_adopted_decisions(
+                        &root,
+                        &batch_id,
+                        &covered_question_numbers,
+                        &qualified_task_ids,
+                    ) {
+                        Ok(_) => {}
+                        Err(error) => eprintln!(
+                            "[processing] supersede cloud-adopted decisions failed for {job_id}: {error}"
+                        ),
+                    }
+                }
                 let adoption_info = if let Some(result) = adoption_result.as_ref() {
                     let status = if rejected_groups.is_empty() {
                         "adopted"
@@ -989,9 +1059,13 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                         "status": status,
                         "adopted": true,
                         "editVersion": result.edit_version,
+                        "passageAdopted": passage_adopted,
                         "adoptedTaskIds": qualified_task_ids,
+                        "coveredQuestionNumbers": covered_question_numbers,
                         "rejectedGroups": rejected_json,
                         "preservedGroupIds": result.preserved_group_ids,
+                        "reviewRecords": review_records,
+                        "needsCloudReview": needs_cloud_review,
                         "reason": reason
                     })
                 } else {
@@ -1006,8 +1080,11 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                     serde_json::json!({
                         "status": "not_adopted",
                         "adopted": false,
+                        "passageAdopted": passage_adopted,
                         "documentReasons": document_reasons,
                         "rejectedGroups": rejected_json,
+                        "reviewRecords": review_records,
+                        "needsCloudReview": needs_cloud_review,
                         "reason": reason,
                         "fallback": "local_draft"
                     })

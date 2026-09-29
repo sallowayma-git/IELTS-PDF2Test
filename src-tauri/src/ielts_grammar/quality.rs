@@ -4876,6 +4876,32 @@ fn physical_ignored_reasons(
                 continue;
             }
 
+            // 非题目内容（图注、版权声明、页眉页脚的短 running 文本）：未被锚点认领时
+            // 按「有理由忽略」而非硬阻断，逐条给出稳定原因。题目内容仍走正常认领判定。
+            if kind == "caption" && has_semantic_text {
+                ignored.insert(region_id.to_string(), "figure_caption".to_string());
+                continue;
+            }
+            if region_text.contains('©')
+                || compact_text.contains("copyright")
+                || compact_text.contains("allrightsreserved")
+                || compact_text.contains("reproducedbypermission")
+            {
+                ignored.insert(region_id.to_string(), "copyright_notice".to_string());
+                continue;
+            }
+            if kind == "text"
+                && child_line_ids.len() == 1
+                && child_object_count == 0
+                && has_semantic_text
+                && near_page_edge
+                && compact_text.chars().count() <= 40
+                && !declares_question_numbers(&compact_text)
+            {
+                ignored.insert(region_id.to_string(), "running_header_or_footer".to_string());
+                continue;
+            }
+
             if ocr_page
                 && (compact_text.contains("答案")
                     || compact_text.contains("answer")
@@ -7973,5 +7999,33 @@ mod tests {
             rule,
             None,
         ));
+    }
+
+    #[test]
+    fn non_question_boilerplate_regions_are_ignored_with_reason() {
+        // 图注 / 版权 / 页眉短文本按有理由忽略；正文仍需被认领（保持 unassigned）。
+        let physical = json!({
+            "pages": [{
+                "pageIndex": 0,
+                "heightPt": 800.0,
+                "lines": [
+                    {"id": "lc", "text": "Figure 1: the layout of the palace"},
+                    {"id": "lr", "text": "© 2020 Cambridge Assessment. All rights reserved."},
+                    {"id": "lh", "text": "IELTS Practice Tests"},
+                    {"id": "lb", "text": "The Roman palace at Fishbourne was discovered by workmen digging a trench in 1960."}
+                ],
+                "regions": [
+                    {"id": "cap1", "kind": "caption", "childLineIds": ["lc"], "bbox": {"x": 40.0, "y": 400.0, "width": 300.0, "height": 20.0}},
+                    {"id": "cr1", "kind": "text", "childLineIds": ["lr"], "bbox": {"x": 40.0, "y": 760.0, "width": 300.0, "height": 15.0}},
+                    {"id": "hd1", "kind": "text", "childLineIds": ["lh"], "bbox": {"x": 40.0, "y": 10.0, "width": 200.0, "height": 15.0}},
+                    {"id": "body1", "kind": "text", "childLineIds": ["lb"], "bbox": {"x": 40.0, "y": 300.0, "width": 400.0, "height": 40.0}}
+                ]
+            }]
+        });
+        let ignored = physical_ignored_reasons(&physical, &BTreeSet::new());
+        assert_eq!(ignored.get("cap1").map(String::as_str), Some("figure_caption"));
+        assert_eq!(ignored.get("cr1").map(String::as_str), Some("copyright_notice"));
+        assert_eq!(ignored.get("hd1").map(String::as_str), Some("running_header_or_footer"));
+        assert!(!ignored.contains_key("body1"), "正文区域不得被忽略");
     }
 }
