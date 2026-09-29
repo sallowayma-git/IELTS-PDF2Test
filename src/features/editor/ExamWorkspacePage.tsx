@@ -71,6 +71,11 @@ function describeLoadError(raw?: string): string {
  * 响亮失败，绝不静默。
  */
 function missingStructureActionMessage(draft: IeltsAuthoringIRV2, action: ExamCanvasStructureAction): string | undefined {
+  if (action.type === "answer-slot.host.set") {
+    if (!draft.answerSlots[action.slotId]) return "这个答案位刚被后台刷新移除，这次段落修改没有生效，请重试。";
+    if (!Object.values(draft.passage?.paragraphMap ?? {}).includes(action.hostNodeId)) return "目标段落已不在当前稿件中，这次修改没有生效，请重试。";
+    return undefined;
+  }
   if (action.type !== "option.add" && action.type !== "option.move" && action.type !== "option.delete") return undefined;
   const task = draft.taskGroups.find((candidate) => candidate.taskId === action.taskId);
   const group = task?.responseGroups.find((candidate) => candidate.responseGroupId === action.responseGroupId);

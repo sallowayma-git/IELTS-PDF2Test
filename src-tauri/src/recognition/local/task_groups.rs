@@ -342,106 +342,48 @@ fn classify(
         !bank.labels.is_empty() && bank.labels.iter().all(|label| is_alpha_label(label))
     });
 
-    // §6.9 first, and explicitly: a heading bank plus paragraph targets is never a
-    // generic feature-matching task.
+    // A roman heading bank plus explicit paragraph targets is stronger than a
+    // generic matching cue and must remain a headings task.
     let has_paragraph_targets = stems_lower.contains("paragraph");
     if bank_lower.contains("list of headings") && bank_is_roman && has_paragraph_targets {
         return Some(TaskTypeV2::MatchingHeadings);
     }
-
-    if lower.contains("true") && lower.contains("false") {
-        return Some(TaskTypeV2::TrueFalseNotGiven);
+    // Keep an incomplete fixed-label answer set in the candidate family so
+    // `check_statement_closure` can block it instead of silently treating it
+    // as an unrelated short-answer task. The shared accepted-task classifier
+    // still requires NOT GIVEN.
+    if !lower.contains("not given") && lower.contains("agree") {
+        if lower.contains("true") && lower.contains("false") {
+            return Some(TaskTypeV2::TrueFalseNotGiven);
+        }
+        if lower.contains("yes") && lower.contains("no") {
+            return Some(TaskTypeV2::YesNoNotGiven);
+        }
     }
-    if lower.contains("yes") && lower.contains("no") {
-        return Some(TaskTypeV2::YesNoNotGiven);
+    if let Some(task_type) = crate::ielts_grammar::classify_instruction_task_type(instruction) {
+        // An explicitly attached alphabetic shared bank distinguishes a feature
+        // match from a single-question choice instruction.
+        if task_type == TaskTypeV2::SingleChoice
+            && bank_is_alpha
+            && blocks.iter().all(|block| block.option_run.is_none())
+        {
+            return Some(TaskTypeV2::MatchingFeatures);
+        }
+        return Some(task_type);
     }
-
-    if mentions_multiple_answers(&lower) {
-        return Some(TaskTypeV2::MultipleChoice);
-    }
-    if lower.contains("choose the correct letter")
-        || lower.contains("choose the correct answer")
-        || blocks.iter().any(|block| block.option_run.is_some())
-    {
-        return Some(TaskTypeV2::SingleChoice);
-    }
-
-    if lower.contains("which paragraph contains") || lower.contains("which section contains") {
-        return Some(TaskTypeV2::MatchingInformation);
-    }
-    if lower.contains("classify") {
-        return Some(TaskTypeV2::Classification);
-    }
-    if lower.contains("match each") || lower.contains("match the") || bank_is_alpha {
+    if bank_is_alpha && blocks.iter().all(|block| block.option_run.is_none()) {
         return Some(TaskTypeV2::MatchingFeatures);
     }
-
-    if let Some(completion) = classify_completion(&lower) {
-        return Some(completion);
+    if blocks.iter().any(|block| block.option_run.is_some()) {
+        return Some(TaskTypeV2::SingleChoice);
     }
     if lower.contains("answer the questions below") || lower.contains("no more than") {
         return Some(TaskTypeV2::ShortAnswer);
     }
-    // A hint carried over from the region-role pass is weaker evidence than the
-    // wording, but better than refusing to classify at all.
-    match task_hint {
-        Some("matching_headings") => Some(TaskTypeV2::MatchingHeadings),
-        Some("true_false_not_given") => Some(TaskTypeV2::TrueFalseNotGiven),
-        Some("yes_no_not_given") => Some(TaskTypeV2::YesNoNotGiven),
-        Some("single_choice") => Some(TaskTypeV2::SingleChoice),
-        Some("matching") => Some(TaskTypeV2::MatchingFeatures),
-        _ => None,
-    }
-}
-
-/// `choose TWO letters`, `which THREE of the following`, `write two answers`.
-fn mentions_multiple_answers(lower: &str) -> bool {
-    const COUNT_WORDS: [&str; 5] = ["two", "three", "four", "2", "3"];
-    let has_count = COUNT_WORDS.iter().any(|word| lower.contains(word));
-    let multiple_marker = lower.contains("two letters")
-        || lower.contains("three letters")
-        || lower.contains("four letters")
-        || lower.contains("five letters")
-        || lower.contains("choose two")
-        || lower.contains("choose three")
-        || lower.contains("choose four")
-        || lower.contains("choose five")
-        || lower.contains("four answers")
-        || lower.contains("five answers")
-        || lower.contains("which two")
-        || lower.contains("which three")
-        || lower.contains("two answers")
-        || lower.contains("three answers")
-        || lower.contains("more than one answer");
-    multiple_marker || (has_count && lower.contains("from the list"))
-}
-
-fn classify_completion(lower: &str) -> Option<TaskTypeV2> {
-    if !lower.contains("complete") {
-        return None;
-    }
-    if lower.contains("table") {
-        return Some(TaskTypeV2::TableCompletion);
-    }
-    if lower.contains("flow-chart") || lower.contains("flowchart") {
-        return Some(TaskTypeV2::FlowchartCompletion);
-    }
-    if lower.contains("note") {
-        return Some(TaskTypeV2::NoteCompletion);
-    }
-    if lower.contains("summary") {
-        return Some(TaskTypeV2::SummaryCompletion);
-    }
-    if lower.contains("diagram") || lower.contains("label the") {
-        return Some(TaskTypeV2::DiagramLabelCompletion);
-    }
-    if lower.contains("table") {
-        return Some(TaskTypeV2::TableCompletion);
-    }
-    if lower.contains("sentence") {
-        return Some(TaskTypeV2::SentenceCompletion);
-    }
-    Some(TaskTypeV2::NoteCompletion)
+    // Region-role hints remain a fallback when the instruction text itself has
+    // no recognizable task cue.
+    crate::ielts_grammar::task_type_from_kind_hint(task_hint)
+        .or_else(|| (task_hint == Some("matching")).then_some(TaskTypeV2::MatchingFeatures))
 }
 
 fn is_roman_label(label: &str) -> bool {
@@ -799,6 +741,60 @@ mod tests {
         assert!(groups[0]
             .issues
             .contains(&issue_codes::OPTION_LABEL_MISSING.to_string()));
+    }
+
+    #[test]
+    fn shared_task_classifier_keeps_form_map_and_shared_bank_tasks_distinct() {
+        let form = build_task_groups(
+            &[page()],
+            &[zone(
+                None,
+                "Questions 1-2 Complete the form below. Write no more than two words.",
+                vec![1, 2],
+            )],
+            &[block("f1", 1, "Name"), block("f2", 2, "Date")],
+            &[],
+            &[],
+            &[],
+        );
+        assert_eq!(form[0].task_type, Some(TaskTypeV2::FormCompletion));
+
+        let map = build_task_groups(
+            &[page()],
+            &[zone(None, "Questions 3-4 Label the map below.", vec![3, 4])],
+            &[
+                block("m3", 3, "North entrance"),
+                block("m4", 4, "Main hall"),
+            ],
+            &[],
+            &[],
+            &[],
+        );
+        assert_eq!(map[0].task_type, Some(TaskTypeV2::PlanMapLabelCompletion));
+
+        let shared_bank = bank(
+            "bank-0-1",
+            Some("List of Features"),
+            &["A", "B", "C", "D", "E", "F"],
+        );
+        let features = build_task_groups(
+            &[page()],
+            &[zone(
+                None,
+                "Questions 5-8 Choose FOUR correct answers, A-F.",
+                vec![5, 6, 7, 8],
+            )],
+            &[
+                block("q5", 5, "First feature"),
+                block("q6", 6, "Second feature"),
+                block("q7", 7, "Third feature"),
+                block("q8", 8, "Fourth feature"),
+            ],
+            &[shared_bank],
+            &[],
+            &[],
+        );
+        assert_eq!(features[0].task_type, Some(TaskTypeV2::MatchingFeatures));
     }
 
     #[test]

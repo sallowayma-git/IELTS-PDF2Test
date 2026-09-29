@@ -111,12 +111,11 @@ fn cloud_kind_to_task_type(kind: &str) -> Option<&'static str> {
         "multi_choice" => "multiple_choice",
         "true_false_not_given" => "true_false_not_given",
         "yes_no_not_given" => "yes_no_not_given",
-        "matching" => "matching_information",
         "heading_matching" => "matching_headings",
         "matching_information" => "matching_information",
         "classification" => "classification",
         "summary_completion" => "summary_completion",
-        "note_completion" | "notes_completion" => "summary_completion",
+        "note_completion" | "notes_completion" => "note_completion",
         "table_completion" => "table_completion",
         "diagram_completion" => "diagram_label_completion",
         "plan_map_label_completion" => "plan_map_label_completion",
@@ -127,41 +126,15 @@ fn cloud_kind_to_task_type(kind: &str) -> Option<&'static str> {
 }
 
 /// 由 `TaskTypeV2` snake_case 派生 `(interaction, hostType)`（见 `ielts_authoring_v2.rs:427`）。
-fn interaction_host_for(task_type: &str) -> (&'static str, &'static str) {
-    match task_type {
-        "single_choice"
-        | "multiple_choice"
-        | "true_false_not_given"
-        | "yes_no_not_given"
-        | "classification"
-        | "matching_information"
-        | "matching_headings"
-        | "matching_features"
-        | "matching_sentence_endings" => ("radio", "prompt"),
-        "summary_completion"
-        | "note_completion"
-        | "sentence_completion"
-        | "short_answer"
-        | "form_completion"
-        | "flowchart_completion" => ("text", "prompt"),
-        "table_completion" => ("text", "table_cell"),
-        "diagram_label_completion" | "plan_map_label_completion" => ("dragdrop", "figure_hotspot"),
-        _ => ("text", "prompt"),
-    }
-}
-
-/// 由 `TaskTypeV2` snake_case 派生 `ResponseGroupKindV2`（见 `ielts_authoring_v2.rs:373`）。
-fn response_group_kind_for(task_type: &str) -> &'static str {
-    match task_type {
-        "single_choice"
-        | "multiple_choice"
-        | "true_false_not_given"
-        | "yes_no_not_given"
-        | "classification" => "choice",
-        "matching_information" | "matching_headings" => "matching",
-        "diagram_label_completion" | "plan_map_label_completion" => "diagram_hotspot",
-        _ => "text_entry",
-    }
+fn task_presentation_rule(
+    task_type: &str,
+    has_option_bank: bool,
+) -> Option<&'static crate::schema::task_presentation::TaskPresentationRule> {
+    let task_type = serde_json::from_value::<TaskTypeV2>(json!(task_type)).ok()?;
+    Some(crate::schema::task_presentation::rule_for(
+        &task_type,
+        has_option_bank,
+    ))
 }
 
 /// 题号推导：优先用 `range` 数组 `[start,end]`（start>0）；否则退回解析 `questionIds`
@@ -313,9 +286,21 @@ pub(crate) fn expand_natural_cloud_shape(raw: &Value) -> Value {
             continue;
         }
         let task_id = format!("cloud-task-{}", index + 1);
-        let response_group_id = format!("cloud-rg-{}", index + 1);
-        let (interaction, host_type) = interaction_host_for(task_type);
-        let response_group_kind = response_group_kind_for(task_type);
+        let Some(rule) = task_presentation_rule(
+            task_type,
+            object.get("optionBank").map(|bank| !bank.is_null()).unwrap_or(false),
+        ) else {
+            new_groups.push(group.clone());
+            continue;
+        };
+        let interaction = crate::schema::task_presentation::wire_name(&rule.interaction);
+        let host_type = rule
+            .host_types
+            .first()
+            .map(crate::schema::task_presentation::wire_name)
+            .unwrap_or_else(|| "prompt".to_string());
+        let response_group_kind =
+            crate::schema::task_presentation::wire_name(&rule.response_kind);
         let group_answers = object.get("answers").cloned().unwrap_or_else(|| json!({}));
         let model_slots = object
             .get("slots")
@@ -327,6 +312,14 @@ pub(crate) fn expand_natural_cloud_shape(raw: &Value) -> Value {
         let mut new_slots: Vec<Value> = Vec::with_capacity(numbers.len());
         for &number in &numbers {
             let slot_id = format!("cloud-q{}", number);
+            let response_group_id = match rule.group_granularity {
+                crate::schema::task_presentation::GroupGranularity::PerSlot => {
+                    format!("cloud-rg-{}-q{}", index + 1, number)
+                }
+                crate::schema::task_presentation::GroupGranularity::TaskGroup => {
+                    format!("cloud-rg-{}", index + 1)
+                }
+            };
             slot_ids.push(slot_id.clone());
             let model_slot = model_slots.iter().find(|slot| {
                 slot.get("questionNumber").and_then(Value::as_u64) == Some(number as u64)
@@ -388,14 +381,24 @@ pub(crate) fn expand_natural_cloud_shape(raw: &Value) -> Value {
         new_group.insert("taskId".to_string(), json!(task_id));
         new_group.insert("taskType".to_string(), json!(task_type));
         new_group.insert("range".to_string(), range_internal);
-        new_group.insert(
-            "responseGroups".to_string(),
-            json!([{
-                "responseGroupId": response_group_id,
+        let response_groups = match rule.group_granularity {
+            crate::schema::task_presentation::GroupGranularity::PerSlot => numbers
+                .iter()
+                .map(|number| {
+                    json!({
+                        "responseGroupId": format!("cloud-rg-{}-q{}", index + 1, number),
+                        "kind": response_group_kind,
+                        "slotIds": [format!("cloud-q{}", number)],
+                    })
+                })
+                .collect::<Vec<_>>(),
+            crate::schema::task_presentation::GroupGranularity::TaskGroup => vec![json!({
+                "responseGroupId": format!("cloud-rg-{}", index + 1),
                 "kind": response_group_kind,
                 "slotIds": slot_ids,
-            }]),
-        );
+            })],
+        };
+        new_group.insert("responseGroups".to_string(), json!(response_groups));
         new_group
             .entry("instructionsText".to_string())
             .or_insert_with(|| json!(""));
@@ -2830,6 +2833,71 @@ fn apply_cloud_listening_parts(
     }
 }
 
+fn canonical_passage_paragraph_ids(canonical: &Value) -> BTreeSet<String> {
+    fn collect(value: &Value, ids: &mut BTreeSet<String>) {
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    collect(item, ids);
+                }
+            }
+            Value::Object(object) => {
+                if object.get("type").and_then(Value::as_str) == Some("paragraph") {
+                    if let Some(id) = object.get("id").and_then(Value::as_str) {
+                        ids.insert(id.to_string());
+                    }
+                }
+                for child in object.values() {
+                    collect(child, ids);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut passage_nodes = BTreeSet::new();
+    if let Some(content) = canonical.pointer("/passage/content") {
+        collect(content, &mut passage_nodes);
+    }
+    canonical
+        .pointer("/passage/paragraphMap")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter_map(|(_, node_id)| node_id.as_str())
+        .filter(|node_id| passage_nodes.contains(*node_id))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Heading slots may point outside the cloud candidate, but only to a real paragraph
+/// node covered by the canonical local `paragraphMap`. Other external IDs are rejected.
+fn validate_cloud_passage_host_nodes(
+    draft: &Value,
+    canonical: &Value,
+) -> CommandResult<()> {
+    let allowed = canonical_passage_paragraph_ids(canonical);
+    for (slot_id, slot) in draft
+        .get("answerSlots")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+    {
+        if slot.get("hostType").and_then(Value::as_str) != Some("passage_paragraph") {
+            continue;
+        }
+        let Some(host_node_id) = slot.get("hostNodeId").and_then(Value::as_str) else {
+            return Err(format!("cloud_authoring_passage_host_node_missing:{slot_id}"));
+        };
+        if !allowed.contains(host_node_id) {
+            return Err(format!(
+                "cloud_authoring_passage_host_node_unknown:{slot_id}:{host_node_id}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// 把模型输出标准化成一份**完整**的 `IeltsAuthoringIRV2` 值（含后端身份）。
 ///
 /// 输入 `raw` 是模型原始 JSON：`{"authoring": {...}}` 或直接就是稿件对象。
@@ -2853,6 +2921,9 @@ pub(crate) fn normalize_cloud_authoring(
     // 先做一次契约收敛：枚举别名归一 + 锚点补齐后端来源字段 + 剥掉多余键。
     // 目的是让「无害的写法差异」不要升级成整份候选反序列化失败。
     sanitize_cloud_authoring_draft(&mut draft, identity);
+    if let Some(canonical) = canonical {
+        validate_cloud_passage_host_nodes(&draft, canonical)?;
+    }
 
     let mut source_coverage_notes: Vec<String> = raw
         .get("sourceCoverageNotes")
@@ -3201,10 +3272,12 @@ pub(crate) fn normalize_cloud_authoring(
     document.insert("jobId".to_string(), json!(identity.job_id));
     document.insert("exam".to_string(), identity.exam.clone());
     document.insert("modality".to_string(), json!(identity.modality));
-    if let Some(passage) = draft.get("passage") {
-        if passage.is_object() {
-            document.insert("passage".to_string(), passage.clone());
-        }
+    let passage = canonical
+        .and_then(|value| value.get("passage"))
+        .filter(|passage| passage.is_object())
+        .or_else(|| draft.get("passage").filter(|passage| passage.is_object()));
+    if let Some(passage) = passage {
+        document.insert("passage".to_string(), passage.clone());
     }
     // 听力结构同理：必须取**重写之后**的 `draft.listening`，否则 `parts[].taskIds`
     // 还是模型的临时引用，候选看着完整、其实一个题组都没接上。
@@ -3966,6 +4039,54 @@ mod tests {
             )
         );
         assert!(candidate.slots[0].has_source_evidence);
+    }
+
+    #[test]
+    fn natural_cloud_shape_uses_task_presentation_rules_without_lossy_aliases() {
+        let expanded = expand_natural_cloud_shape(&json!({
+            "groups": [
+                {
+                    "kind": "heading_matching",
+                    "range": [14, 15],
+                    "questionIds": ["q14", "q15"],
+                    "slots": [
+                        {"questionNumber": 14, "answer": "i"},
+                        {"questionNumber": 15, "answer": "iv"}
+                    ]
+                },
+                {
+                    "kind": "matching_information",
+                    "range": [1, 2],
+                    "questionIds": ["q1", "q2"],
+                    "slots": [{"questionNumber": 1}, {"questionNumber": 2}]
+                },
+                {
+                    "kind": "note_completion",
+                    "range": [3, 3],
+                    "questionIds": ["q3"],
+                    "slots": [{"questionNumber": 3, "answer": "water"}]
+                },
+                {
+                    "kind": "matching",
+                    "range": [4, 4],
+                    "questionIds": ["q4"],
+                    "slots": [{"questionNumber": 4}]
+                }
+            ]
+        }));
+        let groups = expanded["groups"].as_array().unwrap();
+        assert_eq!(groups[0]["taskType"], "matching_headings");
+        assert_eq!(groups[0]["responseGroups"][0]["kind"], "matching");
+        assert_eq!(groups[0]["slots"][0]["interaction"], "dragdrop");
+        assert_eq!(groups[0]["slots"][0]["hostType"], "passage_paragraph");
+        assert_eq!(groups[1]["responseGroups"].as_array().unwrap().len(), 2);
+        assert_eq!(groups[1]["responseGroups"][0]["slotIds"], json!(["cloud-q1"]));
+        assert_eq!(groups[1]["responseGroups"][1]["slotIds"], json!(["cloud-q2"]));
+        assert_eq!(groups[2]["taskType"], "note_completion");
+        assert!(
+            groups[3].get("taskId").is_none(),
+            "ambiguous `matching` must remain fail-closed: {groups:#?}"
+        );
     }
 
     #[test]
@@ -5207,6 +5328,31 @@ mod cloud_authoring_tests {
     }
 
     #[test]
+    fn cloud_heading_hosts_must_exist_in_the_canonical_passage_paragraph_map() {
+        let mut canonical = golden_authoring();
+        canonical["passage"] = json!({
+            "content": [paragraph("source-p-a", "source-p-a-text", "Paragraph A text.")],
+            "paragraphMap": {"A": "source-p-a"},
+            "sourceAnchors": []
+        });
+        let mut raw = cloud_draft(&[14], "heading-cloud");
+        raw["taskGroups"][0]["taskType"] = json!("matching_headings");
+        raw["answerSlots"]["heading-cloud-q14"]["hostNodeId"] = json!("source-p-a");
+        raw["answerSlots"]["heading-cloud-q14"]["hostType"] = json!("passage_paragraph");
+        raw["answerSlots"]["heading-cloud-q14"]["interaction"] = json!("dragdrop");
+
+        normalize_cloud_authoring(&identity(), Some(&canonical), &raw)
+            .expect("canonical paragraphMap targets are valid source anchors");
+
+        raw["answerSlots"]["heading-cloud-q14"]["hostNodeId"] = json!("invented-paragraph");
+        let error = match normalize_cloud_authoring(&identity(), Some(&canonical), &raw) {
+            Ok(_) => panic!("a passage host outside the local paragraphMap must fail adaptation"),
+            Err(error) => error,
+        };
+        assert!(error.contains("passage_host_node_unknown"), "{error}");
+    }
+
+    #[test]
     fn cloud_authoring_accepts_identity_mappings_for_existing_stable_ids() {
         let canonical = golden_authoring();
         let raw = json!({"authoring": canonical.clone()});
@@ -5465,10 +5611,9 @@ mod cloud_authoring_tests {
         );
     }
 
-    /// 输出契约不再要求 `passage`（它是最大的一块输出，却没有任何环节读它）。
-    /// 证明：有无 passage，finalize 都成功；修复回合看到的差异清单完全相同。
+    /// 云端候选不重传原文：规范稿的 passage 和段落映射仍必须留在完整候选中。
     #[test]
-    fn candidate_without_a_passage_finalizes_and_yields_the_same_differences() {
+    fn candidate_without_a_passage_inherits_the_authoritative_passage() {
         let canonical = golden_authoring();
         let without = json!({"authoring": cloud_draft(&[14, 15], "cloud")});
         let mut with_draft = cloud_draft(&[14, 15], "cloud");
@@ -5487,7 +5632,19 @@ mod cloud_authoring_tests {
         };
         let candidate_without = finalize(&without);
         let candidate_with = finalize(&with);
-        assert!(candidate_without.authoring.passage.is_none());
+        let authoritative_passage = canonical["passage"].clone();
+        assert_eq!(
+            serde_json::to_value(candidate_without.authoring.passage.as_ref().unwrap())
+                .expect("passage serialises"),
+            authoritative_passage,
+            "candidate without passage must retain the canonical source passage"
+        );
+        assert_eq!(
+            serde_json::to_value(candidate_with.authoring.passage.as_ref().unwrap())
+                .expect("passage serialises"),
+            authoritative_passage,
+            "cloud output must not replace the canonical source passage"
+        );
 
         let differences = |candidate: &CloudAuthoringCandidateV1| {
             crate::cloud_repair::candidate_differences(

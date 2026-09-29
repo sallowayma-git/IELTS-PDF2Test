@@ -1182,8 +1182,45 @@ function unresolvedFrom(plan, context) {
   }));
 }
 
-/** 完整候选识别：样本里就是整卷草稿，原样返回。 */
-function authoringCandidateReply() {
+function sourceParagraphsFromCandidatePrompt(text) {
+  const marker = "Source paragraph targets (labels and existing local node IDs only):";
+  const start = text.lastIndexOf(marker);
+  const end = start < 0 ? -1 : text.indexOf("\nOutput contract JSON:", start);
+  if (start < 0 || end < 0) throw new Error("candidate prompt has no source paragraph map");
+  const raw = text.slice(start + marker.length, end).trim();
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`candidate prompt source paragraph map is invalid JSON: ${String(error?.message ?? error)}`);
+  }
+}
+
+function candidateForPromptChunk(candidate, text) {
+  const match = text.match(/This request covers ONLY ([^\n]+?) of the paper\./u);
+  if (!match) return candidate;
+  const numbers = [...match[1].matchAll(/\d+/gu)].map((entry) => Number(entry[0]));
+  if (!numbers.length) throw new Error(`cannot read question range from chunk label: ${match[1]}`);
+  const min = Math.min(...numbers);
+  const max = Math.max(...numbers);
+  const allowedSlots = new Set(Object.entries(candidate.answerSlots ?? {})
+    .filter(([, slot]) => Number(slot?.questionNumber) >= min && Number(slot?.questionNumber) <= max)
+    .map(([slotId]) => slotId));
+  if (!allowedSlots.size) throw new Error(`candidate has no answer slots in requested chunk ${match[1]}`);
+  candidate.taskGroups = (candidate.taskGroups ?? []).map((task) => ({
+    ...task,
+    responseGroups: (task.responseGroups ?? []).map((response) => ({
+      ...response,
+      slotIds: (response.slotIds ?? []).filter((slotId) => allowedSlots.has(slotId)),
+    })).filter((response) => response.slotIds.length > 0),
+  })).filter((task) => task.responseGroups.length > 0);
+  candidate.answerSlots = Object.fromEntries(Object.entries(candidate.answerSlots ?? {}).filter(([slotId]) => allowedSlots.has(slotId)));
+  candidate.answerKey = Object.fromEntries(Object.entries(candidate.answerKey ?? {}).filter(([slotId]) => allowedSlots.has(slotId)));
+  candidate.answerPageEvidence = (candidate.answerPageEvidence ?? []).filter((entry) => Number(entry?.questionNumber) >= min && Number(entry?.questionNumber) <= max);
+  return candidate;
+}
+
+/** 完整候选识别：按本次导入的段落映射解析候选占位符。 */
+function authoringCandidateReply(text) {
   if (!authoringCandidate) {
     return {
       taskGroups: [],
@@ -1191,7 +1228,25 @@ function authoringCandidateReply() {
       note: '受控服务没有拿到 --candidate 样本',
     };
   }
-  return authoringCandidate;
+  const candidate = candidateForPromptChunk(structuredClone(authoringCandidate), text);
+  const sourceParagraphs = sourceParagraphsFromCandidatePrompt(text);
+  const paragraphMap = sourceParagraphs?.paragraphMap;
+  if (!paragraphMap || typeof paragraphMap !== 'object' || Array.isArray(paragraphMap)) {
+    throw new Error("candidate prompt has no paragraphMap object");
+  }
+  for (const [slotId, slot] of Object.entries(candidate.answerSlots ?? {})) {
+    const hostNodeId = typeof slot?.hostNodeId === "string" ? slot.hostNodeId : "";
+    const match = hostNodeId.match(/^@paragraph:([A-Z])$/u);
+    if (!match) continue;
+    const resolved = paragraphMap[match[1]];
+    if (typeof resolved !== "string" || !resolved.trim()) {
+      throw new Error(`candidate slot ${slotId} cannot resolve paragraph ${match[1]} from this job`);
+    }
+    slot.hostType = "passage_paragraph";
+    slot.interaction = "dragdrop";
+    slot.hostNodeId = resolved;
+  }
+  return candidate;
 }
 
 function replyFor(task, text) {
@@ -1201,7 +1256,7 @@ function replyFor(task, text) {
   if (task === 'adjudicate_divergence') {
     return adjudicationReply(embeddedJson(text, '--- DIVERGENCES BEGIN ---', '--- DIVERGENCES END ---'));
   }
-  if (task === 'generate_authoring_candidate') return authoringCandidateReply();
+  if (task === 'generate_authoring_candidate') return authoringCandidateReply(text);
   if (task === 'repair_authoring_step') return repairStepReply(text);
   return outline;
 }
@@ -1246,9 +1301,16 @@ const server = http.createServer(async (request, response) => {
   const failThisTask = options.mode === 'fail' && task !== 'generate_pdf_reading_outline';
   const garbageThisTask = options.mode === 'garbage' && task !== 'generate_pdf_reading_outline';
 
-  const content = garbageThisTask
-    ? JSON.stringify({ note: '受控服务在 garbage 模式下刻意返回不符合约定的 JSON。' })
-    : JSON.stringify(replyFor(task, text));
+  let content;
+  try {
+    content = garbageThisTask
+      ? JSON.stringify({ note: '受控服务在 garbage 模式下刻意返回不符合约定的 JSON。' })
+      : JSON.stringify(replyFor(task, text));
+  } catch (error) {
+    console.error(`[controlled-llm] ${String(error?.message ?? error)}`);
+    reply(422, { error: { message: String(error?.message ?? error), type: 'controlled_candidate_error' } });
+    return;
+  }
 
   console.log(
     `[controlled-llm] ${new Date().toISOString()} POST ${url.pathname} mode=${options.mode} task=${task} `

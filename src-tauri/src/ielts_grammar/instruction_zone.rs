@@ -65,9 +65,7 @@ pub(crate) fn collect_instruction_zone(
             end_index = index;
             break;
         }
-        if index > heading_index
-            && line_has_expected_number_before_blank(&text, expected_numbers)
-        {
+        if index > heading_index && line_has_expected_number_before_blank(&text, expected_numbers) {
             end_index = index;
             break;
         }
@@ -421,11 +419,7 @@ fn may_follow_closing_instruction(text: &str, last_accepted_was_legend: bool) ->
     // 图例解释的折行续行（"the writer"、"information on this"）：仅当上一条已
     // 收进的行是图例行、且本行以小写字母开头。以大写开头的行（笔记标题、
     // "No one knows …"）不因此被收进说明区。
-    if last_accepted_was_legend
-        && text
-            .trim_start()
-            .starts_with(|ch: char| ch.is_lowercase())
-    {
+    if last_accepted_was_legend && text.trim_start().starts_with(|ch: char| ch.is_lowercase()) {
         return true;
     }
     false
@@ -443,9 +437,9 @@ fn is_legend_line(lower: &str) -> bool {
 fn is_legend_label_line(lower: &str) -> bool {
     let trimmed = lower.trim();
     !trimmed.is_empty()
-        && trimmed.split_whitespace().all(|token| {
-            matches!(token, "true" | "false" | "yes" | "no" | "not" | "given")
-        })
+        && trimmed
+            .split_whitespace()
+            .all(|token| matches!(token, "true" | "false" | "yes" | "no" | "not" | "given"))
 }
 
 /// `TRUE` / `FALSE` / `NOT GIVEN` / `YES` / `NO` legend rows and their
@@ -716,17 +710,31 @@ mod tests {
         let lines = vec![
             line("h", "Questions 7-13"),
             line("i1", "Complete the notes below."),
-            line("i2", "Choose ONE WORD ONLY from the passage for each answer."),
-            line("close", "Write your answers in boxes 7-13 on your answer sheet."),
+            line(
+                "i2",
+                "Choose ONE WORD ONLY from the passage for each answer.",
+            ),
+            line(
+                "close",
+                "Write your answers in boxes 7-13 on your answer sheet.",
+            ),
             line("title", "The role of capsaicin"),
             line("sub", "Chili seeds and capsaicin"),
-            line("b1", "• certain birds and other animals eat chili fruit and spread the seeds"),
-            line("b2", "• some animals destroy the seeds, preventing 7 __________"),
+            line(
+                "b1",
+                "• certain birds and other animals eat chili fruit and spread the seeds",
+            ),
+            line(
+                "b2",
+                "• some animals destroy the seeds, preventing 7 __________",
+            ),
             line("b3", "8 __________"),
         ];
         let zone = collect_instruction_zone(&lines, 0, &[7, 8, 9, 10, 11, 12, 13]);
         assert_eq!(zone.line_ids, vec!["h", "i1", "i2", "close"]);
-        assert!(zone.text.contains("Write your answers in boxes 7-13 on your answer sheet."));
+        assert!(zone
+            .text
+            .contains("Write your answers in boxes 7-13 on your answer sheet."));
         assert!(!zone.text.contains("capsaicin"));
         assert!(!zone.text.contains("preventing"));
     }
@@ -740,7 +748,10 @@ mod tests {
             line("h", "Questions 7-13"),
             line("i", "Complete the notes below."),
             line("title", "Chili seeds and capsaicin"),
-            line("b2", "• some animals destroy the seeds, preventing 7 __________"),
+            line(
+                "b2",
+                "• some animals destroy the seeds, preventing 7 __________",
+            ),
             line("b3", "8 __________"),
         ];
         let zone = collect_instruction_zone(&lines, 0, &[7, 8, 9, 10, 11, 12, 13]);
@@ -765,8 +776,12 @@ mod tests {
         ];
         let zone = collect_instruction_zone(&lines, 0, &[1, 2, 3, 4, 5, 6]);
         assert!(zone.text.contains("TRUE if the statement agrees"));
-        assert!(zone.text.contains("NOT GIVEN if there is no information on this"));
-        assert!(zone.text.contains("NB You may use any letter more than once."));
+        assert!(zone
+            .text
+            .contains("NOT GIVEN if there is no information on this"));
+        assert!(zone
+            .text
+            .contains("NB You may use any letter more than once."));
         assert!(!zone.text.contains("First statement"));
     }
 
@@ -778,8 +793,14 @@ mod tests {
         let lines = vec![
             line("h", "Questions 7-13"),
             line("i", "Complete the notes below."),
-            line("close", "Write your answers in boxes 7-13 on your answer sheet."),
-            line("title", "No one knows exactly when people first dried chilies"),
+            line(
+                "close",
+                "Write your answers in boxes 7-13 on your answer sheet.",
+            ),
+            line(
+                "title",
+                "No one knows exactly when people first dried chilies",
+            ),
             line("b1", "• certain birds eat chili fruit and spread the seeds"),
         ];
         let zone = collect_instruction_zone(&lines, 0, &[7, 8]);
@@ -795,13 +816,18 @@ mod tests {
         let lines = vec![
             line("h", "Questions 1-3"),
             line("close", "In boxes 1-3 on your answer sheet, write"),
-            line("legend", "TRUE if the statement agrees with the information"),
+            line(
+                "legend",
+                "TRUE if the statement agrees with the information",
+            ),
             line("wrap", "GIVEN if there is no information on this"),
             line("q1", "1 First statement"),
         ];
         let zone = collect_instruction_zone(&lines, 0, &[1, 2, 3]);
         assert!(zone.text.contains("TRUE if the statement agrees"));
-        assert!(zone.text.contains("GIVEN if there is no information on this"));
+        assert!(zone
+            .text
+            .contains("GIVEN if there is no information on this"));
         assert!(!zone.text.contains("First statement"));
     }
 
@@ -830,10 +856,15 @@ mod tests {
             ),
         ];
         let zone = collect_instruction_zone(&lines, 0, &[1, 2, 3, 4, 5, 6]);
-        assert!(zone.text.contains("TRUE if the statement agrees"), "{}", zone.text);
+        assert!(
+            zone.text.contains("TRUE if the statement agrees"),
+            "{}",
+            zone.text
+        );
         assert!(zone.text.contains("FALSE NOT GIVEN"), "{}", zone.text);
         assert!(
-            zone.text.contains("if the statement contradicts the information"),
+            zone.text
+                .contains("if the statement contradicts the information"),
             "{}",
             zone.text
         );
@@ -842,7 +873,11 @@ mod tests {
             "{}",
             zone.text
         );
-        assert!(!zone.text.contains("Fishbourne Palace was"), "{}", zone.text);
+        assert!(
+            !zone.text.contains("Fishbourne Palace was"),
+            "{}",
+            zone.text
+        );
     }
 
     // YNNG 图例解释的折行续行（"the writer"）：上一条已收进的行是图例行、本行以
@@ -882,7 +917,10 @@ mod tests {
         let lines = vec![
             line("h", "Questions 1-3"),
             line("close", "In boxes 1-3 on your answer sheet, write"),
-            line("legend", "TRUE if the statement agrees with the information"),
+            line(
+                "legend",
+                "TRUE if the statement agrees with the information",
+            ),
             line("title", "Notes on the palace"),
             line("b1", "• bullet body"),
         ];

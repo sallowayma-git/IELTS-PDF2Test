@@ -197,7 +197,7 @@ pub(crate) fn vision_answer_output_contract() -> Value {
             "answers keys are question number strings without q prefix, for example \"8\"; values are an answer string or an array of accepted answer strings.",
             "answers must contain at least one entry and evidence must contain at least one item {questionNumber, pageIndex >= 1, non-empty quote}. A reply without any answer is rejected and recorded as \"no answer key found\".",
             "Do not invent missing answers; omit uncertain question numbers.",
-            "Normalize TRUE/FALSE/NOT GIVEN/YES/NO and single-letter options to uppercase."
+            "Normalize TRUE/FALSE/NOT GIVEN/YES/NO to uppercase. Uppercase A-Z option letters only when the printed answer is a single-letter label from a Latin-letter bank; preserve lowercase Roman labels such as i, iv, and viii exactly as printed."
         ]
     })
 }
@@ -420,11 +420,12 @@ pub(crate) fn candidate_modality(modality: &str) -> &'static str {
 /// task groups only). Listening papers declare their parts in `listeningParts`.
 pub(crate) fn authoring_candidate_output_contract(modality: &str) -> Value {
     let modality = candidate_modality(modality);
+    let task_presentation_rules = crate::schema::task_presentation::rules_prompt_table();
     let mut shape = json!({
         "taskGroups": [{
             "taskId": "cloud-tg-1",
             "displayRange": {"kind": "range", "start": 1, "end": 5},
-            "taskType": "true_false_not_given",
+            "taskType": "single_choice",
             "instructions": [{"type": "paragraph", "id": "cloud-tg-1-instr", "children": [{"type": "text", "id": "cloud-tg-1-instr-text", "text": "full instruction text"}]}],
             "stimulus": [{"type": "paragraph", "id": "cloud-tg-1-stim", "children": [{"type": "text", "id": "cloud-tg-1-stim-text", "text": "full notes / table / diagram / form text"}]}],
             "optionBank": {
@@ -476,7 +477,7 @@ pub(crate) fn authoring_candidate_output_contract(modality: &str) -> Value {
         "Return FULL recognition content, not an outline and not a summary. This is used as a complete candidate draft.".to_string(),
         "Top-level keys: taskGroups, answerSlots, answerKey, answerPageEvidence, unresolvedRegions, sourceCoverageNotes, warnings. Nothing else.".to_string(),
         "Transcribe every question's FULL prompt text. Do not abbreviate, summarise or paraphrase any question.".to_string(),
-        "Transcribe every option's label and FULL option text. Keep the option bank per task group.".to_string(),
+        "Transcribe every option's label and FULL option text. Follow taskPresentationRules.taskGroups.optionSource for where options belong; do not add a bank when the rule says fixed labels or paragraphMap.".to_string(),
         "Do NOT transcribe the reading passage / audio script body. Transcribe only what the task groups show: instructions, and the notes / table / diagram / flow-chart / form / summary text a group depends on (into stimulus).".to_string(),
         "Give every question an answerKey entry. If the original file does not provide an answer, use {\"kind\": \"unresolved\"} — never invent an answer.".to_string(),
         "answerKey values: {\"kind\":\"text\",\"values\":[\"...\"]} with at least one value, {\"kind\":\"option\",\"labels\":[\"A\"],\"assignment\":\"per_slot\"} with at least one label, or {\"kind\":\"unresolved\"}.".to_string(),
@@ -485,7 +486,9 @@ pub(crate) fn authoring_candidate_output_contract(modality: &str) -> Value {
         "Required on every taskGroup: taskId, displayRange, taskType, instructions (array), responseGroups (array). displayRange is {\"kind\":\"range\",\"start\":1,\"end\":5} or {\"kind\":\"set\",\"values\":[1,3,5]}.".to_string(),
         "Required on every optionBank: optionBankId, scope, options, allowReuse; every option needs optionId, label and content (array).".to_string(),
         "Required on every responseGroup: responseGroupId, kind, slotIds (non-empty), cardinality {min, max}, assignment, scoringPolicy, duplicatePolicy, allowOptionReuse (true/false).".to_string(),
-        "Required on every answerSlot: slotId, questionNumber, displayLabel, hostType, interaction, participation, confidence (0..1). Every slotIds entry in a responseGroup MUST appear as a key in answerSlots. Every hostNodeId MUST be an id you defined in this same output.".to_string(),
+        "Required on every answerSlot: slotId, questionNumber, displayLabel, hostType, interaction, participation, confidence (0..1). Every slotIds entry in a responseGroup MUST appear as a key in answerSlots. A hostNodeId must refer to an id in this output, except hostType=passage_paragraph must use an existing nodeId listed in sourceParagraphs.paragraphMap.".to_string(),
+        "For matching_headings, use the source paragraph's existing nodeId as hostNodeId, hostType=passage_paragraph and interaction=dragdrop; never invent a passage id or transcribe the passage body.".to_string(),
+        "The presentationExamples below illustrate four rules. They are guidance only and must not be copied into the returned candidate.".to_string(),
         "Every content node needs type and id; text nodes need text; paragraph / heading / list_item / table_cell nodes need children.".to_string(),
         "Do NOT output jobId, schemaVersion, exam, quality, audit, reviewState, sourceDocumentId, provenanceStatus, pageIndex hashes or any publish/verification flag. The backend fills all of those.".to_string(),
         "sourceAnchors are optional. If you provide them, use only {\"sourceFileId\": \"...\", \"pageIndex\": 1, \"nodeIds\": []}; pageIndex is 1-based. Never invent hashes or file paths.".to_string(),
@@ -509,15 +512,61 @@ pub(crate) fn authoring_candidate_output_contract(modality: &str) -> Value {
         "jsonOnly": true,
         "modality": modality,
         "shape": shape,
+        "taskPresentationRules": task_presentation_rules,
+        "presentationExamples": {
+            "tfng": {
+                "taskGroup": {"taskType": "true_false_not_given"},
+                "responseGroup": {
+                    "kind": "choice",
+                    "slotIds": ["cloud-q1"],
+                    "options": [
+                        {"optionId": "cloud-tf-true", "label": "TRUE", "content": [{"type": "text", "id": "cloud-tf-true-text", "text": "TRUE"}]},
+                        {"optionId": "cloud-tf-false", "label": "FALSE", "content": [{"type": "text", "id": "cloud-tf-false-text", "text": "FALSE"}]},
+                        {"optionId": "cloud-tf-ng", "label": "NOT GIVEN", "content": [{"type": "text", "id": "cloud-tf-ng-text", "text": "NOT GIVEN"}]}
+                    ],
+                    "assignment": "per_slot"
+                },
+                "answerSlot": {"hostType": "prompt", "interaction": "radio", "constraints": {"acceptedOptionLabels": ["TRUE", "FALSE", "NOT GIVEN"]}}
+            },
+            "headings": {
+                "taskGroup": {
+                    "taskType": "matching_headings",
+                    "optionBank": {"optionBankId": "cloud-heading-bank", "scope": "task_group", "allowReuse": false,
+                        "options": [
+                            {"optionId": "cloud-heading-i", "label": "i", "content": [{"type": "text", "id": "cloud-heading-i-text", "text": "Heading text"}]},
+                            {"optionId": "cloud-heading-iv", "label": "iv", "content": [{"type": "text", "id": "cloud-heading-iv-text", "text": "Another heading"}]}
+                        ]}
+                },
+                "responseGroup": {"kind": "matching", "slotIds": ["cloud-q14"], "optionBankRef": "cloud-heading-bank", "assignment": "per_slot"},
+                "answerSlot": {"hostNodeId": "local-passage-A", "hostType": "passage_paragraph", "interaction": "dragdrop"}
+            },
+            "summaryWordBank": {
+                "taskGroup": {
+                    "taskType": "summary_completion",
+                    "stimulus": [{"type": "paragraph", "id": "cloud-summary-paragraph", "children": [{"type": "text", "id": "cloud-summary-text", "text": "The summary contains a blank."}]}],
+                    "optionBank": {"optionBankId": "cloud-summary-bank", "scope": "task_group", "allowReuse": false,
+                        "options": [{"optionId": "cloud-word-a", "label": "A", "content": [{"type": "text", "id": "cloud-word-a-text", "text": "word"}]}]}
+                },
+                "responseGroup": {"kind": "matching", "slotIds": ["cloud-q26"], "optionBankRef": "cloud-summary-bank", "assignment": "per_slot"},
+                "answerSlot": {"hostNodeId": "cloud-summary-paragraph", "hostType": "paragraph", "interaction": "dragdrop"}
+            },
+            "chooseTwo": {
+                "taskGroup": {"taskType": "multiple_choice", "optionBank": {"optionBankId": "cloud-mc-bank", "scope": "task_group", "allowReuse": false,
+                    "options": [{"optionId": "cloud-mc-a", "label": "A", "content": [{"type": "text", "id": "cloud-mc-a-text", "text": "Option A"}]}]}},
+                "responseGroup": {"kind": "choice", "slotIds": ["cloud-q30"], "optionBankRef": "cloud-mc-bank", "assignment": "unordered_set", "cardinality": {"min": 2, "max": 2, "exact": 2}},
+                "answerSlot": {"hostType": "prompt", "interaction": "checkbox"},
+                "answerKey": {"kind": "option", "labels": ["A", "C"], "assignment": "unordered_set"}
+            }
+        },
         "enums": {
             "taskType": ["single_choice", "multiple_choice", "true_false_not_given", "yes_no_not_given", "matching_information", "matching_headings", "matching_features", "matching_sentence_endings", "classification", "sentence_completion", "summary_completion", "note_completion", "table_completion", "form_completion", "flowchart_completion", "diagram_label_completion", "plan_map_label_completion", "short_answer"],
             "displayRange.kind": ["range", "set"],
-            "optionBank.scope": ["task_group", "response_group"],
+            "optionBank.scope": ["task_group", "document"],
             "responseGroup.kind": ["choice", "text_entry", "matching", "diagram_hotspot", "composite"],
             "responseGroup.assignment": ["per_slot", "unordered_set", "ordered_slots"],
             "responseGroup.scoringPolicy": ["per_slot_binary", "per_slot_ielts_normalized", "exact_set", "all_or_nothing"],
             "responseGroup.duplicatePolicy": ["reject_submission", "ignore_duplicates"],
-            "answerSlot.hostType": ["prompt", "paragraph", "table_cell", "figure_hotspot", "flow_step"],
+            "answerSlot.hostType": ["prompt", "paragraph", "table_cell", "figure_hotspot", "flow_step", "passage_paragraph"],
             "answerSlot.interaction": ["radio", "checkbox", "text", "select", "dragdrop", "hotspot"],
             "answerSlot.participation": ["scoring", "example", "non_scoring"],
             "answerKey.kind": ["text", "option", "unresolved"],
@@ -560,6 +609,7 @@ pub(crate) fn make_cloud_authoring_candidate_input(
         "pdfPath": pdf_path.to_string_lossy(),
         "pages": extraction.get("pages").cloned().unwrap_or_else(|| json!([])),
         "extractionWarnings": extraction.get("warnings").cloned().unwrap_or_else(|| json!([])),
+        "sourceParagraphs": {"paragraphMap": {}, "paragraphs": []},
         "outputContract": authoring_candidate_output_contract(modality)
     })
 }

@@ -12,23 +12,23 @@
     },
     "ContentDocV2": {
       "path": "content-doc-v2.schema.json",
-      "sha256": "98a979be823710a3231118ab6e6b9c27e16e7664c0b204b983a12cbf41f97de2"
+      "sha256": "865f02f1cc669da44e5a69684ec2f69e41604c9bfea3c130892a0125e03fe0b3"
     },
     "IeltsAuthoringIRV2": {
       "path": "ielts-authoring-ir-v2.schema.json",
-      "sha256": "2b0d700f53ff8130d471460d0f424a6eb1d940ded80a69bb2222944ba1ddbcc2"
+      "sha256": "e5c7ec0b66f32890d03f103784adf7c031e0bac863bee83819108411fad11029"
     },
     "QualityReportV2": {
       "path": "quality-report-v2.schema.json",
-      "sha256": "79931b1602bbb017dbad189c4ed15adad781b302681275f407a525dd338ce0f3"
+      "sha256": "3d016919f0620d9cd2f64b46f2e6e149409d7f566477df4c0893e8e0197e57d1"
     },
     "ReadingExamSourceV2": {
       "path": "reading-exam-source-v2.schema.json",
-      "sha256": "172bd2f129071a1fd81186bf5c15a9d5752686d43976745d3588179fa5286ac3"
+      "sha256": "d8744e11560a3238c1735d36182108082b62cb522ac26df18f691a08f27e00ad"
     },
     "ListeningExamSourceV1": {
       "path": "listening-exam-source-v1.schema.json",
-      "sha256": "1cf9eaef4f4d46219c896b4134c1cdc21abdc88cccf846e9050390f6b94dbbf7"
+      "sha256": "c757ddbe6accefc5b6d4c742f1fe2b276ef69f00d27fe8e1aa07a7957e74b63d"
     },
     "ListeningAttemptV1": {
       "path": "listening-attempt-v1.schema.json",

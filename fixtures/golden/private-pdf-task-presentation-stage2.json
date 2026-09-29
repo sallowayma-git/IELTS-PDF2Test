@@ -1,0 +1,126 @@
+{
+  "schemaVersion": "Stage2PrivatePdfTaskPresentationV1",
+  "manualReview": {
+    "physicalPdfCount": 9,
+    "previousOfficialManifestCount": 8,
+    "discrepancy": "Stage 2 names listening-vol7-t9.pdf although the earlier official manifest and acceptance spec contain eight PDFs. This gate covers all nine named physical PDFs.",
+    "source": "The task ranges, paragraph labels, option instructions, and page references were checked against rendered source PDF pages.",
+    "sourcePagesAreOneBased": true
+  },
+  "fixtures": [
+    {
+      "fixtureId": "chili-peppers",
+      "sourcePath": "fixtures/golden/private-real/chili-peppers.pdf",
+      "metadataPath": "fixtures/golden/metadata/chili-peppers.json",
+      "sourcePages": [3, 4],
+      "paragraphLabels": [],
+      "tasks": [
+        {"range": [1, 6], "taskType": "true_false_not_given", "variant": "default", "presentation": "radio_list"},
+        {"range": [7, 13], "taskType": "note_completion", "variant": "default", "presentation": "inline_text"}
+      ]
+    },
+    {
+      "fixtureId": "conformity",
+      "sourcePath": "fixtures/golden/private-real/conformity.pdf",
+      "metadataPath": "fixtures/golden/metadata/conformity.json",
+      "sourcePages": [3, 4],
+      "paragraphLabels": [],
+      "tasks": [
+        {"range": [27, 30], "taskType": "yes_no_not_given", "variant": "default", "presentation": "radio_list"},
+        {"range": [31, 35], "taskType": "summary_completion", "variant": "default", "presentation": "inline_text"},
+        {"range": [36, 40], "taskType": "note_completion", "variant": "default", "presentation": "inline_text"}
+      ]
+    },
+    {
+      "fixtureId": "fishbourne-roman-palace",
+      "sourcePath": "fixtures/golden/private-real/fishbourne-roman-palace.pdf",
+      "metadataPath": "fixtures/golden/metadata/fishbourne-roman-palace.json",
+      "sourcePages": [3, 4],
+      "paragraphLabels": [],
+      "tasks": [
+        {"range": [1, 6], "taskType": "true_false_not_given", "variant": "default", "presentation": "radio_list"},
+        {"range": [7, 13], "taskType": "note_completion", "variant": "default", "presentation": "inline_text"}
+      ]
+    },
+    {
+      "fixtureId": "listening-to-the-ocean",
+      "sourcePath": "fixtures/golden/private-real/listening-to-the-ocean.pdf",
+      "metadataPath": "fixtures/golden/metadata/listening-to-the-ocean.json",
+      "sourcePages": [1, 2, 3, 4],
+      "paragraphLabels": ["A", "B", "C", "D", "E", "F", "G"],
+      "tasks": [
+        {"range": [1, 4], "taskType": "true_false_not_given", "variant": "default", "presentation": "radio_list"},
+        {"range": [5, 8], "taskType": "matching_information", "variant": "default", "presentation": "radio_matrix", "paragraphLabels": ["A", "B", "C", "D", "E", "F", "G"]},
+        {"range": [9, 13], "taskType": "single_choice", "variant": "default", "presentation": "radio_list"}
+      ]
+    },
+    {
+      "fixtureId": "listening-vol7-t9",
+      "sourcePath": "fixtures/golden/private-real/listening-vol7-t9.pdf",
+      "metadataPath": "fixtures/golden/metadata/listening-vol7-t9.json",
+      "sourcePages": [2, 3, 4, 5, 6, 7, 8],
+      "paragraphLabels": [],
+      "tasks": [
+        {"range": [1, 4], "taskType": "form_completion", "variant": "default", "presentation": "inline_text"},
+        {"range": [5, 7], "taskType": "single_choice", "variant": "default", "presentation": "radio_list"},
+        {"range": [8, 10], "taskType": "form_completion", "variant": "default", "presentation": "inline_text"},
+        {"range": [11, 16], "taskType": "single_choice", "variant": "default", "presentation": "radio_list"},
+        {"range": [17, 20], "taskType": "matching_features", "variant": "default", "presentation": "row_dropzone"},
+        {"range": [21, 25], "taskType": "matching_features", "variant": "default", "presentation": "row_dropzone"},
+        {"range": [26, 30], "taskType": "single_choice", "variant": "default", "presentation": "radio_list"},
+        {"range": [31, 40], "taskType": "note_completion", "variant": "default", "presentation": "inline_text"}
+      ]
+    },
+    {
+      "fixtureId": "organisational-design",
+      "sourcePath": "fixtures/golden/private-real/organisational-design.pdf",
+      "metadataPath": "fixtures/golden/metadata/organisational-design.json",
+      "sourcePages": [4, 5, 6],
+      "paragraphLabels": [],
+      "tasks": [
+        {"range": [14, 15], "taskType": "multiple_choice", "variant": "default", "presentation": "checkbox_set", "chooseCount": 2},
+        {"range": [16, 17], "taskType": "multiple_choice", "variant": "default", "presentation": "checkbox_set", "chooseCount": 2},
+        {"range": [18, 19], "taskType": "multiple_choice", "variant": "default", "presentation": "checkbox_set", "chooseCount": 2},
+        {"range": [20, 21], "taskType": "multiple_choice", "variant": "default", "presentation": "checkbox_set", "chooseCount": 2},
+        {"range": [22, 26], "taskType": "matching_features", "variant": "default", "presentation": "row_dropzone"}
+      ]
+    },
+    {
+      "fixtureId": "petri-dish",
+      "sourcePath": "fixtures/golden/private-real/petri-dish.pdf",
+      "metadataPath": "fixtures/golden/metadata/petri-dish.json",
+      "sourcePages": [3, 4, 5],
+      "paragraphLabels": ["A", "B", "C", "D", "E", "F"],
+      "sourceNotes": ["The printed answer-box range says 29–32 while the actual summary blanks are Q26–29."],
+      "tasks": [
+        {"range": [14, 19], "taskType": "matching_information", "variant": "default", "presentation": "radio_matrix", "paragraphLabels": ["A", "B", "C", "D", "E", "F"]},
+        {"range": [20, 25], "taskType": "matching_features", "variant": "default", "presentation": "row_dropzone"},
+        {"range": [26, 29], "taskType": "summary_completion", "variant": "default", "presentation": "inline_text"}
+      ]
+    },
+    {
+      "fixtureId": "sleep-study",
+      "sourcePath": "fixtures/golden/private-real/sleep-study.pdf",
+      "metadataPath": "fixtures/golden/metadata/sleep-study.json",
+      "sourcePages": [3, 4],
+      "paragraphLabels": [],
+      "sourceNotes": ["Q3 wording was visually checked; the source answer appendix gives NOT GIVEN."],
+      "tasks": [
+        {"range": [1, 4], "taskType": "true_false_not_given", "variant": "default", "presentation": "radio_list"},
+        {"range": [5, 13], "taskType": "note_completion", "variant": "default", "presentation": "inline_text"}
+      ]
+    },
+    {
+      "fixtureId": "western-celebrity",
+      "sourcePath": "fixtures/golden/private-real/western-celebrity.pdf",
+      "metadataPath": "fixtures/golden/metadata/western-celebrity.json",
+      "sourcePages": [2, 3, 4],
+      "paragraphLabels": ["A", "B", "C", "D", "E", "F", "G"],
+      "tasks": [
+        {"range": [14, 20], "taskType": "matching_headings", "variant": "default", "presentation": "paragraph_dropzone", "paragraphLabels": ["A", "B", "C", "D", "E", "F", "G"], "questionParagraphTargets": {"14": "A", "15": "B", "16": "C", "17": "D", "18": "E", "19": "F", "20": "G"}},
+        {"range": [21, 23], "taskType": "matching_features", "variant": "default", "presentation": "row_dropzone"},
+        {"range": [24, 26], "taskType": "summary_completion", "variant": "default", "presentation": "inline_text", "contextParagraphLabels": ["F", "G"]}
+      ]
+    }
+  ]
+}

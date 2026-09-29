@@ -91,6 +91,7 @@
             },
             "align": { "oneOf": [{ "$ref": "#/$defs/contentAlign" }, { "$ref": "#/$defs/paragraphAlign" }] },
             "indentLevel": { "type": "integer", "minimum": 0 },
+            "paragraphLabel": { "type": "string", "minLength": 1, "description": "Passage paragraph letter (A/B/C...); only passage paragraphs carry it." },
             "rows": { "type": "array", "items": { "$ref": "#/$defs/tableRow" } },
             "cells": { "type": "array", "items": { "$ref": "#/$defs/tableCell" } },
             "rowSpan": { "type": "integer", "minimum": 1 },

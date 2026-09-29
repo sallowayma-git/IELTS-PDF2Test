@@ -131,7 +131,7 @@ function buildVisionAnswerPrompt(input) {
   return [
     "You are extracting the answer key from IELTS Reading PDF page images.",
     "Return JSON only with shape {\"answers\":{\"8\":\"answer text\"},\"confidence\":0.0,\"warnings\":[],\"evidence\":[{\"questionNumber\":\"8\",\"pageIndex\":1,\"quote\":\"short visible source text\"}]} .",
-    "Use question number strings without q prefix. Normalize TRUE/FALSE/NOT GIVEN/YES/NO and single-letter options to uppercase.",
+    "Use question number strings without q prefix. Normalize TRUE/FALSE/NOT GIVEN/YES/NO to uppercase. Uppercase A-Z option labels only when the source uses a Latin-letter bank; preserve lowercase Roman numeral labels exactly as printed.",
     "Multi-answer questions may use arrays. Do not invent answers; omit uncertain numbers and add a warning.",
     `Job: ${JSON.stringify(input.job ?? {})}`,
     `Output contract: ${JSON.stringify(input.outputContract ?? {})}`

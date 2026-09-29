@@ -19,6 +19,10 @@ const ACCEPTANCE_SPEC: &str = "fixtures/golden/phase4-eight-pdf-acceptance.json"
 const MANIFEST: &str = "fixtures/golden/manifest.json";
 const REPORT: &str = "tmp/phase4-real-pdf-acceptance/report.json";
 const PHASE5_REPORT: &str = "tmp/phase5-real-pdf-acceptance/report.json";
+const STAGE2_PRESENTATION_SPEC: &str =
+    "fixtures/golden/private-pdf-task-presentation-stage2.json";
+const STAGE2_PRESENTATION_REPORT: &str =
+    "tmp/stage2-private-pdf-task-presentation/report.json";
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
@@ -1288,12 +1292,6 @@ fn process_fixture(root: &Path, fixture_id: &str, fixture: &Value) -> Result<Val
             .and_then(Value::as_str)
             .ok_or_else(|| format!("{fixture_id}: metadataPath missing"))?,
     );
-    let baseline_path = root.join(
-        fixture
-            .get("baselinePath")
-            .and_then(Value::as_str)
-            .ok_or_else(|| format!("{fixture_id}: baselinePath missing"))?,
-    );
     let source_path = root.join(
         fixture
             .get("sourcePath")
@@ -1301,7 +1299,15 @@ fn process_fixture(root: &Path, fixture_id: &str, fixture: &Value) -> Result<Val
             .ok_or_else(|| format!("{fixture_id}: sourcePath missing"))?,
     );
     let metadata = read_json(&metadata_path)?;
-    let baseline = read_json(&baseline_path)?;
+    let baseline = if let Some(baseline_path) = fixture.get("baselinePath").and_then(Value::as_str)
+    {
+        read_json(&root.join(baseline_path))?
+    } else {
+        json!({
+            "source": metadata.get("source").cloned().unwrap_or(Value::Null),
+            "observed": metadata.pointer("/baseline/observed").cloned().unwrap_or(Value::Null)
+        })
+    };
     let mut checks = Vec::new();
     let actual_hash = file_sha256(&source_path)?;
     let actual_size = fs::metadata(&source_path)
@@ -1492,6 +1498,252 @@ fn process_fixture(root: &Path, fixture_id: &str, fixture: &Value) -> Result<Val
         },
         "checks": checks
     }))
+}
+
+fn expected_task_numbers(task: &Value) -> Vec<u32> {
+    let Some(range) = task.get("range").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let Some(start) = range.first().and_then(Value::as_u64) else {
+        return Vec::new();
+    };
+    let end = range.get(1).and_then(Value::as_u64).unwrap_or(start);
+    (start..=end).map(|number| number as u32).collect()
+}
+
+fn actual_task_numbers(group: &Value) -> Vec<u32> {
+    group
+        .pointer("/instructionSignature/expectedQuestionNumbers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_u64)
+        .map(|number| number as u32)
+        .collect()
+}
+
+fn presentation_rule_name<T: serde::Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(ToString::to_string))
+        .unwrap_or_default()
+}
+
+fn stage2_task_contract_failures(expected_fixture: &Value, authoring: &Value) -> Vec<Value> {
+    use crate::schema::task_presentation::{
+        rule_for, GroupGranularity, OptionReusePolicy, OptionSource,
+    };
+
+    let fixture_id = expected_fixture
+        .get("fixtureId")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let groups = authoring
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let mut failures = Vec::new();
+    let expected_tasks = expected_fixture
+        .get("tasks")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if groups.len() != expected_tasks.len() {
+        failures.push(json!({
+            "fixtureId":fixture_id,
+            "aspect":"task_group_count",
+            "expected":expected_tasks.len(),
+            "actual":groups.len()
+        }));
+    }
+
+    for expected in expected_tasks {
+        let numbers = expected_task_numbers(expected);
+        let expected_type = expected
+            .get("taskType")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let matches = groups
+            .iter()
+            .filter(|group| actual_task_numbers(group) == numbers)
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            failures.push(json!({
+                "fixtureId":fixture_id,
+                "range":expected.get("range"),
+                "aspect":"question_range_binding",
+                "expectedMatchCount":1,
+                "actualMatchCount":matches.len(),
+                "actualRanges":groups.iter().map(actual_task_numbers).collect::<Vec<_>>()
+            }));
+            continue;
+        }
+        let group = matches[0];
+        let actual_type = group.get("taskType").and_then(Value::as_str).unwrap_or_default();
+        let has_bank = group.get("optionBank").is_some_and(Value::is_object);
+        let Ok(task_type) = serde_json::from_value::<crate::schema::ielts_authoring_v2::TaskTypeV2>(
+            Value::String(actual_type.to_string()),
+        ) else {
+            failures.push(json!({"fixtureId":fixture_id,"range":expected.get("range"),"aspect":"task_type_unrecognized","actual":actual_type}));
+            continue;
+        };
+        let rule = rule_for(&task_type, has_bank);
+        let response_groups = group
+            .get("responseGroups")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let slots = authoring
+            .get("answerSlots")
+            .and_then(Value::as_object);
+        let actual_group_count = response_groups.len();
+        let expected_group_count = match rule.group_granularity {
+            GroupGranularity::PerSlot => numbers.len(),
+            GroupGranularity::TaskGroup => 1,
+        };
+        let response_slots = response_groups
+            .iter()
+            .flat_map(|response| response.get("slotIds").and_then(Value::as_array))
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        let mut expected_slots = numbers.iter().map(|number| format!("q{number}")).collect::<Vec<_>>();
+        expected_slots.sort();
+        let mut sorted_response_slots = response_slots.clone();
+        sorted_response_slots.sort();
+        if actual_type != expected_type {
+            failures.push(json!({"fixtureId":fixture_id,"range":expected.get("range"),"aspect":"task_type","expected":expected_type,"actual":actual_type}));
+        }
+        if rule.variant != expected.get("variant").and_then(Value::as_str).unwrap_or_default() {
+            failures.push(json!({"fixtureId":fixture_id,"range":expected.get("range"),"aspect":"task_variant","expected":expected.get("variant"),"actual":rule.variant}));
+        }
+        let actual_presentation = presentation_rule_name(&rule.presentation);
+        if actual_presentation != expected.get("presentation").and_then(Value::as_str).unwrap_or_default() {
+            failures.push(json!({"fixtureId":fixture_id,"range":expected.get("range"),"aspect":"presentation","expected":expected.get("presentation"),"actual":actual_presentation}));
+        }
+        if actual_group_count != expected_group_count || sorted_response_slots != expected_slots {
+            failures.push(json!({
+                "fixtureId":fixture_id,
+                "range":expected.get("range"),
+                "aspect":"response_group_granularity",
+                "expectedGroupCount":expected_group_count,
+                "actualGroupCount":actual_group_count,
+                "expectedSlotIds":expected_slots,
+                "actualSlotIds":sorted_response_slots
+            }));
+        }
+        for response in response_groups {
+            if response.get("kind").and_then(Value::as_str)
+                != Some(presentation_rule_name(&rule.response_kind).as_str())
+                || response.get("assignment").and_then(Value::as_str)
+                    != Some(presentation_rule_name(&rule.assignment).as_str())
+            {
+                failures.push(json!({"fixtureId":fixture_id,"range":expected.get("range"),"aspect":"response_group_contract","expectedKind":presentation_rule_name(&rule.response_kind),"expectedAssignment":presentation_rule_name(&rule.assignment),"actual":response}));
+            }
+        }
+        if response_slots.len() != expected_slots.len() {
+            failures.push(json!({"fixtureId":fixture_id,"range":expected.get("range"),"aspect":"response_slot_uniqueness","expected":expected_slots,"actual":response_slots}));
+        }
+        if let Some(expected_count) = expected.get("chooseCount").and_then(Value::as_u64) {
+            for response in response_groups {
+                if response.pointer("/cardinality/exact").and_then(Value::as_u64)
+                    != Some(expected_count)
+                    || response.get("assignment").and_then(Value::as_str) != Some("unordered_set")
+                {
+                    failures.push(json!({"fixtureId":fixture_id,"range":expected.get("range"),"aspect":"choose_count","expected":expected_count,"actual":response.get("cardinality")}));
+                }
+            }
+        }
+        let option_reuse_expected = match rule.option_reuse_policy {
+            OptionReusePolicy::Always => true,
+            OptionReusePolicy::Never | OptionReusePolicy::NotApplicable => false,
+            OptionReusePolicy::InstructionControlled => group
+                .pointer("/instructionSignature/allowOptionReuse")
+                .and_then(Value::as_bool)
+                .unwrap_or(rule.option_reuse_default),
+        };
+        for response in response_groups {
+            if response.get("allowOptionReuse").and_then(Value::as_bool)
+                != Some(option_reuse_expected)
+            {
+                failures.push(json!({"fixtureId":fixture_id,"range":expected.get("range"),"aspect":"option_reuse","expected":option_reuse_expected,"actual":response.get("allowOptionReuse")}));
+            }
+        }
+        if rule.option_source == OptionSource::OptionBank {
+            if !has_bank || group.pointer("/optionBank/scope").and_then(Value::as_str) != Some("task_group") {
+                failures.push(json!({"fixtureId":fixture_id,"range":expected.get("range"),"aspect":"option_bank_scope_or_missing","actual":group.get("optionBank")}));
+            }
+        }
+        for (slot_id, slot) in slots.into_iter().flatten() {
+            if numbers.iter().any(|number| slot_id == &format!("q{number}"))
+                && (slot.get("interaction").and_then(Value::as_str)
+                    != Some(presentation_rule_name(&rule.interaction).as_str())
+                    || !rule.host_types.iter().any(|host| {
+                        slot.get("hostType").and_then(Value::as_str)
+                            == Some(presentation_rule_name(host).as_str())
+                    }))
+            {
+                failures.push(json!({"fixtureId":fixture_id,"range":expected.get("range"),"slotId":slot_id,"aspect":"slot_presentation","expectedInteraction":presentation_rule_name(&rule.interaction),"expectedHosts":rule.host_types.iter().map(presentation_rule_name).collect::<Vec<_>>(),"actual":slot}));
+            }
+        }
+        for label in expected
+            .get("paragraphLabels")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            if authoring.pointer(&format!("/passage/paragraphMap/{label}")).and_then(Value::as_str).is_none() {
+                failures.push(json!({"fixtureId":fixture_id,"range":expected.get("range"),"aspect":"paragraph_label_missing","label":label}));
+            }
+        }
+        for (number, label_value) in expected
+            .get("questionParagraphTargets")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+        {
+            let label = label_value.as_str().unwrap_or_default();
+            let slot_id = format!("q{number}");
+            let mapped_id = authoring.pointer(&format!("/passage/paragraphMap/{label}")).and_then(Value::as_str);
+            let slot = authoring.pointer(&format!("/answerSlots/{slot_id}"));
+            if slot.and_then(|slot| slot.get("hostType")).and_then(Value::as_str) != Some("passage_paragraph")
+                || slot.and_then(|slot| slot.get("hostNodeId")).and_then(Value::as_str) != mapped_id
+            {
+                failures.push(json!({"fixtureId":fixture_id,"range":expected.get("range"),"aspect":"heading_paragraph_anchor","question":number,"expectedLabel":label,"expectedNodeId":mapped_id,"actual":slot}));
+            }
+        }
+    }
+
+    let expected_labels = expected_fixture
+        .get("paragraphLabels")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let actual_map = authoring
+        .pointer("/passage/paragraphMap")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let mut actual_labels = actual_map.keys().cloned().collect::<Vec<_>>();
+    let mut sorted_expected = expected_labels.iter().filter_map(Value::as_str).map(ToString::to_string).collect::<Vec<_>>();
+    actual_labels.sort();
+    sorted_expected.sort();
+    if actual_labels != sorted_expected {
+        failures.push(json!({"fixtureId":fixture_id,"aspect":"paragraph_map_labels","expected":sorted_expected,"actual":actual_labels}));
+    }
+    let content = authoring.pointer("/passage/content").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+    for (label, node_id) in actual_map {
+        let node = content.iter().find(|node| node.get("id").and_then(Value::as_str) == node_id.as_str());
+        if node.and_then(|node| node.get("paragraphLabel")).and_then(Value::as_str) != Some(label.as_str())
+            || node.and_then(|node| node.get("sourceAnchors")).and_then(Value::as_array).is_none_or(Vec::is_empty)
+        {
+            failures.push(json!({"fixtureId":fixture_id,"aspect":"paragraph_map_source_anchor","label":label,"nodeId":node_id,"actual":node}));
+        }
+    }
+    failures
 }
 
 fn first_text_node_id(value: &Value) -> Option<String> {
@@ -2010,14 +2262,14 @@ fn chili_real_pdf_reaches_all_declared_acceptance_truth() {
     let shadow_path =
         root.join("tmp/phase4-real-pdf-acceptance/chili-peppers/authoring-ir-v2.shadow.json");
     let shadow = read_json(&shadow_path).expect("Chili V2 shadow must be readable");
-    let group_1_instructions = task_group_instruction_text(&shadow, "group-1")
-        .expect("group-1 instructions node");
+    let group_1_instructions =
+        task_group_instruction_text(&shadow, "group-1").expect("group-1 instructions node");
     assert!(
         group_1_instructions.contains("NOT GIVEN if there is no information on this"),
         "group-1 instructions must keep the full NOT GIVEN clause, got: {group_1_instructions:?}"
     );
-    let group_2_instructions = task_group_instruction_text(&shadow, "group-2")
-        .expect("group-2 instructions node");
+    let group_2_instructions =
+        task_group_instruction_text(&shadow, "group-2").expect("group-2 instructions node");
     assert!(
         group_2_instructions
             .trim_end()
@@ -2204,6 +2456,119 @@ fn petri_real_pdf_reaches_all_declared_acceptance_truth() {
 }
 
 #[test]
+fn stage2_nine_private_pdfs_match_manual_task_presentation_and_anchor_expectations() {
+    let root = repo_root();
+    let spec = read_json(&root.join(STAGE2_PRESENTATION_SPEC))
+        .expect("Stage 2 source-audited presentation spec must load");
+    let expected_fixtures = spec
+        .get("fixtures")
+        .and_then(Value::as_array)
+        .expect("Stage 2 fixtures must be an array");
+    assert_eq!(expected_fixtures.len(), 9, "all nine named PDFs must remain covered");
+    assert_eq!(
+        spec.pointer("/manualReview/physicalPdfCount").and_then(Value::as_u64),
+        Some(9)
+    );
+    assert_eq!(
+        spec.pointer("/manualReview/previousOfficialManifestCount").and_then(Value::as_u64),
+        Some(8)
+    );
+    let required_paths = expected_fixtures
+        .iter()
+        .filter_map(|fixture| fixture.get("sourcePath").and_then(Value::as_str))
+        .map(|path| root.join(path))
+        .collect::<Vec<_>>();
+    if !crate::test_support::private_corpus_ready(
+        "stage2_nine_private_pdfs_match_manual_task_presentation_and_anchor_expectations",
+        &required_paths,
+    ) {
+        return;
+    }
+
+    let manifest = read_json(&root.join(MANIFEST)).expect("golden manifest must load");
+    let manifest_fixtures = manifest
+        .get("fixtures")
+        .and_then(Value::as_array)
+        .expect("manifest fixtures must be an array");
+    let mut results = Vec::new();
+    let mut failures = Vec::new();
+    for expected_fixture in expected_fixtures {
+        let fixture_id = expected_fixture
+            .get("fixtureId")
+            .and_then(Value::as_str)
+            .expect("fixtureId");
+        let metadata_path = expected_fixture
+            .get("metadataPath")
+            .and_then(Value::as_str)
+            .expect("metadataPath");
+        let manifest_fixture = manifest_fixtures
+            .iter()
+            .find(|fixture| fixture.get("fixtureId").and_then(Value::as_str) == Some(fixture_id));
+        let fixture = if let Some(fixture) = manifest_fixture {
+            fixture.clone()
+        } else {
+            let metadata = read_json(&root.join(metadata_path))
+                .unwrap_or_else(|error| panic!("{fixture_id} metadata must load: {error}"));
+            json!({
+                "fixtureId":fixture_id,
+                "sourcePath":expected_fixture.get("sourcePath"),
+                "metadataPath":metadata_path,
+                "originalName":metadata.pointer("/source/originalName"),
+                "sha256":metadata.pointer("/source/sha256"),
+                "sizeBytes":metadata.pointer("/source/sizeBytes")
+            })
+        };
+        match process_fixture(&root, fixture_id, &fixture) {
+            Ok(process_result) => {
+                let shadow_path = root
+                    .join("tmp/phase4-real-pdf-acceptance")
+                    .join(fixture_id)
+                    .join("authoring-ir-v2.shadow.json");
+                match read_json(&shadow_path) {
+                    Ok(shadow) => {
+                        failures.extend(stage2_task_contract_failures(expected_fixture, &shadow));
+                        results.push(json!({
+                            "fixtureId":fixture_id,
+                            "processFixturePassed":process_result.get("passed"),
+                            "sourcePages":expected_fixture.get("sourcePages"),
+                            "manualNotes":expected_fixture.get("sourceNotes"),
+                            "taskGroupCount":shadow.get("taskGroups").and_then(Value::as_array).map(Vec::len),
+                            "paragraphLabels":shadow.pointer("/passage/paragraphMap")
+                                .and_then(Value::as_object).map(|map| map.keys().cloned().collect::<Vec<_>>())
+                        }));
+                    }
+                    Err(error) => failures.push(json!({
+                        "fixtureId":fixture_id,
+                        "aspect":"shadow_artifact_missing",
+                        "error":error
+                    })),
+                }
+            }
+            Err(error) => failures.push(json!({
+                "fixtureId":fixture_id,
+                "aspect":"real_pdf_pipeline_error",
+                "error":error
+            })),
+        }
+    }
+    let report = json!({
+        "schemaVersion":"Stage2PrivatePdfTaskPresentationReportV1",
+        "passed":failures.is_empty(),
+        "fixtureCount":results.len(),
+        "manualReview":spec.get("manualReview"),
+        "fixtures":results,
+        "failures":failures.clone()
+    });
+    write_json(&root.join(STAGE2_PRESENTATION_REPORT), &report)
+        .expect("Stage 2 presentation report must be written");
+    assert!(
+        failures.is_empty(),
+        "Stage 2 nine-PDF task-presentation corpus failed; inspect {}: {failures:#?}",
+        root.join(STAGE2_PRESENTATION_REPORT).display()
+    );
+}
+
+#[test]
 // 存量缺口（干净 HEAD 同样失败，非本轮回归）：八份真实 PDF 的答案页是图片而链路
 // 尚未实现答案解析（无 OCR），v2 探针报 RUNTIME_ANSWER_UNRESOLVED →
 // RUNTIME_COMPILER_FAILED，被 QUALITY_BLOCKER_POLICY 拦截（13×ANSWER_KEY_MISSING_SLOT
@@ -2318,14 +2683,14 @@ fn phase4_eight_real_pdfs_preserve_instruction_zone_structure() {
     let mut failures: Vec<String> = Vec::new();
     for fixture_id_value in fixture_ids.iter().filter_map(Value::as_str) {
         let fixture_id = fixture_id_value.to_string();
-        let fixture = match fixtures
-            .iter()
-            .find(|fixture| {
-                fixture.get("fixtureId").and_then(Value::as_str) == Some(fixture_id.as_str())
-            }) {
+        let fixture = match fixtures.iter().find(|fixture| {
+            fixture.get("fixtureId").and_then(Value::as_str) == Some(fixture_id.as_str())
+        }) {
             Some(fixture) => fixture,
             None => {
-                failures.push(format!("{fixture_id}: fixture missing from golden manifest"));
+                failures.push(format!(
+                    "{fixture_id}: fixture missing from golden manifest"
+                ));
                 continue;
             }
         };
@@ -2334,7 +2699,9 @@ fn phase4_eight_real_pdfs_preserve_instruction_zone_structure() {
             failures.push(format!("{fixture_id}: chain failed: {error}"));
             continue;
         }
-        let output_dir = root.join("tmp/phase4-real-pdf-acceptance").join(&fixture_id);
+        let output_dir = root
+            .join("tmp/phase4-real-pdf-acceptance")
+            .join(&fixture_id);
         let shadow = match read_json(&output_dir.join("authoring-ir-v2.shadow.json")) {
             Ok(shadow) => shadow,
             Err(error) => {
@@ -2353,12 +2720,14 @@ fn phase4_eight_real_pdfs_preserve_instruction_zone_structure() {
                 .expect("baselinePath"),
         );
         let baseline = read_json(&baseline_path).expect("baseline must load");
-        let metadata = read_json(&root.join(
-            fixture
-                .get("metadataPath")
-                .and_then(Value::as_str)
-                .expect("metadataPath"),
-        ))
+        let metadata = read_json(
+            &root.join(
+                fixture
+                    .get("metadataPath")
+                    .and_then(Value::as_str)
+                    .expect("metadataPath"),
+            ),
+        )
         .expect("metadata must load");
 
         // c) v1 摘要一致（复用 v1_summary + baseline.observed 的既有比较语义）。

@@ -101,6 +101,11 @@ export function compileStructureAction(current: IeltsAuthoringIRV2, action: Exam
       slot: { ...existing, slotId, questionNumber, displayLabel: String(questionNumber), hostNodeId: location.parentId ?? existing.hostNodeId,
         sourceAnchors: [], provenanceStatus: "manual", confidence: 1 }, value: { kind: "unresolved" }, expression: expression([...numbers, questionNumber]) };
   }
+  if (action.type === "answer-slot.host.set") {
+    const slot = current.answerSlots[action.slotId];
+    if (!slot || !Object.values(current.passage?.paragraphMap ?? {}).includes(action.hostNodeId)) return;
+    return { op: "setAnswerSlotHost", slotId: action.slotId, hostNodeId: action.hostNodeId };
+  }
   const task = current.taskGroups.find((task) => task.responseGroups.some((group) => group.slotIds.includes(action.slotId)));
   const group = task?.responseGroups.find((group) => group.slotIds.includes(action.slotId));
   if (!task || !group || group.slotIds.length <= 1) throw new Error("每题至少保留一个答案位。");

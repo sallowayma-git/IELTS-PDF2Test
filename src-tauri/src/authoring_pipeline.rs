@@ -1276,84 +1276,28 @@ fn is_dynamic_answer_block(block: &Value) -> bool {
 }
 
 fn detect_dynamic_group_kind(text: &str) -> &'static str {
-    let lower = text.to_lowercase();
-    let normalized = normalized_dynamic_instruction_text(text);
-    if lower.contains("true") && lower.contains("false") && lower.contains("not given") {
-        "true_false_not_given"
-    } else if lower.contains("yes") && lower.contains("no") && lower.contains("not given") {
-        "yes_no_not_given"
-    } else if is_dynamic_shared_letter_bank_choice_text(text) {
-        "matching"
-    } else if is_dynamic_multi_choice_text(text) {
-        "multi_choice"
-    } else if lower.contains("complete the table")
-        || lower.contains("table below")
-        || lower.contains("complete the form")
-        || lower.contains("form below")
-        || (lower.contains('|') && lower.contains("complete"))
-    {
-        "table_completion"
-    } else if lower.contains("complete the flow chart")
-        || lower.contains("complete the flow-chart")
-        || lower.contains("flow chart below")
-        || lower.contains("flow-chart below")
-        || lower.contains("label the diagram")
-        || lower.contains("diagram below")
-        || lower.contains("label the map")
-        || lower.contains("map below")
-        || lower.contains("label the plan")
-        || lower.contains("plan below")
-        || lower.contains("process below")
-    {
-        "diagram_completion"
-    } else if lower.contains("list of headings")
-        || lower.contains("matching headings")
-        || (lower.contains("correct heading for") && lower.contains("headings"))
-    {
-        "heading_matching"
-    } else if lower.contains("classify")
-        || lower.contains("classification")
-        || lower.contains("according to which")
-    {
-        "classification"
-    } else if lower.contains("which paragraph contains")
-        || lower.contains("which section contains")
-        || lower.contains("which paragraph mentions")
-        || lower.contains("which section mentions")
-        || lower.contains("which paragraph refers to")
-        || lower.contains("which section refers to")
-        || lower.contains("matching information")
-    {
-        "matching_information"
-    } else if lower.contains("complete the summary") || lower.contains("summary below") {
-        // IELTS summary completion can use an A-J phrase bank. The explicit
-        // task shape is more specific than the generic "write the correct
-        // letter" signal and must keep its completion layout; the interaction
-        // is upgraded separately when a complete option bank is present.
-        "summary_completion"
-    } else if is_dynamic_sentence_ending_matching_text(text) {
-        "matching"
-    } else if normalized.contains("write the correct letter")
-        && has_dynamic_letter_option_span(&normalized)
-        && !is_dynamic_single_choice_text(text)
-    {
-        "matching"
-    } else if is_dynamic_matching_prompt_text(&normalized) {
-        "matching"
-    } else if lower.contains("match") && lower.contains("letter") {
-        "matching"
-    } else if is_dynamic_notes_completion_text(text) {
-        "sentence_completion"
-    } else if has_dynamic_numbered_inline_blanks(text) {
-        "sentence_completion"
-    } else if is_dynamic_short_answer_instruction_text(text) {
-        "short_answer"
-    } else if lower.contains("complete the sentence") || lower.contains("complete the sentences") {
-        "sentence_completion"
-    } else if is_dynamic_single_choice_text(text) {
-        "single_choice"
-    } else {
-        "short_answer"
+    use crate::schema::ielts_authoring_v2::TaskTypeV2;
+
+    let task_type = crate::ielts_grammar::classify_instruction_task_type(text)
+        .unwrap_or(TaskTypeV2::ShortAnswer);
+    match task_type {
+        TaskTypeV2::TrueFalseNotGiven => "true_false_not_given",
+        TaskTypeV2::YesNoNotGiven => "yes_no_not_given",
+        TaskTypeV2::SingleChoice => "single_choice",
+        TaskTypeV2::MultipleChoice => "multi_choice",
+        TaskTypeV2::MatchingHeadings => "heading_matching",
+        TaskTypeV2::MatchingInformation => "matching_information",
+        TaskTypeV2::MatchingFeatures | TaskTypeV2::MatchingSentenceEndings => "matching",
+        TaskTypeV2::Classification => "classification",
+        TaskTypeV2::SummaryCompletion => "summary_completion",
+        // Keep the established V1 grouping/layout keys while V2 carries the
+        // precise distinction to authoring and runtime consumers.
+        TaskTypeV2::NoteCompletion | TaskTypeV2::SentenceCompletion => "sentence_completion",
+        TaskTypeV2::TableCompletion | TaskTypeV2::FormCompletion => "table_completion",
+        TaskTypeV2::FlowchartCompletion
+        | TaskTypeV2::DiagramLabelCompletion
+        | TaskTypeV2::PlanMapLabelCompletion => "diagram_completion",
+        TaskTypeV2::ShortAnswer => "short_answer",
     }
 }
 
@@ -1362,36 +1306,6 @@ fn normalized_dynamic_instruction_text(text: &str) -> String {
         ['\u{2010}', '\u{2011}', '\u{2012}', '\u{2013}', '\u{2014}'],
         "-",
     )
-}
-
-fn is_dynamic_multi_choice_text(text: &str) -> bool {
-    let normalized = normalized_dynamic_instruction_text(text);
-    normalized.contains("choose two letters")
-        || normalized.contains("choose three letters")
-        || normalized.contains("choose two correct letters")
-        || normalized.contains("choose three correct letters")
-}
-
-/// `Choose FOUR correct answers, A-F, next to questions 17-20` — and the
-/// `FIVE`/`A-G` variant. The paper declares one letter box that several numbered
-/// rows draw from, so this is a feature match against a **shared bank**, not a
-/// multiple choice.
-///
-/// The V1.5 classifier used to fall through to its generic `short_answer`
-/// fallback here. That value is a structure hint, so the instruction signature
-/// then read it as a competing claim and the quality gate blocked the paper with
-/// `TASK_TYPE_CONFLICT`; and because the group never looked like a matching task,
-/// `mod.rs` never ran the bank detector for it either, leaving q17-q25 with no
-/// option list at all. Requiring the declared letter range keeps ordinary
-/// `Choose TWO letters, A-E` cues on the `multi_choice` path above.
-fn is_dynamic_shared_letter_bank_choice_text(text: &str) -> bool {
-    let normalized = normalized_dynamic_instruction_text(text);
-    has_dynamic_letter_option_span(&normalized)
-        && ["four", "five", "six"].iter().any(|count| {
-            normalized.contains(&format!("choose {count} correct"))
-                || normalized.contains(&format!("choose {count} letters"))
-                || normalized.contains(&format!("choose {count} answers"))
-        })
 }
 
 fn has_dynamic_letter_option_span(normalized: &str) -> bool {
@@ -1438,92 +1352,11 @@ fn has_dynamic_single_choice_option_run(normalized: &str) -> bool {
     .any(|marker| normalized.contains(marker))
 }
 
-fn is_dynamic_matching_prompt_text(normalized: &str) -> bool {
-    normalized.contains("which paragraph contains")
-        || normalized.contains("which section contains")
-        || normalized.contains("which paragraph mentions")
-        || normalized.contains("which section mentions")
-        || normalized.contains("which paragraph refers to")
-        || normalized.contains("which section refers to")
-        || normalized.contains("match each statement")
-        || normalized.contains("match each person")
-        || normalized.contains("match each opinion")
-        || normalized.contains("match each sentence")
-        || normalized.contains("match each method")
-        || normalized.contains("match each technique")
-        || normalized.contains("match each with")
-        || normalized.contains("look at the following")
-        || normalized.contains("list of headings")
-        || normalized.contains("correct heading for each")
-}
-
-fn is_dynamic_single_choice_text(text: &str) -> bool {
-    let normalized = normalized_dynamic_instruction_text(text);
-    let explicit_letter_list = ["a, b, c or d", "a, b, c, or d", "a, b or c", "a, b, or c"]
-        .iter()
-        .any(|marker| normalized.contains(marker));
-    if (normalized.contains("choose the correct letter")
-        || normalized.contains("write the correct letter"))
-        && explicit_letter_list
-    {
-        return true;
-    }
-    if is_dynamic_matching_prompt_text(&normalized) {
-        return false;
-    }
-    if normalized.contains("which of the following")
-        && has_dynamic_single_choice_option_run(&normalized)
-    {
-        return true;
-    }
-    let option_hits = [" a ", " b ", " c ", " d "]
-        .iter()
-        .filter(|marker| normalized.contains(**marker))
-        .count();
-    option_hits >= 4
-        && [
-            "what ",
-            "why ",
-            "which ",
-            "according to ",
-            "writer",
-            "article",
-            "purpose",
-            "title",
-        ]
-        .iter()
-        .any(|marker| normalized.contains(marker))
-}
-
 fn is_dynamic_notes_completion_text(text: &str) -> bool {
     let lower = text.to_lowercase();
     lower.contains("complete the notes")
         || lower.contains("notes below")
         || lower.contains("note completion")
-}
-
-fn is_dynamic_short_answer_instruction_text(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    let has_word_limit = lower.contains("no more than")
-        || lower.contains("one word only")
-        || lower.contains("two words only")
-        || lower.contains("three words only")
-        || lower.contains("and/or a number");
-    has_word_limit
-        && !lower.contains("complete the summary")
-        && !is_dynamic_notes_completion_text(text)
-        && !lower.contains("complete the sentence")
-        && !lower.contains("complete the sentences")
-        && !lower.contains("complete the table")
-        && !lower.contains("flow chart")
-        && !lower.contains("flow-chart")
-        && !lower.contains("diagram")
-}
-
-fn is_dynamic_sentence_ending_matching_text(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    (lower.contains("complete each sentence") || lower.contains("complete the sentences"))
-        && (lower.contains("correct ending") || lower.contains("list of endings"))
 }
 
 fn dynamic_layout_hint_for_group(kind: &str, text: &str) -> &'static str {
@@ -12981,7 +12814,12 @@ mod tests {
             Some("The history of the archive"),
             "the preamble banner is not the passage title"
         );
-        for id in ["passage-banner", "time-instruction", "page-instruction", "folio"] {
+        for id in [
+            "passage-banner",
+            "time-instruction",
+            "page-instruction",
+            "folio",
+        ] {
             assert!(
                 !range_ids.contains(&id),
                 "preamble/page-number block {id} leaked into passage range: {range_ids:?}"

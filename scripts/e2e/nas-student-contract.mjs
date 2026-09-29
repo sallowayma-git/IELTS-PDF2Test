@@ -328,7 +328,9 @@ function main() {
       ) && ok;
 
       // 学生端 loader 按 sha256/byteLength 校验磁盘内容；这里提前做同样的事。
-      const absolute = path.join(packageDir, relative);
+      // relativePath is rooted at the ExamAssetManifestV2 file's directory,
+      // matching the student's reading-asset-resolver.ts behavior.
+      const absolute = path.resolve(path.dirname(assetManifestPath), relative);
       if (fs.existsSync(absolute)) {
         ok = check(`asset[${assetId}].file-sha256`, sha256(fs.readFileSync(absolute)) === descriptor.sha256) && ok;
         ok = check(

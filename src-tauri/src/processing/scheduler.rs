@@ -511,7 +511,10 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         }
     }
 
-    // ── 本地识别与云端拉取并行执行 ───────────────────────────────────
+    // ── 本地识别与云端候选衔接 ─────────────────────────────────────
+    // 云端候选需要本地首稿的 passage paragraphMap，因此先等这份 V2 草稿落盘。
+    // oneshot 只串起数据依赖；云端任务仍独立运行，不阻塞本地稿发布和编辑。
+    let (local_draft_ready_tx, local_draft_ready_rx) = tokio::sync::oneshot::channel::<bool>();
     // 本地闭包：真实本地管道。
     let root_local = root.clone();
     let job_id_local = job_id.clone();
@@ -522,11 +525,13 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
             target: Some("editableDraft".to_string()),
             ..Default::default()
         });
-        if recognition_attempt > 0 {
+        let result = if recognition_attempt > 0 {
             run_auto_pipeline_core_for_retry(&root_local, &job_id_local, input)
         } else {
             run_auto_pipeline_core(&root_local, &job_id_local, input)
-        }
+        };
+        let _ = local_draft_ready_tx.send(result.is_ok());
+        result
     };
 
     // 云端任务（async）：**不在主路径上**抢 permit——permit 获取与 cloud_status 推进
@@ -550,6 +555,9 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         let job_id_cloud = job_id.clone();
         let resolved = resolved_profile.clone();
         Some(Box::pin(async move {
+            if !local_draft_ready_rx.await.unwrap_or(false) {
+                return None;
+            }
             // 受控并发：取得 cloud permit（等待期间落下的取消由 set_cloud_status_only 拒绝）。
             let _cloud_permit = state_cloud.cloud_permits.clone().acquire_owned().await;
             if set_cloud_status_only(&app_cloud, &state_cloud, &job_id_cloud, "running")
@@ -580,15 +588,14 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         None
     };
 
-    // ── 立即并发拉起：本地阻塞任务 + 云端 async 任务，二者互不阻塞 ──────────
-    // 云端 permit 的获取发生在 cloud 任务内部（见 cloud_future），所以本地识别
-    // 此刻就能起飞，绝不会被云端 permit 卡住（Defect 1 修复）。
+    // ── 拉起本地识别与等待首稿的云端任务 ────────────────────────────
+    // 云端 permit 只在本地 V2 首稿写完后获取，不会占住本地识别的并发额度。
     let local_handle = tauri::async_runtime::spawn_blocking(local_closure);
     let cloud_handle: Option<
         tauri::async_runtime::JoinHandle<Option<Result<serde_json::Value, String>>>,
     > = cloud_future.map(|fut| tauri::async_runtime::spawn(fut));
 
-    // 只 await 本地结果——云端仍在并行跑。本地失败/取消在此即时兑现。
+    // 只 await 本地结果——云端在本地首稿就绪后独立运行。本地失败/取消在此即时兑现。
     let local_result = local_handle
         .await
         .unwrap_or_else(|error| Err(format!("processing_join:{error}")));

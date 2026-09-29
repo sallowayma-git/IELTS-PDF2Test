@@ -2873,10 +2873,61 @@ pub(crate) fn cloud_recognition_modality(root: &Path, job_id: &str) -> String {
     crate::llm_suggestions::candidate_modality(modality).to_string()
 }
 
+fn local_source_paragraph_targets(root: &Path, job_id: &str) -> CommandResult<Value> {
+    fn collect_paragraph_ids(value: &Value, ids: &mut std::collections::BTreeSet<String>) {
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    collect_paragraph_ids(item, ids);
+                }
+            }
+            Value::Object(object) => {
+                if object.get("type").and_then(Value::as_str) == Some("paragraph") {
+                    if let Some(id) = object.get("id").and_then(Value::as_str) {
+                        ids.insert(id.to_string());
+                    }
+                }
+                for child in object.values() {
+                    collect_paragraph_ids(child, ids);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let path = job_dir(root, job_id).join(AUTHORING_V2_SHADOW_ARTIFACT_FILE);
+    let Some(authoring) = read_json_opt(&path)? else {
+        return Ok(json!({"paragraphMap": {}, "paragraphs": []}));
+    };
+    let Some(paragraph_map) = authoring
+        .pointer("/passage/paragraphMap")
+        .and_then(Value::as_object)
+    else {
+        return Ok(json!({"paragraphMap": {}, "paragraphs": []}));
+    };
+    let mut passage_paragraph_ids = std::collections::BTreeSet::new();
+    if let Some(content) = authoring.pointer("/passage/content") {
+        collect_paragraph_ids(content, &mut passage_paragraph_ids);
+    }
+    let mut valid_map = serde_json::Map::new();
+    let mut paragraphs = Vec::new();
+    for (label, node_id) in paragraph_map {
+        let Some(node_id) = node_id.as_str() else {
+            continue;
+        };
+        if !passage_paragraph_ids.contains(node_id) {
+            continue;
+        }
+        valid_map.insert(label.clone(), json!(node_id));
+        paragraphs.push(json!({"label": label, "nodeId": node_id}));
+    }
+    Ok(json!({"paragraphMap": valid_map, "paragraphs": paragraphs}))
+}
+
 /// 云端**完整候选**识别的第一段：原文件证据面 + 真实网关调用。
 ///
 /// 返回的是**模型原始 JSON**（尚未接上后端身份）。之所以只做到这一步：
-/// 云端与本地并发起飞，而候选的 `batch_id` 由 `(job_id, source_sha256, base_edit_version)`
+/// 本地首稿先落盘以提供原文段落锚点；候选的 `batch_id` 由 `(job_id, source_sha256, base_edit_version)`
 /// 派生、`base_edit_version` 要到本地冻结之后才成立。把「调用」与「定身份 + 落盘」分开，
 /// 既保持并发，又不让候选挂在一个并不存在的批次上（那比没有候选更危险，因为它看着可信）。
 ///
@@ -2912,6 +2963,7 @@ pub(crate) fn generate_cloud_authoring_candidate_raw(
         &extraction,
         &modality,
     );
+    input["sourceParagraphs"] = local_source_paragraph_targets(root, job_id)?;
     // 分块计划的依据：**原文件自己的文本**（PDF 走独立的文本层抽取，DOCX/TXT 走同一份
     // 证据文本），绝不读本地识别的结论。
     let plan_text = if !is_pdf {

@@ -627,6 +627,22 @@ function answerOf(ds, slotId) {
   return (ds?.answerKey ?? {})[slotId] ?? null;
 }
 
+/** Build a valid controlled answer for the slot's actual runtime interaction. */
+function controlledAnswerForInteraction(interaction, options, assignment, textValues, optionIndex = 0) {
+  if (interaction === "text") {
+    return { kind: "text", normalization: "ielts_default", values: textValues };
+  }
+  const labels = (options ?? [])
+    .map((option) => option?.label)
+    .filter((label) => typeof label === "string" && label.trim().length > 0);
+  if (labels.length === 0) return null;
+  return {
+    kind: "option",
+    labels: [labels[optionIndex % labels.length]],
+    assignment: assignment ?? "per_slot",
+  };
+}
+
 /** Pick a distinct unresolved answer target for the in-flight adoption protection scenario. */
 function humanProtectionProbe(ds, excludedSlotIds = []) {
   const excluded = new Set(excludedSlotIds);
@@ -634,22 +650,26 @@ function humanProtectionProbe(ds, excludedSlotIds = []) {
     for (const response of group.responseGroups ?? []) {
       for (const slotId of response.slotIds ?? []) {
         if (excluded.has(slotId) || answerOf(ds, slotId)?.kind !== "unresolved") continue;
-        const interaction = ds?.answerSlots?.[slotId]?.interaction;
+        const interaction = ds?.answerSlots?.[slotId]?.interaction ?? "text";
         const options = group.optionBank?.options ?? response.options ?? [];
-        if (["radio", "checkbox", "select"].includes(interaction) && options.length >= 2) {
+        if (interaction === "text") {
+          return {
+            slotId,
+            candidateValue: { kind: "text", normalization: "ielts_default", values: ["cloud"] },
+            userValue: { kind: "text", normalization: "ielts_default", values: ["human"] },
+          };
+        }
+        const labels = options
+          .map((option) => option?.label)
+          .filter((label) => typeof label === "string" && label.trim().length > 0);
+        if (labels.length >= 2) {
           const assignment = response.assignment ?? "per_slot";
           return {
             slotId,
-            candidateValue: { kind: "option", labels: [options[0].label], assignment },
-            userValue: { kind: "option", labels: [options[1].label], assignment },
+            candidateValue: { kind: "option", labels: [labels[0]], assignment },
+            userValue: { kind: "option", labels: [labels[1]], assignment },
           };
         }
-        if (interaction === "radio" || interaction === "checkbox" || interaction === "select") continue;
-        return {
-          slotId,
-          candidateValue: { kind: "text", normalization: "ielts_default", values: ["cloud"] },
-          userValue: { kind: "text", normalization: "ielts_default", values: ["human"] },
-        };
       }
     }
   }
@@ -2040,13 +2060,19 @@ async function main() {
       for (const slotId of response.slotIds ?? []) {
         const answer = answerOf(draft, slotId);
         if (answer?.kind === "unresolved") {
-          humanSlot = {
-            slotId,
-            interaction: draft.answerSlots?.[slotId]?.interaction ?? "text",
-            options: group.optionBank?.options ?? response.options ?? [],
-            assignment: response.assignment ?? "per_slot",
-          };
-          break;
+          const interaction = draft.answerSlots?.[slotId]?.interaction ?? "text";
+          const options = group.optionBank?.options ?? response.options ?? [];
+          const value = controlledAnswerForInteraction(
+            interaction,
+            options,
+            response.assignment,
+            ["controlled-user-answer"],
+            1,
+          );
+          if (value) {
+            humanSlot = { slotId, value };
+            break;
+          }
         }
       }
       if (humanSlot) break;
@@ -2054,13 +2080,7 @@ async function main() {
     if (humanSlot) break;
   }
   if (humanSlot) {
-    const value = ["radio", "checkbox", "select"].includes(humanSlot.interaction)
-      ? {
-          kind: "option",
-          labels: [humanSlot.options[1]?.label ?? humanSlot.options[0]?.label ?? "A"],
-          assignment: humanSlot.assignment,
-        }
-      : { kind: "text", values: ["controlled-user-answer"] };
+    const { value } = humanSlot;
     // 版本必须取**实时**权威稿：前序场景（云端结束后的编辑）可能已经推进过版本，
     // 用旧快照当 CAS 基线会把用户自己的合法操作误判成冲突。
     const liveBeforeHumanEdit = await readWorkspace();
@@ -2127,17 +2147,13 @@ async function main() {
           const answer = answerOf(workspaceNow?.ds, slotId);
           if (answer?.kind !== "unresolved") continue;
           const interaction = workspaceNow?.ds?.answerSlots?.[slotId]?.interaction ?? "text";
-          if (["radio", "checkbox", "select"].includes(interaction)) {
-            const bank = group.optionBank?.options ?? response.options ?? [];
-            const label = bank[0]?.label ?? "A";
-            commands.push({
-              op: "setAnswer",
-              slotId,
-              value: { kind: "option", labels: [label], assignment: response.assignment ?? "per_slot" },
-            });
-          } else {
-            commands.push({ op: "setAnswer", slotId, value: { kind: "text", values: ["answer"] } });
-          }
+          const value = controlledAnswerForInteraction(
+            interaction,
+            group.optionBank?.options ?? response.options ?? [],
+            response.assignment,
+            ["answer"],
+          );
+          if (value) commands.push({ op: "setAnswer", slotId, value });
         }
       }
     }

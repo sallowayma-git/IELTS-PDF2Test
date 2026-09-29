@@ -30,24 +30,11 @@ pub(crate) fn infer_instruction_signature(
     let option_alphabet = infer_option_alphabet(&lower);
     let word_limit = parse_word_limit(&lower);
     let allow_option_reuse = parse_reuse_policy(&lower, &task_type);
-    let answer_assignment = if selection_cardinality
-        .as_ref()
-        .and_then(|cardinality| cardinality.exact)
-        .is_some_and(|count| count > 1)
-    {
-        Some(AssignmentV2::UnorderedSet)
-    } else if matches!(
-        task_type,
-        TaskTypeV2::MatchingInformation
-            | TaskTypeV2::MatchingHeadings
-            | TaskTypeV2::MatchingFeatures
-            | TaskTypeV2::MatchingSentenceEndings
-            | TaskTypeV2::Classification
-    ) {
-        Some(AssignmentV2::PerSlot)
-    } else {
-        Some(AssignmentV2::PerSlot)
-    };
+    let answer_assignment = Some(
+        crate::schema::task_presentation::rule_for(&task_type, false)
+            .assignment
+            .clone(),
+    );
 
     let mut warnings = Vec::new();
     if expected_question_numbers.is_empty() {
@@ -168,6 +155,17 @@ fn infer_task_type(lower: &str, kind_hint: Option<&str>) -> TaskTypeV2 {
         .unwrap_or(TaskTypeV2::ShortAnswer)
 }
 
+/// Shared instruction classifier for legacy V1 recognition and canonical V2.
+/// Callers that need a V1 artifact name must adapt this typed result without
+/// reclassifying the instruction independently.
+pub(crate) fn classify_instruction_task_type(text: &str) -> Option<TaskTypeV2> {
+    let normalized = normalize_instruction_text(text);
+    let cue_text = instruction_cue_text(&normalized);
+    infer_task_type_from_cues(&cue_text).or_else(|| {
+        has_numbered_inline_blank_sequence(text).then_some(TaskTypeV2::SentenceCompletion)
+    })
+}
+
 fn infer_task_type_from_cues(lower: &str) -> Option<TaskTypeV2> {
     if lower.contains("true") && lower.contains("false") && lower.contains("not given") {
         return Some(TaskTypeV2::TrueFalseNotGiven);
@@ -178,21 +176,34 @@ fn infer_task_type_from_cues(lower: &str) -> Option<TaskTypeV2> {
     if lower.contains("list of headings") || lower.contains("correct heading for each paragraph") {
         return Some(TaskTypeV2::MatchingHeadings);
     }
+    if lower.contains("which paragraph")
+        || lower.contains("which section")
+        || ((lower.contains("match") || lower.contains("matching"))
+            && (lower.contains("paragraph") || lower.contains("section")))
+    {
+        return Some(TaskTypeV2::MatchingInformation);
+    }
     if lower.contains("list of people")
         || lower.contains("list of features")
         || lower.contains("list of categories")
+        || lower.contains("correct person")
+        || lower.contains("correct people")
         || (lower.contains("match each statement") && lower.contains("list of"))
     {
         return Some(TaskTypeV2::MatchingFeatures);
     }
-    if lower.contains("sentence endings") || lower.contains("endings") && lower.contains("match") {
+    if lower.contains("sentence endings")
+        || lower.contains("endings") && lower.contains("match")
+        || lower.contains("complete each sentence") && lower.contains("ending")
+        || lower.contains("complete the sentences") && lower.contains("ending")
+    {
         return Some(TaskTypeV2::MatchingSentenceEndings);
     }
-    if lower.contains("which paragraph")
-        || lower.contains("which section")
-        || lower.contains("match each statement with")
+    if lower.contains("classify")
+        || lower.contains("classification")
+        || lower.contains("according to which")
     {
-        return Some(TaskTypeV2::MatchingInformation);
+        return Some(TaskTypeV2::Classification);
     }
     if lower.contains("complete the table") || lower.contains("complete the table below") {
         return Some(TaskTypeV2::TableCompletion);
@@ -221,45 +232,91 @@ fn infer_task_type_from_cues(lower: &str) -> Option<TaskTypeV2> {
     if has_map_or_plan_word && (lower.contains("label") || lower.contains("complete")) {
         return Some(TaskTypeV2::PlanMapLabelCompletion);
     }
+    let has_letter_alphabet =
+        infer_option_alphabet(lower).is_some_and(|alphabet| alphabet.starts_with("A-"));
+    let declared_answer_count = selection_cardinality(lower)
+        .and_then(|cardinality| cardinality.exact)
+        .unwrap_or_default();
     if lower.contains("choose")
-        && (lower.contains("two") || lower.contains("three"))
-        && (lower.contains("letter") || lower.contains("option"))
+        && (declared_answer_count == 2 || declared_answer_count == 3)
+        && (lower.contains("letter")
+            || lower.contains("option")
+            || lower.contains("answer")
+            || has_letter_alphabet)
     {
         return Some(TaskTypeV2::MultipleChoice);
     }
-    // Listening papers select four or five labels from one shared bank:
-    // `Choose FOUR correct answers, A-F`, `Choose FIVE correct letters, A-G`.
-    //
-    // This is a **feature match against a shared bank**, not a multiple-choice
-    // question: several numbered rows each take one letter from a single printed
-    // box. Typing it `multiple_choice` closed the bank gate in `mod.rs`
-    // (`detect_option_bank` runs only for matching-family tasks), so those rows
-    // came out with an empty option list — nothing to click in the UI, plus
-    // `OPTION_RUN_INCOMPLETE` and `RESPONSE_GROUP_POLICY_MISMATCH`.
-    //
-    // The declared letter range keeps this branch from swallowing the ordinary
-    // `Choose TWO letters, A-E` cue above, which really is a multiple choice.
-    if ["four", "five", "six"].iter().any(|count| {
-        lower.contains(&format!("choose {count} correct"))
-            || lower.contains(&format!("choose {count} letters"))
-            || lower.contains(&format!("choose {count} answers"))
-    }) && infer_option_alphabet(lower).is_some()
-    {
+    // In this corpus, Choose FOUR/FIVE over a numbered bank task supplies one
+    // answer to each row. Keep that row identity instead of flattening it to a set.
+    if lower.contains("choose") && declared_answer_count >= 4 && has_letter_alphabet {
         return Some(TaskTypeV2::MatchingFeatures);
     }
+    if lower.contains("match") || lower.contains("matching") {
+        return Some(TaskTypeV2::MatchingFeatures);
+    }
+    let single_choice_letter_bank = infer_option_alphabet(lower)
+        .and_then(|alphabet| alphabet.chars().last())
+        .is_some_and(|terminal| terminal <= 'D');
     if lower.contains("choose the correct letter")
         || lower.contains("choose the correct answer")
         || lower.contains("select the correct")
+        || (lower.contains("write the correct letter")
+            && has_letter_alphabet
+            && single_choice_letter_bank)
     {
         return Some(TaskTypeV2::SingleChoice);
     }
-    if lower.contains("match") || lower.contains("matching") {
-        return Some(TaskTypeV2::MatchingInformation);
+    if lower.contains("write the correct letter") && has_letter_alphabet {
+        return Some(TaskTypeV2::MatchingFeatures);
     }
     None
 }
 
-fn task_type_from_kind_hint(kind_hint: Option<&str>) -> Option<TaskTypeV2> {
+fn has_numbered_inline_blank_sequence(text: &str) -> bool {
+    let characters = text.chars().collect::<Vec<_>>();
+    let mut cursor = 0usize;
+    let mut numbered_blanks = 0usize;
+
+    while cursor < characters.len() {
+        if !characters[cursor].is_ascii_digit() {
+            cursor += 1;
+            continue;
+        }
+        let mut number_end = cursor + 1;
+        while number_end < characters.len() && characters[number_end].is_ascii_digit() {
+            number_end += 1;
+        }
+        let mut marker_start = number_end;
+        while marker_start < characters.len() && characters[marker_start].is_whitespace() {
+            marker_start += 1;
+        }
+        if marker_start >= characters.len() {
+            break;
+        }
+        let marker = characters[marker_start];
+        if marker == '…' {
+            numbered_blanks += 1;
+            cursor = marker_start + 1;
+            continue;
+        }
+        if marker == '.' || marker == '_' {
+            let mut marker_end = marker_start + 1;
+            while marker_end < characters.len() && characters[marker_end] == marker {
+                marker_end += 1;
+            }
+            if marker_end - marker_start >= 3 {
+                numbered_blanks += 1;
+                cursor = marker_end;
+                continue;
+            }
+        }
+        cursor = number_end;
+    }
+
+    numbered_blanks >= 2
+}
+
+pub(crate) fn task_type_from_kind_hint(kind_hint: Option<&str>) -> Option<TaskTypeV2> {
     Some(
         match kind_hint.unwrap_or_default().to_ascii_lowercase().as_str() {
             "true_false_not_given" => TaskTypeV2::TrueFalseNotGiven,
@@ -408,6 +465,16 @@ fn parse_reuse_policy(lower: &str, task_type: &TaskTypeV2) -> Option<bool> {
         TaskTypeV2::MatchingHeadings | TaskTypeV2::MatchingSentenceEndings
     )
     .then_some(false)
+}
+
+pub(crate) fn option_reuse_for_instruction(
+    text: &str,
+    task_type: &TaskTypeV2,
+    default: bool,
+) -> bool {
+    let normalized = normalize_instruction_text(text);
+    let lower = instruction_cue_text(&normalized);
+    parse_reuse_policy(&lower, task_type).unwrap_or(default)
 }
 
 fn parse_word_limit(lower: &str) -> Option<WordLimitV2> {
@@ -588,6 +655,36 @@ mod tests {
     }
 
     #[test]
+    fn shared_classifier_preserves_specific_instruction_task_types() {
+        for (text, expected) in [
+            (
+                "Complete the form below. Write NO MORE THAN TWO WORDS.",
+                TaskTypeV2::FormCompletion,
+            ),
+            (
+                "Label the map below with the correct letters.",
+                TaskTypeV2::PlanMapLabelCompletion,
+            ),
+            (
+                "Choose the correct heading for each paragraph from the list of headings.",
+                TaskTypeV2::MatchingHeadings,
+            ),
+            ("Choose TWO letters, A-E.", TaskTypeV2::MultipleChoice),
+            (
+                "Choose FOUR correct answers, A-F.",
+                TaskTypeV2::MatchingFeatures,
+            ),
+            ("Choose the correct answer, A-D.", TaskTypeV2::SingleChoice),
+        ] {
+            assert_eq!(
+                classify_instruction_task_type(text),
+                Some(expected.clone()),
+                "text={text:?}"
+            );
+        }
+    }
+
+    #[test]
     fn extracts_choose_two_and_word_limit_reuse_policy() {
         let result = infer_instruction_signature(
             "Choose TWO letters, A-E. You may use any letter more than once.",
@@ -712,6 +809,17 @@ mod tests {
     }
 
     #[test]
+    fn matching_named_people_is_not_paragraph_information_matching() {
+        let result = infer_instruction_signature(
+            "Match each statement with the correct person, A, B, C or D.",
+            &range(),
+            Some("matching_features"),
+            Vec::new(),
+        );
+        assert_eq!(result.signature.task_type, TaskTypeV2::MatchingFeatures);
+    }
+
+    #[test]
     fn incompatible_instruction_and_structure_hint_are_blocking_evidence() {
         let result = infer_instruction_signature(
             "Choose the correct letter, A, B or C.",
@@ -795,15 +903,9 @@ mod tests {
         }
     }
 
-    /// `Choose FOUR/FIVE correct answers/letters, A-X, next to questions N-M` is a
-    /// **feature match against one shared bank**, not a multiple-choice question:
-    /// each numbered row takes a single letter from the box A-X, so the task has a
-    /// bank (and therefore matching semantics) rather than per-question options.
-    ///
-    /// Tagging it `multiple_choice` closed the bank gate in `mod.rs`
-    /// (`detect_option_bank` only runs for matching-family tasks), which left
-    /// q17-q25 with an empty option list: no controls in the UI, plus
-    /// `OPTION_RUN_INCOMPLETE` / `RESPONSE_GROUP_POLICY_MISMATCH`.
+    /// `Choose FOUR/FIVE ... next to questions N-M` on a list of entities means
+    /// one answer per numbered row from a shared bank. Row identity matters, so
+    /// it stays per-slot matching rather than a group-wide set.
     #[test]
     fn choose_four_and_five_are_feature_matches_with_declared_alphabets() {
         let four = infer_instruction_signature(
@@ -816,12 +918,7 @@ mod tests {
         assert_eq!(four.task_type, TaskTypeV2::MatchingFeatures);
         assert_eq!(four.option_alphabet.as_deref(), Some("A-F"));
         assert_eq!(four.selection_cardinality.and_then(|c| c.exact), Some(4));
-        // One shared label pool for the whole group, scored per slot.
-        assert_eq!(
-            four.answer_assignment,
-            Some(AssignmentV2::UnorderedSet),
-            "four rows draw from one pool, so the assignment stays group-wide"
-        );
+        assert_eq!(four.answer_assignment, Some(AssignmentV2::PerSlot));
 
         let five = infer_instruction_signature(
             "Questions 21-25 Choose FIVE correct letters, A-G, next to questions 21-25.",
@@ -833,6 +930,7 @@ mod tests {
         assert_eq!(five.task_type, TaskTypeV2::MatchingFeatures);
         assert_eq!(five.option_alphabet.as_deref(), Some("A-G"));
         assert_eq!(five.selection_cardinality.and_then(|c| c.exact), Some(5));
+        assert_eq!(five.answer_assignment, Some(AssignmentV2::PerSlot));
     }
 
     /// The V1.5 structure hint for these rows is the generic `short_answer`

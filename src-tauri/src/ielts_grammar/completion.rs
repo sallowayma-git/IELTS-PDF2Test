@@ -3333,19 +3333,10 @@ mod tests {
         eprintln!("listening-vol7-t9 choose-N groups: {observed:?}; hard failures {codes:?}");
     }
 
-    /// Task-book §1.3 rule 4 settles these two groups: "Choose FOUR correct
-    /// answers, A-F, next to questions 17-20" and "Choose FIVE correct letters,
-    /// A-G, next to questions 21-25" are one slot per question over one shared
-    /// bank, i.e. the same `unordered_set` model as a reading multi-select. The
-    /// paper ships no answer key, so the golden metadata was the only thing
-    /// calling them `per_slot` and left the task type "still to be decided".
-    ///
-    /// This pins what the product must derive from the instruction instead of
-    /// from that metadata: the declaration, and the scoring semantics that
-    /// follow from it — the same letters in any order score full marks, and
-    /// repeating one letter scores nothing.
+    /// These prompts describe separate collection rows. Moving an answer to a
+    /// different row changes its meaning, so shared options must stay slot-bound.
     #[test]
-    fn real_listening_choose_n_groups_score_as_an_unordered_set() {
+    fn real_listening_choose_n_groups_keep_answers_bound_to_their_rows() {
         use crate::reading_source_v2::score_response_group;
         use crate::schema::ielts_authoring_v2::{
             AnswerAssignmentV2, AnswerValueV2, ResponseGroupV2,
@@ -3401,11 +3392,10 @@ mod tests {
 
             let option_value = |label: &str| AnswerValueV2::Option {
                 labels: vec![label.to_string()],
-                assignment: AnswerAssignmentV2::UnorderedSet,
+                assignment: AnswerAssignmentV2::PerSlot,
             };
-            // The key is the paper's letters in slot order; the submission is the
-            // same letters rotated by one, so every slot still carries a letter
-            // the key expects.
+            // The paper has no key, so use a synthetic one to prove that moving
+            // a letter to the next row cannot receive a full-marks set score.
             let answer_key = slot_ids
                 .iter()
                 .zip(declared_letters.iter())
@@ -3450,12 +3440,12 @@ mod tests {
 
             assert_eq!(
                 declared.get("assignment").and_then(Value::as_str),
-                Some("unordered_set"),
-                "task-book §1.3 rule 4: {shown:?}"
+                Some("per_slot"),
+                "the row identity is part of each answer: {shown:?}"
             );
             assert_eq!(
                 declared.get("scoringPolicy").and_then(Value::as_str),
-                Some("per_slot_ielts_normalized"),
+                Some("per_slot_binary"),
                 "{shown:?}"
             );
             assert_eq!(
@@ -3475,21 +3465,11 @@ mod tests {
                     .is_some(),
                 "the group must be bound to its shared bank: {shown:?}"
             );
-            assert_eq!(
-                shuffled_score.earned_points, shuffled_score.possible_points,
-                "the same letters in any order are a full-marks answer: {shown:?}"
-            );
-            assert!(
-                shuffled_score.correct,
-                "a shuffled exact set is correct: {shown:?}"
-            );
-            assert_eq!(
-                repeated_score.earned_points, 0,
-                "repeating one letter must not score: {shown:?}"
-            );
+            assert_eq!(shuffled_score.earned_points, 0, "{shown:?}");
+            assert!(!shuffled_score.correct, "{shown:?}");
             assert!(
                 !repeated_score.correct,
-                "a submission with duplicates is never correct: {shown:?}"
+                "repeating a bank label cannot answer every row: {shown:?}"
             );
         }
 

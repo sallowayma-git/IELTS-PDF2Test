@@ -71,6 +71,7 @@ pub struct ReadingPassageV2 {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     pub content: Vec<ContentNodeV2>,
+    /// 段落标签（A/B/C…）→ `content` 里原文段落节点 id；该节点的 `paragraphLabel` 与键相同。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paragraph_map: Option<BTreeMap<String, String>>,
     pub source_anchors: Vec<SourceAnchorV2>,
@@ -458,6 +459,8 @@ pub enum AnswerSlotHostTypeV2 {
     TableCell,
     FigureHotspot,
     FlowStep,
+    /// 槽位渲染在原文段落之前（如 List of Headings 的段前投放框），`hostNodeId` 为该原文段落节点 id。
+    PassageParagraph,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -589,5 +592,102 @@ pub struct IeltsAuthoringIRV2 {
 impl IeltsAuthoringIRV2 {
     pub fn is_supported_schema_version(&self) -> bool {
         self.schema_version == IELTS_AUTHORING_IR_V2_SCHEMA_VERSION
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AnswerSlotHostTypeV2, AnswerSlotV2, ReadingPassageV2};
+    use serde_json::{json, Value};
+
+    fn passage_paragraph(id: &str, label: Option<&str>) -> Value {
+        let mut node = json!({
+            "type": "paragraph",
+            "id": id,
+            "sourceAnchors": [],
+            "provenanceStatus": "source",
+            "children": [{
+                "type": "text",
+                "id": format!("{id}-text"),
+                "sourceAnchors": [],
+                "provenanceStatus": "source",
+                "text": "Passage paragraph text."
+            }]
+        });
+        if let Some(label) = label {
+            node["paragraphLabel"] = json!(label);
+        }
+        node
+    }
+
+    fn heading_slot(host_type: &str, host_node_id: &str) -> Value {
+        json!({
+            "slotId": "q14",
+            "questionNumber": 14,
+            "displayLabel": "14",
+            "hostNodeId": host_node_id,
+            "hostType": host_type,
+            "interaction": "dragdrop",
+            "participation": "scoring",
+            "sourceAnchors": [],
+            "confidence": 0.9
+        })
+    }
+
+    #[test]
+    fn legacy_passage_and_slot_round_trip_without_new_keys() {
+        let passage = json!({
+            "content": [passage_paragraph("passage-p-a", None)],
+            "sourceAnchors": []
+        });
+        let typed: ReadingPassageV2 =
+            serde_json::from_value(passage.clone()).expect("旧稿原文必须可解析");
+        assert_eq!(
+            serde_json::to_value(&typed).expect("原文必须可序列化"),
+            passage,
+            "旧稿往返不得多出 paragraphLabel / paragraphMap"
+        );
+
+        let slot = heading_slot("prompt", "q14-prompt");
+        let typed: AnswerSlotV2 = serde_json::from_value(slot.clone()).expect("旧稿槽位必须可解析");
+        assert_eq!(
+            serde_json::to_value(&typed).expect("槽位必须可序列化"),
+            slot
+        );
+    }
+
+    #[test]
+    fn labelled_passage_and_passage_paragraph_slot_round_trip() {
+        let passage = json!({
+            "content": [
+                passage_paragraph("passage-p-a", Some("A")),
+                passage_paragraph("passage-p-b", Some("B"))
+            ],
+            "paragraphMap": {"A": "passage-p-a", "B": "passage-p-b"},
+            "sourceAnchors": []
+        });
+        let typed: ReadingPassageV2 =
+            serde_json::from_value(passage.clone()).expect("带段落标签的原文必须可解析");
+        assert_eq!(
+            typed
+                .paragraph_map
+                .as_ref()
+                .and_then(|map| map.get("B"))
+                .map(String::as_str),
+            Some("passage-p-b")
+        );
+        assert_eq!(
+            serde_json::to_value(&typed).expect("原文必须可序列化"),
+            passage
+        );
+
+        let slot = heading_slot("passage_paragraph", "passage-p-b");
+        let typed: AnswerSlotV2 =
+            serde_json::from_value(slot.clone()).expect("passage_paragraph 槽位必须可解析");
+        assert_eq!(typed.host_type, AnswerSlotHostTypeV2::PassageParagraph);
+        assert_eq!(
+            serde_json::to_value(&typed).expect("槽位必须可序列化"),
+            slot
+        );
     }
 }

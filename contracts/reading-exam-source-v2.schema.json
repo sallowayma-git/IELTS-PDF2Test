@@ -104,7 +104,7 @@
         "sourceRevision": { "type": "integer", "minimum": 0 },
         "sourceRevisionKind": {
           "type": "string",
-          "enum": ["auto_extract", "user", "migration"]
+          "enum": ["auto_extract", "user", "migration", "cloud_candidate_adoption"]
         }
       }
     }

@@ -162,6 +162,25 @@ mod tests {
         })
     }
 
+    fn student_heading_package_sample() -> Value {
+        let mut source = student_package_sample();
+        source["passage"]["paragraphMap"] = json!({"A": "p1"});
+        source["passage"]["content"][0]["paragraphLabel"] = json!("A");
+        source["taskGroups"][0]["taskType"] = json!("matching_headings");
+        source["taskGroups"][0]["instructionSignature"]["taskType"] = json!("matching_headings");
+        source["taskGroups"][0]["optionBank"]["options"] = json!([
+            {"optionId": "o-i", "label": "i", "content": [{"id": "c1", "type": "text", "provenanceStatus": "source", "sourceAnchors": [], "text": "First heading"}], "sourceAnchors": []},
+            {"optionId": "o-iv", "label": "iv", "content": [{"id": "c2", "type": "text", "provenanceStatus": "source", "sourceAnchors": [], "text": "Fourth heading"}], "sourceAnchors": []}
+        ]);
+        source["taskGroups"][0]["responseGroups"][0]["kind"] = json!("matching");
+        source["taskGroups"][0]["responseGroups"][0]["optionBankRef"] = json!("bank-1");
+        source["answerSlots"]["q1"]["hostNodeId"] = json!("p1");
+        source["answerSlots"]["q1"]["hostType"] = json!("passage_paragraph");
+        source["answerSlots"]["q1"]["interaction"] = json!("dragdrop");
+        source["answerKey"]["q1"]["labels"] = json!(["i"]);
+        source
+    }
+
     #[test]
     fn student_package_wrapper_drops_editing_metadata_and_stays_compact() {
         let wrapper = build_wrapper(&student_package_sample()).unwrap();
@@ -186,22 +205,89 @@ mod tests {
             "displayRange",
         ] {
             assert!(
-                serde_json::to_string(&payload).unwrap().contains(&format!("\"{stripped}\"")) == false,
+                serde_json::to_string(&payload)
+                    .unwrap()
+                    .contains(&format!("\"{stripped}\""))
+                    == false,
                 "student payload must not carry editing metadata key {stripped}"
             );
         }
         // 学生端按 JSON.stringify 复算 runtimeSha256：嵌入文本必须已是紧凑 canonical 形态。
-        assert!(!wrapper.contains("\n  \""), "wrapper payload must be compact");
+        assert!(
+            !wrapper.contains("\n  \""),
+            "wrapper payload must be compact"
+        );
 
         // 学生端与 NAS 服务端读取器真正用到的字段必须原样保留。
-        assert_eq!(payload.pointer("/passage/content/0/children/0/text"), Some(&json!("Passage text.")));
+        assert_eq!(
+            payload.pointer("/passage/content/0/children/0/text"),
+            Some(&json!("Passage text."))
+        );
         assert_eq!(payload.pointer("/passage/content/0/id"), Some(&json!("p1")));
-        assert_eq!(payload.pointer("/taskGroups/0/optionBank/options/0/content/0/text"), Some(&json!("YES")));
-        assert_eq!(payload.pointer("/answerSlots/q1/hostNodeId"), Some(&json!("prompt-1")));
-        assert_eq!(payload.pointer("/answerSlots/q1/hostType"), Some(&json!("prompt")));
-        assert_eq!(payload.pointer("/taskGroups/0/responseGroups/0/prompt/0/id"), Some(&json!("prompt-1")));
-        assert_eq!(payload.pointer("/answerKey/q1/labels"), Some(&json!(["YES"])));
+        assert_eq!(
+            payload.pointer("/taskGroups/0/optionBank/options/0/content/0/text"),
+            Some(&json!("YES"))
+        );
+        assert_eq!(
+            payload.pointer("/taskGroups/0/responseGroups/0/kind"),
+            Some(&json!("choice"))
+        );
+        assert_eq!(
+            payload.pointer("/taskGroups/0/responseGroups/0/prompt/0/id"),
+            Some(&json!("prompt-1"))
+        );
+        assert_eq!(
+            payload.pointer("/answerKey/q1/labels"),
+            Some(&json!(["YES"]))
+        );
         assert_eq!(payload.pointer("/audit/sourceRevision"), Some(&json!(3)));
+    }
+
+    #[test]
+    fn student_package_wrapper_preserves_heading_targets_and_shared_bank() {
+        let wrapper = build_wrapper(&student_heading_package_sample()).unwrap();
+        let marker = "__READING_EXAM_DATA__.register(";
+        let marker_pos = wrapper.find(marker).expect("wrapper registers exam data");
+        let payload_start = wrapper[marker_pos..].find('{').unwrap() + marker_pos;
+        let payload: Value = serde_json::Deserializer::from_str(&wrapper[payload_start..])
+            .into_iter::<Value>()
+            .next()
+            .expect("wrapper embeds a JSON payload")
+            .expect("wrapper payload is valid JSON");
+
+        assert_eq!(
+            payload.pointer("/passage/paragraphMap/A"),
+            Some(&json!("p1"))
+        );
+        assert_eq!(
+            payload.pointer("/passage/content/0/paragraphLabel"),
+            Some(&json!("A"))
+        );
+        assert_eq!(
+            payload.pointer("/answerSlots/q1/hostNodeId"),
+            Some(&json!("p1"))
+        );
+        assert_eq!(
+            payload.pointer("/answerSlots/q1/hostType"),
+            Some(&json!("passage_paragraph"))
+        );
+        assert_eq!(
+            payload.pointer("/answerSlots/q1/interaction"),
+            Some(&json!("dragdrop"))
+        );
+        assert_eq!(
+            payload.pointer("/taskGroups/0/responseGroups/0/optionBankRef"),
+            Some(&json!("bank-1"))
+        );
+        assert_eq!(
+            payload.pointer("/taskGroups/0/optionBank/options/0/label"),
+            Some(&json!("i"))
+        );
+        assert_eq!(
+            payload.pointer("/taskGroups/0/optionBank/options/0/content/0/text"),
+            Some(&json!("First heading"))
+        );
+        assert_eq!(payload.pointer("/answerKey/q1/labels"), Some(&json!(["i"])));
     }
 
     #[test]

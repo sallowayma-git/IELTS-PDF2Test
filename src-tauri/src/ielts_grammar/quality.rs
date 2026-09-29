@@ -1,11 +1,16 @@
 use chrono::Utc;
+use serde::Serialize;
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::environment::recognition_blockers_gate_enabled;
 use crate::reading_source::ReadingExamSourceV1;
 use crate::reading_source_v2::CompilerIssueV2;
-use crate::schema::ielts_authoring_v2::QuestionNumberExpressionV2;
+use crate::schema::ielts_authoring_v2::{QuestionNumberExpressionV2, TaskTypeV2};
+use crate::schema::task_presentation::{
+    rule_for, GroupGranularity, OptionAlphabet, OptionReusePolicy, OptionSource,
+    TaskPresentationRule,
+};
 use crate::schema::IeltsAuthoringIRV2;
 use crate::validator::validate_reading_source_contract;
 
@@ -469,6 +474,13 @@ fn evaluate_quality_inner(
             .get("taskId")
             .and_then(Value::as_str)
             .unwrap_or("unknown-task");
+        validate_task_presentation_contract(
+            authoring,
+            group,
+            &slots,
+            &mut issues,
+            &mut hard_failures,
+        );
         let evaluation = evaluate_group(
             group,
             &slots,
@@ -1928,6 +1940,649 @@ fn collect_text_value(value: &Value, out: &mut Vec<String>) {
     }
 }
 
+fn validate_task_presentation_contract(
+    authoring: &Value,
+    group: &Value,
+    slots: &Map<String, Value>,
+    issues: &mut Vec<Value>,
+    hard_failures: &mut Vec<String>,
+) {
+    let task_id = group
+        .get("taskId")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown-task");
+    let task_type_name = group
+        .get("taskType")
+        .or_else(|| group.pointer("/instructionSignature/taskType"))
+        .and_then(Value::as_str);
+    let Some(task_type_name) = task_type_name else {
+        return;
+    };
+    let Ok(task_type) = serde_json::from_value::<TaskTypeV2>(Value::String(task_type_name.into()))
+    else {
+        return;
+    };
+    let has_bank = group.get("optionBank").is_some_and(Value::is_object);
+    let rule = rule_for(&task_type, has_bank);
+    let response_groups = group
+        .get("responseGroups")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let mut violations = Vec::new();
+    let expected_kind = serialized_enum(&rule.response_kind);
+    let expected_assignment = serialized_enum(&rule.assignment);
+    let expected_interaction = serialized_enum(&rule.interaction);
+    let expected_hosts = rule
+        .host_types
+        .iter()
+        .map(serialized_enum)
+        .collect::<Vec<_>>();
+
+    for response in response_groups {
+        let response_id = response
+            .get("responseGroupId")
+            .and_then(Value::as_str)
+            .unwrap_or(task_id);
+        for (field, expected) in [
+            ("kind", expected_kind.as_str()),
+            ("assignment", expected_assignment.as_str()),
+        ] {
+            if response.get(field).and_then(Value::as_str) != Some(expected) {
+                violations.push(json!({
+                    "aspect":format!("response_group_{field}"),
+                    "targetId":response_id,
+                    "expected":expected,
+                    "actual":response.get(field).cloned().unwrap_or(Value::Null)
+                }));
+            }
+        }
+        for slot_id in response
+            .get("slotIds")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            let Some(slot) = slots.get(slot_id) else {
+                continue;
+            };
+            if slot.get("interaction").and_then(Value::as_str)
+                != Some(expected_interaction.as_str())
+            {
+                violations.push(json!({
+                    "aspect":"slot_interaction",
+                    "targetId":slot_id,
+                    "expected":expected_interaction,
+                    "actual":slot.get("interaction").cloned().unwrap_or(Value::Null)
+                }));
+            }
+            let actual_host = slot
+                .get("hostType")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !expected_hosts.iter().any(|host| host == actual_host) {
+                violations.push(json!({
+                    "aspect":"slot_host_type",
+                    "targetId":slot_id,
+                    "expected":expected_hosts,
+                    "actual":actual_host
+                }));
+            }
+        }
+    }
+
+    let expected_numbers = group
+        .pointer("/instructionSignature/expectedQuestionNumbers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_u64)
+        .map(|number| number as u32)
+        .chain(display_range_numbers(group.get("displayRange")))
+        .collect::<BTreeSet<_>>();
+    let expected_slot_ids = slots
+        .iter()
+        .filter(|(_, slot)| {
+            let number = slot.get("questionNumber").and_then(Value::as_u64);
+            let scoring = slot
+                .get("participation")
+                .and_then(Value::as_str)
+                .is_none_or(|participation| participation == "scoring");
+            scoring
+                && number.is_some_and(|number| {
+                    expected_numbers.is_empty() || expected_numbers.contains(&(number as u32))
+                })
+        })
+        .map(|(slot_id, _)| slot_id.clone())
+        .collect::<BTreeSet<_>>();
+    let actual_slot_ids = response_groups
+        .iter()
+        .flat_map(|response| {
+            response
+                .get("slotIds")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+        })
+        .collect::<Vec<_>>();
+    let actual_slot_id_set = actual_slot_ids.iter().cloned().collect::<BTreeSet<_>>();
+    let grouping_matches = match rule.group_granularity {
+        GroupGranularity::PerSlot => {
+            response_groups.len() == expected_slot_ids.len()
+                && response_groups.iter().all(|response| {
+                    response
+                        .get("slotIds")
+                        .and_then(Value::as_array)
+                        .is_some_and(|slot_ids| slot_ids.len() == 1)
+                })
+                && actual_slot_ids.len() == actual_slot_id_set.len()
+                && actual_slot_id_set == expected_slot_ids
+        }
+        GroupGranularity::TaskGroup => {
+            response_groups.len() == 1
+                && actual_slot_ids.len() == actual_slot_id_set.len()
+                && actual_slot_id_set == expected_slot_ids
+        }
+    };
+    if !grouping_matches {
+        violations.push(json!({
+            "aspect":"response_group_granularity",
+            "expected":serialized_enum(&rule.group_granularity),
+            "expectedScoringSlots":expected_slot_ids,
+            "actualGroupSlotIds":actual_slot_ids
+        }));
+    }
+
+    let bank = group.get("optionBank").filter(|value| value.is_object());
+    let bank_id = bank
+        .and_then(|value| value.get("optionBankId"))
+        .and_then(Value::as_str);
+    let bank_options = bank
+        .and_then(|value| value.get("options"))
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let paragraph_map = authoring.pointer("/passage/paragraphMap");
+    match rule.option_source {
+        OptionSource::OptionBank => {
+            if bank.is_none() {
+                violations.push(
+                    json!({"aspect":"option_source","expected":"option_bank","actual":"missing"}),
+                );
+            }
+            if bank.is_some_and(|value| {
+                value.get("scope").and_then(Value::as_str) != Some("task_group")
+            }) {
+                violations.push(json!({
+                    "aspect":"option_bank_scope",
+                    "expected":"task_group",
+                    "actual":bank.and_then(|value| value.get("scope")).cloned().unwrap_or(Value::Null)
+                }));
+            }
+            for response in response_groups {
+                if response.get("optionBankRef").and_then(Value::as_str) != bank_id {
+                    violations.push(json!({
+                        "aspect":"option_bank_reference",
+                        "targetId":response.get("responseGroupId"),
+                        "expected":bank_id,
+                        "actual":response.get("optionBankRef").cloned().unwrap_or(Value::Null)
+                    }));
+                }
+            }
+        }
+        OptionSource::ParagraphMap => {
+            if bank.is_some()
+                || response_groups.iter().any(|response| {
+                    response.get("optionBankRef").is_some() || response.get("options").is_some()
+                })
+            {
+                violations.push(json!({
+                    "aspect":"option_source",
+                    "expected":"paragraph_map",
+                    "actual":"explicit_options_or_option_bank"
+                }));
+            }
+            if paragraph_map.and_then(Value::as_object).is_none() {
+                violations.push(json!({"aspect":"paragraph_option_labels","expected":"paragraphMap labels","actual":"missing paragraphMap"}));
+            }
+            for target_violation in paragraph_map_target_violations(authoring) {
+                violations.push(json!({
+                    "aspect":"paragraph_map_target_invalid",
+                    "detail":target_violation
+                }));
+            }
+        }
+        OptionSource::None => {
+            if bank.is_some()
+                || response_groups.iter().any(|response| {
+                    response.get("optionBankRef").is_some() || response.get("options").is_some()
+                })
+            {
+                violations.push(
+                    json!({"aspect":"option_source","expected":"none","actual":"options_present"}),
+                );
+            }
+        }
+        OptionSource::FixedTruthLabels => {
+            if bank.is_some()
+                || response_groups
+                    .iter()
+                    .any(|response| response.get("optionBankRef").is_some())
+            {
+                violations.push(json!({
+                    "aspect":"option_source",
+                    "expected":"fixed_truth_labels",
+                    "actual":"option_bank"
+                }));
+            }
+        }
+        OptionSource::PerSlotOptions | OptionSource::GroupOptions => {
+            if bank.is_some()
+                || response_groups
+                    .iter()
+                    .any(|response| response.get("optionBankRef").is_some())
+            {
+                violations.push(json!({
+                    "aspect":"option_source",
+                    "expected":serialized_enum(&rule.option_source),
+                    "actual":"option_bank"
+                }));
+            }
+            if response_groups.iter().any(|response| {
+                response
+                    .get("options")
+                    .and_then(Value::as_array)
+                    .is_none_or(Vec::is_empty)
+            }) {
+                violations.push(json!({
+                    "aspect":"response_options",
+                    "expected":serialized_enum(&rule.option_source),
+                    "actual":"missing"
+                }));
+            }
+        }
+    }
+
+    let expected_reuse = match rule.option_reuse_policy {
+        OptionReusePolicy::Always => true,
+        OptionReusePolicy::Never | OptionReusePolicy::NotApplicable => false,
+        OptionReusePolicy::InstructionControlled => group
+            .pointer("/instructionSignature/allowOptionReuse")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    };
+    if let Some(bank) = bank {
+        if bank.get("allowReuse").and_then(Value::as_bool) != Some(expected_reuse) {
+            violations.push(json!({
+                "aspect":"option_reuse_policy",
+                "expected":expected_reuse,
+                "actual":bank.get("allowReuse").cloned().unwrap_or(Value::Null)
+            }));
+        }
+    }
+    for response in response_groups {
+        if response.get("allowOptionReuse").and_then(Value::as_bool) != Some(expected_reuse) {
+            violations.push(json!({
+                "aspect":"response_option_reuse",
+                "targetId":response.get("responseGroupId"),
+                "expected":expected_reuse,
+                "actual":response.get("allowOptionReuse").cloned().unwrap_or(Value::Null)
+            }));
+        }
+    }
+
+    let labels_are_valid = match rule.option_source {
+        OptionSource::FixedTruthLabels => response_groups.iter().all(|response| {
+            response.get("options").is_none_or(|options| {
+                option_labels_raw(options.as_array().map(Vec::as_slice).unwrap_or_default())
+                    == rule
+                        .fixed_option_labels
+                        .iter()
+                        .map(|label| (*label).to_string())
+                        .collect::<Vec<_>>()
+            })
+        }),
+        OptionSource::PerSlotOptions | OptionSource::GroupOptions => {
+            response_groups.iter().all(|response| {
+                valid_labels_for_alphabet(
+                    rule.option_alphabet,
+                    &option_labels_raw(
+                        response
+                            .get("options")
+                            .and_then(Value::as_array)
+                            .map(Vec::as_slice)
+                            .unwrap_or_default(),
+                    ),
+                    rule,
+                    paragraph_map,
+                )
+            })
+        }
+        OptionSource::OptionBank => valid_labels_for_alphabet(
+            rule.option_alphabet,
+            &option_labels_raw(bank_options),
+            rule,
+            paragraph_map,
+        ),
+        OptionSource::ParagraphMap => {
+            valid_labels_for_alphabet(rule.option_alphabet, &[], rule, paragraph_map)
+        }
+        OptionSource::None => true,
+    };
+    if !labels_are_valid {
+        violations.push(json!({
+            "aspect":"option_alphabet",
+            "expected":serialized_enum(&rule.option_alphabet),
+            "actual":match rule.option_source {
+                OptionSource::OptionBank => json!(option_labels_raw(bank_options)),
+                OptionSource::FixedTruthLabels | OptionSource::PerSlotOptions | OptionSource::GroupOptions => json!(response_groups.iter().map(|response| option_labels_raw(response.get("options").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default())).collect::<Vec<_>>()),
+                OptionSource::ParagraphMap => paragraph_map.cloned().unwrap_or(Value::Null),
+                OptionSource::None => Value::Null,
+            }
+        }));
+    }
+
+    if !violations.is_empty() {
+        let mut contract_issue = issue(
+            TASK_PRESENTATION_CONTRACT_MISMATCH,
+            "blocking",
+            "题组的选项、response group 或槽位呈现与题型规则不一致。",
+            "task",
+            task_id,
+            anchors_from(group),
+            vec!["edit_text", "assign_role", "attach_option_bank"],
+        );
+        contract_issue["details"] = json!({
+            "taskType":task_type_name,
+            "variant":rule.variant,
+            "violations":violations
+        });
+        push_issue(issues, hard_failures, contract_issue);
+    }
+
+    if matches!(task_type, TaskTypeV2::MatchingHeadings) {
+        let anchor_violations = heading_anchor_violations(authoring, slots, &expected_slot_ids);
+        if !anchor_violations.is_empty() {
+            let mut anchor_issue = issue(
+                PASSAGE_PARAGRAPH_ANCHOR_INVALID,
+                "blocking",
+                "标题配对投放框必须锚定到 paragraphMap 中标签一致的原文段落。",
+                "task",
+                task_id,
+                anchors_from(group),
+                vec!["edit_text", "assign_role"],
+            );
+            anchor_issue["details"] = json!({"slotAnchors":anchor_violations});
+            push_issue(issues, hard_failures, anchor_issue);
+        }
+        if bank_options.len() < expected_slot_ids.len() {
+            let mut count_issue = issue(
+                HEADING_OPTIONS_INSUFFICIENT,
+                "blocking",
+                "标题选项数量不能少于需要投放的计分段落数。",
+                "task",
+                task_id,
+                anchors_from(group),
+                vec!["attach_option_bank", "edit_text"],
+            );
+            count_issue["details"] = json!({
+                "headingOptionCount":bank_options.len(),
+                "dropzoneCount":expected_slot_ids.len()
+            });
+            push_issue(issues, hard_failures, count_issue);
+        }
+    }
+}
+
+fn serialized_enum<T: Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(ToString::to_string))
+        .unwrap_or_default()
+}
+
+fn option_labels_raw(options: &[Value]) -> Vec<String> {
+    options
+        .iter()
+        .filter_map(|option| option.get("label").and_then(Value::as_str))
+        .map(|label| label.trim().to_string())
+        .collect()
+}
+
+fn valid_labels_for_alphabet(
+    alphabet: OptionAlphabet,
+    labels: &[String],
+    rule: &TaskPresentationRule,
+    paragraph_map: Option<&Value>,
+) -> bool {
+    let unique = labels.iter().cloned().collect::<BTreeSet<_>>();
+    if unique.len() != labels.len() {
+        return false;
+    }
+    match alphabet {
+        OptionAlphabet::None => labels.is_empty(),
+        OptionAlphabet::FixedTruth => {
+            labels
+                == rule
+                    .fixed_option_labels
+                    .iter()
+                    .map(|label| (*label).to_string())
+                    .collect::<Vec<_>>()
+        }
+        OptionAlphabet::LettersAbcd => {
+            !labels.is_empty()
+                && labels
+                    .iter()
+                    .all(|label| label.len() == 1 && matches!(label.as_bytes()[0], b'A'..=b'D'))
+        }
+        OptionAlphabet::Letters => {
+            !labels.is_empty()
+                && labels
+                    .iter()
+                    .all(|label| label.len() == 1 && label.as_bytes()[0].is_ascii_uppercase())
+        }
+        OptionAlphabet::Roman => {
+            !labels.is_empty() && labels.iter().all(|label| is_lower_roman(label))
+        }
+        OptionAlphabet::ParagraphLetters => {
+            let mapped = paragraph_map
+                .and_then(Value::as_object)
+                .map(|map| map.keys().cloned().collect::<BTreeSet<_>>())
+                .unwrap_or_default();
+            !mapped.is_empty()
+                && mapped
+                    .iter()
+                    .all(|label| label.len() == 1 && label.as_bytes()[0].is_ascii_uppercase())
+                && (labels.is_empty() || unique == mapped)
+        }
+    }
+}
+
+fn is_lower_roman(label: &str) -> bool {
+    fn roman_value(label: &str) -> Option<u32> {
+        let value = |ch| match ch {
+            'i' => Some(1),
+            'v' => Some(5),
+            'x' => Some(10),
+            'l' => Some(50),
+            'c' => Some(100),
+            'd' => Some(500),
+            'm' => Some(1000),
+            _ => None,
+        };
+        let mut total = 0i32;
+        let mut previous = 0i32;
+        for ch in label.chars().rev() {
+            let current = value(ch)?;
+            if current < previous {
+                total -= current;
+            } else {
+                total += current;
+                previous = current;
+            }
+        }
+        u32::try_from(total)
+            .ok()
+            .filter(|value| (1..=3999).contains(value))
+    }
+
+    fn canonical_roman(mut value: u32) -> String {
+        let mut output = String::new();
+        for (amount, symbol) in [
+            (1000, "m"),
+            (900, "cm"),
+            (500, "d"),
+            (400, "cd"),
+            (100, "c"),
+            (90, "xc"),
+            (50, "l"),
+            (40, "xl"),
+            (10, "x"),
+            (9, "ix"),
+            (5, "v"),
+            (4, "iv"),
+            (1, "i"),
+        ] {
+            while value >= amount {
+                output.push_str(symbol);
+                value -= amount;
+            }
+        }
+        output
+    }
+
+    roman_value(label).is_some_and(|value| canonical_roman(value) == label)
+}
+
+fn heading_anchor_violations(
+    authoring: &Value,
+    slots: &Map<String, Value>,
+    expected_slot_ids: &BTreeSet<String>,
+) -> Vec<Value> {
+    let mut violations = Vec::new();
+    let passage = authoring.get("passage");
+    let content = passage
+        .and_then(|passage| passage.get("content"))
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let paragraph_map = passage
+        .and_then(|passage| passage.get("paragraphMap"))
+        .and_then(Value::as_object);
+    let mut paragraphs = BTreeMap::new();
+    collect_labeled_paragraphs(content, &mut paragraphs);
+    let mapped = paragraph_map
+        .map(|map| map.iter().collect::<Vec<_>>())
+        .unwrap_or_default();
+    if paragraph_map.is_none() {
+        violations.push(json!({"reason":"paragraph_map_missing"}));
+    }
+    for (label, node_id) in mapped {
+        let Some(node_id) = node_id.as_str() else {
+            violations.push(
+                json!({"reason":"paragraph_map_target_invalid","label":label,"nodeId":node_id}),
+            );
+            continue;
+        };
+        if paragraphs.get(node_id).map(String::as_str) != Some(label.as_str()) {
+            violations.push(json!({
+                "reason":"paragraph_map_label_or_node_mismatch",
+                "label":label,
+                "nodeId":node_id,
+                "actualParagraphLabel":paragraphs.get(node_id)
+            }));
+        }
+    }
+    for slot_id in expected_slot_ids {
+        let Some(slot) = slots.get(slot_id) else {
+            violations.push(json!({"reason":"slot_missing","slotId":slot_id}));
+            continue;
+        };
+        let host_type = slot.get("hostType").and_then(Value::as_str);
+        let host_id = slot.get("hostNodeId").and_then(Value::as_str);
+        let map_label = paragraph_map.and_then(|map| {
+            map.iter().find_map(|(label, node_id)| {
+                (node_id.as_str() == host_id).then_some(label.as_str())
+            })
+        });
+        let paragraph_label =
+            host_id.and_then(|host_id| paragraphs.get(host_id).map(String::as_str));
+        if host_type != Some("passage_paragraph")
+            || host_id.is_none()
+            || map_label.is_none()
+            || paragraph_label != map_label
+        {
+            violations.push(json!({
+                "reason":"slot_not_anchored_to_mapped_passage_paragraph",
+                "slotId":slot_id,
+                "hostType":host_type,
+                "hostNodeId":host_id,
+                "paragraphMapLabel":map_label,
+                "paragraphLabel":paragraph_label
+            }));
+        }
+    }
+    violations
+}
+
+fn collect_labeled_paragraphs(nodes: &[Value], output: &mut BTreeMap<String, String>) {
+    for node in nodes {
+        if node.get("type").and_then(Value::as_str) == Some("paragraph") {
+            if let (Some(id), Some(label)) = (
+                node.get("id").and_then(Value::as_str),
+                node.get("paragraphLabel").and_then(Value::as_str),
+            ) {
+                output.insert(id.to_string(), label.to_string());
+            }
+        }
+        for key in ["children", "items", "rows", "cells", "steps"] {
+            if let Some(children) = node.get(key).and_then(Value::as_array) {
+                collect_labeled_paragraphs(children, output);
+            }
+        }
+    }
+}
+
+fn paragraph_map_target_violations(authoring: &Value) -> Vec<Value> {
+    let passage = authoring.get("passage");
+    let Some(paragraph_map) = passage
+        .and_then(|passage| passage.get("paragraphMap"))
+        .and_then(Value::as_object)
+    else {
+        return Vec::new();
+    };
+    let content = passage
+        .and_then(|passage| passage.get("content"))
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let mut paragraphs = BTreeMap::new();
+    collect_labeled_paragraphs(content, &mut paragraphs);
+    paragraph_map
+        .iter()
+        .filter_map(|(label, node_id)| {
+            let Some(node_id) = node_id.as_str() else {
+                return Some(json!({
+                    "label":label,
+                    "nodeId":node_id,
+                    "reason":"paragraph_map_target_not_string"
+                }));
+            };
+            (paragraphs.get(node_id).map(String::as_str) != Some(label.as_str())).then(|| {
+                json!({
+                    "label":label,
+                    "nodeId":node_id,
+                    "actualParagraphLabel":paragraphs.get(node_id),
+                    "reason":"paragraph_map_target_missing_or_label_mismatch"
+                })
+            })
+        })
+        .collect()
+}
+
 fn evaluate_group(
     group: &Value,
     slots: &Map<String, Value>,
@@ -2065,8 +2720,18 @@ fn evaluate_group(
     }
 
     let prompt_text = group_prompt_text(group);
-    let prompt_coverage = if prompt_text.is_empty() { 0.0 } else { 1.0 };
-    if prompt_text.is_empty() && !group_slot_ids.is_empty() {
+    // Heading tasks use each mapped passage paragraph itself as the question prompt.
+    let prompt_is_anchored_passage = task_type == "matching_headings"
+        && !group_slot_ids.is_empty()
+        && group_slot_ids.iter().all(|slot_id| {
+            slots.get(slot_id).is_some_and(|slot| {
+                slot.get("hostType").and_then(Value::as_str) == Some("passage_paragraph")
+                    && slot.get("interaction").and_then(Value::as_str) == Some("dragdrop")
+            })
+        });
+    let prompt_missing = prompt_text.is_empty() && !prompt_is_anchored_passage;
+    let prompt_coverage = if prompt_missing { 0.0 } else { 1.0 };
+    if prompt_missing && !group_slot_ids.is_empty() {
         push_issue(
             issues,
             hard_failures,
@@ -2275,56 +2940,73 @@ fn validate_options(
     issues: &mut Vec<Value>,
     hard_failures: &mut Vec<String>,
 ) -> f64 {
-    let expected_labels = group
-        .pointer("/instructionSignature/optionAlphabet")
-        .and_then(Value::as_str)
-        .and_then(expected_labels_from_alphabet);
+    let Ok(task_type_enum) =
+        serde_json::from_value::<TaskTypeV2>(Value::String(task_type.to_string()))
+    else {
+        return 1.0;
+    };
+    let has_bank = group.get("optionBank").is_some_and(Value::is_object);
+    let rule = rule_for(&task_type_enum, has_bank);
+    if matches!(
+        rule.option_source,
+        OptionSource::None | OptionSource::ParagraphMap
+    ) {
+        return 1.0;
+    }
     let response_groups = group
         .get("responseGroups")
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let choice_required = matches!(
-        task_type,
-        "single_choice"
-            | "multiple_choice"
-            | "true_false_not_given"
-            | "yes_no_not_given"
-            | "matching_information"
-            | "matching_headings"
-            | "matching_features"
-            | "matching_sentence_endings"
-            | "classification"
-    );
-    if !choice_required {
-        return 1.0;
-    }
+    let bank = group.get("optionBank");
+    let bank_id = bank
+        .and_then(|value| value.get("optionBankId"))
+        .and_then(Value::as_str);
+    let bank_options = bank
+        .and_then(|value| value.get("options"))
+        .and_then(Value::as_array)
+        .map(Vec::as_slice);
     let mut total = 0usize;
     let mut complete = 0usize;
     for response in response_groups {
-        let options = response
+        let response_options = response
             .get("options")
             .and_then(Value::as_array)
-            .cloned()
+            .map(Vec::as_slice)
             .unwrap_or_default();
         let bank_ref = response.get("optionBankRef").and_then(Value::as_str);
-        let bank_options = bank_ref.and_then(|bank_id| {
-            let bank = group.get("optionBank")?;
-            (bank.get("optionBankId").and_then(Value::as_str) == Some(bank_id))
-                .then(|| bank.get("options").and_then(Value::as_array))
-                .flatten()
-        });
-        let bank_complete = bank_options.is_some_and(|items| {
-            items.len() >= 2
-                && (tfng_fixed_labels_allow_empty_content(task_type, items)
-                    || items.iter().all(option_has_renderable_content))
-        });
-        if options.is_empty() && !bank_complete {
+        let referenced_bank_options = bank_ref
+            .filter(|reference| Some(*reference) == bank_id)
+            .and(bank_options);
+        let options = match rule.option_source {
+            OptionSource::FixedTruthLabels if !response_options.is_empty() => {
+                Some(response_options)
+            }
+            OptionSource::FixedTruthLabels => referenced_bank_options,
+            OptionSource::PerSlotOptions | OptionSource::GroupOptions => {
+                (!response_options.is_empty()).then_some(response_options)
+            }
+            OptionSource::OptionBank => referenced_bank_options,
+            OptionSource::None | OptionSource::ParagraphMap => None,
+        };
+        if rule.option_source == OptionSource::FixedTruthLabels
+            && response_options.is_empty()
+            && bank_ref.is_none()
+        {
+            total += 1;
+            complete += 1;
+            continue;
+        }
+        let options = options.unwrap_or_default();
+        let options_have_content = options.len() >= 2
+            && (tfng_fixed_labels_allow_empty_content(task_type, options)
+                || options.iter().all(option_has_renderable_content));
+        if options.is_empty() || !options_have_content {
             push_issue(
                 issues,
                 hard_failures,
                 issue(
-                    if task_type.starts_with("matching") || task_type == "classification" {
+                    if rule.option_source == OptionSource::OptionBank {
                         OPTION_BANK_MISSING
                     } else {
                         OPTION_RUN_INCOMPLETE
@@ -2344,60 +3026,8 @@ fn validate_options(
             continue;
         }
         total += 1;
-        if !options.is_empty() {
-            let nonempty = tfng_fixed_labels_allow_empty_content(task_type, &options)
-                || options.iter().all(option_has_renderable_content);
-            let labels_match = expected_labels
-                .as_ref()
-                .is_none_or(|expected| option_labels(&options) == *expected);
-            if nonempty && labels_match {
-                complete += 1;
-            } else {
-                push_issue(
-                    issues,
-                    hard_failures,
-                    issue(
-                        if nonempty {
-                            OPTION_ALPHABET_MISMATCH
-                        } else {
-                            OPTION_RUN_INCOMPLETE
-                        },
-                        "blocking",
-                        "固定选项存在 label，但缺少可渲染的 option text。",
-                        "response_group",
-                        response
-                            .get("responseGroupId")
-                            .and_then(Value::as_str)
-                            .unwrap_or(task_id),
-                        anchors.clone(),
-                        vec!["edit_text"],
-                    ),
-                );
-            }
-        } else if bank_complete {
-            let labels_match = expected_labels.as_ref().is_none_or(|expected| {
-                bank_options.is_some_and(|items| option_labels(items) == *expected)
-            });
-            if labels_match {
-                complete += 1;
-            } else {
-                push_issue(
-                    issues,
-                    hard_failures,
-                    issue(
-                        OPTION_ALPHABET_MISMATCH,
-                        "blocking",
-                        "option bank labels 与 instruction signature 的 alphabet 不一致。",
-                        "response_group",
-                        response
-                            .get("responseGroupId")
-                            .and_then(Value::as_str)
-                            .unwrap_or(task_id),
-                        anchors.clone(),
-                        vec!["attach_option_bank", "edit_text"],
-                    ),
-                );
-            }
+        if options_have_content {
+            complete += 1;
         }
     }
     if total == 0 {
@@ -2931,30 +3561,6 @@ fn response_option_labels(group: &Value) -> BTreeSet<String> {
         }));
     }
     labels
-}
-
-fn expected_labels_from_alphabet(alphabet: &str) -> Option<BTreeSet<String>> {
-    let alphabet = alphabet.trim().to_ascii_uppercase();
-    let (start, end) = alphabet.split_once('-')?;
-    let start = start.trim().chars().next()?;
-    let end = end.trim().chars().next()?;
-    if !start.is_ascii_uppercase() || !end.is_ascii_uppercase() || start > end {
-        return None;
-    }
-    Some(
-        (start as u8..=end as u8)
-            .map(|value| (value as char).to_string())
-            .collect(),
-    )
-}
-
-fn option_labels(options: &[Value]) -> BTreeSet<String> {
-    options
-        .iter()
-        .filter_map(|option| option.get("label").and_then(Value::as_str))
-        .map(|label| label.trim().to_ascii_uppercase())
-        .filter(|label| !label.is_empty())
-        .collect()
 }
 
 fn response_option_count(group: &Value, response: &Value) -> usize {
@@ -3766,9 +4372,9 @@ fn is_numeric_page_folio(text: &str) -> bool {
     let digit_count = trimmed.chars().filter(char::is_ascii_digit).count();
     digit_count > 0
         && digit_count <= 3
-        && trimmed.chars().all(|ch| {
-            ch.is_ascii_digit() || ch.is_whitespace() || matches!(ch, '.' | '-')
-        })
+        && trimmed
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || ch.is_whitespace() || matches!(ch, '.' | '-'))
 }
 
 fn source_coverage_summary(
@@ -4215,8 +4821,7 @@ fn physical_ignored_reasons(
                     y.zip(height).is_some_and(|(y, height)| {
                         page_height > 0.0
                             && height > 0.0
-                            && (y <= page_height * 0.08
-                                || y + height >= page_height * 0.90)
+                            && (y <= page_height * 0.08 || y + height >= page_height * 0.90)
                     })
                 });
 
@@ -5465,6 +6070,113 @@ mod tests {
         physical
     }
 
+    fn heading_authoring(slot_count: u32, heading_labels: &[&str]) -> Value {
+        let mut authoring: Value = serde_json::from_str(include_str!(
+            "../../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
+        ))
+        .expect("基线正式稿必须通过 IeltsAuthoringIRV2 schema");
+        let numbers = (1..=slot_count).collect::<Vec<_>>();
+        let slot_ids = numbers
+            .iter()
+            .map(|number| format!("q{number}"))
+            .collect::<Vec<_>>();
+        let mut passage_map = Map::new();
+        let mut passage_nodes = Vec::new();
+        let mut answer_slots = Map::new();
+        let mut answer_key = Map::new();
+        for (index, number) in numbers.iter().enumerate() {
+            let label = char::from(b'A' + index as u8).to_string();
+            let paragraph_id = format!("passage-{label}");
+            let slot_id = format!("q{number}");
+            passage_map.insert(label.clone(), json!(paragraph_id));
+            passage_nodes.push(json!({
+                "type":"paragraph",
+                "id":paragraph_id,
+                "paragraphLabel":label,
+                "sourceAnchors":[],
+                "provenanceStatus":"source",
+                "children":[{"type":"text","id":format!("{paragraph_id}-text"),"sourceAnchors":[],"provenanceStatus":"source","text":"Passage paragraph."}]
+            }));
+            answer_slots.insert(
+                slot_id.clone(),
+                json!({
+                    "slotId":slot_id,
+                    "questionNumber":number,
+                    "displayLabel":number.to_string(),
+                    "hostNodeId":paragraph_id,
+                    "hostType":"passage_paragraph",
+                    "interaction":"dragdrop",
+                    "participation":"scoring",
+                    "sourceAnchors":[],
+                    "confidence":0.95
+                }),
+            );
+            if let Some(answer) = heading_labels.get(index % heading_labels.len().max(1)) {
+                answer_key.insert(
+                    slot_id,
+                    json!({"kind":"option","labels":[answer],"assignment":"per_slot"}),
+                );
+            }
+        }
+        let options = heading_labels
+            .iter()
+            .map(|label| {
+                json!({
+                    "optionId":format!("heading-{label}"),
+                    "label":label,
+                    "content":[{"type":"text","id":format!("heading-{label}-text"),"sourceAnchors":[],"provenanceStatus":"source","text":format!("Heading {label}")}],
+                    "sourceAnchors":[]
+                })
+            })
+            .collect::<Vec<_>>();
+        authoring["passage"] = json!({
+            "content":passage_nodes,
+            "paragraphMap":passage_map,
+            "sourceAnchors":[]
+        });
+        authoring["taskGroups"] = json!([{
+            "taskId":"task-heading",
+            "taskType":"matching_headings",
+            "displayRange":{"kind":"range","start":1,"end":slot_count},
+            "instructionSignature":{
+                "normalizedText":"Match the headings to the paragraphs.",
+                "taskType":"matching_headings",
+                "expectedQuestionNumbers":numbers,
+                "expectedSlotCount":slot_count,
+                "optionAlphabet":"i-iv",
+                "confidence":0.95,
+                "evidenceAnchors":[]
+            },
+            "instructions":[],
+            "stimulus":[],
+            "optionBank":{
+                "optionBankId":"heading-bank",
+                "scope":"task_group",
+                "options":options,
+                "allowReuse":false,
+                "sourceAnchors":[]
+            },
+            "responseGroups":[{
+                "responseGroupId":"heading-response",
+                "kind":"matching",
+                "slotIds":slot_ids,
+                "optionBankRef":"heading-bank",
+                "cardinality":{"min":1,"max":1},
+                "assignment":"per_slot",
+                "scoringPolicy":"per_slot_ielts_normalized",
+                "duplicatePolicy":"reject_submission",
+                "allowOptionReuse":false,
+                "sourceAnchors":[]
+            }],
+            "sourceAnchors":[],
+            "quality":{"score":0.95,"sourceCoverage":1.0,"hardFailures":[]},
+            "reviewState":"unreviewed"
+        }]);
+        authoring["answerSlots"] = Value::Object(answer_slots);
+        authoring["answerKey"] = Value::Object(answer_key);
+        authoring
+    }
+
     fn issue_for_target(report: &Value, code: &str, target_id: &str) -> bool {
         report
             .get("issues")
@@ -5948,6 +6660,107 @@ mod tests {
     }
 
     #[test]
+    fn quality_gate_rejects_heading_group_with_choice_shape() {
+        let mut authoring = heading_authoring(1, &["i", "ii"]);
+        authoring["taskGroups"][0]["responseGroups"][0]["kind"] = json!("choice");
+        authoring["answerSlots"]["q1"]["hostType"] = json!("prompt");
+        authoring["answerSlots"]["q1"]["interaction"] = json!("radio");
+        authoring["taskGroups"][0]["optionBank"]["options"][0]["label"] = json!("A");
+
+        let report = evaluate_quality(&authoring, None);
+        assert!(
+            issue_for_target(
+                &report,
+                "TASK_PRESENTATION_CONTRACT_MISMATCH",
+                "task-heading"
+            ),
+            "heading 的 choice/radio/prompt 呈现必须被门禁拦下：{report:#}"
+        );
+    }
+
+    #[test]
+    fn anchored_heading_paragraphs_satisfy_prompt_coverage() {
+        let authoring = heading_authoring(2, &["i", "ii", "iii"]);
+
+        let report = evaluate_quality(&authoring, None);
+
+        assert!(
+            !issue_for_target(&report, PROMPT_EMPTY, "task-heading"),
+            "mapped source paragraphs are the prompts for matching headings: {report:#}"
+        );
+    }
+
+    #[test]
+    fn quality_gate_rejects_heading_slot_without_paragraph_map_anchor() {
+        let mut authoring = heading_authoring(1, &["i", "ii"]);
+        authoring["passage"]["paragraphMap"] = json!({});
+
+        let report = evaluate_quality(&authoring, None);
+        assert!(
+            issue_for_target(&report, "PASSAGE_PARAGRAPH_ANCHOR_INVALID", "task-heading"),
+            "heading 投放框必须引用 paragraphMap 中真实的原文段落：{report:#}"
+        );
+    }
+
+    #[test]
+    fn quality_gate_rejects_paragraph_map_targets_outside_passage_content() {
+        let mut authoring = heading_authoring(1, &["i", "ii"]);
+        authoring["taskGroups"][0]["taskType"] = json!("matching_information");
+        authoring["taskGroups"][0]["instructionSignature"]["taskType"] =
+            json!("matching_information");
+        authoring["taskGroups"][0]["instructionSignature"]["optionAlphabet"] = json!("A-B");
+        authoring["taskGroups"][0]
+            .as_object_mut()
+            .expect("task group")
+            .remove("optionBank");
+        authoring["taskGroups"][0]["responseGroups"] = json!([{
+            "responseGroupId":"information-response",
+            "kind":"matching",
+            "slotIds":["q1"],
+            "cardinality":{"min":1,"max":1},
+            "assignment":"per_slot",
+            "scoringPolicy":"per_slot_ielts_normalized",
+            "duplicatePolicy":"reject_submission",
+            "allowOptionReuse":true,
+            "sourceAnchors":[]
+        }]);
+        authoring["answerSlots"]["q1"]["hostType"] = json!("prompt");
+        authoring["answerSlots"]["q1"]["interaction"] = json!("radio");
+        authoring["answerKey"]["q1"] =
+            json!({"kind":"option","labels":["A"],"assignment":"per_slot"});
+        authoring["passage"]["paragraphMap"]["A"] = json!("missing-passage-node");
+
+        let group = authoring["taskGroups"][0].clone();
+        let slots = authoring["answerSlots"].as_object().expect("answer slots");
+        let mut issues = Vec::new();
+        let mut hard_failures = Vec::new();
+        validate_task_presentation_contract(
+            &authoring,
+            &group,
+            slots,
+            &mut issues,
+            &mut hard_failures,
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue["code"] == "TASK_PRESENTATION_CONTRACT_MISMATCH"),
+            "matching_information 的 paragraphMap 目标必须指向标签相同的原文段落：{issues:#?}"
+        );
+    }
+
+    #[test]
+    fn quality_gate_rejects_fewer_heading_options_than_dropzones() {
+        let authoring = heading_authoring(3, &["i", "ii"]);
+
+        let report = evaluate_quality(&authoring, None);
+        assert!(
+            issue_for_target(&report, "HEADING_OPTIONS_INSUFFICIENT", "task-heading"),
+            "heading 选项数不得少于计分投放框数：{report:#}"
+        );
+    }
+
+    #[test]
     fn per_slot_cardinality_is_valid_for_multiple_slots_when_each_slot_takes_one_answer() {
         let authoring = json!({
             "taskGroups": [{
@@ -6259,11 +7072,23 @@ mod tests {
 
         for id in ["p001-r0001", "p002-r0001"] {
             assert_eq!(disposition_of(&summary, id), "ignored_with_reason", "{id}");
-            assert_eq!(reason_of(&summary, id).as_deref(), Some("page_number_furniture"), "{id}");
+            assert_eq!(
+                reason_of(&summary, id).as_deref(),
+                Some("page_number_furniture"),
+                "{id}"
+            );
         }
         for id in ["p001-r0002", "p001-r0003"] {
-            assert_eq!(disposition_of(&summary, id), "unassigned", "{id} must remain significant");
-            assert_eq!(reason_of(&summary, id), None, "{id} must not be silently ignored");
+            assert_eq!(
+                disposition_of(&summary, id),
+                "unassigned",
+                "{id} must remain significant"
+            );
+            assert_eq!(
+                reason_of(&summary, id),
+                None,
+                "{id} must not be silently ignored"
+            );
         }
     }
 
@@ -7035,7 +7860,10 @@ mod tests {
             &mut hard_failures,
         );
         // blocking 级 issue 会同时写进 hard_failures，正好说明普通选项缺 content 堵发布。
-        assert!(hard_failures.contains(&OPTION_RUN_INCOMPLETE.to_string()), "{hard_failures:?}");
+        assert!(
+            hard_failures.contains(&OPTION_RUN_INCOMPLETE.to_string()),
+            "{hard_failures:?}"
+        );
         assert!(
             issues
                 .iter()
@@ -7072,5 +7900,37 @@ mod tests {
                 .any(|issue| issue["code"] == OPTION_RUN_INCOMPLETE),
             "非判断题型的 TRUE/FALSE label 不享受豁免：{issues:#?}"
         );
+    }
+
+    #[test]
+    fn paragraph_map_matching_information_does_not_require_explicit_options() {
+        let group = json!({
+            "taskId":"information-1",
+            "responseGroups":[{"responseGroupId":"q1","slotIds":["q1"]}]
+        });
+        let mut issues = Vec::new();
+        let mut hard_failures = Vec::new();
+        let score = validate_options(
+            &group,
+            "matching_information",
+            "information-1",
+            Vec::new(),
+            &mut issues,
+            &mut hard_failures,
+        );
+        assert!(hard_failures.is_empty(), "{hard_failures:?}");
+        assert!(issues.is_empty(), "{issues:#?}");
+        assert_eq!(score, 1.0);
+    }
+
+    #[test]
+    fn single_choice_accepts_a_valid_subset_of_the_a_to_d_labels() {
+        let rule = rule_for(&TaskTypeV2::SingleChoice, false);
+        assert!(valid_labels_for_alphabet(
+            rule.option_alphabet,
+            &["A".to_string(), "B".to_string(), "C".to_string()],
+            rule,
+            None,
+        ));
     }
 }

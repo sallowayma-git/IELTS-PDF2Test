@@ -8,6 +8,7 @@ pub mod listening_runtime_v1;
 pub mod migration_v1;
 pub mod quality_report_v2;
 pub mod recognition_v1;
+pub mod task_presentation;
 
 pub use cloud_repair_v1::{
     CloudAuthoringCandidateV1, CloudCandidateUnresolvedRegionV1, CloudRepairToolCallV1,

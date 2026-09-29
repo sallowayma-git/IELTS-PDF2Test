@@ -57,7 +57,7 @@ export interface ListeningRuntimeAuditV1 {
   sourceSchemaVersion: "IeltsAuthoringIRV2";
   sourceDocumentId: string;
   sourceRevision: number;
-  sourceRevisionKind: "auto_extract" | "user" | "migration";
+  sourceRevisionKind: "auto_extract" | "user" | "migration" | "cloud_candidate_adoption";
   minimumRuntimeVersion: string;
 }
 

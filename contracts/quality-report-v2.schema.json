@@ -12,6 +12,7 @@
     "sourceCoverage": { "type": "number", "minimum": 0, "maximum": 1 },
     "coverageLedger": { "type": "array", "items": { "$ref": "#/$defs/coverageEntry" } },
     "coverageStatus": { "$ref": "#/$defs/coverageStatus" },
+    "questionCoverage": { "$ref": "#/$defs/questionCoverage" },
     "compilerProbes": { "$ref": "#/$defs/compilerProbes" },
     "taskScores": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 } },
     "hardFailures": { "type": "array", "items": { "type": "string", "minLength": 1 } },
@@ -49,6 +50,21 @@
         "significantSourceNodeCount": { "type": "integer", "minimum": 0 },
         "explainedSourceNodeCount": { "type": "integer", "minimum": 0 },
         "unassignedSourceNodeIds": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
+      }
+    },
+    "questionCoverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "declaredQuestionNumbers", "canonicalQuestionNumbers", "missingQuestionNumbers", "extraQuestionNumbers", "declarations", "unparsedDeclarations"],
+      "properties": {
+        "status": { "type": "string", "enum": ["complete", "missing", "undetermined"] },
+        "declaredQuestionNumbers": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
+        "canonicalQuestionNumbers": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
+        "missingQuestionNumbers": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
+        "extraQuestionNumbers": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
+        "declarations": { "type": "array", "items": { "type": "string" } },
+        "unparsedDeclarations": { "type": "array", "items": { "type": "string" } },
+        "reason": { "type": "string" }
       }
     },
     "compilerProbe": {
