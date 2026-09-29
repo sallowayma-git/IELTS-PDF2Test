@@ -2540,6 +2540,99 @@ fn inherit_local_provenance(draft: &mut Value, canonical: &Value) {
     apply_inherited_provenance(draft, &index);
 }
 
+/// 题组区域的第一个真实来源锚点：先说明区(instructions)，再题组自身 sourceAnchors，
+/// 再 stimulus、responseGroups 提示。与本地 fixed_truth_options 取的 task_anchors 同源。
+fn group_first_source_anchor(group: &Value) -> Option<Value> {
+    if let Some(first) = group
+        .get("instructions")
+        .map(instruction_source_anchors)
+        .and_then(|anchors| anchors.into_iter().next())
+    {
+        return Some(first);
+    }
+    if let Some(anchor) = group
+        .get("sourceAnchors")
+        .and_then(Value::as_array)
+        .and_then(|anchors| anchors.first())
+        .cloned()
+    {
+        return Some(anchor);
+    }
+    if let Some(first) = group
+        .get("stimulus")
+        .map(instruction_source_anchors)
+        .and_then(|anchors| anchors.into_iter().next())
+    {
+        return Some(first);
+    }
+    group
+        .get("responseGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|rg| rg.get("prompt"))
+        .find_map(|prompt| instruction_source_anchors(prompt).into_iter().next())
+}
+
+fn stamp_empty_option_anchors(group: &mut Value, anchor: &Value) {
+    fn stamp(options: &mut Vec<Value>, anchor: &Value) {
+        for option in options.iter_mut().filter_map(Value::as_object_mut) {
+            let empty = option
+                .get("sourceAnchors")
+                .and_then(Value::as_array)
+                .map(Vec::is_empty)
+                .unwrap_or(true);
+            if empty {
+                option.insert("sourceAnchors".to_string(), json!([anchor.clone()]));
+            }
+        }
+    }
+    if let Some(bank_options) = group
+        .pointer_mut("/optionBank/options")
+        .and_then(Value::as_array_mut)
+    {
+        stamp(bank_options, anchor);
+    }
+    if let Some(response_groups) = group
+        .get_mut("responseGroups")
+        .and_then(Value::as_array_mut)
+    {
+        for rg in response_groups.iter_mut() {
+            if let Some(options) = rg.get_mut("options").and_then(Value::as_array_mut) {
+                stamp(options, anchor);
+            }
+        }
+    }
+}
+
+/// 固定标签选项（TFNG/YNNG 的 true/false/(not_)given）本无独立原文来源。按本地
+/// `fixed_truth_options` 的做法，挂上题组区域的第一个真实锚点，让质量门禁凭真实来源通过；
+/// 题组自己也没有真实锚点时**不挂**，让门禁如实报 PROVENANCE_MISSING——绝不用占位或 manual
+/// 冒充来源。本地那两处路径（direct_canonical.rs / authoring_v2_commands.rs）不在本轮范围。
+fn stamp_fixed_truth_option_provenance(draft: &mut Value) {
+    let Some(groups) = draft.get_mut("taskGroups").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for group in groups.iter_mut() {
+        let Some(task_type) = group.get("taskType").and_then(Value::as_str) else {
+            continue;
+        };
+        let has_bank = group
+            .get("optionBank")
+            .map(|bank| !bank.is_null())
+            .unwrap_or(false);
+        let Some(rule) = task_presentation_rule(task_type, has_bank) else {
+            continue;
+        };
+        if rule.option_source != crate::schema::task_presentation::OptionSource::FixedTruthLabels {
+            continue;
+        }
+        if let Some(anchor) = group_first_source_anchor(group) {
+            stamp_empty_option_anchors(group, &anchor);
+        }
+    }
+}
+
 /// 补齐**后端拥有**、模型被明确告知不要输出的字段。
 ///
 /// 输出契约告诉模型：`sourceAnchors` 可选、`provenanceStatus` 不许写。那么照契约回复的
@@ -3470,6 +3563,8 @@ pub(crate) fn normalize_cloud_authoring(
     if let Some(canonical) = canonical {
         inherit_local_provenance(&mut draft, canonical);
     }
+    // 固定标签选项（TFNG/YNNG）没有独立原文来源：挂上题组区域的真实锚点，与本地一致。
+    stamp_fixed_truth_option_provenance(&mut draft);
 
     // ── 6) 组装后端字段 ────────────────────────────────────────────
     let mut document = Map::new();
@@ -6454,6 +6549,50 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
             !serialized.contains("cloud-tf"),
             "临时选项 id 必须被重写成后端稳定 id，不得残留：{serialized}"
         );
+    }
+
+    /// T3.2：固定标签选项（TFNG true/false/ng）本无独立原文来源，按本地 fixed_truth_options
+    /// 的做法挂上题组区域的第一个真实锚点，凭真实来源过 PROVENANCE 门禁——不放宽、不用 manual。
+    #[test]
+    fn cloudfix_fixed_truth_options_inherit_group_region_anchor() {
+        let canonical = golden_authoring();
+        let group_anchor = json!({
+            "sourceFileId": "will-be-rebound", "pageIndex": 1, "nodeIds": ["line-tfng-stem"],
+            "extractionMode": "pdf_native", "sourceHash": "a".repeat(64)
+        });
+        let inline_options = json!([
+            {"optionId":"cloud-tf1-true","label":"TRUE","content":[{"type":"text","id":"cloud-tf1-true-text","sourceAnchors":[],"text":"TRUE"}],"sourceAnchors":[]},
+            {"optionId":"cloud-tf1-false","label":"FALSE","content":[{"type":"text","id":"cloud-tf1-false-text","sourceAnchors":[],"text":"FALSE"}],"sourceAnchors":[]},
+            {"optionId":"cloud-tf1-ng","label":"NOT GIVEN","content":[{"type":"text","id":"cloud-tf1-ng-text","sourceAnchors":[],"text":"NOT GIVEN"}],"sourceAnchors":[]}
+        ]);
+        let draft = json!({
+            "taskGroups": [{
+                "taskId":"cloud-tg-1",
+                "displayRange":{"kind":"range","start":1,"end":1},
+                "taskType":"true_false_not_given",
+                "instructions":[paragraph("cloud-ins","cloud-ins-text","Do the following statements agree with the passage?")],
+                "responseGroups":[{"responseGroupId":"cloud-rg-q1","kind":"choice","slotIds":["cloud-q1"],"options": inline_options}],
+                "sourceAnchors":[group_anchor]
+            }],
+            "answerSlots":{"cloud-q1":{"slotId":"cloud-q1","questionNumber":1,"displayLabel":"1","hostType":"prompt","interaction":"radio","participation":"scoring","sourceAnchors":[]}},
+            "answerKey":{"cloud-q1":{"kind":"option","labels":["TRUE"],"assignment":"unordered_set"}},
+            "assets":[]
+        });
+        let raw = json!({ "authoring": draft });
+
+        let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), &raw)
+            .expect("标准化必须成功");
+        for index in 0..3 {
+            let anchors = normalized
+                .document
+                .pointer(&format!("/taskGroups/0/responseGroups/0/options/{index}/sourceAnchors"))
+                .and_then(Value::as_array);
+            assert!(
+                anchors.is_some_and(|a| !a.is_empty()),
+                "固定标签选项 {index} 应挂上题组区域的真实来源锚点：{:?}",
+                normalized.document.pointer(&format!("/taskGroups/0/responseGroups/0/options/{index}"))
+            );
+        }
     }
 }
 
