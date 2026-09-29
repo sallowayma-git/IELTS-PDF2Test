@@ -133,7 +133,9 @@ fn labelled_paragraph_nodes(
 /// inline prefixes are accepted only when they form an ordered paragraph
 /// label sequence, so an ordinary sentence such as `A study found ...` cannot
 /// create a paragraph map by itself.
-fn paragraph_markers(lines: &[SemanticLine]) -> std::collections::BTreeMap<usize, (String, String)> {
+fn paragraph_markers(
+    lines: &[SemanticLine],
+) -> std::collections::BTreeMap<usize, (String, String)> {
     let mut markers = std::collections::BTreeMap::new();
     let mut prefixes = Vec::<(usize, String, String)>::new();
     for (index, line) in lines.iter().enumerate() {
@@ -436,7 +438,9 @@ mod tests {
         );
         assert_eq!(
             nodes[1]["children"][0]["text"],
-            json!("The first source paragraph starts here. It continues on the next physical line.")
+            json!(
+                "The first source paragraph starts here. It continues on the next physical line."
+            )
         );
         assert_eq!(
             nodes[2]["children"][0]["text"],

@@ -126,6 +126,7 @@ const claimTask = {
   action: "answer",
   blocking: false,
   targetIds: ["q27"],
+  questionNumbers: [27],
   message:
     "云端未能确认：第 27 题的答案无法核实：原文件里没有答案页（抓取核对过），云端不能编造答案。请对照原文件或自行填写。",
 };
@@ -226,6 +227,31 @@ describe("ExamWorkspacePage 的云端修复剩余条目刷新", () => {
 
     expect(renderedTaskIds()).toContain("cloud-question:q27:1");
     expect(vi.mocked(getRecognitionDecision)).toHaveBeenCalledTimes(2);
+  });
+
+  it("真实题面差异在工作区待办里分别标出当前稿与云端文本", async () => {
+    vi.mocked(getRecognitionDecision).mockResolvedValueOnce(
+      decision("completed", [{
+        userTaskId: "cloud-diff:response-group:rg-6:instructions",
+        action: "review",
+        targetIds: ["rg-6"],
+        questionNumbers: [6, 7, 8, 9, 10, 11, 12, 13],
+        field: "instructions",
+        currentValue: "Complete the sentence.",
+        cloudValue: "Complete the notes.",
+        challengerLabel: "云端识别"
+      }])
+    );
+
+    render(<ExamWorkspacePage itemId={ITEM_ID} />);
+    await act(async () => {});
+    await openIssueList();
+
+    const removed = screen.getByText("Complete the sentence.");
+    const added = screen.getByText("Complete the notes.");
+    expect(removed.tagName).toBe("DEL");
+    expect(added.tagName).toBe("INS");
+    expect(screen.getByText("第 6–13 题的作答说明有差异")).toBeTruthy();
   });
 
   it("清单已有条目时一次读取失败：条目保留，随后重读成功仍在前", async () => {

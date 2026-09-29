@@ -17,6 +17,7 @@ import {
   decisionStatusLabel,
   decisionTargetId,
   describeStaleness,
+  displayedUnverifiableCount,
   emptyStateMessage,
   formatDecisionValue,
   formatEvidence,
@@ -375,7 +376,7 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
                   <li data-count="agreed">一致 {view.summary.agreed}</li>
                   <li data-count="auto_fixed">已自动修正 {view.summary.autoFixed}</li>
                   <li data-count="needs_review">待确认 {view.summary.needsReview}</li>
-                  <li data-count="unverifiable">无法验证 {view.summary.unverifiable}</li>
+                  <li data-count="unverifiable">无法验证 {displayedUnverifiableCount(view)}</li>
                 </ul>
               )}
             </>

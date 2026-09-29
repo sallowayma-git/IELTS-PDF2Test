@@ -785,6 +785,12 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
                       {task.title}
                     </span>
                     {task.detail ? <small className="workspace-task-detail">{task.detail}</small> : null}
+                    {task.comparison ? (
+                      <div className="workspace-task-comparison" aria-label="当前稿与云端识别的差异">
+                        <p>当前稿：<del>{task.comparison.current || "（空）"}</del></p>
+                        <p>{task.comparison.cloudLabel}：<ins>{task.comparison.cloud || "（空）"}</ins></p>
+                      </div>
+                    ) : null}
                     <div className="button-row">
                       {task.actions.map((action) => (
                         <button
