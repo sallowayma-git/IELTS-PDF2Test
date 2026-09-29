@@ -458,6 +458,8 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   const title = editor.draft?.exam.title ?? detail?.job.title ?? itemId;
   // 以处理任务的真实阶段为准（`job.currentStep` 在本地识别结束后就停在 Authoring，不能用）。
   const processingNote = processingNoteOf(processingState);
+  const llmUsage = detail?.llmUsage;
+  const formatTokens = (value: number) => new Intl.NumberFormat("zh-CN").format(value);
 
   return (
     <section
@@ -496,6 +498,15 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               onCancel={() => setTitleEditing(false)}
             />
             {processingNote ? <small data-testid="workspace-processing-note">{processingNote}</small> : null}
+            {llmUsage ? (
+              <small data-testid="workspace-llm-usage">
+                {llmUsage.budgetReached
+                  ? llmUsage.unknownUsageCalls > 0
+                    ? "云端用量信息缺失，已停止该试卷后续云端请求。"
+                    : `本次云端用量 ${formatTokens(llmUsage.totalTokens)} / ${formatTokens(llmUsage.tokenBudget)} tokens，已达到上限，后续云端请求已停止。`
+                  : `本次云端用量 ${formatTokens(llmUsage.promptTokens)} 输入 + ${formatTokens(llmUsage.completionTokens)} 输出 / ${formatTokens(llmUsage.tokenBudget)} tokens${llmUsage.cacheUsageAvailable ? ` · 缓存命中 ${formatTokens(llmUsage.cacheHitTokens)}` : ""}`}
+              </small>
+            ) : null}
           </div>
         </div>
 

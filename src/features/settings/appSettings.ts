@@ -11,6 +11,14 @@ import { useCallback, useEffect, useState } from "react";
 const STORAGE_KEY = "ielts-author-studio.app-settings.v1";
 /** 与旧 ExportPage 共用的历史 key，迁移期继续兼容读取。 */
 const LEGACY_NAS_KEY = "ielts-author-studio.confirmed-nas-export-dir.v1";
+export const DEFAULT_CLOUD_TOKEN_BUDGET = 1_000_000;
+export const MIN_CLOUD_TOKEN_BUDGET = 10_000;
+export const MAX_CLOUD_TOKEN_BUDGET = 20_000_000;
+
+export function normalizeCloudTokenBudget(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_CLOUD_TOKEN_BUDGET;
+  return Math.min(MAX_CLOUD_TOKEN_BUDGET, Math.max(MIN_CLOUD_TOKEN_BUDGET, Math.round(value)));
+}
 
 // 已移除（只被设置页自己读写、对产品没有任何作用）：`keepSourceFiles`（原文件发布后
 // 由后端统一清理）、`localConcurrency` / `cloudConcurrency`（调度器并发由后端决定）。
@@ -19,11 +27,14 @@ export interface AppSettingsV1 {
   nasDestination: string;
   /** 开发者模式：技术日志、完整环境诊断、过程文件保留开关才出现。 */
   developerMode: boolean;
+  /** Per imported paper, count prompt and completion tokens together. */
+  cloudTokenBudget: number;
 }
 
 export const DEFAULT_APP_SETTINGS: Readonly<AppSettingsV1> = Object.freeze({
   nasDestination: "",
-  developerMode: false
+  developerMode: false,
+  cloudTokenBudget: DEFAULT_CLOUD_TOKEN_BUDGET
 });
 
 export function readAppSettings(): AppSettingsV1 {
@@ -36,7 +47,8 @@ export function readAppSettings(): AppSettingsV1 {
   const legacyNas = window.localStorage.getItem(LEGACY_NAS_KEY)?.trim() ?? "";
   return {
     nasDestination: (stored.nasDestination ?? legacyNas).trim(),
-    developerMode: stored.developerMode === true
+    developerMode: stored.developerMode === true,
+    cloudTokenBudget: normalizeCloudTokenBudget(stored.cloudTokenBudget)
   };
 }
 
@@ -45,6 +57,7 @@ const listeners = new Set<(settings: AppSettingsV1) => void>();
 export function writeAppSettings(patch: Partial<AppSettingsV1>): AppSettingsV1 {
   const next = { ...readAppSettings(), ...patch };
   next.nasDestination = next.nasDestination.trim();
+  next.cloudTokenBudget = normalizeCloudTokenBudget(next.cloudTokenBudget);
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     // 迁移期同时写回旧 key，兼容仍在使用它的旧导出页。

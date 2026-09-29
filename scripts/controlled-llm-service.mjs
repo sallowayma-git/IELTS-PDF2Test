@@ -165,7 +165,10 @@ function textOf(body) {
     return { model: '<unparsable>', text: '', attachedParts: [] };
   }
   const messages = parsed?.messages ?? [];
-  const parts = messages.flatMap((message) => (Array.isArray(message?.content) ? message.content : []));
+  const parts = messages.flatMap((message) => {
+    if (typeof message?.content === 'string') return [{ type: 'text', text: message.content }];
+    return Array.isArray(message?.content) ? message.content : [];
+  });
   const attachedParts = parts.map((part) => part?.type ?? 'unknown');
   const text = parts
     .filter((part) => part?.type === 'text')
@@ -1183,9 +1186,9 @@ function unresolvedFrom(plan, context) {
 }
 
 function sourceParagraphsFromCandidatePrompt(text) {
-  const marker = "Source paragraph targets (labels and existing local node IDs only):";
+  const marker = "Source paragraph targets:";
   const start = text.lastIndexOf(marker);
-  const end = start < 0 ? -1 : text.indexOf("\nOutput contract JSON:", start);
+  const end = start < 0 ? -1 : text.indexOf("\nLocal node targets:", start);
   if (start < 0 || end < 0) throw new Error("candidate prompt has no source paragraph map");
   const raw = text.slice(start + marker.length, end).trim();
   try {

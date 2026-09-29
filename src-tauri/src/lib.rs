@@ -347,6 +347,8 @@ pub struct JobDetail {
     pub vision_answer_candidates: Option<Value>,
     #[serde(rename = "llmSuggestions")]
     pub llm_suggestions: Vec<Value>,
+    #[serde(rename = "llmUsage")]
+    pub llm_usage: Option<Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

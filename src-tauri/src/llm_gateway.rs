@@ -8,9 +8,11 @@ use chrono::Utc;
 use serde_json::{json, Value};
 use std::{
     cell::RefCell,
+    collections::HashMap,
     fs,
     io::Read,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock, Weak},
     thread,
     time::{Duration, Instant},
 };
@@ -31,6 +33,66 @@ const LLM_TIMEOUT_MAX_MS: u64 = 600_000;
 const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 16_384;
 /// Longest error string kept verbatim in a call record.
 const RECORD_ERROR_MAX_CHARS: usize = 8_000;
+const RETAINED_LLM_CALL_RECORDS: usize = 200;
+const RETAINED_LLM_CALL_LOG_BYTES: usize = 512 * 1024;
+const LLM_TOKEN_BUDGET_FILE: &str = "llm-token-budget.json";
+const LLM_TOKEN_USAGE_TOTAL_FILE: &str = "llm-token-usage-total.json";
+const DEFAULT_CLOUD_TOKEN_BUDGET: u64 = 1_000_000;
+const MIN_CLOUD_TOKEN_BUDGET: u64 = 10_000;
+const MAX_CLOUD_TOKEN_BUDGET: u64 = 20_000_000;
+
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LlmTokenUsageTotal {
+    #[serde(default)]
+    prompt_tokens: u64,
+    #[serde(default)]
+    completion_tokens: u64,
+    #[serde(default)]
+    cache_hit_tokens: u64,
+    #[serde(default)]
+    cache_miss_tokens: u64,
+    #[serde(default)]
+    call_count: u64,
+    #[serde(default)]
+    unknown_usage_calls: u64,
+    #[serde(default)]
+    unknown_cache_usage_calls: u64,
+}
+
+impl LlmTokenUsageTotal {
+    fn total_tokens(&self) -> u64 {
+        self.prompt_tokens.saturating_add(self.completion_tokens)
+    }
+
+    fn record(&mut self, usage: &Value) {
+        self.call_count = self.call_count.saturating_add(1);
+        let prompt = usage.get("prompt_tokens").and_then(Value::as_u64);
+        let completion = usage.get("completion_tokens").and_then(Value::as_u64);
+        if let Some(tokens) = prompt {
+            self.prompt_tokens = self.prompt_tokens.saturating_add(tokens);
+        }
+        if let Some(tokens) = completion {
+            self.completion_tokens = self.completion_tokens.saturating_add(tokens);
+        }
+        if prompt.is_none() || completion.is_none() {
+            self.unknown_usage_calls = self.unknown_usage_calls.saturating_add(1);
+        }
+        let cache_hit = usage.get("prompt_cache_hit_tokens").and_then(Value::as_u64);
+        let cache_miss = usage
+            .get("prompt_cache_miss_tokens")
+            .and_then(Value::as_u64);
+        if let Some(tokens) = cache_hit {
+            self.cache_hit_tokens = self.cache_hit_tokens.saturating_add(tokens);
+        }
+        if let Some(tokens) = cache_miss {
+            self.cache_miss_tokens = self.cache_miss_tokens.saturating_add(tokens);
+        }
+        if cache_hit.is_none() || cache_miss.is_none() {
+            self.unknown_cache_usage_calls = self.unknown_cache_usage_calls.saturating_add(1);
+        }
+    }
+}
 
 /// Per-call transport trace. Every gateway call runs synchronously on one
 /// thread, so a thread-local collects what the HTTP layer saw (attempts,
@@ -50,6 +112,9 @@ struct LlmCallTrace {
     usage: Option<Value>,
     finish_reason: Option<String>,
     raw_content: Option<String>,
+    response_bytes: u64,
+    system_bytes: u64,
+    media_bytes: u64,
     /// 校核包（`repair_authoring_step`）专属：这一轮问的是**哪个包**、升到了哪一级、
     /// 包里带了哪些页、包自己估了多少 token。没有这四个字段，「输入量下降」就只是一句
     /// 感觉——有了它们，逐包逐轮都能对账（见任务书 §4.5）。
@@ -84,6 +149,324 @@ fn truncate_for_record(text: &str) -> String {
     }
 }
 
+fn next_llm_call_index(root: &Path, job_id: &str) -> CommandResult<u64> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "llm_call_sequence_lock_poisoned".to_string())?;
+    let path = job_dir(root, job_id).join("llm-usage-sequence");
+    let current = match fs::read_to_string(&path) {
+        Ok(value) => value
+            .trim()
+            .parse::<u64>()
+            .map_err(|error| format!("llm_call_sequence_invalid:{error}"))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(error) => return Err(format!("llm_call_sequence_read_failed:{error}")),
+    };
+    let next = current.saturating_add(1);
+    fs::write(&path, next.to_string())
+        .map_err(|error| format!("llm_call_sequence_write_failed:{error}"))?;
+    Ok(next)
+}
+
+fn json_value_size(value: Option<&Value>) -> CommandResult<u64> {
+    value
+        .map(|value| {
+            serde_json::to_vec(value)
+                .map(|bytes| bytes.len() as u64)
+                .map_err(|error| format!("llm_metrics_encode_failed:{error}"))
+        })
+        .unwrap_or(Ok(0))
+}
+
+fn sum_json_value_sizes(values: &[Option<&Value>]) -> CommandResult<u64> {
+    values.iter().try_fold(0u64, |sum, value| {
+        Ok(sum.saturating_add(json_value_size(*value)?))
+    })
+}
+
+fn normalized_usage_fields(usage: &Value) -> Value {
+    let prompt_tokens = usage.get("prompt_tokens").and_then(Value::as_u64);
+    let completion_tokens = usage.get("completion_tokens").and_then(Value::as_u64);
+    let reported_hit = usage
+        .get("prompt_cache_hit_tokens")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            usage
+                .pointer("/prompt_tokens_details/cached_tokens")
+                .and_then(Value::as_u64)
+        });
+    let reported_miss = usage
+        .get("prompt_cache_miss_tokens")
+        .and_then(Value::as_u64);
+    let derived_miss = prompt_tokens
+        .zip(reported_hit)
+        .map(|(prompt, hit)| prompt.saturating_sub(hit));
+    json!({
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "prompt_cache_hit_tokens": reported_hit,
+        "prompt_cache_miss_tokens": reported_miss.or(derived_miss),
+        "prompt_cache_miss_is_derived": reported_miss.is_none() && derived_miss.is_some(),
+    })
+}
+
+fn summarize_llm_input(input: &Value, step_index: u64) -> Value {
+    let keys = input
+        .as_object()
+        .map(|object| {
+            object
+                .keys()
+                .filter(|key| !matches!(key.as_str(), "apiKey" | "authorization" | "token"))
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let context = input.get("context").unwrap_or(&Value::Null);
+    let groups = context
+        .pointer("/draftSlice/taskGroups")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .or_else(|| {
+            input
+                .pointer("/taskGroups")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+        })
+        .unwrap_or(0);
+    let questions = context
+        .get("questionNumbers")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    json!({
+        "keys": keys,
+        "stepIndex": step_index,
+        "contextMode": context.get("contextMode").cloned().unwrap_or(Value::Null),
+        "packetId": context.get("packetId").cloned().unwrap_or(Value::Null),
+        "taskGroupCount": groups,
+        "questionCount": questions,
+        "observationCount": input.get("observations").and_then(Value::as_array).map(Vec::len).unwrap_or(0),
+    })
+}
+
+fn summarize_llm_output(output: &CommandResult<Value>, trace: &LlmCallTrace) -> Value {
+    let mut summary = json!({
+        "ok": output.is_ok(),
+        "responseBytes": trace.response_bytes,
+        "contentBytes": trace.raw_content.as_ref().map(|content| content.len()).unwrap_or(0),
+    });
+    if let Ok(value) = output {
+        let keys = value
+            .as_object()
+            .map(|object| object.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        summary["keys"] = json!(keys);
+        summary["taskGroupCount"] = json!(value
+            .get("taskGroups")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0));
+        summary["answerSlotCount"] = json!(value
+            .get("answerSlots")
+            .and_then(Value::as_object)
+            .map(serde_json::Map::len)
+            .unwrap_or(0));
+        summary["commandCount"] = json!(value
+            .get("commands")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0));
+        summary["tool"] = value.get("tool").cloned().unwrap_or(Value::Null);
+    }
+    summary
+}
+
+fn call_segment_sizes(input: &Value, trace: &LlmCallTrace) -> CommandResult<Value> {
+    let context = input.get("context");
+    let source_sizes = [
+        input.get("sourceFile"),
+        input.get("sourceText"),
+        input.get("pages"),
+        input.get("sourceParagraphs"),
+        context.and_then(|value| value.get("paperMap")),
+        context.and_then(|value| value.get("scope")),
+        context.and_then(|value| value.get("scopeManifest")),
+        context.and_then(|value| value.get("sourceEvidence")),
+    ];
+    let draft_sizes = [
+        context.and_then(|value| value.get("draftSlice")),
+        context.and_then(|value| value.get("candidateSlice")),
+        context.and_then(|value| value.get("localSnapshotSlice")),
+        context.and_then(|value| value.get("differences")),
+        context.and_then(|value| value.get("blockingIssues")),
+        input.get("localNodeTargets"),
+    ];
+    let rule_sizes = [input.get("rules"), input.get("outputContract")];
+    let tool_sizes = [input.get("tools"), input.get("allowedOps")];
+    Ok(json!({
+        "system": trace.system_bytes,
+        "rules": sum_json_value_sizes(&rule_sizes)?,
+        "tools": sum_json_value_sizes(&tool_sizes)?,
+        "source": sum_json_value_sizes(&source_sizes)?,
+        "draft": sum_json_value_sizes(&draft_sizes)?,
+        "observations": json_value_size(input.get("observations"))?,
+        "images": trace.media_bytes,
+    }))
+}
+
+fn append_retained_llm_usage_record(
+    root: &Path,
+    job_id: &str,
+    record: &Value,
+) -> CommandResult<()> {
+    let path = job_dir(root, job_id).join("llm-usage.jsonl");
+    let line = serde_json::to_string(record).map_err(|error| error.to_string())?;
+    let new_line_bytes = line.len().saturating_add(1);
+    if new_line_bytes > RETAINED_LLM_CALL_LOG_BYTES {
+        return Err("llm_usage_record_exceeds_retention_limit".to_string());
+    }
+    let existing = match fs::read_to_string(&path) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(format!("llm_usage_log_read_failed:{error}")),
+    };
+    let mut retained = Vec::<String>::new();
+    let mut retained_bytes = new_line_bytes;
+    for old in existing.lines().rev().filter(|old| !old.is_empty()) {
+        if retained.len() + 1 >= RETAINED_LLM_CALL_RECORDS {
+            break;
+        }
+        let old_bytes = old.len().saturating_add(1);
+        if retained_bytes.saturating_add(old_bytes) > RETAINED_LLM_CALL_LOG_BYTES {
+            break;
+        }
+        retained.push(old.to_string());
+        retained_bytes = retained_bytes.saturating_add(old_bytes);
+    }
+    retained.reverse();
+    retained.push(line);
+    fs::write(&path, format!("{}\n", retained.join("\n")))
+        .map_err(|error| format!("llm_usage_log_write_failed:{error}"))
+}
+
+fn llm_budget_job_lock(root: &Path, job_id: &str) -> CommandResult<Arc<Mutex<()>>> {
+    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+    let path = job_dir(root, job_id);
+    let mut locks = LOCKS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| "llm_budget_lock_map_poisoned".to_string())?;
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(&path).and_then(Weak::upgrade) {
+        return Ok(lock);
+    }
+    let lock = Arc::new(Mutex::new(()));
+    locks.insert(path, Arc::downgrade(&lock));
+    Ok(lock)
+}
+
+fn cloud_token_budget(root: &Path, job_id: &str) -> CommandResult<u64> {
+    let path = job_dir(root, job_id).join(LLM_TOKEN_BUDGET_FILE);
+    let content = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(DEFAULT_CLOUD_TOKEN_BUDGET)
+        }
+        Err(error) => return Err(format!("llm_token_budget_read_failed:{error}")),
+    };
+    let value: Value = serde_json::from_str(&content)
+        .map_err(|error| format!("llm_token_budget_parse_failed:{error}"))?;
+    let budget = value
+        .get("tokenBudget")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "llm_token_budget_value_missing".to_string())?;
+    if !(MIN_CLOUD_TOKEN_BUDGET..=MAX_CLOUD_TOKEN_BUDGET).contains(&budget) {
+        return Err("llm_token_budget_value_out_of_range".to_string());
+    }
+    Ok(budget)
+}
+
+fn retained_usage_total(root: &Path, job_id: &str) -> CommandResult<LlmTokenUsageTotal> {
+    let path = job_dir(root, job_id).join("llm-usage.jsonl");
+    let content = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Default::default()),
+        Err(error) => return Err(format!("llm_usage_log_read_failed:{error}")),
+    };
+    let mut total = LlmTokenUsageTotal::default();
+    for line in content.lines().filter(|line| !line.trim().is_empty()) {
+        let record: Value = serde_json::from_str(line)
+            .map_err(|error| format!("llm_usage_log_parse_failed:{error}"))?;
+        if record.get("providerCall").and_then(Value::as_bool) == Some(false) {
+            continue;
+        }
+        total.record(record.get("usage").unwrap_or(&Value::Null));
+    }
+    Ok(total)
+}
+
+fn read_llm_token_usage_total(root: &Path, job_id: &str) -> CommandResult<LlmTokenUsageTotal> {
+    let path = job_dir(root, job_id).join(LLM_TOKEN_USAGE_TOTAL_FILE);
+    match fs::read_to_string(&path) {
+        Ok(content) => serde_json::from_str(&content)
+            .map_err(|error| format!("llm_token_usage_total_parse_failed:{error}")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            retained_usage_total(root, job_id)
+        }
+        Err(error) => Err(format!("llm_token_usage_total_read_failed:{error}")),
+    }
+}
+
+fn write_llm_token_usage_total(
+    root: &Path,
+    job_id: &str,
+    total: &LlmTokenUsageTotal,
+) -> CommandResult<()> {
+    let path = job_dir(root, job_id).join(LLM_TOKEN_USAGE_TOTAL_FILE);
+    let value = serde_json::to_value(total)
+        .map_err(|error| format!("llm_token_usage_total_encode_failed:{error}"))?;
+    crate::artifact_store::write_canonical_json_atomic(&path, &value)
+        .map(|_| ())
+        .map_err(|error| format!("llm_token_usage_total_write_failed:{error}"))
+}
+
+fn budget_block_reason(total: &LlmTokenUsageTotal, budget: u64) -> Option<String> {
+    if total.unknown_usage_calls > 0 {
+        Some(format!(
+            "cloud_token_budget_usage_unavailable:{}:{}",
+            total.unknown_usage_calls, budget
+        ))
+    } else if total.total_tokens() >= budget {
+        Some(format!(
+            "cloud_token_budget_exceeded:{}:{}",
+            total.total_tokens(),
+            budget
+        ))
+    } else {
+        None
+    }
+}
+
+pub(crate) fn llm_usage_summary(root: &Path, job_id: &str) -> CommandResult<Value> {
+    let budget = cloud_token_budget(root, job_id)?;
+    let total = read_llm_token_usage_total(root, job_id)?;
+    Ok(json!({
+        "tokenBudget": budget,
+        "promptTokens": total.prompt_tokens,
+        "completionTokens": total.completion_tokens,
+        "totalTokens": total.total_tokens(),
+        "cacheHitTokens": total.cache_hit_tokens,
+        "cacheMissTokens": total.cache_miss_tokens,
+        "callCount": total.call_count,
+        "usageAvailable": total.call_count > 0 && total.unknown_usage_calls == 0,
+        "cacheUsageAvailable": total.call_count > 0 && total.unknown_cache_usage_calls == 0,
+        "unknownUsageCalls": total.unknown_usage_calls,
+        "budgetReached": budget_block_reason(&total, budget).is_some(),
+    }))
+}
+
 pub(crate) fn run_llm_gateway(
     root: &Path,
     job_id: &str,
@@ -91,46 +474,80 @@ pub(crate) fn run_llm_gateway(
     input: &Value,
     api_key: Option<&str>,
 ) -> CommandResult<Value> {
+    let budget_lock = llm_budget_job_lock(root, job_id)?;
+    let _budget_guard = budget_lock
+        .lock()
+        .map_err(|_| "llm_budget_job_lock_poisoned".to_string())?;
+    let budget = cloud_token_budget(root, job_id)?;
+    let mut usage_total = read_llm_token_usage_total(root, job_id)?;
+    let usage_before = usage_total.total_tokens();
+    let blocked_reason = budget_block_reason(&usage_total, budget);
+    let mut request_input = input.clone();
+    if blocked_reason.is_none() {
+        if let Some(profile) = request_input
+            .get_mut("profile")
+            .and_then(Value::as_object_mut)
+        {
+            let configured_max = profile
+                .get("maxOutputTokens")
+                .and_then(Value::as_u64)
+                .filter(|value| *value > 0)
+                .unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS);
+            profile.insert(
+                "maxOutputTokens".to_string(),
+                json!(configured_max.min(budget)),
+            );
+        }
+    }
     let cache_dir = job_dir(root, job_id).join("cache").join("llm");
     let stamp = Utc::now().timestamp_millis();
     let input_path = cache_dir.join(format!("{}-input-{}.json", command_name, stamp));
     let output_path = cache_dir.join(format!("{}-output-{}.json", command_name, stamp));
-    write_json(&input_path, &redact_llm_input_for_cache(input))?;
+    if blocked_reason.is_none() {
+        write_json(&input_path, &redact_llm_input_for_cache(&request_input))?;
+    }
+    let step_index = next_llm_call_index(root, job_id)?;
     let _stale = take_trace();
     let started = std::time::Instant::now();
-    let output = match command_name {
-        "classify_group" | "extract_group" | "test_profile" => {
-            run_openai_compatible_group_llm(command_name, input, api_key)
+    let output = if let Some(reason) = blocked_reason.as_ref() {
+        Err(reason.clone())
+    } else {
+        match command_name {
+            "classify_group" | "extract_group" | "test_profile" => {
+                run_openai_compatible_group_llm(command_name, &request_input, api_key)
+            }
+            "transcribe_pdf_images" => {
+                run_openai_compatible_vision_llm(root, job_id, &request_input, api_key)
+            }
+            "extract_pdf_image_answers" => {
+                run_openai_compatible_vision_answer_llm(root, job_id, &request_input, api_key)
+            }
+            "generate_pdf_reading_outline" => {
+                run_openai_compatible_cloud_outline_llm(root, job_id, &request_input, api_key)
+            }
+            // 云端**完整候选**识别：产出可直接渲染的完整稿件（正文 / 题组 / 富内容题干 /
+            // 选项库 / 作答位置 / 答案）。它是候选，不写权威稿；身份与质量由后端生成。
+            "generate_authoring_candidate" => {
+                run_openai_compatible_authoring_candidate_llm(root, job_id, &request_input, api_key)
+            }
+            // 修复回合：模型输出一个**应用层 JSON 工具消息**，由 Rust 真实执行并把真实结果
+            // 回传下一轮。不是建议卡，也不改造供应商 native tools 协议。
+            "repair_authoring_step" => {
+                run_openai_compatible_repair_step_llm(root, job_id, &request_input, api_key)
+            }
+            // A4：分歧裁决。与云端识别共用证据面（PDF 附原文件 / 非 PDF 附原文文本），
+            // 但输出契约与校验完全不同——它必须回指本次提交的 decisionId 集合。
+            "adjudicate_divergence" => {
+                run_openai_compatible_adjudication_llm(root, job_id, &request_input, api_key)
+            }
+            // A3：原文件核验。任务与裁决相反：不是「在三条已有结论里挑一条」，而是
+            // 「回原文件查这个值对不对」。输出必须回指本次提交的 slotId 集合，
+            // 且任何断言都要带原文引用（quote + pageIndex）。
+            "verify_source_answers" => {
+                run_openai_compatible_source_verification_llm(root, job_id, &request_input, api_key)
+            }
+            _ => Err(format!("unsupported_llm_gateway_command:{}", command_name)),
         }
-        "transcribe_pdf_images" => run_openai_compatible_vision_llm(root, job_id, input, api_key),
-        "extract_pdf_image_answers" => {
-            run_openai_compatible_vision_answer_llm(root, job_id, input, api_key)
-        }
-        "generate_pdf_reading_outline" => {
-            run_openai_compatible_cloud_outline_llm(root, job_id, input, api_key)
-        }
-        // 云端**完整候选**识别：产出可直接渲染的完整稿件（正文 / 题组 / 富内容题干 /
-        // 选项库 / 作答位置 / 答案）。它是候选，不写权威稿；身份与质量由后端生成。
-        "generate_authoring_candidate" => {
-            run_openai_compatible_authoring_candidate_llm(root, job_id, input, api_key)
-        }
-        // 修复回合：模型输出一个**应用层 JSON 工具消息**，由 Rust 真实执行并把真实结果
-        // 回传下一轮。不是建议卡，也不改造供应商 native tools 协议。
-        "repair_authoring_step" => {
-            run_openai_compatible_repair_step_llm(root, job_id, input, api_key)
-        }
-        // A4：分歧裁决。与云端识别共用证据面（PDF 附原文件 / 非 PDF 附原文文本），
-        // 但输出契约与校验完全不同——它必须回指本次提交的 decisionId 集合。
-        "adjudicate_divergence" => {
-            run_openai_compatible_adjudication_llm(root, job_id, input, api_key)
-        }
-        // A3：原文件核验。任务与裁决相反：不是「在三条已有结论里挑一条」，而是
-        // 「回原文件查这个值对不对」。输出必须回指本次提交的 slotId 集合，
-        // 且任何断言都要带原文引用（quote + pageIndex）。
-        "verify_source_answers" => {
-            run_openai_compatible_source_verification_llm(root, job_id, input, api_key)
-        }
-        _ => Err(format!("unsupported_llm_gateway_command:{}", command_name)),
     };
     // Per-call observability record: every gateway invocation (success or
     // failure) lands in llm-calls.jsonl with its latency, transport attempts,
@@ -157,10 +574,25 @@ pub(crate) fn run_llm_gateway(
         }
         _ => None,
     };
+    let usage = trace.usage.clone().unwrap_or(Value::Null);
+    let usage_fields = normalized_usage_fields(&usage);
+    let provider_call = blocked_reason.is_none();
+    let redacted_input = redact_llm_input_for_cache(&request_input);
+    let input_bytes = json_value_size(Some(&redacted_input))?;
+    let segments = call_segment_sizes(&request_input, &trace)?;
+    let input_summary = summarize_llm_input(&request_input, step_index);
+    if provider_call {
+        usage_total.record(&usage_fields);
+        write_llm_token_usage_total(root, job_id, &usage_total)?;
+    }
+    let budget_reached = budget_block_reason(&usage_total, budget).is_some();
+    let output_summary = summarize_llm_output(&output, &trace);
     let call_record = json!({
         "recordType": "llm_call",
         "commandName": command_name,
         "jobId": job_id,
+        "stepIndex": step_index,
+        "providerCall": provider_call,
         "model": input.get("profile").and_then(|profile| profile.get("model")).cloned().unwrap_or(Value::Null),
         "ok": output.is_ok(),
         "latencyMs": started.elapsed().as_millis() as u64,
@@ -174,13 +606,27 @@ pub(crate) fn run_llm_gateway(
         },
         "attempts": trace.attempts,
         "requestBytes": trace.request_bytes,
+        "inputBytes": input_bytes,
+        "segments": segments,
+        "responseBytes": trace.response_bytes,
+        "inputSummary": input_summary,
+        "outputSummary": output_summary,
+        "cloudTokenBudget": budget,
+        "cloudTokensBefore": usage_before,
+        "cloudTokensAfter": usage_total.total_tokens(),
+        "cloudBudgetReached": budget_reached,
         "maxTokens": trace.max_tokens,
         "pdfBytes": trace.pdf_bytes,
         "imageCount": trace.image_count,
         "imageFallback": trace.image_fallback,
         "directPdfError": trace.direct_pdf_error.as_deref().map(truncate_for_record),
         "httpStatus": trace.http_status,
-        "usage": trace.usage.unwrap_or(Value::Null),
+        "usage": usage,
+        "prompt_tokens": usage_fields.get("prompt_tokens").cloned().unwrap_or(Value::Null),
+        "completion_tokens": usage_fields.get("completion_tokens").cloned().unwrap_or(Value::Null),
+        "prompt_cache_hit_tokens": usage_fields.get("prompt_cache_hit_tokens").cloned().unwrap_or(Value::Null),
+        "prompt_cache_miss_tokens": usage_fields.get("prompt_cache_miss_tokens").cloned().unwrap_or(Value::Null),
+        "prompt_cache_miss_is_derived": usage_fields.get("prompt_cache_miss_is_derived").cloned().unwrap_or(json!(false)),
         "finishReason": trace.finish_reason,
         // 非包模式的调用留 null：这些字段只在「这一轮问的是一个包」时才有意义。
         "packetId": trace.packet_id,
@@ -190,7 +636,41 @@ pub(crate) fn run_llm_gateway(
         "rejectedPath": rejected_path,
         "recordedAt": Utc::now().to_rfc3339()
     });
-    let _ = append_llm_call_record(root, job_id, &call_record);
+    let metrics_record = json!({
+        "recordType": "llm_usage",
+        "commandName": command_name,
+        "jobId": job_id,
+        "stepIndex": step_index,
+        "providerCall": provider_call,
+        "model": call_record.get("model").cloned().unwrap_or(Value::Null),
+        "ok": call_record.get("ok").cloned().unwrap_or(json!(false)),
+        "latencyMs": call_record.get("latencyMs").cloned().unwrap_or(json!(0)),
+        "requestBytes": trace.request_bytes,
+        "inputBytes": input_bytes,
+        "segments": segments,
+        "responseBytes": trace.response_bytes,
+        "usage": usage_fields,
+        "prompt_tokens": call_record.get("prompt_tokens").cloned().unwrap_or(Value::Null),
+        "completion_tokens": call_record.get("completion_tokens").cloned().unwrap_or(Value::Null),
+        "prompt_cache_hit_tokens": call_record.get("prompt_cache_hit_tokens").cloned().unwrap_or(Value::Null),
+        "prompt_cache_miss_tokens": call_record.get("prompt_cache_miss_tokens").cloned().unwrap_or(Value::Null),
+        "prompt_cache_miss_is_derived": call_record.get("prompt_cache_miss_is_derived").cloned().unwrap_or(json!(false)),
+        "finishReason": trace.finish_reason,
+        "packetId": trace.packet_id,
+        "escalationLevel": trace.escalation_level,
+        "pagesIncluded": trace.pages_included,
+        "imageCount": trace.image_count,
+        "estimatedInputTokens": trace.estimated_input_tokens,
+        "inputSummary": input_summary,
+        "outputSummary": output_summary,
+        "cloudTokenBudget": budget,
+        "cloudTokensBefore": usage_before,
+        "cloudTokensAfter": usage_total.total_tokens(),
+        "cloudBudgetReached": budget_reached,
+        "recordedAt": call_record.get("recordedAt").cloned().unwrap_or(Value::Null),
+    });
+    append_retained_llm_usage_record(root, job_id, &metrics_record)?;
+    append_llm_call_record(root, job_id, &call_record)?;
     let output = output?;
     write_json(&output_path, &output)?;
     Ok(output)
@@ -333,6 +813,9 @@ fn llm_max_output_tokens(profile: &Value) -> u64 {
 /// truncated JSON object would otherwise surface as `llm_json_parse_failed`
 /// and send diagnosis down the wrong path.
 fn openai_chat_content(payload: &Value) -> CommandResult<String> {
+    let response_bytes = serde_json::to_vec(payload)
+        .map_err(|error| format!("llm_response_measure_failed:{error}"))?
+        .len() as u64;
     let usage = payload.get("usage").cloned();
     let finish_reason = payload
         .pointer("/choices/0/finish_reason")
@@ -344,6 +827,7 @@ fn openai_chat_content(payload: &Value) -> CommandResult<String> {
         .map(ToString::to_string);
     let mut max_tokens = None;
     with_trace(|trace| {
+        trace.response_bytes = response_bytes;
         trace.usage = usage.clone();
         trace.finish_reason = finish_reason.clone();
         trace.raw_content = content.clone();
@@ -365,6 +849,39 @@ fn openai_chat_content(payload: &Value) -> CommandResult<String> {
         ));
     }
     content.ok_or_else(|| "llm_empty_content".to_string())
+}
+
+fn message_role_content_bytes(body: &Value, role: &str) -> u64 {
+    body.get("messages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|message| message.get("role").and_then(Value::as_str) == Some(role))
+        .map(|message| match message.get("content") {
+            Some(Value::String(content)) => content.len() as u64,
+            Some(Value::Array(parts)) => parts
+                .iter()
+                .filter_map(|part| part.get("text").and_then(Value::as_str))
+                .map(|text| text.len() as u64)
+                .sum(),
+            _ => 0,
+        })
+        .sum()
+}
+
+fn embedded_media_bytes(value: &Value) -> u64 {
+    match value {
+        Value::String(text)
+            if text.starts_with("data:image/")
+                || text.starts_with("data:application/pdf")
+                || text.starts_with("data:audio/") =>
+        {
+            text.len() as u64
+        }
+        Value::Array(items) => items.iter().map(embedded_media_bytes).sum(),
+        Value::Object(object) => object.values().map(embedded_media_bytes).sum(),
+        _ => 0,
+    }
 }
 
 /// Fail-closed confidence normalization. A non-numeric or out-of-range
@@ -467,6 +984,12 @@ fn openai_post(profile: &Value, api_key: Option<&str>, mut body: Value) -> Comma
     let request_bytes = body_bytes.len() as u64;
     with_trace(|trace| {
         trace.request_bytes = trace.request_bytes.saturating_add(request_bytes);
+        trace.system_bytes = trace
+            .system_bytes
+            .saturating_add(message_role_content_bytes(&body, "system"));
+        trace.media_bytes = trace
+            .media_bytes
+            .saturating_add(embedded_media_bytes(&body));
         trace.max_tokens = max_tokens;
     });
     let mut last_error = String::new();
@@ -1188,7 +1711,7 @@ fn run_openai_compatible_cloud_outline_llm(
 ///
 /// `repairNote`：上一次回复被校验器拒了，把**被拒原因原样**回给模型再问一次。
 /// 不带原因地重试同一句话，只会再拿到同一种错误——那不是修复，只是多烧一次配额。
-fn authoring_candidate_prompt(input: &Value) -> String {
+fn authoring_candidate_prompt_parts(input: &Value) -> (String, String) {
     let modality = crate::llm_suggestions::candidate_modality(
         input
             .get("modality")
@@ -1196,23 +1719,12 @@ fn authoring_candidate_prompt(input: &Value) -> String {
             .unwrap_or("reading"),
     );
     let paper = ielts_paper_label(modality);
-    let task_presentation_rules = crate::schema::task_presentation::rules_prompt_table();
-    let repair = input
-        .get("repairNote")
-        .and_then(Value::as_str)
-        .filter(|note| !note.trim().is_empty())
-        .map(|note| {
-            format!(
-                "\nYour previous reply was REJECTED by the backend validator. Fix exactly this and return the whole JSON object again.\nRejection reason: {note}\n"
-            )
-        })
-        .unwrap_or_default();
     let chunk_rules = input
         .get("chunk")
         .and_then(|chunk| {
             let label = chunk.get("label").and_then(Value::as_str)?;
             Some(format!(
-                "- This request covers ONLY {label} of the paper. Recognise only the task groups of these questions; every answerSlots questionNumber MUST be one of them. Ignore all other questions: they are recognised in separate requests.\n"
+                "Chunk scope: {label}. Recognise ONLY its questions; every answerSlots.questionNumber must be in that chunk.\n"
             ))
         })
         .unwrap_or_default();
@@ -1222,43 +1734,100 @@ fn authoring_candidate_prompt(input: &Value) -> String {
             .unwrap_or(&json!({"paragraphMap": {}, "paragraphs": []})),
     )
     .unwrap_or_default();
+    let local_node_targets = serde_json::to_string(
+        input
+            .get("localNodeTargets")
+            .unwrap_or(&json!({"taskGroups": []})),
+    )
+    .unwrap_or_default();
     let (envelope_extra, modality_rules) = if modality == "listening" {
         (
             ", \"listeningParts\"",
-            "- This is a Listening question paper: you see the printed questions, not the audio. There is no reading passage.\n\
-- Organise the task groups by Part (Part 1-4, also called Sections) and list every Part in listeningParts as {\"displayLabel\":\"Part 1\",\"expectedQuestionNumbers\":[1,2,3],\"taskIds\":[\"cloud-tg-1\"]}; every taskIds entry MUST be a taskId you defined.\n",
+            "- This is a Listening question paper: you see the printed questions, not the audio. There is no reading passage.\n- Organise task groups by Part (Part 1-4) and list every Part in listeningParts with displayLabel, expectedQuestionNumbers, and taskIds that refer to taskIds you defined.\n",
         )
     } else {
         ("", "")
     };
-    format!(
+    let mut output_contract = input.get("outputContract").cloned().unwrap_or(Value::Null);
+    if let Some(contract) = output_contract.as_object_mut() {
+        contract.remove("taskPresentationRules");
+    }
+    let prefix = format!(
         "You are recognising an {paper} paper from its ORIGINAL FILE into a COMPLETE authoring draft.\n\
 Return JSON only. Do not return Markdown, HTML, JavaScript, explanations, or final export files.\n\
-Return exactly one JSON object with the top-level keys \"taskGroups\", \"answerSlots\", \"answerKey\", \"answerPageEvidence\", \"unresolvedRegions\", \"sourceCoverageNotes\", \"warnings\"{envelope_extra}; the exact shape is outputContract.shape.\n\
-This is NOT an outline and NOT a comparison summary: transcribe the FULL question content so it can be rendered.\n\
-{repair}\n\
+Return one object with top-level keys \"taskGroups\", \"answerSlots\", \"answerKey\", \"answerPageEvidence\", \"unresolvedRegions\", \"sourceCoverageNotes\", and \"warnings\"{envelope_extra}; follow outputContract.shape exactly.\n\
+This is a complete transcription for rendering, not an outline or comparison summary.\n\
 Rules that matter most:\n\
-Authoritative generated task-presentation rules (use the outputContract examples only as examples):\n{task_presentation_rules}\n\
-{chunk_rules}\
 {modality_rules}\
-- Follow the generated `taskPresentationRules` table in outputContract as the authoritative taskType → response kind, assignment, interaction, host, option source, option alphabet, reuse and grouping contract. Do not fold distinct task types together.\n\
-- Transcribe every question's FULL prompt text; never abbreviate or summarise a question.\n\
-- Transcribe every option label and its FULL text. Put choices only where the rule table says; fixed TFNG/YNNG labels are response options and have no optionBank.\n\
-- Do NOT transcribe the passage or script body. Transcribe the instructions and the notes / tables / diagrams / form text a task group depends on (into stimulus).\n\
-- For Reading, the sourceParagraphs below are existing node IDs and labels from the local first draft; use them only as anchor references, not as question content or source evidence. `paragraphMap` maps a label to its nodeId (for example, Paragraph A uses the ID mapped from label A). For a matching_headings slot, hostType MUST be passage_paragraph, interaction MUST be dragdrop, and hostNodeId MUST be the existing nodeId mapped to that paragraph label. Never invent a passage ID. If no supplied paragraph target can anchor a heading slot, report that coverage gap instead of fabricating an ID.\n\
-- Give EVERY question an answerKey entry; use {{\"kind\":\"unresolved\"}} when the file gives no answer. Never invent answers.\n\
-- answerPageEvidence may cite only an answer visibly printed in this original file's answer key/page: {{\"questionNumber\":1,\"pageIndex\":6,\"quote\":\"1 B\"}}. Quotes must reproduce the visible line exactly; use [] when there is no printed answer.\n\
-- Use TEMPORARY ids only (cloud-tg-1, cloud-q14, cloud-opt-a ...). Never copy a real database id.\n\
-- Every responseGroups[].slotIds entry MUST be a key of answerSlots. A hostNodeId must be an id defined here, except passage_paragraph hosts must copy an existing ID from sourceParagraphs.paragraphMap.\n\
-- Every responseGroup needs kind, cardinality, assignment, scoringPolicy, duplicatePolicy and allowOptionReuse; every answerSlot needs slotId, questionNumber, displayLabel, hostType, interaction, participation and confidence; every content node needs type and id.\n\
-- NEVER output jobId, schemaVersion, exam, quality, audit, reviewState, sourceDocumentId, provenanceStatus or any publish/verification flag — the backend owns those.\n\
-- Report unreadable areas in unresolvedRegions (sourceFileId, 1-based pageIndex, reason, detail) and unverified coverage in sourceCoverageNotes.\n\
-- Use only the enum values listed in outputContract.enums.\n\
-Job JSON: {}\nSource file JSON: {}\nSource paragraph targets (labels and existing local node IDs only): {}\nOutput contract JSON: {}",
+- Follow the authoritative taskPresentationRules in the system message for taskType → response kind, assignment, interaction, host, option source, alphabet, reuse, and grouping. Treat outputContract examples as examples only.\n\
+- Transcribe every question's full prompt and every option label and full option text.\n\
+- For true_false_not_given use exactly one of TRUE / FALSE / NOT GIVEN; for yes_no_not_given use exactly one of YES / NO / NOT GIVEN. These are fixed response choices and must not use an optionBank.\n\
+- For choose-two tasks use the responseGroup assignment unordered_set.\n\
+- Do not transcribe the reading passage or audio script body. Transcribe instructions and the notes, tables, diagrams, forms, or other stimulus the questions depend on.\n\
+- Put an inline answer_slot node at the exact location of every completion blank inside stimulus: include type, id, slotId matching an answerSlots key, displayLabel, and inline:true; preserve all surrounding text and punctuation.\n\
+- For matching_headings, include a task-group optionBank with every printed heading option; the responseGroup uses kind:matching, optionBankRef, and slotIds. Each heading answerSlot uses hostType:passage_paragraph, interaction:dragdrop, and the supplied local passage nodeId.\n\
+- For Reading, sourceParagraphs.paragraphMap maps passage labels to existing local nodeIds. Never invent a passage ID; if no target maps to a heading paragraph, report the coverage gap.\n\
+- For a mapped heading paragraph (for example Paragraph A), set answerSlots[*].hostNodeId to that supplied passage nodeId.\n\
+- Give every question an answerKey entry. Use {{\"kind\":\"unresolved\"}} when the original gives no answer; never guess.\n\
+- answerPageEvidence may cite only answers visibly printed in this original file's answer key; quote the exact visible answer line and use a 1-based pageIndex. Use [] if there is no printed answer key.\n\
+- Reuse each supplied local taskId and content nodeId for its equivalent task group, question prompt, instruction, or stimulus node. Match question prompts by question number and instructions or stimulus by their content. Reuse sourceParagraphs nodeIds for passage paragraphs. Use temporary IDs only where no local target exists; never copy an unrelated database ID.\n\
+- Every group needs taskId, displayRange, taskType, instructions, stimulus, and responseGroups. Every responseGroup needs kind, cardinality, assignment, scoringPolicy, duplicatePolicy, allowOptionReuse, and slotIds that exist in answerSlots. Every answerSlot needs slotId, questionNumber, displayLabel, hostType, interaction, participation, and confidence.\n\
+- Every content node needs type and id. Heading nodes need non-empty children; text nodes need text.\n\
+- Do not output jobId, schemaVersion, exam, quality, audit, reviewState, sourceDocumentId, provenanceStatus, or publish/verification flags; the backend owns them.\n\
+- Report unreadable areas in unresolvedRegions and unverified coverage in sourceCoverageNotes. Use only outputContract.enums.\n\
+Output contract JSON: {}",
+        serde_json::to_string(&output_contract).unwrap_or_default()
+    );
+    let repair = input
+        .get("repairNote")
+        .and_then(Value::as_str)
+        .filter(|note| !note.trim().is_empty())
+        .map(|note| {
+            format!("\nPrevious validator rejection; fix this and return the full object: {note}")
+        })
+        .unwrap_or_default();
+    let tail = format!(
+        "Request-specific data:\nJob JSON: {}\nSource file JSON: {}\nSource paragraph targets: {}\nLocal node targets: {}\n{chunk_rules}{repair}",
         serde_json::to_string(input.get("job").unwrap_or(&Value::Null)).unwrap_or_default(),
         serde_json::to_string(input.get("sourceFile").unwrap_or(&Value::Null)).unwrap_or_default(),
         source_paragraphs,
-        serde_json::to_string(input.get("outputContract").unwrap_or(&Value::Null)).unwrap_or_default()
+        local_node_targets,
+    );
+    (prefix, tail)
+}
+
+fn authoring_candidate_prompt(input: &Value) -> String {
+    let (prefix, tail) = authoring_candidate_prompt_parts(input);
+    format!("{}\n{prefix}\n{tail}", shared_authoring_system_prompt())
+}
+
+fn shared_authoring_system_prompt() -> String {
+    let rules = crate::schema::task_presentation::rules_prompt_table();
+    format!(
+        "You are an IELTS paper authoring assistant. The supplied original file is the authority.\n\
+Return exactly one valid JSON object only: no Markdown, explanations, or text outside JSON.\n\
+Use the request's output contract and allowed tools exactly. Never invent source content, answers, or identifiers.\n\
+Authoritative taskPresentationRules (shared by recognition and repair):\n{rules}"
+    )
+}
+
+fn ordered_llm_messages(prefix: &str, evidence: Vec<Value>, request_tail: String) -> Vec<Value> {
+    let mut evidence_content = vec![json!({"type": "text", "text": prefix})];
+    evidence_content.extend(evidence);
+    vec![
+        json!({"role": "system", "content": shared_authoring_system_prompt()}),
+        json!({"role": "user", "content": evidence_content}),
+        json!({"role": "user", "content": request_tail}),
+    ]
+}
+
+fn split_prompt_at_marker(prompt: &str, marker: &str) -> (String, String) {
+    let Some(offset) = prompt.find(marker) else {
+        return (prompt.to_string(), String::new());
+    };
+    (
+        prompt[..offset].trim_end().to_string(),
+        prompt[offset..].to_string(),
     )
 }
 
@@ -1285,17 +1854,18 @@ fn run_openai_compatible_authoring_candidate_llm(
     let profile = llm_profile(input);
     let model = llm_model(profile).ok_or_else(|| "llm_profile_model_missing".to_string())?;
     let mut warnings = Vec::<String>::new();
-    let mut content = vec![json!({"type": "text", "text": authoring_candidate_prompt(input)})];
+    let (prefix, request_tail) = authoring_candidate_prompt_parts(input);
+    let mut evidence = Vec::new();
     let pdf_part = data_url_for_pdf(root, job_id, input)?;
     let had_pdf = pdf_part.is_some();
     if let Some(pdf_part) = pdf_part {
-        content.push(pdf_part);
+        evidence.push(pdf_part);
     } else if let Some(source_text) = input
         .get("sourceText")
         .and_then(Value::as_str)
         .filter(|text| !text.trim().is_empty())
     {
-        content.push(json!({
+        evidence.push(json!({
             "type": "text",
             "text": format!(
                 "The original file is not a PDF, so no page image is attached. \
@@ -1309,10 +1879,7 @@ fn run_openai_compatible_authoring_candidate_llm(
     let mut body = json!({
         "model": model,
         "temperature": llm_temperature(profile),
-        "messages": [
-            {"role": "system", "content": "Return valid JSON only."},
-            {"role": "user", "content": content}
-        ]
+        "messages": ordered_llm_messages(&prefix, evidence, request_tail)
     });
     if llm_force_json(profile) {
         body["response_format"] = json!({"type": "json_object"});
@@ -1326,7 +1893,7 @@ fn run_openai_compatible_authoring_candidate_llm(
         body,
         had_pdf,
         input,
-        format!("{}\nThe direct PDF file request failed, so use the supplied rendered page images as the only evidence.", authoring_candidate_prompt(input)),
+        format!("{prefix}\nThe direct PDF file request failed, so use the supplied rendered page images as the only evidence."),
         "cloud_authoring_candidate_direct_pdf_failed_and_no_images",
         &mut warnings,
     )?;
@@ -1900,9 +2467,8 @@ fn dry_run_candidate_finalize(output: &Value, modality: &'static str) -> Command
 ///
 /// 工具清单来自 [`crate::schema::cloud_repair_v1::CLOUD_REPAIR_TOOLS`]——**唯一真源**。
 /// 提示词里写一个、分发器不认，是这类循环最典型的漂移；这里刻意引用同一份常量。
-fn repair_step_prompt(input: &Value) -> String {
+fn repair_step_prompt_content(input: &Value) -> String {
     let tools = crate::schema::cloud_repair_v1::CLOUD_REPAIR_TOOLS.join(", ");
-    let task_presentation_rules = crate::schema::task_presentation::rules_prompt_table();
     let paper = ielts_paper_label(
         input
             .get("modality")
@@ -1922,6 +2488,9 @@ fn repair_step_prompt(input: &Value) -> String {
             "apiKeySource",
             "pages",
             "repairNote",
+            "tools",
+            "allowedOps",
+            "rules",
         ] {
             object.remove(key);
         }
@@ -1930,6 +2499,16 @@ fn repair_step_prompt(input: &Value) -> String {
     // prompt 只会泄露本机目录结构，且模型没有任何办法用它。换成「有没有附图」这一位
     // 模型真正需要的信息。
     strip_packet_image_paths(&mut prompt_input);
+    let mut stable_tools = input.get("tools").cloned().unwrap_or(Value::Null);
+    replace_tool_source_file_ids(&mut stable_tools);
+    let allowed_ops = input
+        .get("allowedOps")
+        .cloned()
+        .unwrap_or_else(|| json!(crate::cloud_repair::tools::MODEL_ALLOWED_OPS));
+    let repair_rules = input
+        .get("rules")
+        .cloned()
+        .unwrap_or_else(|| crate::llm_suggestions::repair_tool_rules(&Value::Null));
     let packet_mode = input
         .pointer("/context/contextMode")
         .and_then(Value::as_str)
@@ -1939,30 +2518,11 @@ fn repair_step_prompt(input: &Value) -> String {
         .and_then(Value::as_str)
         == Some("adopted_cloud_vs_local_snapshot");
     let draft_example = if packet_mode {
-        let task_id = input
-            .pointer("/context/taskIds")
-            .and_then(Value::as_array)
-            .and_then(|items| items.iter().find_map(Value::as_str));
-        let question_number = input
-            .pointer("/context/questionNumbers")
-            .and_then(Value::as_array)
-            .and_then(|items| items.iter().find_map(Value::as_u64));
-        if let Some(task_id) = task_id {
-            json!({
-                "callId": "call-1",
-                "tool": "read_draft",
-                "arguments": {"taskGroupIds": [task_id]}
-            })
-        } else if let Some(question_number) = question_number {
-            json!({
-                "callId": "call-1",
-                "tool": "read_draft",
-                "arguments": {"questionNumbers": [question_number]}
-            })
-        } else {
-            // 文档包没有可读稿件目标，因此用不需要 selector 的包收尾工具展示外层信封。
-            json!({"callId": "call-1", "tool": "finish_packet", "arguments": {}})
-        }
+        json!({
+            "callId": "call-1",
+            "tool": "read_draft",
+            "arguments": {"taskGroupIds": ["copy a task id from this packet"]}
+        })
     } else {
         json!({"callId": "call-1", "tool": "read_draft", "arguments": {}})
     };
@@ -2009,7 +2569,7 @@ The first-pass cloud candidate is only an input and it can be wrong. For every d
         .filter(|note| !note.trim().is_empty())
         .map(|note| {
             format!(
-                "\nYour previous reply was REJECTED by the backend. Fix exactly this and reply with one JSON object again.\nRejection reason: {note}\n"
+                "\nYour previous reply was REJECTED by our validator. Fix exactly this and return one JSON object. Rejection reason: {note}"
             )
         })
         .unwrap_or_default();
@@ -2050,9 +2610,11 @@ Call `finish_packet` when this packet is done.\n"
 Return JSON only: exactly one object shaped like {draft_example} (replace sample values with values from this request; arguments must follow the selected tool entry in the tools table).\n\
 Do not return Markdown, prose, or several objects.\n\
 Allowed tools (and nothing else): {tools}.\n\
-Apply this generated task-presentation rule table whenever changing a task type or rebuilding its response structure:\n{task_presentation_rules}\n\
+Use the authoritative taskPresentationRules in the system message whenever changing a task type or rebuilding its response structure.\n\
+Stable tool definitions (use the actual sourceFileId from request data): {}\n\
+Allowed operations:\n{}\n\
+Repair rules:\n{}\n\
 {packet}\n\
-{repair}\n\
 Work like an editor: read what you need, then submit ONE batch of domain commands per turn, then read the result.\n\
 {base_version_rule}\
 - Use only the stable ids you were given. Never invent ids.\n\
@@ -2072,10 +2634,13 @@ The first-pass cloud candidate is only an input and it can be wrong. For every d
 \n\
 When you are done, call finish. Put every question you could NOT settle in \"unresolved\": \
 those become user-visible items, so leaving them out hides real uncertainty.\n\
-Input JSON: {}",
+Input JSON: {}\n{repair}",
+        serde_json::to_string(&stable_tools).unwrap_or_default(),
+        serde_json::to_string(&allowed_ops).unwrap_or_default(),
+        serde_json::to_string(&repair_rules).unwrap_or_default(),
         serde_json::to_string(&prompt_input).unwrap_or_default()
     );
-    if adopted_cloud_mode {
+    let prompt = if adopted_cloud_mode {
         let guidance_start = prompt
             .find("DIFFERENCES ARE NOT AUTOMATICALLY THE USER'S PROBLEM.")
             .expect("legacy difference guidance marker");
@@ -2092,6 +2657,37 @@ Input JSON: {}",
         )
     } else {
         prompt
+    };
+    prompt
+}
+
+fn repair_step_prompt_parts(input: &Value) -> (String, String) {
+    let prompt = repair_step_prompt_content(input);
+    split_prompt_at_marker(&prompt, "Input JSON:")
+}
+
+fn repair_step_prompt(input: &Value) -> String {
+    let (prefix, tail) = repair_step_prompt_parts(input);
+    format!("{}\n{prefix}\n{tail}", shared_authoring_system_prompt())
+}
+
+fn replace_tool_source_file_ids(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            for (key, child) in object.iter_mut() {
+                if key == "sourceFileId" {
+                    *child = json!("SOURCE_FILE_ID_FROM_REQUEST_DATA");
+                } else {
+                    replace_tool_source_file_ids(child);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                replace_tool_source_file_ids(item);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -2130,7 +2726,8 @@ fn run_openai_compatible_repair_step_llm(
     let profile = llm_profile(input);
     let model = llm_model(profile).ok_or_else(|| "llm_profile_model_missing".to_string())?;
     let mut warnings = Vec::<String>::new();
-    let mut content = vec![json!({"type": "text", "text": repair_step_prompt(input)})];
+    let (prefix, request_tail) = repair_step_prompt_parts(input);
+    let mut evidence = Vec::new();
     // 包模式下**不附整份原文件**：那正是这一轮要消掉的东西（每轮几十 MB base64，
     // 而模型只用得上范围内那几页）。证据改为随请求附上包里的区域页图。
     // 只有升级到 L3（`attachFullSource`，每次运行最多一次）才退回整份附件。
@@ -2151,13 +2748,13 @@ fn run_openai_compatible_repair_step_llm(
         let pdf_part = data_url_for_pdf(root, job_id, input)?;
         had_pdf = pdf_part.is_some();
         if let Some(pdf_part) = pdf_part {
-            content.push(pdf_part);
+            evidence.push(pdf_part);
         } else if let Some(source_text) = input
             .get("sourceText")
             .and_then(Value::as_str)
             .filter(|text| !text.trim().is_empty())
         {
-            content.push(json!({
+            evidence.push(json!({
                 "type": "text",
                 "text": format!(
                     "The original file is not a PDF, so no page image is attached. \
@@ -2170,16 +2767,13 @@ The extracted source text below is the ONLY evidence you may use; do not invent 
         }
     } else {
         let attached =
-            append_packet_region_images(root, job_id, &mut content, input, &mut warnings)?;
+            append_packet_region_images(root, job_id, &mut evidence, input, &mut warnings)?;
         with_trace(|trace| trace.image_count = Some(attached));
     }
     let mut body = json!({
         "model": model,
         "temperature": llm_temperature(profile),
-        "messages": [
-            {"role": "system", "content": "Return valid JSON only."},
-            {"role": "user", "content": content}
-        ]
+        "messages": ordered_llm_messages(&prefix, evidence, request_tail)
     });
     if llm_force_json(profile) {
         body["response_format"] = json!({"type": "json_object"});
@@ -2193,7 +2787,7 @@ The extracted source text below is the ONLY evidence you may use; do not invent 
         body,
         had_pdf,
         input,
-        format!("{}\nThe direct PDF file request failed, so use the supplied rendered page images as the only evidence.", repair_step_prompt(input)),
+        format!("{prefix}\nThe direct PDF file request failed, so use the supplied rendered page images as the only evidence."),
         "cloud_repair_step_direct_pdf_failed_and_no_images",
         &mut warnings,
     )?;
@@ -2468,8 +3062,8 @@ Hard rules:\n\
 byte for byte. Never invent a fourth value.\n\
 4. If the original file does not settle the question, return chosen = \"unresolved\" and say why.\n\
 5. `rationale` must not be empty; cite what in the original file decided it.\n\
-6. Return JSON only.{repair}\n\
---- DIVERGENCES BEGIN ---\n{divergences}\n--- DIVERGENCES END ---"
+6. Return JSON only.\n\
+--- DIVERGENCES BEGIN ---\n{divergences}\n--- DIVERGENCES END ---{repair}"
     )
 }
 
@@ -2494,15 +3088,17 @@ fn run_openai_compatible_adjudication_llm(
     {
         return Err("adjudication_no_divergences".to_string());
     }
-    let mut content = vec![json!({"type": "text", "text": adjudication_prompt(input)})];
+    let prompt = adjudication_prompt(input);
+    let (prefix, request_tail) = split_prompt_at_marker(&prompt, "--- DIVERGENCES BEGIN ---");
+    let mut evidence = Vec::new();
     if let Some(pdf_part) = data_url_for_pdf(root, job_id, input)? {
-        content.push(pdf_part);
+        evidence.push(pdf_part);
     } else if let Some(source_text) = input
         .get("sourceText")
         .and_then(Value::as_str)
         .filter(|text| !text.trim().is_empty())
     {
-        content.push(json!({
+        evidence.push(json!({
             "type": "text",
             "text": format!(
                 "The original file is not a PDF, so no page image is attached. \
@@ -2516,10 +3112,7 @@ fn run_openai_compatible_adjudication_llm(
     let mut body = json!({
         "model": model,
         "temperature": llm_temperature(profile),
-        "messages": [
-            {"role": "system", "content": "Return valid JSON only."},
-            {"role": "user", "content": content}
-        ]
+        "messages": ordered_llm_messages(&prefix, evidence, request_tail)
     });
     if llm_force_json(profile) {
         body["response_format"] = json!({"type": "json_object"});
@@ -2616,8 +3209,8 @@ otherwise use \"not_verifiable\".\n\
 `quote` copied from the file plus the 1-based `pageIndex` it appears on. Never guess.\n\
 5. Never invent a value that is not in the file. If you cannot read the file, say \
 \"not_verifiable\" — an honest gap is far better than a plausible guess.\n\
-6. Return JSON only.{repair}\n\
---- SLOTS BEGIN ---\n{items}\n--- SLOTS END ---"
+6. Return JSON only.\n\
+--- SLOTS BEGIN ---\n{items}\n--- SLOTS END ---{repair}"
     )
 }
 
@@ -2642,15 +3235,17 @@ fn run_openai_compatible_source_verification_llm(
     {
         return Err("source_verification_no_slots".to_string());
     }
-    let mut content = vec![json!({"type": "text", "text": source_verification_prompt(input)})];
+    let prompt = source_verification_prompt(input);
+    let (prefix, request_tail) = split_prompt_at_marker(&prompt, "--- SLOTS BEGIN ---");
+    let mut evidence = Vec::new();
     if let Some(pdf_part) = data_url_for_pdf(root, job_id, input)? {
-        content.push(pdf_part);
+        evidence.push(pdf_part);
     } else if let Some(source_text) = input
         .get("sourceText")
         .and_then(Value::as_str)
         .filter(|text| !text.trim().is_empty())
     {
-        content.push(json!({
+        evidence.push(json!({
             "type": "text",
             "text": format!(
                 "The original file is not a PDF, so no page image is attached. \
@@ -2664,10 +3259,7 @@ fn run_openai_compatible_source_verification_llm(
     let mut body = json!({
         "model": model,
         "temperature": llm_temperature(profile),
-        "messages": [
-            {"role": "system", "content": "Return valid JSON only."},
-            {"role": "user", "content": content}
-        ]
+        "messages": ordered_llm_messages(&prefix, evidence, request_tail)
     });
     if llm_force_json(profile) {
         body["response_format"] = json!({"type": "json_object"});
@@ -4092,6 +4684,147 @@ mod tests {
             .collect()
     }
 
+    #[test]
+    fn retained_usage_log_enforces_record_and_byte_limits() {
+        let root = std::env::temp_dir().join(format!(
+            "llm-usage-cap-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let job_id = "job-usage-cap";
+        fs::create_dir_all(job_dir(&root, job_id)).unwrap();
+        for index in 0..(RETAINED_LLM_CALL_RECORDS + 3) {
+            append_retained_llm_usage_record(
+                &root,
+                job_id,
+                &json!({"recordType": "llm_usage", "sequence": index}),
+            )
+            .unwrap();
+        }
+        let path = job_dir(&root, job_id).join("llm-usage.jsonl");
+        let content = fs::read_to_string(&path).unwrap();
+        let records = content
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(records.len(), RETAINED_LLM_CALL_RECORDS);
+        assert_eq!(records.first().unwrap()["sequence"], json!(3));
+        assert_eq!(
+            records.last().unwrap()["sequence"],
+            json!(RETAINED_LLM_CALL_RECORDS + 2)
+        );
+        assert!(fs::metadata(&path).unwrap().len() as usize <= RETAINED_LLM_CALL_LOG_BYTES);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn call_usage_is_saved_to_compact_retained_metrics() {
+        let response = json!({
+            "choices": [{"message": {"content": "not json"}, "finish_reason": "stop"}],
+            "usage": {
+                "prompt_tokens": 1200,
+                "completion_tokens": 34,
+                "total_tokens": 1234,
+                "prompt_cache_hit_tokens": 1000,
+                "prompt_cache_miss_tokens": 200
+            }
+        })
+        .to_string();
+        let (base_url, _) = fake_llm_server(vec![FakeReply::Respond(200, response)]);
+        let job = fake_candidate_job(&base_url, "job-usage-metrics");
+        let _ = run_llm_gateway(
+            &job.root,
+            job.job_id,
+            "generate_authoring_candidate",
+            &job.input,
+            None,
+        );
+
+        let path = job_dir(&job.root, job.job_id).join("llm-usage.jsonl");
+        let content = fs::read_to_string(path).expect("durable usage log should exist");
+        let record: Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        assert_eq!(record["commandName"], json!("generate_authoring_candidate"));
+        assert_eq!(record["stepIndex"], json!(1));
+        assert_eq!(record["prompt_tokens"], json!(1200));
+        assert_eq!(record["completion_tokens"], json!(34));
+        assert_eq!(record["prompt_cache_hit_tokens"], json!(1000));
+        assert_eq!(record["prompt_cache_miss_tokens"], json!(200));
+        for segment in [
+            "system",
+            "rules",
+            "tools",
+            "source",
+            "draft",
+            "observations",
+            "images",
+        ] {
+            assert!(
+                record["segments"][segment].as_u64().is_some(),
+                "missing {segment}: {record}"
+            );
+        }
+        assert!(record["inputBytes"].as_u64().unwrap_or(0) > 0, "{record}");
+        assert!(record["inputSummary"].is_object(), "{record}");
+        assert!(record["outputSummary"].is_object(), "{record}");
+    }
+
+    #[test]
+    fn import_budget_stops_after_the_call_that_reaches_it_and_exposes_totals() {
+        let response = json!({
+            "choices": [{"message": {"content": "not json"}, "finish_reason": "stop"}],
+            "usage": {
+                "prompt_tokens": 9_000,
+                "completion_tokens": 2_000,
+                "prompt_cache_hit_tokens": 8_000,
+                "prompt_cache_miss_tokens": 1_000
+            }
+        })
+        .to_string();
+        let (base_url, requests) = fake_llm_server(vec![FakeReply::Respond(200, response)]);
+        let mut job = fake_candidate_job(&base_url, "job-token-budget");
+        job.input["profile"]["maxOutputTokens"] = json!(16_384);
+        fs::write(
+            job_dir(&job.root, job.job_id).join(LLM_TOKEN_BUDGET_FILE),
+            json!({"tokenBudget": 10_000}).to_string(),
+        )
+        .unwrap();
+
+        let _ = run_llm_gateway(
+            &job.root,
+            job.job_id,
+            "generate_authoring_candidate",
+            &job.input,
+            None,
+        );
+        let request = requests
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first request should reach the fake provider");
+        assert!(request.contains("\"max_tokens\":10000"), "{request}");
+
+        let error = run_llm_gateway(
+            &job.root,
+            job.job_id,
+            "generate_authoring_candidate",
+            &job.input,
+            None,
+        )
+        .expect_err("the next request must be stopped once usage reaches the budget");
+        assert!(
+            error.starts_with("cloud_token_budget_exceeded:11000:10000"),
+            "{error}"
+        );
+        assert!(
+            requests.try_recv().is_err(),
+            "no second provider request is allowed"
+        );
+
+        let summary = llm_usage_summary(&job.root, job.job_id).unwrap();
+        assert_eq!(summary["promptTokens"], json!(9_000));
+        assert_eq!(summary["completionTokens"], json!(2_000));
+        assert_eq!(summary["cacheHitTokens"], json!(8_000));
+        assert_eq!(summary["totalTokens"], json!(11_000));
+        assert_eq!(summary["budgetReached"], json!(true));
+    }
+
     /// 真实事故：212 KB PDF 的整卷候选在 134 s / 144 s 以 `llm_timeout_budget_exhausted`
     /// 失败，而 profile 超时是 120 s。唯一能超出一个预算的路径是「直传 PDF 失败 →
     /// 页图回退拿一个全新预算」。超时说明服务端在算，换成页图只会再算一遍、再超一次。
@@ -4598,9 +5331,20 @@ mod tests {
             "sourceParagraphs": {
                 "paragraphMap": {"A": "local-passage-a"},
                 "paragraphs": [{"label": "A", "nodeId": "local-passage-a"}]
-            }
+            },
+            "localNodeTargets": {"taskGroups": [{
+                "taskId": "local-task-id",
+                "questionPrompts": [{
+                    "responseGroupId": "local-question-group-id",
+                    "questionNumbers": [1],
+                    "promptNodes": [{"type": "text", "nodeId": "local-question-text-id"}]
+                }]
+            }]}
         }));
         assert!(prompt.contains("local-passage-a"), "{prompt}");
+        assert!(prompt.contains("local-task-id"), "{prompt}");
+        assert!(prompt.contains("local-question-group-id"), "{prompt}");
+        assert!(prompt.contains("local-question-text-id"), "{prompt}");
         assert!(prompt.contains("Paragraph A"), "{prompt}");
         assert!(prompt.contains("hostNodeId"), "{prompt}");
         assert!(prompt.contains("TRUE / FALSE / NOT GIVEN"), "{prompt}");
@@ -4757,5 +5501,123 @@ mod tests {
         let mut unscoped = shape;
         validate_authoring_candidate_output_for_chunk(&mut unscoped, "reading", None)
             .expect("不分块时不做范围限制");
+    }
+
+    #[test]
+    fn candidate_static_contract_precedes_chunk_and_job_data() {
+        let prompt = authoring_candidate_prompt(&json!({
+            "job": {"jobId": "job-changing-per-import"},
+            "sourceFile": {"fileId": "source-changing-per-import"},
+            "chunk": {"label": "Questions 14-26", "questionNumbers": [14, 26]},
+            "outputContract": {"schema": "stable-contract"}
+        }));
+        let contract = prompt
+            .find("Output contract JSON:")
+            .expect("contract marker");
+        let job = prompt.find("Job JSON:").expect("job marker");
+        assert!(
+            contract < job,
+            "fixed contract must precede per-import ids: {prompt}"
+        );
+    }
+
+    #[test]
+    fn repair_rejection_feedback_is_at_the_variable_tail() {
+        let prompt = repair_step_prompt(&json!({
+            "repairNote": "DYNAMIC-REJECTION-MARKER",
+            "context": {"taskIds": ["task-changing-per-packet"]},
+            "observations": []
+        }));
+        let request_data = prompt.find("Input JSON:").expect("request data marker");
+        let rejection = prompt
+            .find("DYNAMIC-REJECTION-MARKER")
+            .expect("rejection marker");
+        assert!(
+            request_data < rejection,
+            "variable feedback must follow shared rules: {prompt}"
+        );
+    }
+
+    #[test]
+    fn candidate_and_repair_keep_source_before_per_call_data_in_stable_messages() {
+        let candidate_a = json!({
+            "modality": "reading",
+            "job": {"jobId": "job-a"},
+            "sourceFile": {"fileId": "source-a"},
+            "sourceParagraphs": {"paragraphMap": {"A": "paragraph-a"}},
+            "localNodeTargets": {"taskGroups": [{"taskId": "task-a"}]},
+            "chunk": {"label": "Questions 1-5"},
+            "repairNote": "candidate-rejection-a",
+            "outputContract": {"shape": {"taskGroups": []}}
+        });
+        let candidate_b = json!({
+            "modality": "reading",
+            "job": {"jobId": "job-b"},
+            "sourceFile": {"fileId": "source-b"},
+            "sourceParagraphs": {"paragraphMap": {"B": "paragraph-b"}},
+            "localNodeTargets": {"taskGroups": [{"taskId": "task-b"}]},
+            "chunk": {"label": "Questions 6-10"},
+            "repairNote": "candidate-rejection-b",
+            "outputContract": {"shape": {"taskGroups": []}}
+        });
+        let (candidate_prefix_a, candidate_tail_a) = authoring_candidate_prompt_parts(&candidate_a);
+        let (candidate_prefix_b, candidate_tail_b) = authoring_candidate_prompt_parts(&candidate_b);
+        assert_eq!(candidate_prefix_a, candidate_prefix_b);
+        assert_ne!(candidate_tail_a, candidate_tail_b);
+        let candidate_messages_a = ordered_llm_messages(
+            &candidate_prefix_a,
+            vec![json!({"type": "text", "text": "ORIGINAL-SOURCE"})],
+            candidate_tail_a,
+        );
+        let candidate_messages_b = ordered_llm_messages(
+            &candidate_prefix_b,
+            vec![json!({"type": "text", "text": "ORIGINAL-SOURCE"})],
+            candidate_tail_b,
+        );
+        assert_eq!(&candidate_messages_a[..2], &candidate_messages_b[..2]);
+        assert_ne!(candidate_messages_a[2], candidate_messages_b[2]);
+
+        let repair_a = json!({
+            "mode": "repair_authoring_step",
+            "modality": "reading",
+            "job": {"jobId": "job-a"},
+            "sourceFile": {"fileId": "source-a"},
+            "tools": crate::llm_suggestions::repair_tools_table("source-a"),
+            "allowedOps": crate::cloud_repair::tools::MODEL_ALLOWED_OPS,
+            "rules": ["same stable rule"],
+            "context": {"contextMode": "packets", "taskIds": ["task-a"], "packetId": "packet-a"},
+            "observations": [{"status": "ok"}],
+            "repairNote": "repair-rejection-a"
+        });
+        let repair_b = json!({
+            "mode": "repair_authoring_step",
+            "modality": "reading",
+            "job": {"jobId": "job-b"},
+            "sourceFile": {"fileId": "source-b"},
+            "tools": crate::llm_suggestions::repair_tools_table("source-b"),
+            "allowedOps": crate::cloud_repair::tools::MODEL_ALLOWED_OPS,
+            "rules": ["same stable rule"],
+            "context": {"contextMode": "packets", "taskIds": ["task-b"], "packetId": "packet-b"},
+            "observations": [{"status": "rejected"}],
+            "repairNote": "repair-rejection-b"
+        });
+        let (repair_prefix_a, repair_tail_a) = repair_step_prompt_parts(&repair_a);
+        let (repair_prefix_b, repair_tail_b) = repair_step_prompt_parts(&repair_b);
+        assert_eq!(repair_prefix_a, repair_prefix_b);
+        assert_ne!(repair_tail_a, repair_tail_b);
+        assert!(repair_prefix_a.contains("SOURCE_FILE_ID_FROM_REQUEST_DATA"));
+        let repair_messages_a = ordered_llm_messages(
+            &repair_prefix_a,
+            vec![json!({"type": "text", "text": "ORIGINAL-SOURCE"})],
+            repair_tail_a,
+        );
+        let repair_messages_b = ordered_llm_messages(
+            &repair_prefix_b,
+            vec![json!({"type": "text", "text": "ORIGINAL-SOURCE"})],
+            repair_tail_b,
+        );
+        assert_eq!(&repair_messages_a[..2], &repair_messages_b[..2]);
+        assert_ne!(repair_messages_a[2], repair_messages_b[2]);
+        assert_eq!(candidate_messages_a[0], repair_messages_a[0]);
     }
 }

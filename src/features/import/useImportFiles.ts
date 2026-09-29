@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { listLlmProfiles } from "../../api/tauriCommands";
 import { importFiles as enqueueFiles, type ImportModality } from "../../api/processingClient";
 import { bindListeningAudio } from "../../api/listeningAudioClient";
+import { readAppSettings } from "../settings/appSettings";
 import type { PickedPath } from "../../api/desktopDialogs";
 import { toUserFacingError } from "../../utils/userFacingError";
 import { buildRow, type LibraryRowV1 } from "../library/libraryTypes";
@@ -40,7 +41,13 @@ export function useImportFiles(onRowsChanged: () => void) {
       const cloudEnabled = options.cloudEnabled ?? Boolean(cloudProfileId);
 
       const enqueue = async (batch: PickedPath[], modality: ImportModality) => {
-        const result = await enqueueFiles({ files: batch, cloudEnabled, cloudProfileId, modality });
+        const result = await enqueueFiles({
+          files: batch,
+          cloudEnabled,
+          cloudProfileId,
+          modality,
+          cloudTokenBudget: readAppSettings().cloudTokenBudget
+        });
         rejected.push(...result.rejected.map(({ name, reason }) => ({ name, reason: toUserFacingError(reason, "文件未能导入。").userMessage })));
         const created = result.created.map(({ itemId, title }) => ({ ...buildRow(itemId, undefined, undefined), title, modality }));
         rows.push(...created);

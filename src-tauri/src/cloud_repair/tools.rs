@@ -190,6 +190,100 @@ pub(crate) fn sanitize_commands(raw: &[Value]) -> Result<(Vec<Value>, Vec<String
     Ok((cleaned, stripped.into_iter().collect()))
 }
 
+const MODEL_HIDDEN_PROVENANCE_KEYS: [&str; 3] = ["sourceAnchors", "provenance", "provenanceStatus"];
+
+fn collect_provenance(
+    value: &Value,
+    provenance: &mut BTreeMap<(String, String), Map<String, Value>>,
+) {
+    let Some(object) = value.as_object() else {
+        if let Some(items) = value.as_array() {
+            for item in items {
+                collect_provenance(item, provenance);
+            }
+        }
+        return;
+    };
+    let metadata: Map<String, Value> = MODEL_HIDDEN_PROVENANCE_KEYS
+        .iter()
+        .filter_map(|key| {
+            object
+                .get(*key)
+                .map(|value| ((*key).to_string(), value.clone()))
+        })
+        .collect();
+    if !metadata.is_empty() {
+        for key in [
+            "id",
+            "taskId",
+            "responseGroupId",
+            "slotId",
+            "optionId",
+            "optionBankId",
+            "assetId",
+        ] {
+            if let Some(id) = object.get(key).and_then(Value::as_str) {
+                provenance.insert((key.to_string(), id.to_string()), metadata.clone());
+            }
+        }
+    }
+    for child in object.values() {
+        collect_provenance(child, provenance);
+    }
+}
+
+fn restore_provenance(
+    value: &mut Value,
+    provenance: &BTreeMap<(String, String), Map<String, Value>>,
+) {
+    if let Some(object) = value.as_object_mut() {
+        let mut trusted_metadata = None;
+        for key in [
+            "id",
+            "taskId",
+            "responseGroupId",
+            "slotId",
+            "optionId",
+            "optionBankId",
+            "assetId",
+        ] {
+            if let Some(id) = object.get(key).and_then(Value::as_str) {
+                if let Some(metadata) = provenance.get(&(key.to_string(), id.to_string())) {
+                    trusted_metadata = Some(metadata.clone());
+                    break;
+                }
+            }
+        }
+        if let Some(metadata) = trusted_metadata {
+            for key in MODEL_HIDDEN_PROVENANCE_KEYS {
+                object.remove(key);
+            }
+            object.extend(metadata);
+        } else if object.get("type").and_then(Value::as_str).is_some()
+            && object.get("id").and_then(Value::as_str).is_some()
+        {
+            object.insert("sourceAnchors".to_string(), json!([]));
+            object.remove("provenance");
+            object.insert("provenanceStatus".to_string(), json!("derived"));
+        }
+        for child in object.values_mut() {
+            restore_provenance(child, provenance);
+        }
+    } else if let Some(items) = value.as_array_mut() {
+        for item in items {
+            restore_provenance(item, provenance);
+        }
+    }
+}
+
+fn restore_authoritative_provenance(current: &Value, commands: &mut [Value]) {
+    let mut provenance = BTreeMap::new();
+    collect_provenance(current, &mut provenance);
+    for command in commands {
+        restore_provenance(command, &provenance);
+    }
+}
+
 /// 后端派生 requestId：同一 run / 同一轮 / 同一调用重试 => 同一 id（幂等命中）。
 ///
 /// **不让模型提供 requestId**：否则它可以用同一个 id 提交不同内容触发
@@ -574,7 +668,7 @@ pub(crate) fn apply_cloud_edits(
     request: &CloudEditRequest,
     context: &EvidenceSourceContext,
 ) -> CommandResult<CloudEditOutcome> {
-    let (commands, stripped_keys) = sanitize_commands(&request.commands)?;
+    let (mut commands, stripped_keys) = sanitize_commands(&request.commands)?;
     let mut evidence_problems = validate_evidence(&request.evidence);
     let (quote_problems, evidence_unverifiable) =
         verify_evidence_quotes(&request.evidence, context);
@@ -586,6 +680,8 @@ pub(crate) fn apply_cloud_edits(
     // 因为预检与提交之间可能有人工保存落地。
     let (current_ds, current_version) = get_canonical_ds(&conn, &request.item_id)?
         .ok_or_else(|| format!("ITEM_DS_NOT_SEEDED:{}", request.item_id))?;
+    // Whole-group replacements omit model-hidden metadata; rebuild it from the trusted snapshot.
+    restore_authoritative_provenance(&current_ds, &mut commands);
 
     // 基线必须用**同一套质量管线**在"未施加本次编辑的同一份稿件"上重算，而不是直接读
     // 库里那一份 `quality.hardFailures` / `quality.issues`。理由：库里那份可能是播种 / 迁移
@@ -1164,6 +1260,139 @@ mod cloud_repair_write_entry_tests {
         let (origin, run) = found.expect("应存在 cloud_repair journal 行");
         assert_eq!(origin, "cloud_repair");
         assert_eq!(run, "run-success");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn set_response_group_restores_source_anchors_from_the_authoritative_draft() {
+        fn strip_source_anchors(value: &mut Value) {
+            match value {
+                Value::Object(object) => {
+                    for key in MODEL_HIDDEN_PROVENANCE_KEYS {
+                        object.remove(key);
+                    }
+                    for child in object.values_mut() {
+                        strip_source_anchors(child);
+                    }
+                }
+                Value::Array(items) => {
+                    for item in items {
+                        strip_source_anchors(item);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        fn collect_source_anchors(value: &Value, out: &mut BTreeMap<String, Value>) {
+            if let Some(object) = value.as_object() {
+                if let Some(anchors) = object.get("sourceAnchors") {
+                    for key in [
+                        "id",
+                        "taskId",
+                        "responseGroupId",
+                        "slotId",
+                        "optionId",
+                        "assetId",
+                    ] {
+                        if let Some(id) = object.get(key).and_then(Value::as_str) {
+                            out.insert(format!("{key}:{id}"), anchors.clone());
+                        }
+                    }
+                }
+                for child in object.values() {
+                    collect_source_anchors(child, out);
+                }
+            } else if let Some(items) = value.as_array() {
+                for item in items {
+                    collect_source_anchors(item, out);
+                }
+            }
+        }
+
+        fn inject_untrusted_anchor(value: &mut Value) -> bool {
+            if let Some(object) = value.as_object_mut() {
+                if object.get("type").and_then(Value::as_str).is_some()
+                    && object.get("id").and_then(Value::as_str).is_some()
+                {
+                    object.insert(
+                        "sourceAnchors".to_string(),
+                        json!([{"sourceFileId": "untrusted"}]),
+                    );
+                    return true;
+                }
+                return object.values_mut().any(inject_untrusted_anchor);
+            }
+            value
+                .as_array_mut()
+                .is_some_and(|items| items.iter_mut().any(inject_untrusted_anchor))
+        }
+
+        let root = temp_root();
+        let item_id = seed_item(&root, &load_fixture());
+        let conn = open_library_connection(&root).expect("打开库连接");
+        let (current, base_version) = get_canonical_ds(&conn, &item_id)
+            .expect("读 canonical")
+            .expect("稿件已播");
+        let (task_id, mut response_group) = current["taskGroups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find_map(|group| {
+                let response = group.get("responseGroups")?.as_array()?.first()?;
+                Some((group["taskId"].as_str()?.to_string(), response.clone()))
+            })
+            .expect("fixture should contain a response group");
+        let mut expected_anchors = BTreeMap::new();
+        collect_source_anchors(&response_group, &mut expected_anchors);
+        assert!(
+            !expected_anchors.is_empty(),
+            "fixture must exercise existing anchors"
+        );
+
+        strip_source_anchors(&mut response_group);
+        assert!(inject_untrusted_anchor(&mut response_group));
+        let response_group_id = response_group["responseGroupId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let request = base_request(
+            &item_id,
+            "run-anchor-restoration",
+            base_version,
+            json!({
+                "op": "setResponseGroup",
+                "taskId": task_id,
+                "responseGroup": response_group
+            }),
+        );
+        let outcome = apply(&root, &request).expect("apply_cloud_edits");
+        assert_eq!(
+            outcome.status,
+            CloudEditStatus::Applied,
+            "errors={:?}",
+            outcome.errors
+        );
+
+        let (updated, _) = get_canonical_ds(&conn, &item_id)
+            .expect("read updated canonical")
+            .expect("updated draft");
+        let actual_response = updated["taskGroups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|group| group["responseGroups"].as_array().unwrap())
+            .find(|response| {
+                response["responseGroupId"].as_str() == Some(response_group_id.as_str())
+            })
+            .expect("response group should remain present");
+        let mut actual_anchors = BTreeMap::new();
+        collect_source_anchors(actual_response, &mut actual_anchors);
+        assert_eq!(
+            actual_anchors, expected_anchors,
+            "model supplied anchors must not replace trusted anchors"
+        );
+        drop(conn);
         let _ = std::fs::remove_dir_all(&root);
     }
 
