@@ -66,6 +66,12 @@ export interface UserTaskV1 {
   title: string;
   /** 需要时补一句怎么做。 */
   detail?: string;
+  /** 云端差异两侧的原文；工作区用 del/ins 标记直接并列呈现。 */
+  comparison?: {
+    current: string;
+    cloud: string;
+    cloudLabel: string;
+  };
   actions: UserTaskActionV1[];
   /** 这条任务覆盖的原始问题行 id（诊断与验收证据用，**不进**普通界面）。 */
   covers: string[];
@@ -267,12 +273,36 @@ function numberOf(ds: IeltsAuthoringIRV2 | undefined, slotId: string): number | 
   return Number.isFinite(value) ? value : undefined;
 }
 
+function answerMismatchDetail(ds: IeltsAuthoringIRV2, slotIds: readonly string[]): string {
+  const interactionValues: string[] = slotIds.flatMap((id) => {
+    const interaction = ds.answerSlots[id]?.interaction;
+    return interaction ? [interaction] : [];
+  });
+  const interactions = new Set<string>(interactionValues);
+  if (interactions.size === 1 && interactions.has("text")) {
+    return "这些题需要文字答案；请按题面给出的字数和答案格式填写。";
+  }
+  const labels = [...new Set(slotIds.flatMap((slotId) => {
+    const group = groupForTarget(ds, slotId);
+    return group?.optionBank?.options.map((option) => option.label.trim()).filter(Boolean) ?? [];
+  }))];
+  const choiceInteractions = ["radio", "checkbox", "select", "dragdrop", "hotspot"];
+  if (interactions.size === 1 && choiceInteractions.some((value) => interactions.has(value))) {
+    return labels.length
+      ? "这些题需要选项答案形式，请从题面允许的标签中选择：" + labels.join("、") + "。"
+      : "这些题需要选项答案形式，请从题面列出的选项中选择。";
+  }
+  return "请按每道题的作答控件填写对应形式：文字题填写文字，选择题填写选项。";
+}
+
 /** 题号区间的用户话术：「第 11 题」「第 11–13 题」。 */
 function questionRangeLabel(numbers: readonly number[]): string {
-  const sorted = [...new Set(numbers)].sort((a, b) => a - b);
-  if (!sorted.length) return "";
-  if (sorted.length === 1) return `第 ${sorted[0]} 题`;
-  return `第 ${sorted[0]}–${sorted[sorted.length - 1]} 题`;
+  const runs = contiguousRuns(numbers);
+  return runs
+    .map((run) => run.length === 1
+      ? `第 ${run[0]} 题`
+      : `第 ${run[0]}–${run[run.length - 1]} 题`)
+    .join("、");
 }
 
 /** 一串题号里**连续**的段落（1,2,3,7 → [[1,2,3],[7]]）。 */
@@ -351,13 +381,19 @@ export function buildUserTasks(
 
   // 答案与题目形式不匹配：同样定位到答案控件，但话术不同（要改的是「答案形式」，不是「没填」）。
   const mismatchNumbers: number[] = [];
+  const mismatchSlots: string[] = [];
   const mismatchCovers: string[] = [];
   let mismatchFirstSlot: string | undefined;
   for (const issue of take("answer-mismatch")) {
     const slotId = slotIdsOfTarget(ds, issue.targetId)[0];
     const number = ds && slotId ? numberOf(ds, slotId) : undefined;
-    if (number !== undefined) mismatchNumbers.push(number);
-    if (slotId && !mismatchFirstSlot) mismatchFirstSlot = slotId;
+    if (number === undefined || !slotId) {
+      logUnlocalized(issue.issueId);
+      continue;
+    }
+    mismatchNumbers.push(number);
+    mismatchSlots.push(slotId);
+    if (!mismatchFirstSlot) mismatchFirstSlot = slotId;
     mismatchCovers.push(issue.issueId);
   }
   if (mismatchCovers.length) {
@@ -366,8 +402,8 @@ export function buildUserTasks(
       taskId: "answer-mismatch",
       kind: "answer-mismatch",
       severity: "blocker",
-      title: range ? `${range}的答案和题目形式对不上` : "有答案和题目形式对不上",
-      detail: "这些答案填进去学生也提交不了，需要按题目要求改。",
+      title: `${range}的答案和题目形式对不上`,
+      detail: answerMismatchDetail(ds, mismatchSlots),
       actions: [{ id: "fill-answer", label: "去填写", targetId: mismatchFirstSlot ?? "document" }],
       covers: mismatchCovers
     });
@@ -392,11 +428,15 @@ export function buildUserTasks(
         .filter((value): value is number => value !== undefined)
     );
     const range = questionRangeLabel(numbers);
+    if (!range) {
+      groupIssues.forEach((issue) => logUnlocalized(issue.issueId));
+      continue;
+    }
     tasks.push({
       taskId: `incomplete-recognition:${groupKey}`,
       kind: "incomplete-recognition",
       severity: "blocker",
-      title: range ? `${range}没有识别完整` : "这道题还有内容没有识别完整",
+      title: `${range}没有识别完整`,
       detail: "请对照原文件检查题干和答案。",
       // 不给「重新识别」：重跑不会替换已经生成的题稿，按了也改不掉这里的问题。
       actions: [{ id: "view-source", label: "查看原文", targetId: groupKey }],
@@ -407,29 +447,51 @@ export function buildUserTasks(
   // 3) 资源缺失。仓内暂无「重新选择图片」入口，所以给的是**真能按**的「重新识别」
   //    （任务书第三节允许「重新选择图片**或**重新识别」）。不给假按钮。
   const assetIssues = take("missing-asset");
-  if (assetIssues.length) {
+  const assetGroups = new Map<string, ActionableIssueV1[]>();
+  for (const issue of assetIssues) {
+    const where = localizedTarget(ds, issue.targetId);
+    if (!where) {
+      logUnlocalized(issue.issueId);
+      continue;
+    }
+    const list = assetGroups.get(where) ?? [];
+    list.push(issue);
+    assetGroups.set(where, list);
+  }
+  for (const [where, entries] of assetGroups) {
     tasks.push({
-      taskId: "missing-asset",
+      taskId: `missing-asset:${where}`,
       kind: "missing-asset",
       severity: "blocker",
-      title: "这道题有图片没有识别到",
+      title: `${where}有图片没有识别到`,
       detail: "请对照原文件确认图片。",
-      actions: [{ id: "view-source", label: "查看原文", targetId: assetIssues[0].targetId }],
-      covers: assetIssues.map((issue) => issue.issueId)
+      actions: [{ id: "view-source", label: "查看原文", targetId: entries[0].targetId }],
+      covers: entries.map((issue) => issue.issueId)
     });
   }
 
   // 4) 其余处理失败：一条任务，动作是重试处理。
   const failedIssues = take("processing-failed");
-  if (failedIssues.length) {
+  const failedGroups = new Map<string, ActionableIssueV1[]>();
+  for (const issue of failedIssues) {
+    const where = localizedTarget(ds, issue.targetId);
+    if (!where) {
+      logUnlocalized(issue.issueId);
+      continue;
+    }
+    const list = failedGroups.get(where) ?? [];
+    list.push(issue);
+    failedGroups.set(where, list);
+  }
+  for (const [where, entries] of failedGroups) {
     tasks.push({
-      taskId: "processing-failed",
+      taskId: `processing-failed:${where}`,
       kind: "processing-failed",
       severity: "blocker",
-      title: "有一处内容没有处理好",
-      detail: "请对照原文件核对这一处。",
-      actions: [{ id: "view-source", label: "查看原文", targetId: failedIssues[0].targetId }],
-      covers: failedIssues.map((issue) => issue.issueId)
+      title: `${where}有一处内容没有处理好`,
+      detail: `请对照原文件检查${where}。`,
+      actions: [{ id: "view-source", label: "查看原文", targetId: entries[0].targetId }],
+      covers: entries.map((issue) => issue.issueId)
     });
   }
 
@@ -452,27 +514,30 @@ export function buildUserTasks(
     (issue) => !GENERIC_ONLY.has(issueRootCause(issue)) && !explained.has(issueRootCause(issue))
   );
 
-  if (tasks.length === 0 && (genericIssues.length || structureIssues.length)) {
-    // 一条具体任务都没有：泛化/结构行是**唯一**的线索，必须显示（任务书第二节第 5 条）。
+  for (const issue of genericIssues) {
+    if (!localizedTarget(ds, issue.targetId)) logUnlocalized(issue.issueId);
+  }
+
+  const unexplainedGroups = new Map<string, ActionableIssueV1[]>();
+  for (const issue of unexplained) {
+    const where = localizedTarget(ds, issue.targetId);
+    if (!where) {
+      logUnlocalized(issue.issueId);
+      continue;
+    }
+    const list = unexplainedGroups.get(where) ?? [];
+    list.push(issue);
+    unexplainedGroups.set(where, list);
+  }
+  for (const [where, entries] of unexplainedGroups) {
     tasks.push({
-      taskId: "structure-incomplete",
+      taskId: `structure-incomplete:${where}`,
       kind: "structure-incomplete",
       severity: "blocker",
-      title: "这道题的结构可能还不完整",
-      detail: "请对照原文件核对题组和答案位。",
-      actions: [{ id: "view-source", label: "查看原文", targetId: "document" }],
-      covers: [...genericIssues, ...structureIssues].map((issue) => issue.issueId)
-    });
-  } else if (unexplained.length) {
-    // 有具体任务，但仍有**没有被表达出来**的失败原因：如实再给一条，不让发布在界面上「看起来能过」。
-    tasks.push({
-      taskId: "structure-incomplete:unexplained",
-      kind: "structure-incomplete",
-      severity: "blocker",
-      title: "这道题还有内容可能没有识别完整",
-      detail: "请对照原文件核对。",
-      actions: [{ id: "view-source", label: "查看原文", targetId: "document" }],
-      covers: unexplained.map((issue) => issue.issueId)
+      title: `${where}还有内容可能没有识别完整`,
+      detail: `请对照原文件检查${where}的题面、材料或答案。`,
+      actions: [{ id: "view-source", label: "查看原文", targetId: entries[0].targetId }],
+      covers: entries.map((issue) => issue.issueId)
     });
   }
   // 被隐藏的行数仍记入 `mergedRowCount`：验收脚本据此断言「泛化行确实被合并掉了」，
@@ -480,19 +545,9 @@ export function buildUserTasks(
   const hiddenGenerics = issues.length > 0 && tasks.length > 0
     ? genericIssues.length + structureIssues.length - unexplained.length
     : 0;
-  // 5c) 落在没有题号的答案位上的缺答行：退化成一条不带题号的任务，
-  //     而不是悄悄丢掉（丢一条阻断问题比多显示一条严重得多）。
+  // 5c) 没有题号/原卷区域就无法告诉用户去哪里检查：只记日志，不生成泛化任务。
   if (unnumberedAnswerIssues.length) {
-    tasks.push({
-      taskId: "missing-answer:unnumbered",
-      kind: "missing-answer",
-      severity: "blocker",
-      title: "还有答案没有填写",
-      actions: [
-        { id: "fill-answer", label: "去填写", targetId: unnumberedAnswerIssues[0].targetId }
-      ],
-      covers: unnumberedAnswerIssues.map((issue) => issue.issueId)
-    });
+    unnumberedAnswerIssues.forEach((issue) => logUnlocalized(issue.issueId));
   }
 
   const order: Record<UserTaskKind, number> = {
@@ -603,6 +658,14 @@ export interface RepairAidInputV1 {
   field?: string;
   currentValue?: unknown;
   cloudValue?: unknown;
+  challengerLabel?: string;
+  questionNumbers?: number[];
+  pageIndex?: number;
+  pageNumber?: number;
+  region?: string;
+  regionLabel?: string;
+  sourceRegion?: unknown;
+  evidence?: unknown;
   /**
    * 云端**没能拿到足够的原文**来判断这一处（后端理由码 `CONTEXT_INSUFFICIENT`）。
    *
@@ -666,6 +729,172 @@ function placeLabel(ds: IeltsAuthoringIRV2, targetId: string): string {
   return slots.length ? questionRangeLabel(slots) : "这一处";
 }
 
+function localizedTarget(ds: IeltsAuthoringIRV2, targetId: string): string | undefined {
+  if (!targetId || targetId === "document") return undefined;
+  const label = placeLabel(ds, targetId);
+  return label === "这一处" ? undefined : label;
+}
+
+function groupForTarget(ds: IeltsAuthoringIRV2, targetId: string) {
+  return ds.taskGroups.find((task) =>
+    task.taskId === targetId
+    || task.responseGroups.some((group) =>
+      group.responseGroupId === targetId
+      || group.slotIds.includes(targetId)
+    )
+  );
+}
+
+function questionNumbersFor(ds: IeltsAuthoringIRV2, targetId: string, explicit?: readonly number[]): number[] {
+  const given = (explicit ?? []).filter((number) => Number.isInteger(number) && number > 0);
+  if (given.length) return [...new Set(given)].sort((a, b) => a - b);
+  return [...new Set(slotIdsOfTarget(ds, targetId)
+    .map((slotId) => numberOf(ds, slotId))
+    .filter((number): number is number => number !== undefined))]
+    .sort((a, b) => a - b);
+}
+
+function rawText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(rawText).filter(Boolean).join(" ");
+  if (!value || typeof value !== "object") return value == null ? "" : String(value);
+  const record = value as Record<string, unknown>;
+  if (record.kind === "text" && Array.isArray(record.values)) return record.values.map(rawText).join(" ");
+  if (record.kind === "option" && Array.isArray(record.labels)) return record.labels.map(rawText).join(" ");
+  if (typeof record.text === "string") return record.text;
+  if (Array.isArray(record.content)) return rawText(record.content);
+  if (Array.isArray(record.children)) return rawText(record.children);
+  return formatDecisionValue(value);
+}
+
+function normalizedReviewText(value: unknown, field: string): string {
+  let text = rawText(value)
+    .normalize("NFKC")
+    .replace(/[\u2018\u2019\u02bc]/g, "'")
+    .replace(/[\u2010-\u2015\u2212]/g, "-")
+    .replace(/\s+/g, " ")
+    .replace(/\s*-\s*/g, "-")
+    .trim()
+    .toLocaleLowerCase("en");
+  if (field === "instructions") {
+    text = text.replace(/^questions\s+\d+(?:-\d+)?(?:\s*[:.)]\s*|\s+)/, "").trim();
+  }
+  return text;
+}
+
+function hasPdfCharacterSpacing(value: string): boolean {
+  return /(?:^|\s)(?:[a-z]\s+){4,}[a-z](?:$|\s)/i.test(value);
+}
+
+function answerTokens(value: unknown): { values: string[]; assignment: string } | undefined {
+  if (typeof value === "string") return { values: [value], assignment: "per_slot" };
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const rawValues = record.kind === "option" ? record.labels : record.kind === "text" ? record.values : undefined;
+  if (!Array.isArray(rawValues)) return undefined;
+  return {
+    values: rawValues.filter((entry): entry is string => typeof entry === "string"),
+    assignment: typeof record.assignment === "string" ? record.assignment : "per_slot"
+  };
+}
+
+function normalizeAnswerToken(value: string, taskType: string): string {
+  const normalized = normalizedReviewText(value, "answer");
+  if ((taskType === "true_false_not_given" || taskType === "yes_no_not_given")
+    && ["not stated", "not mentioned"].includes(normalized)) return "not given";
+  return normalized;
+}
+
+function optionLabelForToken(ds: IeltsAuthoringIRV2, targetId: string, token: string): string | undefined {
+  const options = groupForTarget(ds, targetId)?.optionBank?.options ?? [];
+  const normalized = normalizedReviewText(token, "answer");
+  const matches = options.filter((option) =>
+    [option.optionId, option.label].some((candidate) => normalizedReviewText(candidate, "answer") === normalized)
+  );
+  return matches.length === 1 ? matches[0].label : undefined;
+}
+
+function sameRepairValue(ds: IeltsAuthoringIRV2, task: RepairAidInputV1, targetId: string, field: string): boolean {
+  if (field === "answer") {
+    const current = answerTokens(task.currentValue);
+    const cloud = answerTokens(task.cloudValue);
+    if (current && cloud) {
+      const taskType = groupForTarget(ds, targetId)?.taskType ?? "";
+      const key = (entry: { values: string[]; assignment: string }) => entry.values
+        .map((value) => normalizeAnswerToken(optionLabelForToken(ds, targetId, value) ?? value, taskType))
+        .filter(Boolean)
+        .sort()
+        .join("|") + `::${entry.assignment}`;
+      return key(current) === key(cloud);
+    }
+  }
+  const current = normalizedReviewText(task.currentValue, field);
+  const cloud = normalizedReviewText(task.cloudValue, field);
+  if (current === cloud) return true;
+  return Boolean(current && cloud
+    && (hasPdfCharacterSpacing(current) || hasPdfCharacterSpacing(cloud))
+    && current.replace(/\s/g, "") === cloud.replace(/\s/g, ""));
+}
+
+function valueForReview(value: unknown, ds: IeltsAuthoringIRV2, targetId: string): string {
+  const answer = answerTokens(value);
+  if (!answer) return rawText(value) || "（空）";
+  return answer.values
+    .map((token) => optionLabelForToken(ds, targetId, token) ?? token.trim())
+    .filter(Boolean)
+    .join(", ") || "（空）";
+}
+
+function sourceRegionLabel(task: RepairAidInputV1): string | undefined {
+  const direct = [task.region, task.regionLabel].find((value) => typeof value === "string" && value.trim());
+  if (direct) return direct!.trim();
+  const region = task.sourceRegion;
+  if (typeof region === "string" && region.trim()) return region.trim();
+  if (region && typeof region === "object") {
+    const record = region as Record<string, unknown>;
+    for (const key of ["label", "name", "title", "region", "description"]) {
+      if (typeof record[key] === "string" && (record[key] as string).trim()) return (record[key] as string).trim();
+    }
+  }
+  const evidence = Array.isArray(task.evidence) ? task.evidence : [task.evidence];
+  for (const item of evidence) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    for (const key of ["regionLabel", "region", "areaLabel", "area"]) {
+      if (typeof record[key] === "string" && (record[key] as string).trim()) return (record[key] as string).trim();
+    }
+  }
+  return undefined;
+}
+
+function safeCoverageDescription(message: string): string | undefined {
+  const cleaned = message
+    .trim()
+    .replace(/[（(][A-Z][A-Z0-9_]{2,}[）)](?:\s*[:：].*)?$/u, "")
+    .replace(/\s*[:：]\s*(?:ocr|pdfium|recognition|page unreadable|processing failed)\b.*$/iu, "")
+    .trim();
+  if (!cleaned || /(?:PAGE_[A-Z_]+|ocr\s+failed|pdfium|stack trace)/i.test(cleaned)) return undefined;
+  if (/^原文件(?:第\s*\d+\s*页)?(?:云端)?(?:没能|未能)?读全[。！!]?$/u.test(cleaned)) return undefined;
+  return cleaned;
+}
+
+function sourcePageNumber(task: RepairAidInputV1): number | undefined {
+  if (Number.isInteger(task.pageNumber) && task.pageNumber! > 0) return task.pageNumber;
+  if (Number.isInteger(task.pageIndex) && task.pageIndex! >= 0) return task.pageIndex! + 1;
+  const evidence = Array.isArray(task.evidence) ? task.evidence : [task.evidence];
+  for (const item of evidence) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    if (Number.isInteger(record.pageNumber) && (record.pageNumber as number) > 0) return record.pageNumber as number;
+    if (Number.isInteger(record.pageIndex) && (record.pageIndex as number) >= 0) return (record.pageIndex as number) + 1;
+  }
+  return undefined;
+}
+
+function logUnlocalized(id: string): void {
+  console.warn("[authoring-review] skipped unlocalized task", id);
+}
+
 /**
  * **唯一**一份编辑辅助清单：本地检查 + 发布前检查 + 学生预览的答案形式问题 + 云端修复后剩下的，
  * 合成一份，每个题位 / 每件事只出一条，修好了就消失（云端那一路在读取时按当前稿重算）。
@@ -708,6 +937,14 @@ export function buildEditingAids(
   }
   const tasks = [...summary.tasks];
   const seen = new Set<string>();
+  const coverage = new Map<string, {
+    questionNumbers: number[];
+    pageNumber?: number;
+    region?: string;
+    messages: string[];
+    covers: string[];
+    targetId?: string;
+  }>();
   for (const task of others) {
     const target = task.targetIds?.find((id) => id) ?? "";
     const id = task.userTaskId;
@@ -716,10 +953,23 @@ export function buildEditingAids(
     if (id.startsWith("cloud-diff:")) {
       if (target && covered.has(target)) continue;
       const field = task.field ?? id.split(":").pop() ?? "";
-      const where = placeLabel(ds, target);
+      const questionNumbers = questionNumbersFor(ds, target, task.questionNumbers);
+      const isPartBoundary = field === "part_boundary";
+      const currentPart = isPartBoundary ? partRangeLabel(task.currentValue) : "";
+      const cloudPart = isPartBoundary ? partRangeLabel(task.cloudValue) : "";
+      const where = isPartBoundary
+        ? currentPart !== "没有这一段" ? currentPart : cloudPart
+        : questionRangeLabel(questionNumbers) || (target ? placeLabel(ds, target) : "这一处");
+      if (where === "这一处") {
+        logUnlocalized(id);
+        continue;
+      }
+      if (sameRepairValue(ds, task, target, field)) continue;
       const label = FIELD_LABEL[field] ?? "内容";
       const isAnswer = field === "answer";
-      const isPartBoundary = field === "part_boundary";
+      const current = valueForReview(task.currentValue, ds, target);
+      const cloud = valueForReview(task.cloudValue, ds, target);
+      const cloudLabel = task.challengerLabel || "云端";
       tasks.push({
         taskId: id,
         kind: "cloud-difference",
@@ -727,12 +977,13 @@ export function buildEditingAids(
         title: isPartBoundary
           ? `听力分段对不上：现在是「${partRangeLabel(task.currentValue)}」，云端读到的是「${partRangeLabel(task.cloudValue)}」`
           : isAnswer
-            ? `${where}的答案：现在是「${formatDecisionValue(task.currentValue)}」，云端读到的是「${formatDecisionValue(task.cloudValue)}」`
-            : `${where}的${label}和云端读到的不一样`,
+            ? `${where}的答案：现在是「${current}」，${cloudLabel}读到的是「${cloud}」`
+            : `${where}的${label}有差异`,
         // 「材料没到手」不能说成「看过了但定不了」：后者会让人以为云端已经对照过原文。
         detail: task.contextInsufficient
           ? "云端没能拿到足够的原文来判断这一处，请对照原文确认。"
-          : "云端对照原文件后没能定论，看一眼原文再决定保留哪个。",
+          : "本地与云端识别存在差异，云端对照原文件后没能定论。请查看下面标出的两侧内容，再对照原文决定是否调整。",
+        comparison: isPartBoundary ? undefined : { current, cloud, cloudLabel },
         actions: isAnswer && target
           ? [{ id: "fill-answer", label: "去看看", targetId: target }, { id: "view-source", label: "查看原文", targetId: target }]
           : [{ id: "view-source", label: "查看原文", targetId: target || "document" }],
@@ -743,30 +994,77 @@ export function buildEditingAids(
     }
     if (id.startsWith("cloud-question:")) {
       if (target && covered.has(target)) continue;
+      const questionNumbers = questionNumbersFor(ds, target, task.questionNumbers);
+      const where = questionRangeLabel(questionNumbers) || (target ? placeLabel(ds, target) : "");
+      if (!where || where === "这一处") {
+        logUnlocalized(id);
+        continue;
+      }
+      const answerTarget = target || Object.values(ds.answerSlots).find((slot) => questionNumbers.includes(slot.questionNumber))?.slotId || "";
       const text = (task.message ?? "").replace(/^云端未能确认[：:]\s*/, "").trim();
       tasks.push({
         taskId: id,
         kind: "cloud-note",
         severity: "warning",
-        title: target ? `${placeLabel(ds, target)}：云端没能确认` : "云端留下了一条没能确认的内容",
+        title: `${where}：云端没能确认`,
         detail: text || undefined,
-        actions: target
-          ? [{ id: "fill-answer", label: "去看看", targetId: target }]
+        actions: answerTarget
+          ? [{ id: "fill-answer", label: "去看看", targetId: answerTarget }]
           : [{ id: "view-source", label: "查看原文", targetId: "document" }],
         covers: [id]
       });
       continue;
     }
-    // 覆盖缺口（cloud-coverage / cloud-coverage-note）与其它未知条目：只说人话，不透传原因码。
-    const page = /^cloud-coverage:[^:]*:(\d+):/.exec(id)?.[1];
+    const questionNumbers = questionNumbersFor(ds, target, task.questionNumbers);
+    const pageNumber = sourcePageNumber(task);
+    const region = sourceRegionLabel(task);
+    const locationKey = pageNumber && region
+      ? `page:${pageNumber}:${normalizedReviewText(region, "region")}`
+      : questionNumbers.length
+        ? `questions:${questionNumbers.join(",")}`
+        : "";
+    if (!locationKey) {
+      logUnlocalized(id);
+      continue;
+    }
+    const bucket = coverage.get(locationKey) ?? {
+      questionNumbers: [],
+      pageNumber,
+      region,
+      messages: [],
+      covers: [],
+      targetId: target || undefined
+    };
+    bucket.questionNumbers = [...new Set([...bucket.questionNumbers, ...questionNumbers])].sort((a, b) => a - b);
+    bucket.messages.push((task.message ?? "").trim());
+    bucket.covers.push(id);
+    if (!bucket.targetId && target) bucket.targetId = target;
+    coverage.set(locationKey, bucket);
+  }
+
+  for (const [locationKey, entry] of coverage) {
+    const questionRange = questionRangeLabel(entry.questionNumbers);
+    const sourceArea = entry.pageNumber && entry.region
+      ? `原文件第 ${entry.pageNumber} 页「${entry.region}」区域`
+      : undefined;
+    const location = [questionRange, sourceArea].filter(Boolean).join("，");
+    const where = questionRange
+      ? `${questionRange}的原文件内容${sourceArea ? `（${sourceArea}）` : ""}`
+      : sourceArea!;
+    const target = entry.targetId
+      || Object.values(ds.answerSlots).find((slot) => entry.questionNumbers.includes(slot.questionNumber))?.slotId
+      || "document";
+    const descriptions = [...new Set(entry.messages
+      .map(safeCoverageDescription)
+      .filter((message): message is string => Boolean(message)))];
     tasks.push({
-      taskId: id,
+      taskId: `cloud-coverage:${locationKey}`,
       kind: "cloud-note",
       severity: "warning",
-      title: page ? `原文件第 ${page} 页有部分内容云端没能读全` : "原文件有一部分内容云端没能读全",
-      detail: "请对照原文件核对这一部分。",
-      actions: [{ id: "view-source", label: "查看原文", targetId: "document" }],
-      covers: [id]
+      title: `${where}可能没有识别完整`,
+      detail: [location, "请检查题面、选项或答案说明是否有遗漏。", ...descriptions].join("："),
+      actions: [{ id: "view-source", label: "查看原文", targetId: target }],
+      covers: entry.covers
     });
   }
 

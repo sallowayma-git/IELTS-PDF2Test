@@ -136,6 +136,180 @@ pub(crate) fn answer_compare_key(answer: Option<&Value>) -> String {
     }
 }
 
+fn answer_compare_key_for_slot(
+    candidate: &RecognitionCandidateV1,
+    slot: &CandidateSlotV1,
+    answer: Option<&Value>,
+) -> String {
+    let Some(answer) = answer else {
+        return String::new();
+    };
+    let group = candidate.group(&slot.task_id);
+    let response = group.and_then(|group| {
+        group
+            .response_groups
+            .iter()
+            .find(|response| response.response_group_id == slot.response_group_id)
+    });
+    let options = response
+        .and_then(|response| response.options.as_deref())
+        .filter(|options| !options.is_empty())
+        .or_else(|| {
+            group
+                .and_then(|group| group.option_bank.as_ref())
+                .map(|bank| bank.options.as_slice())
+        })
+        .unwrap_or_default();
+    let task_type = group
+        .map(|group| group.task_type.as_str())
+        .unwrap_or_default();
+    let values = match answer.get("kind").and_then(Value::as_str) {
+        Some("text") => answer.get("values").and_then(Value::as_array),
+        Some("option") => answer.get("labels").and_then(Value::as_array),
+        _ => return String::new(),
+    };
+    let mut normalized = values
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(|value| {
+            let key = normalize_answer_text_for_task(value, task_type);
+            let matches: Vec<_> = options
+                .iter()
+                .filter(|option| {
+                    [
+                        option.option_id.as_str(),
+                        option.label.as_str(),
+                        option.text.as_str(),
+                    ]
+                    .iter()
+                    .any(|candidate| normalize_answer_text_for_task(candidate, task_type) == key)
+                })
+                .collect();
+            let label = if matches.len() == 1 {
+                matches[0].label.as_str()
+            } else {
+                value
+            };
+            normalize_fixed_answer_label(label, task_type)
+        })
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    normalized.sort();
+    let assignment = answer
+        .get("assignment")
+        .and_then(Value::as_str)
+        .or_else(|| response.and_then(|response| response.assignment.as_deref()))
+        .unwrap_or("per_slot");
+    if normalized.is_empty() {
+        String::new()
+    } else {
+        format!("{}:{}", assignment, normalized.join("|"))
+    }
+}
+
+fn normalize_fixed_answer_label(label: &str, task_type: &str) -> String {
+    let normalized = normalize_answer_text_for_task(label, task_type);
+    let is_truth_group = matches!(task_type, "true_false_not_given" | "yes_no_not_given");
+    if is_truth_group
+        && matches!(
+            normalized.as_str(),
+            "not stated" | "not mentioned" | "notgiven" | "notstated" | "notmentioned"
+        )
+    {
+        "not given".to_string()
+    } else {
+        normalized
+    }
+}
+
+fn normalize_review_text(input: &str, instructions: bool) -> String {
+    let mut compatibility = String::new();
+    for ch in input.chars() {
+        match ch {
+            '\u{2018}' | '\u{2019}' | '\u{02bc}' | '\u{ff07}' => compatibility.push('\''),
+            '\u{2010}'..='\u{2015}' | '\u{2212}' | '\u{ff0d}' => compatibility.push('-'),
+            '\u{fb00}' => compatibility.push_str("ff"),
+            '\u{fb01}' => compatibility.push_str("fi"),
+            '\u{fb02}' => compatibility.push_str("fl"),
+            '\u{fb03}' => compatibility.push_str("ffi"),
+            '\u{fb04}' => compatibility.push_str("ffl"),
+            '\u{ff01}'..='\u{ff5e}' => {
+                if let Some(ascii) = char::from_u32(ch as u32 - 0xfee0) {
+                    compatibility.push(ascii);
+                }
+            }
+            other => compatibility.push(other),
+        }
+    }
+    let mut normalized = compatibility
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+        .replace(" - ", "-");
+    if instructions {
+        if let Some(rest) = normalized.strip_prefix("questions ") {
+            if let Some((range, content)) = rest.split_once(' ') {
+                let range = range.trim_end_matches(|ch| matches!(ch, ':' | '.' | ')'));
+                if !range.is_empty()
+                    && range
+                        .chars()
+                        .all(|ch| ch.is_ascii_digit() || matches!(ch, '-' | '–' | '—'))
+                {
+                    normalized = content.trim().to_string();
+                }
+            }
+        }
+    }
+    normalized
+}
+
+fn has_pdf_character_spacing(input: &str) -> bool {
+    let mut consecutive_single_letters = 0;
+    for token in input.split_whitespace() {
+        let is_single_letter = token.chars().count() == 1
+            && token
+                .chars()
+                .next()
+                .is_some_and(|character| character.is_ascii_alphabetic());
+        if is_single_letter {
+            consecutive_single_letters += 1;
+            if consecutive_single_letters >= 5 {
+                return true;
+            }
+        } else {
+            consecutive_single_letters = 0;
+        }
+    }
+    false
+}
+
+fn compact_whitespace(input: &str) -> String {
+    input
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect()
+}
+
+fn normalize_answer_text_for_task(input: &str, task_type: &str) -> String {
+    let normalized = normalize_review_text(input, false);
+    let is_truth_group = matches!(task_type, "true_false_not_given" | "yes_no_not_given");
+    if is_truth_group || has_pdf_character_spacing(input) {
+        compact_whitespace(&normalized)
+    } else {
+        normalized
+    }
+}
+
+fn review_texts_equal(left: &str, right: &str, instructions: bool) -> bool {
+    let normalized_left = normalize_review_text(left, instructions);
+    let normalized_right = normalize_review_text(right, instructions);
+    normalized_left == normalized_right
+        || ((has_pdf_character_spacing(left) || has_pdf_character_spacing(right))
+            && compact_whitespace(&normalized_left) == compact_whitespace(&normalized_right))
+}
+
 fn evidence_for(
     chain: ChainKindV1,
     anchor_kind: &str,
@@ -316,9 +490,9 @@ fn compare_slots(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
             DecisionFieldV1::Answer,
         );
 
-        let local_key = answer_compare_key(slot.answer.as_ref());
-        let cloud_key =
-            cloud_slot.and_then(|cloud| answer_compare_key(cloud.answer.as_ref()).into());
+        let local_key = answer_compare_key_for_slot(input.local, slot, slot.answer.as_ref());
+        let cloud_key = cloud_slot
+            .map(|cloud| answer_compare_key_for_slot(input.cloud, cloud, cloud.answer.as_ref()));
         let cloud_key = cloud_key.unwrap_or_default();
         let cloud_answer = cloud_slot.and_then(|cloud| cloud.answer.clone());
         let cloud_usable = input.cloud_usable();
@@ -333,9 +507,9 @@ fn compare_slots(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
             })
             .unwrap_or(false)
             || !matches!(
-                answer_compare_key(canonical_answer),
+                answer_compare_key_for_slot(input.local, slot, canonical_answer),
                 key if key.is_empty()
-            ) && answer_compare_key(canonical_answer) != local_key;
+            ) && answer_compare_key_for_slot(input.local, slot, canonical_answer) != local_key;
 
         let mut evidence: Vec<DecisionEvidenceV1> = Vec::new();
         if slot.has_source_evidence {
@@ -345,8 +519,32 @@ fn compare_slots(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
             .map(|value| value.has_source_evidence)
             .unwrap_or(false)
         {
-            evidence.push(evidence_for(ChainKindV1::Cloud, "group_quote", None));
+            evidence.push(evidence_for(
+                ChainKindV1::Cloud,
+                "group_quote",
+                cloud_answer.as_ref().map(answer_display),
+            ));
         }
+        if let Some(answer) = slot.answer.as_ref() {
+            evidence.push(evidence_for(
+                ChainKindV1::Local,
+                "answer_key",
+                Some(answer_display(answer)),
+            ));
+        }
+        if let Some(cloud_answer) = cloud_answer.as_ref() {
+            evidence.push(evidence_for(
+                ChainKindV1::Cloud,
+                "answer_key",
+                Some(answer_display(cloud_answer)),
+            ));
+        }
+        evidence.extend(source_finding_evidence(
+            input.source,
+            DecisionTargetTypeV1::Slot,
+            &slot.slot_id,
+            DecisionFieldV1::Answer,
+        ));
 
         // ── 一致分支 ────────────────────────────────────────────────
         if cloud_usable && !cloud_key.is_empty() && cloud_key == local_key {
@@ -354,7 +552,8 @@ fn compare_slots(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
             // 情形。不能因为本地与云端一致就对外宣称已确认，也不能降级成
             // 「证据不足」——原文件在这里是确凿证据，必须作为实质分歧暴露。
             if let Some(suggested) = source_suggested.clone() {
-                let suggested_key = answer_compare_key(Some(&suggested));
+                let suggested_key =
+                    answer_compare_key_for_slot(input.local, slot, Some(&suggested));
                 if !suggested_key.is_empty() && suggested_key != local_key {
                     items.push(build_item(
                         &slot.slot_id,
@@ -386,12 +585,13 @@ fn compare_slots(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
                     slot,
                     DecisionFieldV1::Answer,
                     DecisionResolutionV1::Agreed,
-                    "ANSWER_AGREED",
+                    "ANSWER_BOTH_CHAINS_AGREE",
                     DecisionSeverityV1::Info,
-                    format!("第 {} 题三路一致", slot.question_number),
+                    format!("第 {} 题双方识别一致", slot.question_number),
                     format!(
-                        "第 {} 题的答案已由本地、云端与原文一致确认。",
-                        slot.question_number
+                        "第 {} 题本地与云端都识别为「{}」；原文件核验状态单独记录。",
+                        slot.question_number,
+                        answer_display(slot.answer.as_ref().unwrap_or(&Value::Null))
                     ),
                     slot.answer.clone(),
                     cloud_answer.clone(),
@@ -402,18 +602,19 @@ fn compare_slots(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
                     user_edited,
                 ));
             } else {
-                // 验收项 4：结论一致但缺少原文证据 → 不得判为已验证。
+                // 双方一致可作交叉识别证据；它不代表原文件核验通过。
                 items.push(build_item(
                     &slot.slot_id,
                     slot,
                     DecisionFieldV1::Answer,
-                    DecisionResolutionV1::Unverifiable,
-                    "ANSWER_AGREED_UNVERIFIED",
+                    DecisionResolutionV1::Agreed,
+                    "ANSWER_BOTH_CHAINS_AGREE",
                     DecisionSeverityV1::Info,
-                    format!("第 {} 题缺少原文证据", slot.question_number),
+                    format!("第 {} 题双方识别一致", slot.question_number),
                     format!(
-                        "第 {} 题的本地与云端结果一致，但没有可核验的原文证据，未标记为已验证。",
-                        slot.question_number
+                        "第 {} 题本地与云端都识别为「{}」；原文件尚未核验。",
+                        slot.question_number,
+                        answer_display(slot.answer.as_ref().unwrap_or(&Value::Null))
                     ),
                     slot.answer.clone(),
                     cloud_answer.clone(),
@@ -434,7 +635,7 @@ fn compare_slots(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
             source_suggested.clone()
         {
             // 原文件给出了不同答案：这是可以落到具体 patch 的实质分歧。
-            let suggested_key = answer_compare_key(Some(&suggested));
+            let suggested_key = answer_compare_key_for_slot(input.local, slot, Some(&suggested));
             if source_verdict == Some(SourceVerdictV1::Suggested) {
                 (
                     DecisionResolutionV1::NeedsReview,
@@ -497,28 +698,9 @@ fn compare_slots(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
                     reason::RULES_MATCH,
                     user_edited,
                 ));
-            } else {
-                items.push(build_item(
-                    &slot.slot_id,
-                    slot,
-                    DecisionFieldV1::Answer,
-                    DecisionResolutionV1::Unverifiable,
-                    "ANSWER_EVIDENCE_MISSING",
-                    DecisionSeverityV1::Info,
-                    format!("第 {} 题无法验证", slot.question_number),
-                    format!(
-                        "第 {} 题缺少云端结果与原文证据，无法判断答案是否正确。",
-                        slot.question_number
-                    ),
-                    slot.answer.clone(),
-                    None,
-                    None,
-                    None,
-                    evidence,
-                    reason::EVIDENCE_MISSING,
-                    user_edited,
-                ));
             }
+            // 没有可用云端候选、原文也没有独立结论时，链路状态已说明云端未完成；
+            // 不为每个答案位重复生成「缺少云端结果」项。
             continue;
         } else if answer_is_empty(slot.answer.as_ref()) && !cloud_key.is_empty() {
             // 本地缺答案、云端有答案：只有原文确认时才允许自动补全。
@@ -639,9 +821,16 @@ fn compare_groups(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
         }
 
         // 题干
-        let local_prompt = normalize_text(&group.instructions_text);
-        let cloud_prompt = normalize_text(&cloud_group.instructions_text);
-        if !local_prompt.is_empty() && !cloud_prompt.is_empty() && local_prompt != cloud_prompt {
+        let local_prompt = normalize_review_text(&group.instructions_text, true);
+        let cloud_prompt = normalize_review_text(&cloud_group.instructions_text, true);
+        if !local_prompt.is_empty()
+            && !cloud_prompt.is_empty()
+            && !review_texts_equal(
+                &group.instructions_text,
+                &cloud_group.instructions_text,
+                true,
+            )
+        {
             let source_confirmed = input.source.is_confirmed(
                 DecisionTargetTypeV1::Task,
                 &group.task_id,
@@ -684,6 +873,150 @@ fn compare_groups(input: &CompareInput<'_>, items: &mut Vec<DecisionItemV1>) {
                 cloud_value: Some(Value::String(cloud_group.instructions_text.clone())),
                 source_value: None,
                 // 题干是 rich content（ContentNodeV2）：单方面替换会破坏结构，只做 review。
+                proposed_patch: None,
+                undo: None,
+                auto_applied: false,
+                applied_at: None,
+                status: DecisionStatusV1::Open,
+                reason_code: if source_confirmed {
+                    reason::SUBSTANTIVE_DIVERGENCE.to_string()
+                } else {
+                    reason::EVIDENCE_MISSING.to_string()
+                },
+                dependency_group: None,
+            });
+        }
+
+        // 作答说明：部分 PDF 把说明放在 ResponseGroup.prompt，而不是 task instructions。
+        // 只按相同题号集合匹配不同链路里的 response group，避免 ID 重建后漏比或错配。
+        for response in &group.response_groups {
+            let mut question_numbers: Vec<u32> = response
+                .slot_ids
+                .iter()
+                .filter_map(|slot_id| {
+                    input
+                        .local
+                        .slots
+                        .iter()
+                        .find(|slot| &slot.slot_id == slot_id)
+                        .map(|slot| slot.question_number)
+                })
+                .collect();
+            if question_numbers.is_empty() {
+                question_numbers = super::candidate::expand_question_numbers(&group.display_range);
+            }
+            question_numbers.sort_unstable();
+            question_numbers.dedup();
+            if question_numbers.is_empty() {
+                continue;
+            }
+
+            let local_slot_numbers: Vec<u32> = response
+                .slot_ids
+                .iter()
+                .filter_map(|slot_id| {
+                    input
+                        .local
+                        .slots
+                        .iter()
+                        .find(|slot| &slot.slot_id == slot_id)
+                        .map(|slot| slot.question_number)
+                })
+                .collect();
+            let cloud_response = cloud_group
+                .response_groups
+                .iter()
+                .find(|candidate| candidate.response_group_id == response.response_group_id)
+                .or_else(|| {
+                    if local_slot_numbers.is_empty() {
+                        return None;
+                    }
+                    cloud_group.response_groups.iter().find(|candidate| {
+                        let mut candidate_numbers: Vec<u32> = candidate
+                            .slot_ids
+                            .iter()
+                            .filter_map(|slot_id| {
+                                input
+                                    .cloud
+                                    .slots
+                                    .iter()
+                                    .find(|slot| &slot.slot_id == slot_id)
+                                    .map(|slot| slot.question_number)
+                            })
+                            .collect();
+                        candidate_numbers.sort_unstable();
+                        let mut local_numbers = local_slot_numbers.clone();
+                        local_numbers.sort_unstable();
+                        candidate_numbers == local_numbers
+                    })
+                });
+            let (Some(local_prompt), Some(cloud_prompt)) = (
+                response
+                    .prompt
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty()),
+                cloud_response
+                    .and_then(|candidate| candidate.prompt.as_deref())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty()),
+            ) else {
+                continue;
+            };
+            if review_texts_equal(local_prompt, cloud_prompt, false) {
+                continue;
+            }
+
+            let response_group_id = &response.response_group_id;
+            let source_confirmed = input.source.is_confirmed(
+                DecisionTargetTypeV1::ResponseGroup,
+                response_group_id,
+                DecisionFieldV1::Prompt,
+            );
+            let where_label = question_numbers_label(&question_numbers);
+            let mut evidence = vec![
+                evidence_for(
+                    ChainKindV1::Local,
+                    "response_group_prompt",
+                    Some(local_prompt.to_string()),
+                ),
+                evidence_for(
+                    ChainKindV1::Cloud,
+                    "response_group_prompt",
+                    Some(cloud_prompt.to_string()),
+                ),
+            ];
+            evidence.extend(source_finding_evidence(
+                input.source,
+                DecisionTargetTypeV1::ResponseGroup,
+                response_group_id,
+                DecisionFieldV1::Prompt,
+            ));
+            items.push(DecisionItemV1 {
+                decision_id: DecisionItemV1::decision_id_for(
+                    DecisionTargetTypeV1::ResponseGroup,
+                    response_group_id,
+                    DecisionFieldV1::Prompt,
+                ),
+                resolution: DecisionResolutionV1::NeedsReview,
+                code: "RESPONSE_GROUP_PROMPT_CONFLICT".to_string(),
+                severity: DecisionSeverityV1::Warning,
+                title: format!("{where_label}的作答说明存在差异"),
+                user_message: format!(
+                    "{where_label}的本地作答说明是「{local_prompt}」，云端读到的是「{cloud_prompt}」，请对照原卷确认是否存在内容差异。"
+                ),
+                target: DecisionTargetV1 {
+                    target_type: DecisionTargetTypeV1::ResponseGroup,
+                    target_id: response_group_id.clone(),
+                    task_id: Some(group.task_id.clone()),
+                    node_id: None,
+                    question_numbers,
+                },
+                field: DecisionFieldV1::Prompt,
+                evidence,
+                local_value: Some(Value::String(local_prompt.to_string())),
+                cloud_value: Some(Value::String(cloud_prompt.to_string())),
+                source_value: None,
                 proposed_patch: None,
                 undo: None,
                 auto_applied: false,
@@ -1000,6 +1333,29 @@ pub(crate) fn answer_patch(slot_id: &str, value: &Value) -> Value {
     })
 }
 
+fn question_numbers_label(numbers: &[u32]) -> String {
+    match numbers {
+        [] => "原文件".to_string(),
+        [number] => format!("第 {number} 题"),
+        [first, rest @ ..]
+            if rest
+                .iter()
+                .enumerate()
+                .all(|(index, number)| *number == first + index as u32 + 1) =>
+        {
+            format!("第 {first}–{} 题", rest[rest.len() - 1])
+        }
+        _ => format!(
+            "第 {} 题",
+            numbers
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join("、")
+        ),
+    }
+}
+
 fn answer_display(value: &Value) -> String {
     match value.get("kind").and_then(Value::as_str) {
         Some("text") => value
@@ -1081,11 +1437,19 @@ fn build_item(
 
 /// 供 adjudicate 复用的证据构造（source finding → evidence）。
 pub(crate) fn source_finding_evidence(
+    source: &SourceVerificationV1,
     target_type: DecisionTargetTypeV1,
     target_id: &str,
     field: DecisionFieldV1,
 ) -> Vec<DecisionEvidenceV1> {
-    source_evidence(target_type, target_id, field)
+    let Some(finding) = source.finding(target_type, target_id, field) else {
+        return Vec::new();
+    };
+    if finding.evidence.is_empty() {
+        source_evidence(target_type, target_id, field)
+    } else {
+        finding.evidence.clone()
+    }
 }
 
 /// 供 adjudicate 判断原文件是否「明确反对」当前值。

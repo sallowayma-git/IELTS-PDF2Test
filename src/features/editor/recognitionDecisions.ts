@@ -19,15 +19,26 @@ export interface DecisionGroup {
   items: RecognitionDecisionItemV1[];
 }
 
-/** 主问题列表里要显示的项：排除 agreed / info / superseded。 */
+function cloudHasNoSettledResult(view: RecognitionDecisionViewV1): boolean {
+  return ["not_started", "not_run", "skipped", "queued", "running"].includes(view.cloudStatus);
+}
+
+/** 云端尚无结果时不把逐题的 unverifiable 占位记录呈现为待办。 */
 export function visibleDecisionItems(view: RecognitionDecisionViewV1 | undefined): RecognitionDecisionItemV1[] {
   if (!view?.items?.length) return [];
   return view.items.filter((item) => {
     if (item.resolution === "agreed") return false;
+    if (item.resolution === "unverifiable" && cloudHasNoSettledResult(view)) return false;
     if (item.severity === "info") return false;
     if (item.status === "superseded") return false;
     return true;
   });
+}
+
+/** 面板可展示的无法验证计数；云端尚未完成时不重复报每题缺少云端结果。 */
+export function displayedUnverifiableCount(view: RecognitionDecisionViewV1 | undefined): number {
+  if (!view || cloudHasNoSettledResult(view)) return 0;
+  return view.summary.unverifiable;
 }
 
 /** 已自动修正并写入权威稿的项：顶部展示，默认折叠，只提供撤销。 */
@@ -283,7 +294,7 @@ export function isRecognitionQuiet(view: RecognitionDecisionViewV1 | undefined):
   return summary.agreed === 0
     && summary.autoFixed === 0
     && summary.needsReview === 0
-    && summary.unverifiable === 0;
+    && displayedUnverifiableCount(view) === 0;
 }
 
 /**
@@ -325,7 +336,7 @@ export function formatEvidence(evidence: RecognitionDecisionItemV1["evidence"]):
   if (!evidence?.length) return [];
   const chainLabel: Record<string, string> = { local: "本机识别", cloud: "云端识别", source: "原文件" };
   return evidence.map((entry) => {
-    const where = [chainLabel[entry.chain] ?? entry.chain, entry.pageIndex ? `第 ${entry.pageIndex + 1} 页` : null]
+    const where = [chainLabel[entry.chain] ?? entry.chain, typeof entry.pageIndex === "number" && Number.isInteger(entry.pageIndex) && entry.pageIndex >= 0 ? `第 ${entry.pageIndex + 1} 页` : null]
       .filter(Boolean)
       .join(" · ");
     return entry.quote ? `${where}：${entry.quote}` : where;

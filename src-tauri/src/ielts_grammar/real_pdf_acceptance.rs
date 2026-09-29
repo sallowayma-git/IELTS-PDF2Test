@@ -19,10 +19,8 @@ const ACCEPTANCE_SPEC: &str = "fixtures/golden/phase4-eight-pdf-acceptance.json"
 const MANIFEST: &str = "fixtures/golden/manifest.json";
 const REPORT: &str = "tmp/phase4-real-pdf-acceptance/report.json";
 const PHASE5_REPORT: &str = "tmp/phase5-real-pdf-acceptance/report.json";
-const STAGE2_PRESENTATION_SPEC: &str =
-    "fixtures/golden/private-pdf-task-presentation-stage2.json";
-const STAGE2_PRESENTATION_REPORT: &str =
-    "tmp/stage2-private-pdf-task-presentation/report.json";
+const STAGE2_PRESENTATION_SPEC: &str = "fixtures/golden/private-pdf-task-presentation-stage2.json";
+const STAGE2_PRESENTATION_REPORT: &str = "tmp/stage2-private-pdf-task-presentation/report.json";
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
@@ -1580,7 +1578,10 @@ fn stage2_task_contract_failures(expected_fixture: &Value, authoring: &Value) ->
             continue;
         }
         let group = matches[0];
-        let actual_type = group.get("taskType").and_then(Value::as_str).unwrap_or_default();
+        let actual_type = group
+            .get("taskType")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         let has_bank = group.get("optionBank").is_some_and(Value::is_object);
         let Ok(task_type) = serde_json::from_value::<crate::schema::ielts_authoring_v2::TaskTypeV2>(
             Value::String(actual_type.to_string()),
@@ -1594,9 +1595,7 @@ fn stage2_task_contract_failures(expected_fixture: &Value, authoring: &Value) ->
             .and_then(Value::as_array)
             .map(Vec::as_slice)
             .unwrap_or_default();
-        let slots = authoring
-            .get("answerSlots")
-            .and_then(Value::as_object);
+        let slots = authoring.get("answerSlots").and_then(Value::as_object);
         let actual_group_count = response_groups.len();
         let expected_group_count = match rule.group_granularity {
             GroupGranularity::PerSlot => numbers.len(),
@@ -1609,18 +1608,31 @@ fn stage2_task_contract_failures(expected_fixture: &Value, authoring: &Value) ->
             .filter_map(Value::as_str)
             .map(ToString::to_string)
             .collect::<Vec<_>>();
-        let mut expected_slots = numbers.iter().map(|number| format!("q{number}")).collect::<Vec<_>>();
+        let mut expected_slots = numbers
+            .iter()
+            .map(|number| format!("q{number}"))
+            .collect::<Vec<_>>();
         expected_slots.sort();
         let mut sorted_response_slots = response_slots.clone();
         sorted_response_slots.sort();
         if actual_type != expected_type {
             failures.push(json!({"fixtureId":fixture_id,"range":expected.get("range"),"aspect":"task_type","expected":expected_type,"actual":actual_type}));
         }
-        if rule.variant != expected.get("variant").and_then(Value::as_str).unwrap_or_default() {
+        if rule.variant
+            != expected
+                .get("variant")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+        {
             failures.push(json!({"fixtureId":fixture_id,"range":expected.get("range"),"aspect":"task_variant","expected":expected.get("variant"),"actual":rule.variant}));
         }
         let actual_presentation = presentation_rule_name(&rule.presentation);
-        if actual_presentation != expected.get("presentation").and_then(Value::as_str).unwrap_or_default() {
+        if actual_presentation
+            != expected
+                .get("presentation")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+        {
             failures.push(json!({"fixtureId":fixture_id,"range":expected.get("range"),"aspect":"presentation","expected":expected.get("presentation"),"actual":actual_presentation}));
         }
         if actual_group_count != expected_group_count || sorted_response_slots != expected_slots {
@@ -1648,7 +1660,9 @@ fn stage2_task_contract_failures(expected_fixture: &Value, authoring: &Value) ->
         }
         if let Some(expected_count) = expected.get("chooseCount").and_then(Value::as_u64) {
             for response in response_groups {
-                if response.pointer("/cardinality/exact").and_then(Value::as_u64)
+                if response
+                    .pointer("/cardinality/exact")
+                    .and_then(Value::as_u64)
                     != Some(expected_count)
                     || response.get("assignment").and_then(Value::as_str) != Some("unordered_set")
                 {
@@ -1672,12 +1686,16 @@ fn stage2_task_contract_failures(expected_fixture: &Value, authoring: &Value) ->
             }
         }
         if rule.option_source == OptionSource::OptionBank {
-            if !has_bank || group.pointer("/optionBank/scope").and_then(Value::as_str) != Some("task_group") {
+            if !has_bank
+                || group.pointer("/optionBank/scope").and_then(Value::as_str) != Some("task_group")
+            {
                 failures.push(json!({"fixtureId":fixture_id,"range":expected.get("range"),"aspect":"option_bank_scope_or_missing","actual":group.get("optionBank")}));
             }
         }
         for (slot_id, slot) in slots.into_iter().flatten() {
-            if numbers.iter().any(|number| slot_id == &format!("q{number}"))
+            if numbers
+                .iter()
+                .any(|number| slot_id == &format!("q{number}"))
                 && (slot.get("interaction").and_then(Value::as_str)
                     != Some(presentation_rule_name(&rule.interaction).as_str())
                     || !rule.host_types.iter().any(|host| {
@@ -1695,7 +1713,11 @@ fn stage2_task_contract_failures(expected_fixture: &Value, authoring: &Value) ->
             .flatten()
             .filter_map(Value::as_str)
         {
-            if authoring.pointer(&format!("/passage/paragraphMap/{label}")).and_then(Value::as_str).is_none() {
+            if authoring
+                .pointer(&format!("/passage/paragraphMap/{label}"))
+                .and_then(Value::as_str)
+                .is_none()
+            {
                 failures.push(json!({"fixtureId":fixture_id,"range":expected.get("range"),"aspect":"paragraph_label_missing","label":label}));
             }
         }
@@ -1707,10 +1729,18 @@ fn stage2_task_contract_failures(expected_fixture: &Value, authoring: &Value) ->
         {
             let label = label_value.as_str().unwrap_or_default();
             let slot_id = format!("q{number}");
-            let mapped_id = authoring.pointer(&format!("/passage/paragraphMap/{label}")).and_then(Value::as_str);
+            let mapped_id = authoring
+                .pointer(&format!("/passage/paragraphMap/{label}"))
+                .and_then(Value::as_str);
             let slot = authoring.pointer(&format!("/answerSlots/{slot_id}"));
-            if slot.and_then(|slot| slot.get("hostType")).and_then(Value::as_str) != Some("passage_paragraph")
-                || slot.and_then(|slot| slot.get("hostNodeId")).and_then(Value::as_str) != mapped_id
+            if slot
+                .and_then(|slot| slot.get("hostType"))
+                .and_then(Value::as_str)
+                != Some("passage_paragraph")
+                || slot
+                    .and_then(|slot| slot.get("hostNodeId"))
+                    .and_then(Value::as_str)
+                    != mapped_id
             {
                 failures.push(json!({"fixtureId":fixture_id,"range":expected.get("range"),"aspect":"heading_paragraph_anchor","question":number,"expectedLabel":label,"expectedNodeId":mapped_id,"actual":slot}));
             }
@@ -1728,17 +1758,33 @@ fn stage2_task_contract_failures(expected_fixture: &Value, authoring: &Value) ->
         .cloned()
         .unwrap_or_default();
     let mut actual_labels = actual_map.keys().cloned().collect::<Vec<_>>();
-    let mut sorted_expected = expected_labels.iter().filter_map(Value::as_str).map(ToString::to_string).collect::<Vec<_>>();
+    let mut sorted_expected = expected_labels
+        .iter()
+        .filter_map(Value::as_str)
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
     actual_labels.sort();
     sorted_expected.sort();
     if actual_labels != sorted_expected {
         failures.push(json!({"fixtureId":fixture_id,"aspect":"paragraph_map_labels","expected":sorted_expected,"actual":actual_labels}));
     }
-    let content = authoring.pointer("/passage/content").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+    let content = authoring
+        .pointer("/passage/content")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
     for (label, node_id) in actual_map {
-        let node = content.iter().find(|node| node.get("id").and_then(Value::as_str) == node_id.as_str());
-        if node.and_then(|node| node.get("paragraphLabel")).and_then(Value::as_str) != Some(label.as_str())
-            || node.and_then(|node| node.get("sourceAnchors")).and_then(Value::as_array).is_none_or(Vec::is_empty)
+        let node = content
+            .iter()
+            .find(|node| node.get("id").and_then(Value::as_str) == node_id.as_str());
+        if node
+            .and_then(|node| node.get("paragraphLabel"))
+            .and_then(Value::as_str)
+            != Some(label.as_str())
+            || node
+                .and_then(|node| node.get("sourceAnchors"))
+                .and_then(Value::as_array)
+                .is_none_or(Vec::is_empty)
         {
             failures.push(json!({"fixtureId":fixture_id,"aspect":"paragraph_map_source_anchor","label":label,"nodeId":node_id,"actual":node}));
         }
@@ -2464,13 +2510,19 @@ fn stage2_nine_private_pdfs_match_manual_task_presentation_and_anchor_expectatio
         .get("fixtures")
         .and_then(Value::as_array)
         .expect("Stage 2 fixtures must be an array");
-    assert_eq!(expected_fixtures.len(), 9, "all nine named PDFs must remain covered");
     assert_eq!(
-        spec.pointer("/manualReview/physicalPdfCount").and_then(Value::as_u64),
+        expected_fixtures.len(),
+        9,
+        "all nine named PDFs must remain covered"
+    );
+    assert_eq!(
+        spec.pointer("/manualReview/physicalPdfCount")
+            .and_then(Value::as_u64),
         Some(9)
     );
     assert_eq!(
-        spec.pointer("/manualReview/previousOfficialManifestCount").and_then(Value::as_u64),
+        spec.pointer("/manualReview/previousOfficialManifestCount")
+            .and_then(Value::as_u64),
         Some(8)
     );
     let required_paths = expected_fixtures

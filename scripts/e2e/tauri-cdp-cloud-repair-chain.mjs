@@ -42,6 +42,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import process from "node:process";
 import { isDeepStrictEqual } from "node:util";
@@ -73,7 +74,19 @@ const fixturePath = path.resolve(
   pdfIdx >= 0 ? process.argv[pdfIdx + 1] : path.join(repoRoot, "fixtures", "parser", "demanding-reading-passage-3.pdf"),
 );
 const portIdx = process.argv.indexOf("--port");
-const servicePort = portIdx >= 0 ? Number(process.argv[portIdx + 1]) : 11455;
+async function findAvailableLocalPort() {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("无法取得受控服务端口");
+  const port = address.port;
+  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  return port;
+}
+const servicePort = portIdx >= 0 ? Number(process.argv[portIdx + 1]) : await findAvailableLocalPort();
 const isPdf = /\.pdf$/i.test(fixturePath);
 const extraArgs = process.argv.includes("--no-diagnostic-args") ? "" : "--no-sandbox --disable-gpu";
 /** 显式声明「本轮接受 CDP 重连」；默认不接受（见报告 `cdpReattaches`）。 */
@@ -346,6 +359,11 @@ function startService({ candidate = null, plan = null, delayCandidateMs = 0 } = 
   return out;
 }
 
+function healthPathMatches(actual, expected) {
+  if (expected == null) return actual == null;
+  return typeof actual === "string" && path.resolve(actual) === path.resolve(expected);
+}
+
 async function restartService(options) {
   if (serviceChild) {
     serviceChild.kill();
@@ -355,6 +373,13 @@ async function restartService(options) {
   startService(options);
   const health = await waitForService();
   if (!health) throw new CannotRunError("受控服务没有就绪（/health 不可达）");
+  if (
+    health.service !== "controlled-llm"
+    || !healthPathMatches(health.candidate, options.candidate ?? null)
+    || !healthPathMatches(health.plan, options.plan ?? null)
+  ) {
+    throw new CannotRunError(`受控服务端口 ${servicePort} 指向了其他进程；请检查端口冲突`);
+  }
   report.service.health = health;
   return health;
 }
@@ -1927,6 +1952,11 @@ async function main() {
   // 覆盖集算法抽成纯函数，规则与上一版逐字一致：清单条目的 action-target 与
   // data-task-id 按 `[:+]` 拆出的各段都算「接住」，后端任务的 targetIds 命中其一即可。
   // 收敛判定与最终严格比对共用这一个函数，保证「等待」不会放宽比较规则本身。
+  const isUnlocalizedDocumentFallback = (task) =>
+    task.action === "fix_blocking_issue"
+    && task.userTaskId === "quality:RUNTIME_COMPILER_FAILED:document"
+    && (task.targetIds ?? []).length === 1
+    && task.targetIds[0] === "document";
   const backendTasksNotCoveredByPanel = (remainingTasks, panelSnapshot) => {
     const covered = new Set();
     for (const entry of panelSnapshot.entries ?? []) {
@@ -1934,6 +1964,9 @@ async function main() {
       for (const part of String(entry.taskId ?? "").split(/[:+]/)) if (part) covered.add(part);
     }
     return remainingTasks.filter((task) => {
+      // 产品按要求不把无法定位到题目/原卷区域的编译器兜底项显示成泛泛待办；
+      // 它由具体答案问题说明，原始文案只记日志。界面清单只需覆盖可定位的用户任务。
+      if (isUnlocalizedDocumentFallback(task)) return false;
       const targets = (task.targetIds ?? []).filter(Boolean);
       if (targets.length === 0) return (panelSnapshot.entryCount ?? 0) === 0;
       return !targets.some((id) => covered.has(id) || covered.has(String(id).replace(/^answerKey:/, "")));
@@ -1981,6 +2014,7 @@ async function main() {
       remaining: remaining.length,
       entryCount: panel.entryCount,
       clearText: panel.clearText,
+      unlocalizedDocumentFallbacks: remaining.filter(isUnlocalizedDocumentFallback).map((task) => task.userTaskId),
       remainingSource,
       converged,
       convergedWaitMs,

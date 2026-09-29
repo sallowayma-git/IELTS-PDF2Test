@@ -30,7 +30,9 @@ use super::local::{
     VisualStimulusCandidateV1,
 };
 use crate::authoring_pipeline::dynamic_answer_map_from_split;
-use crate::ielts_grammar::answer_key::answer_value_for_slot;
+use crate::ielts_grammar::answer_key::{
+    answer_value_for_slot_with_option_labels, option_labels_for_slot,
+};
 use crate::ielts_grammar::issue_codes;
 use crate::schema::ielts_authoring_v2::TaskTypeV2;
 use crate::{CommandResult, ImportJob};
@@ -924,7 +926,12 @@ pub(crate) fn build_direct_canonical(
             .unwrap_or(0) as u32;
         answer_key.insert(
             slot_id.to_string(),
-            answer_value_for_slot(&answer_map, slot_id, number),
+            answer_value_for_slot_with_option_labels(
+                &answer_map,
+                slot_id,
+                number,
+                &option_labels_for_slot(&task_groups, slot_id),
+            ),
         );
     }
 

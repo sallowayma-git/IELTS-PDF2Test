@@ -87,6 +87,16 @@ export interface CloudRepairTaskV1 {
   targetIds?: string[];
   questionNumbers?: number[];
   message?: string | null;
+  field?: string;
+  currentValue?: unknown;
+  cloudValue?: unknown;
+  challengerLabel?: string;
+  contextInsufficient?: boolean;
+  pageIndex?: number;
+  pageNumber?: number;
+  region?: string;
+  regionLabel?: string;
+  sourceRegion?: unknown;
   /**
    * 后端给出的**建议处理方式**（`fix_blocking_issue` / `review_difference` / `review_source`）。
    *

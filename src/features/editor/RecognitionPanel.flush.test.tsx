@@ -73,6 +73,31 @@ describe("RecognitionPanel 提交前先 flush 编辑器（C1）", () => {
     expect(calls).toEqual(["flush", "apply"]); // flush 必须先于 apply
   });
 
+  it("云端未运行时不显示逐题无法验证项或其汇总计数", async () => {
+    const offline = {
+      ...viewWithOneReviewItem(),
+      cloudStatus: "not_started",
+      summary: { agreed: 0, autoFixed: 0, needsReview: 0, unverifiable: 1 },
+      items: [
+        {
+          decisionId: "u1", resolution: "unverifiable", code: "ANSWER_EVIDENCE_MISSING", severity: "warning",
+          title: "第 1 题无法验证", userMessage: "第 1 题缺少云端结果与原文证据，无法判断答案是否正确。",
+          target: { targetType: "slot", targetId: "q1" }, field: "answer", evidence: [],
+          localValue: { kind: "text", values: ["A"] }, cloudValue: null, status: "open",
+        },
+      ],
+    };
+    getRecognitionDecision.mockResolvedValue(offline);
+
+    render(
+      <RecognitionPanel itemId="it-1" editVersion={5} refreshKey="offline" onLocate={() => {}} onOpenSource={() => {}} onApplied={() => {}} answerKey={undefined} />
+    );
+    await screen.findByTestId("workspace-recognition");
+    expect(screen.queryByText("第 1 题无法验证")).toBeNull();
+    expect(screen.queryByTestId("workspace-recognition-summary")).toBeNull();
+    expect(screen.queryByTestId("workspace-recognition-card")).toBeNull();
+  });
+
   it("flush 失败时不提交决策，并给出提示", async () => {
     getRecognitionDecision.mockResolvedValue(viewWithOneReviewItem());
     const beforeApply = vi.fn(async () => { throw new Error("EDIT_VERSION_CONFLICT:current=6:base=5"); });

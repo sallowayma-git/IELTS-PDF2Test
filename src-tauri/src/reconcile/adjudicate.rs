@@ -598,12 +598,13 @@ pub(crate) fn adjudicate(input: AdjudicateInput<'_>) -> AdjudicationOutcome {
 
     // ── 汇总输出 ────────────────────────────────────────────────────
     let mut summary = DecisionSummaryV1::default();
-    let mut visible: Vec<DecisionItemV1> = Vec::new();
+    let mut decision_items: Vec<DecisionItemV1> = Vec::new();
     for mut item in items {
         match item.resolution {
             DecisionResolutionV1::Agreed => {
                 summary.agreed += 1;
-                continue; // 一致内容后台留记录，前端不产生逐项问题
+                decision_items.push(item); // 保留双方证据；is_actionable 确保它不显示为待办。
+                continue;
             }
             DecisionResolutionV1::AutoFixed => {
                 summary.auto_fixed += 1;
@@ -623,7 +624,7 @@ pub(crate) fn adjudicate(input: AdjudicateInput<'_>) -> AdjudicationOutcome {
                 item.severity = DecisionSeverityV1::Warning;
             }
         }
-        visible.push(item);
+        decision_items.push(item);
     }
 
     let decision = RecognitionDecisionV1 {
@@ -640,7 +641,7 @@ pub(crate) fn adjudicate(input: AdjudicateInput<'_>) -> AdjudicationOutcome {
             cloud_reason_code: input.cloud.reason_code.clone(),
             source_reason_code: input.source.reason_code.clone(),
         },
-        items: visible,
+        items: decision_items,
         summary,
     };
     AdjudicationOutcome {
@@ -956,49 +957,58 @@ mod tests {
         assert_eq!(outcome.decision.summary.agreed, 2);
         assert_eq!(outcome.decision.summary.needs_review, 0);
         assert_eq!(outcome.decision.summary.unverifiable, 0);
-        assert!(
-            outcome.decision.items.is_empty(),
-            "一致内容不得出现在问题列表"
+        assert_eq!(
+            outcome.decision.items.len(),
+            2,
+            "一致证据应保存在后台裁决项中"
         );
+        assert!(outcome
+            .decision
+            .items
+            .iter()
+            .all(|item| item.resolution == DecisionResolutionV1::Agreed && !item.is_actionable()));
         assert!(outcome.auto_apply_candidates.is_empty());
     }
 
-    /// 验收项 4：各路一致但缺原文证据 → 不能被当成已验证。
+    /// 本地与云端一致但缺原文证据 → 记录双方一致，不生成待办；原文核验状态仍单独保留。
     #[test]
-    fn agreement_without_source_evidence_is_unverifiable_not_agreed() {
+    fn agreement_without_source_evidence_is_agreed_without_claiming_source_verification() {
         let local = candidate(
             ChainKindV1::Local,
             vec![slot(
                 "slot-14",
                 14,
-                Some(json!({"kind":"text","values":["stencilling"]})),
+                Some(json!({"kind":"text","values":["NOT GIVEN"]})),
                 false,
             )],
             ChainStatusV1::Succeeded,
         );
-        let cloud = candidate(
+        let mut cloud = candidate(
             ChainKindV1::Cloud,
             vec![slot(
                 "slot-14",
                 14,
-                Some(json!({"kind":"text","values":["stencilling"]})),
+                Some(json!({"kind":"option","labels":["not stated"],"assignment":"per_slot"})),
                 false,
             )],
             ChainStatusV1::Succeeded,
         );
+        cloud.task_groups[0].task_type = "true_false_not_given".to_string();
+        let mut local = local;
+        local.task_groups[0].task_type = "true_false_not_given".to_string();
         let source = verify_against_source(
             None,
             &[(
                 "slot-14".to_string(),
                 14,
-                Some(json!({"kind":"text","values":["stencilling"]})),
+                Some(json!({"kind":"text","values":["NOT GIVEN"]})),
                 false,
                 String::new(),
             )],
             &[],
             None,
         );
-        let canonical = canonical_with(Some(json!({"kind":"text","values":["stencilling"]})), None);
+        let canonical = canonical_with(Some(json!({"kind":"text","values":["NOT GIVEN"]})), None);
         let validate = no_validation();
         let outcome = adjudicate(AdjudicateInput {
             canonical: &canonical,
@@ -1012,17 +1022,150 @@ mod tests {
             validate_batch: &validate,
             adjudicator: None,
         });
+        assert_eq!(outcome.decision.summary.agreed, 1, "两路规范化一致应被记录");
+        assert_eq!(outcome.decision.summary.unverifiable, 0);
         assert_eq!(
-            outcome.decision.summary.agreed, 0,
-            "缺少原文证据不得判为已确认"
+            outcome.decision.items.len(),
+            1,
+            "一致内容应保留双方识别证据"
         );
-        assert_eq!(outcome.decision.summary.unverifiable, 1);
-        let item = &outcome.decision.items[0];
-        assert_eq!(item.reason_code, reason::NO_SOURCE_EVIDENCE);
+        assert_eq!(
+            outcome.decision.items[0].resolution,
+            DecisionResolutionV1::Agreed
+        );
         assert!(
-            item.proposed_patch.is_none(),
-            "无法判断时不得给出建议 patch"
+            !outcome.decision.items[0].is_actionable(),
+            "一致证据不得生成待办"
         );
+        assert!(
+            outcome.auto_apply_candidates.is_empty(),
+            "一致证据不得擅自改写权威稿"
+        );
+    }
+
+    #[test]
+    fn task_aware_answer_comparison_resolves_option_ids_to_labels() {
+        let mut local = candidate(
+            ChainKindV1::Local,
+            vec![slot(
+                "slot-14",
+                14,
+                Some(json!({"kind":"text","values":["TRUE"],"assignment":"per_slot"})),
+                false,
+            )],
+            ChainStatusV1::Succeeded,
+        );
+        let mut cloud = candidate(
+            ChainKindV1::Cloud,
+            vec![slot(
+                "slot-14",
+                14,
+                Some(json!({"kind":"option","labels":["tfng-true-cloud"],"assignment":"per_slot"})),
+                false,
+            )],
+            ChainStatusV1::Succeeded,
+        );
+        for candidate in [&mut local, &mut cloud] {
+            candidate.task_groups[0].task_type = "true_false_not_given".to_string();
+            candidate.task_groups[0].option_bank =
+                Some(crate::schema::recognition_v1::CandidateOptionBankV1 {
+                    option_bank_id: "tfng-bank".to_string(),
+                    options: vec![crate::schema::recognition_v1::CandidateOptionV1 {
+                        option_id: if candidate.chain == ChainKindV1::Local {
+                            "tfng-true-local"
+                        } else {
+                            "tfng-true-cloud"
+                        }
+                        .to_string(),
+                        label: "TRUE".to_string(),
+                        text: "TRUE".to_string(),
+                    }],
+                    allow_reuse: true,
+                });
+        }
+        let source = verify_against_source(None, &[], &[], None);
+        let canonical = canonical_with(
+            Some(json!({"kind":"option","labels":["TRUE"],"assignment":"per_slot"})),
+            None,
+        );
+        let items = compare(&CompareInput {
+            canonical: &canonical,
+            local: &local,
+            cloud: &cloud,
+            source: &source,
+        });
+        assert!(!items
+            .iter()
+            .any(|item| item.field == DecisionFieldV1::Answer
+                && matches!(
+                    item.resolution,
+                    DecisionResolutionV1::NeedsReview | DecisionResolutionV1::Unverifiable
+                )));
+    }
+
+    #[test]
+    fn instructions_and_prompt_ignore_pdf_spacing_heading_and_quote_glyphs() {
+        let mut local = candidate(
+            ChainKindV1::Local,
+            vec![slot("slot-14", 14, None, false)],
+            ChainStatusV1::Succeeded,
+        );
+        let mut cloud = candidate(
+            ChainKindV1::Cloud,
+            vec![slot("slot-14", 14, None, false)],
+            ChainStatusV1::Succeeded,
+        );
+        local.task_groups[0].instructions_text =
+            "Questions 14–15 Do t h e f o l l o w i n g".to_string();
+        cloud.task_groups[0].instructions_text = "Do the following".to_string();
+        local.task_groups[0].response_groups[0].prompt = Some("What Lucy Taught Us’".to_string());
+        cloud.task_groups[0].response_groups[0].prompt = Some("What Lucy Taught Us'".to_string());
+        let source = verify_against_source(None, &[], &[], None);
+        let canonical = canonical_with(None, None);
+        let items = compare(&CompareInput {
+            canonical: &canonical,
+            local: &local,
+            cloud: &cloud,
+            source: &source,
+        });
+        assert!(!items
+            .iter()
+            .any(|item| item.field == DecisionFieldV1::Prompt
+                && item.resolution == DecisionResolutionV1::NeedsReview));
+    }
+
+    #[test]
+    fn differing_response_group_prompt_creates_question_specific_review_item() {
+        let mut local = candidate(
+            ChainKindV1::Local,
+            vec![slot("slot-14", 14, None, false)],
+            ChainStatusV1::Succeeded,
+        );
+        let mut cloud = candidate(
+            ChainKindV1::Cloud,
+            vec![slot("slot-14", 14, None, false)],
+            ChainStatusV1::Succeeded,
+        );
+        local.task_groups[0].response_groups[0].prompt = Some("What Lucy Taught Us".to_string());
+        cloud.task_groups[0].response_groups[0].prompt = Some("What Lucy Taught Them".to_string());
+        let source = verify_against_source(None, &[], &[], None);
+        let canonical = canonical_with(None, None);
+        let items = compare(&CompareInput {
+            canonical: &canonical,
+            local: &local,
+            cloud: &cloud,
+            source: &source,
+        });
+
+        let item = items
+            .iter()
+            .find(|item| item.field == DecisionFieldV1::Prompt)
+            .expect("题面差异应生成待确认项");
+        assert_eq!(item.resolution, DecisionResolutionV1::NeedsReview);
+        assert_eq!(item.target.target_type, DecisionTargetTypeV1::ResponseGroup);
+        assert_eq!(item.target.question_numbers, vec![14]);
+        assert!(item.user_message.contains("What Lucy Taught Us"));
+        assert!(item.user_message.contains("What Lucy Taught Them"));
     }
 
     /// 验收项 3：本地与云端有分歧 → 只形成一份统一建议。
@@ -1390,6 +1533,14 @@ mod tests {
             "全部项都拿到裁定 → 裁决链必须如实报成功"
         );
         let item = answer_item(&outcome);
+        assert!(
+            item.evidence
+                .iter()
+                .any(|evidence| evidence.chain == ChainKindV1::Source
+                    && evidence.anchor_kind == "question_token"),
+            "来源题号证据应随待办保留: {:?}",
+            item.evidence
+        );
         assert_eq!(
             item.proposed_patch
                 .as_ref()
@@ -1568,6 +1719,43 @@ mod tests {
             !item.reason_code.starts_with("ADJUDICATION_"),
             "没有模型时不得给项盖上裁决类原因码，实际为 {}",
             item.reason_code
+        );
+    }
+
+    #[test]
+    fn cloud_not_run_does_not_create_per_slot_unverifiable_items() {
+        let local_answer = json!({"kind":"text","values":["stencilling"]});
+        let local = candidate(
+            ChainKindV1::Local,
+            vec![slot("slot-14", 14, Some(local_answer.clone()), false)],
+            ChainStatusV1::Succeeded,
+        );
+        let cloud = candidate(ChainKindV1::Cloud, vec![], ChainStatusV1::NotRun);
+        let source = verify_against_source(
+            None,
+            &[(
+                "slot-14".to_string(),
+                14,
+                Some(local_answer.clone()),
+                false,
+                String::new(),
+            )],
+            &[("task-1".to_string(), vec![14])],
+            None,
+        );
+        let canonical = canonical_with(Some(local_answer), None);
+        let items = compare(&CompareInput {
+            canonical: &canonical,
+            local: &local,
+            cloud: &cloud,
+            source: &source,
+        });
+        assert!(
+            items.iter().all(|item| {
+                item.field != DecisionFieldV1::Answer
+                    || item.resolution != DecisionResolutionV1::Unverifiable
+            }),
+            "云端未运行时不应逐题生成‘缺少云端结果’：{items:#?}"
         );
     }
 

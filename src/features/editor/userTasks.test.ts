@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AnswerSlotV2, IeltsAuthoringIRV2, ResponseGroupV2, TaskGroupV2 } from "../../types";
 import type { ActionableIssueV1 } from "./actionableIssues";
 import { buildEditingAids, buildUserTasks, rootCausesOf, splitVisibleTasks, USER_TASK_VISIBLE_LIMIT } from "./userTasks";
@@ -26,10 +26,10 @@ function group(responseGroupId: string, slotIds: string[]): ResponseGroupV2 {
   } as unknown as ResponseGroupV2;
 }
 
-function task(taskId: string, responseGroups: ResponseGroupV2[]): TaskGroupV2 {
+function task(taskId: string, responseGroups: ResponseGroupV2[], taskType: TaskGroupV2["taskType"] = "sentence_completion"): TaskGroupV2 {
   return {
     taskId,
-    taskType: "sentence_completion",
+    taskType,
     responseGroups,
     displayRange: { kind: "range", start: 1, end: 1 },
     instructions: [],
@@ -163,6 +163,46 @@ describe("题组内部问题：并成一条「没有识别完整」，两个动�
     expect(summary.tasks).toHaveLength(1);
     expect(summary.tasks[0].taskId).toBe("incomplete-recognition:rg-1");
   });
+
+  it("整篇级识别失败没有页区或题号时只记日志", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const summary = buildUserTasks(DS, [issue("i1", "STIMULUS_MISSING", "document")]);
+    expect(summary.tasks).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("unlocalized"), "i1");
+    warn.mockRestore();
+  });
+});
+
+describe("答案与学生作答控件不匹配时，说明要改成的形式", () => {
+  it("TFNG 单选答案提示具体选项标签和需要的选项答案形状", () => {
+    const responseGroup = group("tfng-rg", ["q1", "q2", "q3", "q4", "q5"]);
+    const tfngTask = {
+      ...task("tfng", [responseGroup], "true_false_not_given"),
+      optionBank: {
+        optionBankId: "tfng-bank",
+        scope: "task_group",
+        options: ["TRUE", "FALSE", "NOT GIVEN"].map((label) => ({
+          optionId: `tfng-${label.toLowerCase().replaceAll(" ", "-")}`,
+          label,
+          content: []
+        })),
+        allowReuse: true,
+        sourceAnchors: []
+      }
+    } as unknown as TaskGroupV2;
+    const slots = Object.fromEntries([1, 2, 3, 4, 5].map((number) => [`q${number}`, slot(`q${number}`, number)]));
+    const ds = makeDs({ taskGroups: [tfngTask], answerSlots: slots });
+    (ds as unknown as { answerKey: Record<string, unknown> }).answerKey = Object.fromEntries(
+      [1, 2, 3, 4, 5].map((number) => [`q${number}`, { kind: "text", values: [number % 2 ? "TRUE" : "FALSE"] }])
+    );
+    const summary = buildUserTasks(ds, [
+      ...[1, 2, 3, 4, 5].map((number) => issue(`m${number}`, "RUNTIME_CHOICE_SLOT_ANSWER_NOT_OPTION", `q${number}`))
+    ]);
+    expect(summary.tasks).toHaveLength(1);
+    expect(summary.tasks[0].title).toBe("第 1–5 题的答案和题目形式对不上");
+    expect(summary.tasks[0].detail).toContain("选项答案形式");
+    expect(summary.tasks[0].detail).toContain("TRUE、FALSE、NOT GIVEN");
+  });
 });
 
 describe("泛化行：只有阻塞原因被**完整**表达时才隐藏（任务书第 4 条）", () => {
@@ -188,14 +228,16 @@ describe("泛化行：只有阻塞原因被**完整**表达时才隐藏（任务
     expect(summary.tasks[0].title).toBe("第 12 题缺少答案");
   });
 
-  it("**没有**具体任务时泛化行是唯一线索，必须显示", () => {
+  it("没有题号或页区定位的泛化行只记日志，不生成无从处理的任务", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const summary = buildUserTasks(DS, [issue("g1", "QUALITY_NOT_READY", "QUALITY_NOT_READY", "QUALITY_NOT_READY")]);
-    expect(summary.tasks).toHaveLength(1);
-    expect(summary.tasks[0].kind).toBe("structure-incomplete");
-    expect(summary.tasks[0].title).toBe("这道题的结构可能还不完整");
+    expect(summary.tasks).toHaveLength(0);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("unlocalized"), "g1");
+    warn.mockRestore();
   });
 
-  it("**原因没有被表达**的失败不被隐藏：门禁报 A 与 B，只有 A 有任务，B 必须仍出现", () => {
+  it("未表达但无法定位的失败记日志，不生成泛泛的结构待办", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     // 这是本轮修正的关键一条。上一版写的是「有任意具体任务就隐藏全部泛化/结构行」——
     // 那会藏掉尚未被解释的发布失败：用户看到「还有 1 处需要处理」，而发布其实被另外一条拦着。
     const summary = buildUserTasks(DS, [
@@ -204,11 +246,9 @@ describe("泛化行：只有阻塞原因被**完整**表达时才隐藏（任务
     ]);
     const kinds = summary.tasks.map((t) => t.kind);
     expect(kinds).toContain("missing-answer");
-    // 编译器失败没有被任何具体任务表达 → 必须如实再给一条。
-    expect(kinds).toContain("structure-incomplete");
-    const unexplained = summary.tasks.find((t) => t.taskId === "structure-incomplete:unexplained");
-    expect(unexplained).toBeDefined();
-    expect(unexplained!.covers).toEqual(["s1"]);
+    expect(kinds).not.toContain("structure-incomplete");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("unlocalized"), "s1");
+    warn.mockRestore();
   });
 
   it("RUNTIME_COMPILER_FAILED 与它自己的具体原因并存时，只显示具体原因", () => {
@@ -362,7 +402,13 @@ describe("唯一一份编辑辅助清单：本地 + 发布前检查 + 云端剩�
         currentValue: { kind: "text", values: ["river"] },
         cloudValue: { kind: "text", values: ["rivers"] }
       },
-      { userTaskId: "cloud-coverage:pdf-1:3:0", targetIds: [], message: "原文件第 3 页云端未能读全（PAGE_UNREADABLE）：ocr failed" }
+      {
+        userTaskId: "cloud-coverage:pdf-1:3:0",
+        targetIds: [],
+        pageIndex: 2,
+        region: "扫描页正文",
+        message: "原文件第 3 页云端未能读全（PAGE_UNREADABLE）：ocr failed"
+      }
     ]);
     const text = summary.tasks.map((task) => `${task.title} ${task.detail ?? ""}`).join("\n");
     expect(text).not.toMatch(/expected question numbers|slot|q13|PAGE_UNREADABLE|ocr failed/);
@@ -400,6 +446,146 @@ describe("唯一一份编辑辅助清单：本地 + 发布前检查 + 云端剩�
     // 两者的标题仍然如实说「现在是什么、云端读到的是什么」。
     expect(insufficient.title).toBe("第 13 题的答案：现在是「river」，云端读到的是「rivers」");
     expect(undecided.title).toBe("第 12 题的答案：现在是「B」，云端读到的是「A」");
+  });
+
+  it("答案跨表示形态且规范化后相同，不生成云端差异", () => {
+    const summary = buildEditingAids(DS, [], [
+      {
+        userTaskId: "cloud-diff:slot:q13:answer",
+        targetIds: ["q13"],
+        field: "answer",
+        currentValue: { kind: "text", values: [" TRUE "] },
+        cloudValue: { kind: "option", labels: ["true"], assignment: "per_slot", normalization: "ielts_default" }
+      },
+      {
+        userTaskId: "cloud-diff:slot:q12:answer",
+        targetIds: ["q12"],
+        field: "answer",
+        currentValue: { kind: "text", values: ["EGGS"] },
+        cloudValue: { kind: "text", values: [" eggs "], normalization: "ielts_default" }
+      }
+    ]);
+    expect(summary.tasks).toEqual([]);
+    expect(summary.headline).toBe("没有需要补充的内容");
+  });
+
+  it("TFNG 固定标签同义形式及选项 ID/标签等价时不生成待办", () => {
+    const tfng = {
+      ...task("tfng", [group("tfng-rg", ["q1"])], "true_false_not_given"),
+      optionBank: {
+        optionBankId: "tfng-bank",
+        options: [{ optionId: "not-given-id", label: "NOT GIVEN", content: [] }],
+        allowReuse: true,
+        scope: "task_group",
+        sourceAnchors: []
+      }
+    } as unknown as TaskGroupV2;
+    const ds = makeDs({ taskGroups: [tfng], answerSlots: { q1: slot("q1", 1) } });
+    const summary = buildEditingAids(ds, [], [
+      {
+        userTaskId: "cloud-diff:slot:q1:answer",
+        targetIds: ["q1"],
+        field: "answer",
+        currentValue: { kind: "text", values: ["NOT STATED"] },
+        cloudValue: { kind: "option", labels: ["not-given-id"], assignment: "per_slot" }
+      }
+    ]);
+    expect(summary.tasks).toEqual([]);
+  });
+
+  it("作答说明在忽略题号前缀、PDF 字符间距和连接号后相同，不生成待办", () => {
+    const summary = buildEditingAids(DS, [], [
+      {
+        userTaskId: "cloud-diff:task:task-1:instructions",
+        targetIds: ["task-1"],
+        field: "instructions",
+        currentValue: "Questions 1–5 Do t h e f o l l o w i n g",
+        cloudValue: "Do the following"
+      },
+      {
+        userTaskId: "cloud-diff:task:task-1:prompt",
+        targetIds: ["task-1"],
+        field: "prompt",
+        currentValue: "What Lucy Taught Us’",
+        cloudValue: "What Lucy Taught Us'"
+      }
+    ]);
+    expect(summary.tasks).toEqual([]);
+  });
+
+  it("真实文本差异给出题号和可渲染的两侧内容", () => {
+    const summary = buildEditingAids(DS, [], [
+      {
+        userTaskId: "cloud-diff:task:task-1:instructions",
+        targetIds: ["task-1"],
+        questionNumbers: [11, 12, 13],
+        field: "instructions",
+        currentValue: "Complete the sentence.",
+        cloudValue: "Complete the notes.",
+        challengerLabel: "云端识别"
+      }
+    ]);
+    expect(summary.tasks).toHaveLength(1);
+    expect(summary.tasks[0].title).toContain("第 11–13 题");
+    expect(summary.tasks[0].comparison).toEqual({
+      current: "Complete the sentence.",
+      cloud: "Complete the notes.",
+      cloudLabel: "云端识别"
+    });
+  });
+
+  it("非连续题号分别定位，不把两题误写成一个大区间", () => {
+    const summary = buildEditingAids(DS, [], [{
+      userTaskId: "cloud-diff:task:task-1:instructions",
+      targetIds: ["task-1"],
+      questionNumbers: [6, 13],
+      field: "instructions",
+      currentValue: "Complete the sentence.",
+      cloudValue: "Complete the notes."
+    }]);
+    expect(summary.tasks).toHaveLength(1);
+    expect(summary.tasks[0].title).toContain("第 6 题、第 13 题");
+    expect(summary.tasks[0].title).not.toContain("第 6–13 题");
+  });
+
+  it("同一原卷区域的覆盖缺口合并；没有定位的条目只记日志", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const summary = buildEditingAids(DS, [], [
+      {
+        userTaskId: "cloud-coverage-note:1",
+        questionNumbers: [11],
+        message: "题目底部的一行可能没读全",
+        pageIndex: 4,
+        region: "页面底部题目区"
+      },
+      {
+        userTaskId: "cloud-coverage-note:2",
+        questionNumbers: [11],
+        message: "该题的答案说明可能没读全",
+        pageIndex: 4,
+        region: "页面底部题目区"
+      },
+      {
+        userTaskId: "cloud-coverage-note:3",
+        targetIds: [],
+        message: "原文件有一部分内容云端没能读全"
+      },
+      {
+        userTaskId: "cloud-diff:task:document:stimulus",
+        targetIds: [],
+        field: "stimulus",
+        currentValue: "",
+        cloudValue: "Some text"
+      }
+    ]);
+    expect(summary.tasks).toHaveLength(1);
+    expect(summary.tasks[0].title).toContain("第 11 题");
+    expect(summary.tasks[0].detail).toContain("原文件第 5 页");
+    expect(summary.tasks[0].detail).toContain("页面底部题目区");
+    expect(summary.tasks[0].covers).toEqual(["cloud-coverage-note:1", "cloud-coverage-note:2"]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("unlocalized"), "cloud-coverage-note:3");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("unlocalized"), "cloud-diff:task:document:stimulus");
+    warn.mockRestore();
   });
 
   it("没有门槛话术：不出现「不能导出」「阻断」「可以导出」", () => {

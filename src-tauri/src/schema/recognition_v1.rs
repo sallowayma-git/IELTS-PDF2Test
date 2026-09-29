@@ -299,7 +299,7 @@ pub struct SalvageReportV1 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DecisionResolutionV1 {
-    /// 三路一致：后台留记录，前端**不产生逐项问题**。
+    /// 本地与云端结论一致：后台留存双方证据，前端**不产生逐项问题**；原文件核验状态单独记录。
     Agreed,
     /// 符合自动应用规则且已原子写入权威稿。
     AutoFixed,
@@ -523,19 +523,20 @@ impl DecisionItemV1 {
     /// 会污染发布质量门，也会让「必改项」这个数字失去意义。真正需要保证的是**它必须被看见
     /// 且必须计数**，那由本判据（可见性）与 `summary`（计数）共同保证。
     pub fn is_actionable(&self) -> bool {
-        self.resolution != DecisionResolutionV1::AutoFixed
-            && matches!(
-                self.status,
-                DecisionStatusV1::Open | DecisionStatusV1::Failed
-            )
+        matches!(
+            self.resolution,
+            DecisionResolutionV1::NeedsReview | DecisionResolutionV1::Unverifiable
+        ) && matches!(
+            self.status,
+            DecisionStatusV1::Open | DecisionStatusV1::Failed
+        )
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct DecisionSummaryV1 {
-    /// 三路一致（后台留记录，不产生逐项问题）。**一致项不入 `items`**，故该值无法从
-    /// `items` 推导，只能由裁决层在构造时确定，之后不再变动。
+    /// 本地与云端一致（后台留证据，不产生逐项问题）。数量由裁决层构造，每项证据保存在 items 中。
     pub agreed: u32,
     /// 已自动写入权威稿。与 `needs_review` **互斥**——自动应用把项翻成 `AutoFixed` 后，
     /// 必须同时从 `needs_review` 里减掉，否则同一项会被两个计数同时统计。
@@ -686,7 +687,7 @@ pub struct RecognitionChainStateV1 {
 /// `get_recognition_decision` 的返回：把阶段状态与裁决结果合成一次读取。
 ///
 /// 契约要点：
-/// - `actionable` 只含 `needs_review` / `unverifiable`，**不含** `agreed`（后台留记录）
+/// - actionable 只含 needs_review / unverifiable，**不含** agreed（后台保存双方证据）
 ///   与 `auto_fixed`（属于已完成的修正，走 `auto_applied` 供解释与撤销）。
 /// - `stale = true` 时 `base_edit_version < edit_version`：用户在裁决之后改过稿，
 ///   建议已过期，接受前必须重新核验。

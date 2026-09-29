@@ -5756,9 +5756,17 @@ fn complex_reading_splits_into_packets_that_obey_the_grouping_rules() {
         else {
             continue;
         };
-        let Some(values) = candidate["answerKey"][slot]["values"].as_array_mut() else {
+        let answer = &mut candidate["answerKey"][slot];
+        let answer_values_field = if answer.get("values").and_then(Value::as_array).is_some() {
+            "values"
+        } else if answer.get("labels").and_then(Value::as_array).is_some() {
+            "labels"
+        } else {
             continue;
         };
+        let values = answer[answer_values_field]
+            .as_array_mut()
+            .expect("答案字段必须是数组");
         let first = values.first_mut().expect("答案必须有值");
         let text = first.as_str().unwrap_or_default().to_string();
         *first = json!(format!("{text} CHANGED"));

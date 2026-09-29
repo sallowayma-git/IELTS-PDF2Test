@@ -8,6 +8,7 @@ import {
   decisionTargetId,
   describeStaleness,
   emptyStateMessage,
+  formatEvidence,
   groupByDependency,
   hasAnyChainRun,
   isDecided,
@@ -69,6 +70,19 @@ describe("visibleDecisionItems — 哪些不该出现在问题列表", () => {
   it("severity=info 不进主问题列表", () => {
     const v = view([item({ decisionId: "d1", resolution: "needs_review", severity: "info" })]);
     expect(visibleDecisionItems(v)).toEqual([]);
+  });
+
+  it("云端未运行时隐藏旧批次的逐题 unverifiable 和汇总噪音", () => {
+    const v = view(
+      [item({ decisionId: "u1", resolution: "unverifiable", severity: "warning" })],
+      {
+        cloudStatus: "not_started",
+        summary: { agreed: 0, autoFixed: 0, needsReview: 0, unverifiable: 1 }
+      }
+    );
+    expect(visibleDecisionItems(v)).toEqual([]);
+    expect(reviewItems(v)).toEqual([]);
+    expect(isRecognitionQuiet(v)).toBe(true);
   });
 
   it("superseded 不再展示", () => {
@@ -390,6 +404,18 @@ describe("decisionStatusLabel — 已撤销不能被显示成「处理失败」"
     const label = decisionStatusLabel(item({ decisionId: "d4", resolution: "needs_review", status: "failed", code: "APPLY_REJECTED" }));
     expect(label).toBe("处理失败，请重试");
     expect(label).not.toContain("APPLY_REJECTED");
+  });
+});
+
+describe("formatEvidence — 第 1 页从零起算的页索引也能展示", () => {
+  it("pageIndex=0 显示为原文件第 1 页", () => {
+    const lines = formatEvidence([{
+      chain: "source",
+      anchorKind: "answer_row",
+      pageIndex: 0,
+      quote: "14 stencilling"
+    }] as unknown as RecognitionDecisionItemV1["evidence"]);
+    expect(lines).toEqual(["原文件 · 第 1 页：14 stencilling"]);
   });
 });
 
