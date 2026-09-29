@@ -2308,7 +2308,7 @@ fn fill_content_node_defaults(value: &mut Value) {
             }
         }
         Value::Object(map) => {
-            if map.get("type").map(Value::is_string).unwrap_or(false) {
+            if let Some(node_type) = map.get("type").and_then(Value::as_str).map(str::to_string) {
                 if !map
                     .get("sourceAnchors")
                     .map(Value::is_array)
@@ -2317,11 +2317,41 @@ fn fill_content_node_defaults(value: &mut Value) {
                     map.insert("sourceAnchors".to_string(), json!([]));
                 }
                 map.insert("provenanceStatus".to_string(), json!("source"));
+                fill_noncritical_node_fields(&node_type, map);
             }
             for key in ["children", "items", "rows", "cells", "caption"] {
                 if let Some(child) = map.get_mut(key) {
                     fill_content_node_defaults(child);
                 }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 只为**非关键**、缺失即会让整份候选反序列化失败的排版字段补默认值——模型照转写规范
+/// 回复时最容易漏这些。关键字段（题号 / 槽位 / 答案 / 题型 / 节点身份）缺失不在此列，
+/// 仍由解析如实拒收。清单（`content_doc_v2.rs` 里定为必填、但语义上可安全默认的）：
+/// - `heading.level` → 2（正文小标题的默认层级）
+/// - `table_cell.rowSpan` / `colSpan` → 1
+/// - `figure` / `image` / `diagram` 的 `display` → {}（`ContentDisplayV2` 各字段本就可选）
+fn fill_noncritical_node_fields(node_type: &str, map: &mut Map<String, Value>) {
+    match node_type {
+        "heading" => {
+            if !map.get("level").is_some_and(Value::is_u64) {
+                map.insert("level".to_string(), json!(2));
+            }
+        }
+        "table_cell" => {
+            for key in ["rowSpan", "colSpan"] {
+                if !map.get(key).is_some_and(Value::is_u64) {
+                    map.insert(key.to_string(), json!(1));
+                }
+            }
+        }
+        "figure" | "image" | "diagram" => {
+            if !map.get("display").is_some_and(Value::is_object) {
+                map.insert("display".to_string(), json!({}));
             }
         }
         _ => {}
@@ -2336,6 +2366,98 @@ fn ensure_source_anchors(map: &mut Map<String, Value>) {
     {
         map.insert("sourceAnchors".to_string(), json!([]));
     }
+}
+
+/// 本地对象身份（`id` / `optionId` / `slotId`）→ 其非空来源锚点与 provenanceStatus。
+fn collect_local_provenance(
+    value: &Value,
+    index: &mut BTreeMap<String, (Value, Option<Value>)>,
+) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_local_provenance(item, index);
+            }
+        }
+        Value::Object(map) => {
+            let identity = ["id", "optionId", "slotId"]
+                .into_iter()
+                .find_map(|key| map.get(key).and_then(Value::as_str));
+            if let Some(identity) = identity {
+                if let Some(anchors) = map.get("sourceAnchors").and_then(Value::as_array) {
+                    if !anchors.is_empty() {
+                        index.entry(identity.to_string()).or_insert_with(|| {
+                            (
+                                Value::Array(anchors.clone()),
+                                map.get("provenanceStatus").cloned(),
+                            )
+                        });
+                    }
+                }
+            }
+            for child in map.values() {
+                collect_local_provenance(child, index);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn apply_inherited_provenance(
+    value: &mut Value,
+    index: &BTreeMap<String, (Value, Option<Value>)>,
+) {
+    match value {
+        Value::Array(items) => {
+            for item in items.iter_mut() {
+                apply_inherited_provenance(item, index);
+            }
+        }
+        Value::Object(map) => {
+            let identity = ["id", "optionId", "slotId"]
+                .into_iter()
+                .find_map(|key| map.get(key).and_then(Value::as_str))
+                .map(str::to_string);
+            if let Some(identity) = identity {
+                if let Some((anchors, provenance)) = index.get(&identity) {
+                    let empty = map
+                        .get("sourceAnchors")
+                        .and_then(Value::as_array)
+                        .map(Vec::is_empty)
+                        .unwrap_or(true);
+                    if empty {
+                        map.insert("sourceAnchors".to_string(), anchors.clone());
+                        // provenanceStatus 只在节点本就有该字段时覆盖：答案槽的 provenanceStatus
+                        // 是被 fill_backend_owned_defaults 有意删掉的，不能在这里又加回来。
+                        if map.contains_key("provenanceStatus") {
+                            if let Some(provenance) = provenance {
+                                map.insert("provenanceStatus".to_string(), provenance.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            for child in map.values_mut() {
+                apply_inherited_provenance(child, index);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 把已按 `id_map` 对齐到本地身份的云端节点补上**本地**来源锚点。
+///
+/// 候选节点复用了本地稳定 id 后，其 `sourceAnchors` 仍是空数组、`provenanceStatus` 却写着
+/// `source`（伪来源），会被质量门禁判成 PROVENANCE_MISSING / INSTRUCTION_* 。这里按身份从
+/// 本地稿继承真实锚点与 provenance——门禁不放宽，靠补齐真实来源通过。对不上本地身份的
+/// 节点保持原样，交由后续文本比对 / 固定标签豁免 / 逐条硬阻断，绝不冒充 `source`。
+fn inherit_local_provenance(draft: &mut Value, canonical: &Value) {
+    let mut index = BTreeMap::new();
+    collect_local_provenance(canonical, &mut index);
+    if index.is_empty() {
+        return;
+    }
+    apply_inherited_provenance(draft, &index);
 }
 
 /// 补齐**后端拥有**、模型被明确告知不要输出的字段。
@@ -3262,6 +3384,12 @@ pub(crate) fn normalize_cloud_authoring(
         ));
     }
     unresolved.extend(outcome.unmapped.iter().cloned());
+
+    // 引用重写后，被对齐到本地身份的云端节点已经拿到本地稳定 id，但来源锚点仍是空。
+    // 按身份从本地稿继承真实来源，让质量门禁凭真实锚点通过，而不是放宽门禁。
+    if let Some(canonical) = canonical {
+        inherit_local_provenance(&mut draft, canonical);
+    }
 
     // ── 6) 组装后端字段 ────────────────────────────────────────────
     let mut document = Map::new();
@@ -5403,12 +5531,26 @@ mod cloud_authoring_tests {
             .and_then(Value::as_array)
             .expect("后台必须从 instructions 生成 signature evidence");
 
-        assert_eq!(evidence.len(), 1);
-        assert_eq!(evidence[0]["sourceFileId"], "early-approaches-pdf");
-        assert_eq!(evidence[0]["sourceHash"], "a".repeat(64));
-        assert_eq!(evidence[0]["pageIndex"], 2);
-        assert_eq!(evidence[0]["nodeIds"], json!(["source-instruction-node"]));
-        assert_eq!(evidence[0]["extractionMode"], "pdf_native");
+        // 模型伪造的 signature 一律不采信；证据只能来自 instruction 内容自身的来源锚点，
+        // 且必须重绑到本次导入。cloudfix 后内容子节点也会从本地稿继承真实来源，证据可多于一条。
+        assert!(!evidence.is_empty(), "必须从 instructions 生成 signature evidence");
+        assert!(
+            evidence.iter().all(|anchor| anchor["sourceFileId"] == "early-approaches-pdf"
+                && anchor["sourceHash"] == "a".repeat(64)
+                && anchor["extractionMode"] == "pdf_native"),
+            "所有证据锚点必须重绑到本次导入：{evidence:?}"
+        );
+        assert!(
+            evidence.iter().all(|anchor| anchor["pageIndex"] != json!(99)
+                && anchor["nodeIds"] != json!(["forged"])),
+            "模型伪造的 signature 证据不得被采信：{evidence:?}"
+        );
+        // instruction 段落自身给出的来源：节点引用保留、文件身份被纠正后仍在证据里。
+        assert!(
+            evidence.iter().any(|anchor| anchor["nodeIds"] == json!(["source-instruction-node"])
+                && anchor["pageIndex"] == json!(2)),
+            "instruction 自身的来源锚点应保留并重绑：{evidence:?}"
+        );
     }
 
     /// 云端识别出的**新增**对象：后端分配稳定 ID，绝不整类降级成人工问题。
@@ -6093,4 +6235,80 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
             normalized.warnings
         );
     }
+
+    // cloudfix-round 回归：真实模型（DeepSeek）产出的、内容正确的候选必须能被采纳。
+    // 这些用例先复现第 2 节证据，实现后逐条转绿；门禁不放宽，靠归一化补齐来源。
+
+    /// T2：非关键字段缺失（heading 漏 `level`）不得让整份候选在装配期反序列化失败。
+    /// 现状：`HeadingNodeV2.level` 是必填 u8，一个非关键字段缺失就把整份候选作废。
+    #[test]
+    fn cloudfix_missing_heading_level_defaults_instead_of_voiding_candidate() {
+        let canonical = golden_authoring();
+        let mut draft = cloud_draft(&[14, 15], "cloud");
+        // 模型照转写规范给了 heading 但漏了 level：这是非关键字段，应补默认 2 继续。
+        draft["taskGroups"][0]["instructions"] = json!([{
+            "type": "heading",
+            "id": "cloud-ins-heading",
+            "children": [{
+                "type": "text",
+                "id": "cloud-ins-heading-text",
+                "text": "Questions 14 and 15"
+            }]
+        }]);
+        let raw = json!({ "authoring": draft });
+
+        let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), &raw)
+            .expect("题组能唯一对齐时标准化必须成功");
+        let candidate = cloud_authoring_candidate_from_normalized(&identity(), normalized)
+            .expect("非关键字段 level 缺失应补默认值，不得整份作废");
+
+        let assembled = serde_json::to_value(&candidate.authoring).expect("候选必须可序列化");
+        assert_eq!(
+            assembled.pointer("/taskGroups/0/instructions/0/level"),
+            Some(&json!(2)),
+            "heading.level 缺失应补默认 2"
+        );
+    }
+
+    /// T3.1/T3.3：唯一对齐到本地节点的云端节点，必须继承本地 sourceAnchors（及签名证据），
+    /// 而不是留空 `sourceAnchors: []` 却仍标 `provenanceStatus: "source"`。
+    /// 现状：`fill_content_node_defaults` 只补空数组，来源不继承 →
+    /// INSTRUCTION_PROVENANCE_MISSING / INSTRUCTION_SIGNATURE_EVIDENCE_MISSING / PROVENANCE_MISSING。
+    #[test]
+    fn cloudfix_matched_cloud_nodes_inherit_local_source_anchors() {
+        let canonical = golden_authoring();
+        // cloud_draft 的指令 / 提示 / 选项节点都带空 sourceAnchors（模型照契约不写来源）。
+        let raw = json!({ "authoring": cloud_draft(&[14, 15], "cloud") });
+        let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), &raw)
+            .expect("题组能唯一对齐时标准化必须成功");
+        let document = &normalized.document;
+
+        let instruction_anchors = document
+            .pointer("/taskGroups/0/instructions/0/sourceAnchors")
+            .and_then(Value::as_array);
+        assert!(
+            instruction_anchors.is_some_and(|anchors| !anchors.is_empty()),
+            "指令节点唯一对齐后应继承本地来源锚点，不能留空却冒充 source：{:?}",
+            document.pointer("/taskGroups/0/instructions/0")
+        );
+
+        let evidence = document
+            .pointer("/taskGroups/0/instructionSignature/evidenceAnchors")
+            .and_then(Value::as_array);
+        assert!(
+            evidence.is_some_and(|anchors| !anchors.is_empty()),
+            "instructionSignature 证据锚点应随指令来源补齐：{:?}",
+            document.pointer("/taskGroups/0/instructionSignature")
+        );
+
+        let option_anchors = document
+            .pointer("/taskGroups/0/optionBank/options/0/sourceAnchors")
+            .and_then(Value::as_array);
+        assert!(
+            option_anchors.is_some_and(|anchors| !anchors.is_empty()),
+            "对齐到本地选项的云端选项应继承本地来源锚点：{:?}",
+            document.pointer("/taskGroups/0/optionBank/options/0")
+        );
+    }
 }
+
