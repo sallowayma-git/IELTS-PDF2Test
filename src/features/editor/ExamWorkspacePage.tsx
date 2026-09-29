@@ -475,7 +475,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
       <header className="workspace-header">
         <div className="workspace-header-left">
           <button
-            className="workspace-back-button"
+            className="workspace-back-button icon-button"
             data-testid="workspace-back"
             onClick={() => withBusy("leave", async () => {
               await editor.flush();

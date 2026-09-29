@@ -1715,6 +1715,8 @@ pub(crate) struct NormalizedCloudAuthoring {
     pub warnings: Vec<String>,
     /// 分块识别时，失败的块没有覆盖到的题号（升序去重）。非空 ⇒ 候选至多 `Partial`。
     pub uncovered_question_numbers: Vec<u32>,
+    /// 结构回退记录：结构不达标的题组沿用本地结构 + 云端答案（T3.5）。
+    pub structural_fallbacks: Vec<crate::schema::cloud_repair_v1::StructuralFallbackV1>,
 }
 
 /// 权威稿里一个题组的**身份索引**（只读）。
@@ -2058,6 +2060,53 @@ fn canonical_option_id_for_label(canonical_bank: Option<&Value>, label: &str) ->
         .map(str::to_string)
 }
 
+/// 在权威题组**所有 responseGroups 的内联选项**里按标签找已有 optionId。
+/// 内联选项（如 TFNG 的 true/false/ng）不进选项库，身份要在响应组里按标签复用。
+fn canonical_response_option_id_for_label(
+    canonical_group: Option<&Value>,
+    label: &str,
+) -> Option<String> {
+    if label.is_empty() {
+        return None;
+    }
+    canonical_group?
+        .get("responseGroups")?
+        .as_array()?
+        .iter()
+        .flat_map(|rg| {
+            rg.get("options")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .find(|option| option.get("label").and_then(Value::as_str) == Some(label))?
+        .get("optionId")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// 同上，返回同标签内联选项的 `content`，供内容节点按位置复用本地稳定 id。
+fn canonical_response_option_content_for_label<'a>(
+    canonical_group: Option<&'a Value>,
+    label: &str,
+) -> Option<&'a Value> {
+    if label.is_empty() {
+        return None;
+    }
+    canonical_group?
+        .get("responseGroups")?
+        .as_array()?
+        .iter()
+        .flat_map(|rg| {
+            rg.get("options")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .find(|option| option.get("label").and_then(Value::as_str) == Some(label))?
+        .get("content")
+}
+
 /// 为一个云端题组内部的对象分配稳定 ID（内容节点、选项、提示等）。
 fn assign_group_inner_ids(
     cloud_group: &Value,
@@ -2140,9 +2189,42 @@ fn assign_group_inner_ids(
                 );
             }
             if let Some(options) = response_group.get("options").and_then(Value::as_array) {
-                for option in options {
+                let cloud_response_id = response_group
+                    .get("responseGroupId")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                for (index, option) in options.iter().enumerate() {
+                    let label = option.get("label").and_then(Value::as_str).unwrap_or("");
+                    // 内联选项的 optionId 是**新建身份**（TFNG 拆题、固定标签选项都在这里生成）。
+                    // 不登记进 id_map，重写阶段就会把它当成未映射的临时引用，落进
+                    // unresolvedReferences 让整份候选降级 partial。能对上本地同标签选项就复用其
+                    // 稳定 id，否则按（响应组稳定 id + 标签）生成确定性后端 id，保证跨题组不撞。
+                    if let Some(old) = option.get("optionId").and_then(Value::as_str) {
+                        let stable = canonical_response_option_id_for_label(canonical_group, label)
+                            .unwrap_or_else(|| {
+                                let base = id_map
+                                    .get(cloud_response_id)
+                                    .map(String::as_str)
+                                    .unwrap_or(cloud_response_id);
+                                let base = if base.is_empty() { stable_task_id } else { base };
+                                if label.is_empty() {
+                                    format!("{base}-opt-{}", index + 1)
+                                } else {
+                                    format!("{base}-opt-{}", to_snake_case(label))
+                                }
+                            });
+                        id_map.insert(old.to_string(), stable);
+                    }
                     if let Some(content) = option.get("content") {
-                        assign_node_ids(content, None, stable_task_id, &mut counter, id_map);
+                        let canonical_content =
+                            canonical_response_option_content_for_label(canonical_group, label);
+                        assign_node_ids(
+                            content,
+                            canonical_content,
+                            stable_task_id,
+                            &mut counter,
+                            id_map,
+                        );
                     }
                 }
             }
@@ -2308,7 +2390,7 @@ fn fill_content_node_defaults(value: &mut Value) {
             }
         }
         Value::Object(map) => {
-            if map.get("type").map(Value::is_string).unwrap_or(false) {
+            if let Some(node_type) = map.get("type").and_then(Value::as_str).map(str::to_string) {
                 if !map
                     .get("sourceAnchors")
                     .map(Value::is_array)
@@ -2317,11 +2399,41 @@ fn fill_content_node_defaults(value: &mut Value) {
                     map.insert("sourceAnchors".to_string(), json!([]));
                 }
                 map.insert("provenanceStatus".to_string(), json!("source"));
+                fill_noncritical_node_fields(&node_type, map);
             }
             for key in ["children", "items", "rows", "cells", "caption"] {
                 if let Some(child) = map.get_mut(key) {
                     fill_content_node_defaults(child);
                 }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 只为**非关键**、缺失即会让整份候选反序列化失败的排版字段补默认值——模型照转写规范
+/// 回复时最容易漏这些。关键字段（题号 / 槽位 / 答案 / 题型 / 节点身份）缺失不在此列，
+/// 仍由解析如实拒收。清单（`content_doc_v2.rs` 里定为必填、但语义上可安全默认的）：
+/// - `heading.level` → 2（正文小标题的默认层级）
+/// - `table_cell.rowSpan` / `colSpan` → 1
+/// - `figure` / `image` / `diagram` 的 `display` → {}（`ContentDisplayV2` 各字段本就可选）
+fn fill_noncritical_node_fields(node_type: &str, map: &mut Map<String, Value>) {
+    match node_type {
+        "heading" => {
+            if !map.get("level").is_some_and(Value::is_u64) {
+                map.insert("level".to_string(), json!(2));
+            }
+        }
+        "table_cell" => {
+            for key in ["rowSpan", "colSpan"] {
+                if !map.get(key).is_some_and(Value::is_u64) {
+                    map.insert(key.to_string(), json!(1));
+                }
+            }
+        }
+        "figure" | "image" | "diagram" => {
+            if !map.get("display").is_some_and(Value::is_object) {
+                map.insert("display".to_string(), json!({}));
             }
         }
         _ => {}
@@ -2335,6 +2447,379 @@ fn ensure_source_anchors(map: &mut Map<String, Value>) {
         .unwrap_or(false)
     {
         map.insert("sourceAnchors".to_string(), json!([]));
+    }
+}
+
+/// 本地对象身份（`id` / `optionId` / `slotId`）→ 其非空来源锚点与 provenanceStatus。
+fn collect_local_provenance(
+    value: &Value,
+    index: &mut BTreeMap<String, (Value, Option<Value>)>,
+) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_local_provenance(item, index);
+            }
+        }
+        Value::Object(map) => {
+            let identity = ["id", "optionId", "slotId"]
+                .into_iter()
+                .find_map(|key| map.get(key).and_then(Value::as_str));
+            if let Some(identity) = identity {
+                if let Some(anchors) = map.get("sourceAnchors").and_then(Value::as_array) {
+                    if !anchors.is_empty() {
+                        index.entry(identity.to_string()).or_insert_with(|| {
+                            (
+                                Value::Array(anchors.clone()),
+                                map.get("provenanceStatus").cloned(),
+                            )
+                        });
+                    }
+                }
+            }
+            for child in map.values() {
+                collect_local_provenance(child, index);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn apply_inherited_provenance(
+    value: &mut Value,
+    index: &BTreeMap<String, (Value, Option<Value>)>,
+) {
+    match value {
+        Value::Array(items) => {
+            for item in items.iter_mut() {
+                apply_inherited_provenance(item, index);
+            }
+        }
+        Value::Object(map) => {
+            let identity = ["id", "optionId", "slotId"]
+                .into_iter()
+                .find_map(|key| map.get(key).and_then(Value::as_str))
+                .map(str::to_string);
+            if let Some(identity) = identity {
+                if let Some((anchors, provenance)) = index.get(&identity) {
+                    let empty = map
+                        .get("sourceAnchors")
+                        .and_then(Value::as_array)
+                        .map(Vec::is_empty)
+                        .unwrap_or(true);
+                    if empty {
+                        map.insert("sourceAnchors".to_string(), anchors.clone());
+                        // provenanceStatus 只在节点本就有该字段时覆盖：答案槽的 provenanceStatus
+                        // 是被 fill_backend_owned_defaults 有意删掉的，不能在这里又加回来。
+                        if map.contains_key("provenanceStatus") {
+                            if let Some(provenance) = provenance {
+                                map.insert("provenanceStatus".to_string(), provenance.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            for child in map.values_mut() {
+                apply_inherited_provenance(child, index);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 把已按 `id_map` 对齐到本地身份的云端节点补上**本地**来源锚点。
+///
+/// 候选节点复用了本地稳定 id 后，其 `sourceAnchors` 仍是空数组、`provenanceStatus` 却写着
+/// `source`（伪来源），会被质量门禁判成 PROVENANCE_MISSING / INSTRUCTION_* 。这里按身份从
+/// 本地稿继承真实锚点与 provenance——门禁不放宽，靠补齐真实来源通过。对不上本地身份的
+/// 节点保持原样，交由后续文本比对 / 固定标签豁免 / 逐条硬阻断，绝不冒充 `source`。
+fn inherit_local_provenance(draft: &mut Value, canonical: &Value) {
+    let mut index = BTreeMap::new();
+    collect_local_provenance(canonical, &mut index);
+    if index.is_empty() {
+        return;
+    }
+    apply_inherited_provenance(draft, &index);
+}
+
+/// 题组区域的第一个真实来源锚点：先说明区(instructions)，再题组自身 sourceAnchors，
+/// 再 stimulus、responseGroups 提示。与本地 fixed_truth_options 取的 task_anchors 同源。
+fn group_first_source_anchor(group: &Value) -> Option<Value> {
+    if let Some(first) = group
+        .get("instructions")
+        .map(instruction_source_anchors)
+        .and_then(|anchors| anchors.into_iter().next())
+    {
+        return Some(first);
+    }
+    if let Some(anchor) = group
+        .get("sourceAnchors")
+        .and_then(Value::as_array)
+        .and_then(|anchors| anchors.first())
+        .cloned()
+    {
+        return Some(anchor);
+    }
+    if let Some(first) = group
+        .get("stimulus")
+        .map(instruction_source_anchors)
+        .and_then(|anchors| anchors.into_iter().next())
+    {
+        return Some(first);
+    }
+    group
+        .get("responseGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|rg| rg.get("prompt"))
+        .find_map(|prompt| instruction_source_anchors(prompt).into_iter().next())
+}
+
+fn stamp_empty_option_anchors(group: &mut Value, anchor: &Value) {
+    fn stamp(options: &mut Vec<Value>, anchor: &Value) {
+        for option in options.iter_mut().filter_map(Value::as_object_mut) {
+            let empty = option
+                .get("sourceAnchors")
+                .and_then(Value::as_array)
+                .map(Vec::is_empty)
+                .unwrap_or(true);
+            if empty {
+                option.insert("sourceAnchors".to_string(), json!([anchor.clone()]));
+            }
+        }
+    }
+    if let Some(bank_options) = group
+        .pointer_mut("/optionBank/options")
+        .and_then(Value::as_array_mut)
+    {
+        stamp(bank_options, anchor);
+    }
+    if let Some(response_groups) = group
+        .get_mut("responseGroups")
+        .and_then(Value::as_array_mut)
+    {
+        for rg in response_groups.iter_mut() {
+            if let Some(options) = rg.get_mut("options").and_then(Value::as_array_mut) {
+                stamp(options, anchor);
+            }
+        }
+    }
+}
+
+/// 固定标签选项（TFNG/YNNG 的 true/false/(not_)given）本无独立原文来源。按本地
+/// `fixed_truth_options` 的做法，挂上题组区域的第一个真实锚点，让质量门禁凭真实来源通过；
+/// 题组自己也没有真实锚点时**不挂**，让门禁如实报 PROVENANCE_MISSING——绝不用占位或 manual
+/// 冒充来源。本地那两处路径（direct_canonical.rs / authoring_v2_commands.rs）不在本轮范围。
+fn stamp_fixed_truth_option_provenance(draft: &mut Value) {
+    let Some(groups) = draft.get_mut("taskGroups").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for group in groups.iter_mut() {
+        let Some(task_type) = group.get("taskType").and_then(Value::as_str) else {
+            continue;
+        };
+        let has_bank = group
+            .get("optionBank")
+            .map(|bank| !bank.is_null())
+            .unwrap_or(false);
+        let Some(rule) = task_presentation_rule(task_type, has_bank) else {
+            continue;
+        };
+        if rule.option_source != crate::schema::task_presentation::OptionSource::FixedTruthLabels {
+            continue;
+        }
+        if let Some(anchor) = group_first_source_anchor(group) {
+            stamp_empty_option_anchors(group, &anchor);
+        }
+    }
+}
+
+/// inline completion 题型（与 quality.rs SLOT_HOST_MISSING 判定的题型集合一致）。
+fn is_inline_completion_type(task_type: &str) -> bool {
+    matches!(
+        task_type,
+        "sentence_completion" | "summary_completion" | "note_completion" | "form_completion"
+    )
+}
+
+/// 统计一段内容里指定 slotId 的 inline answer_slot 宿主节点数。
+fn count_inline_answer_slots(value: &Value, slot_id: &str) -> usize {
+    match value {
+        Value::Array(items) => items
+            .iter()
+            .map(|item| count_inline_answer_slots(item, slot_id))
+            .sum(),
+        Value::Object(map) => {
+            let here = usize::from(
+                map.get("type").and_then(Value::as_str) == Some("answer_slot")
+                    && map.get("slotId").and_then(Value::as_str) == Some(slot_id),
+            );
+            here + map
+                .values()
+                .map(|child| count_inline_answer_slots(child, slot_id))
+                .sum::<usize>()
+        }
+        _ => 0,
+    }
+}
+
+/// 「忽略空白 / 连字 / PDF 字符间距」的比较键：只留字母数字并小写。
+/// 用于判定云端与本地该组 stimulus 是否有**实质**文字差异（"Do t h e" == "Do the"）。
+fn text_compare_key(text: &str) -> String {
+    text.chars()
+        .filter(|ch| ch.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// 词级差异处数（实质差异时才算）：两侧词频多重集的对称差大小。
+fn word_difference_count(local: &str, cloud: &str) -> usize {
+    fn counts(text: &str) -> BTreeMap<String, i64> {
+        let mut map = BTreeMap::new();
+        for word in text.to_lowercase().split_whitespace() {
+            *map.entry(word.to_string()).or_insert(0) += 1;
+        }
+        map
+    }
+    let left = counts(local);
+    let right = counts(cloud);
+    let mut keys: BTreeSet<&String> = BTreeSet::new();
+    keys.extend(left.keys());
+    keys.extend(right.keys());
+    keys.into_iter()
+        .map(|key| {
+            (left.get(key).copied().unwrap_or(0) - right.get(key).copied().unwrap_or(0)).unsigned_abs()
+                as usize
+        })
+        .sum()
+}
+
+fn truncate_fragment(text: &str) -> String {
+    const MAX: usize = 600;
+    if text.chars().count() <= MAX {
+        text.to_string()
+    } else {
+        let head: String = text.chars().take(MAX).collect();
+        format!("{head}…")
+    }
+}
+
+/// T3.5 回退 A：inline completion 题组的云端 stimulus 缺行内答案槽宿主时，整组沿用本地稿的
+/// 结构与宿主节点（instructions / stimulus / optionBank / responseGroups / sourceAnchors 与
+/// 答案槽宿主），只保留云端答案（answerKey 不动）。云端对该组 stimulus 的文字若有实质差异，
+/// 产出一条可复核记录（本地片段 / 云端片段 / 差异处数），面板展示由后续会话处理。
+fn apply_structural_fallbacks(
+    draft: &mut Value,
+    canonical: &Value,
+    group_canonical: &[Option<usize>],
+    group_stable: &[Option<String>],
+    out: &mut Vec<crate::schema::cloud_repair_v1::StructuralFallbackV1>,
+) {
+    let group_count = draft
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    for index in 0..group_count {
+        let Some(Some(target)) = group_canonical.get(index).cloned() else {
+            continue;
+        };
+        // 只读阶段：判定是否需要回退，并取出所需文本 / 槽位。
+        let (needs_fallback, slot_ids, cloud_text) = {
+            let group = &draft["taskGroups"][index];
+            let task_type = group.get("taskType").and_then(Value::as_str).unwrap_or("");
+            if !is_inline_completion_type(task_type) {
+                continue;
+            }
+            let slot_ids: Vec<String> = group
+                .get("responseGroups")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .flat_map(|rg| {
+                    rg.get("slotIds")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect();
+            let stimulus = group.get("stimulus").cloned().unwrap_or(Value::Null);
+            let missing = slot_ids
+                .iter()
+                .any(|slot_id| count_inline_answer_slots(&stimulus, slot_id) != 1);
+            (missing, slot_ids, nodes_text(&stimulus))
+        };
+        if !needs_fallback {
+            continue;
+        }
+        let Some(canon_group) = canonical
+            .get("taskGroups")
+            .and_then(Value::as_array)
+            .and_then(|groups| groups.get(target))
+            .cloned()
+        else {
+            continue;
+        };
+        let local_text = nodes_text(canon_group.get("stimulus").unwrap_or(&Value::Null));
+
+        // 结构字段整组换成本地稿的（保留云端 taskType / taskId / displayRange）。
+        for key in [
+            "instructions",
+            "stimulus",
+            "optionBank",
+            "responseGroups",
+            "sourceAnchors",
+        ] {
+            match canon_group.get(key) {
+                Some(value) => {
+                    draft["taskGroups"][index][key] = value.clone();
+                }
+                None => {
+                    if let Some(object) = draft["taskGroups"][index].as_object_mut() {
+                        object.remove(key);
+                    }
+                }
+            }
+        }
+        // 答案槽宿主换成本地的；答案（answerKey）保留云端。
+        for slot_id in &slot_ids {
+            if let Some(canon_slot) = canonical
+                .pointer(&format!("/answerSlots/{slot_id}"))
+                .cloned()
+            {
+                if let Some(slots) = draft.get_mut("answerSlots").and_then(Value::as_object_mut) {
+                    slots.insert(slot_id.clone(), canon_slot);
+                }
+            }
+        }
+
+        let substantive = text_compare_key(&cloud_text) != text_compare_key(&local_text);
+        let task_id = group_stable
+            .get(index)
+            .cloned()
+            .flatten()
+            .or_else(|| {
+                draft["taskGroups"][index]
+                    .get("taskId")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_default();
+        out.push(crate::schema::cloud_repair_v1::StructuralFallbackV1 {
+            task_id,
+            reason: "inline_answer_slots_missing".to_string(),
+            adopted: "local_structure_cloud_answers".to_string(),
+            text_difference_count: if substantive {
+                word_difference_count(&local_text, &cloud_text)
+            } else {
+                0
+            },
+            local_fragment: substantive.then(|| truncate_fragment(&local_text)),
+            cloud_fragment: substantive.then(|| truncate_fragment(&cloud_text)),
+        });
     }
 }
 
@@ -2988,6 +3473,7 @@ pub(crate) fn normalize_cloud_authoring(
             source_coverage_notes,
             warnings,
             uncovered_question_numbers,
+            structural_fallbacks: Vec::new(),
         });
     }
 
@@ -3263,6 +3749,27 @@ pub(crate) fn normalize_cloud_authoring(
     }
     unresolved.extend(outcome.unmapped.iter().cloned());
 
+    // 引用重写后，被对齐到本地身份的云端节点已经拿到本地稳定 id，但来源锚点仍是空。
+    // 按身份从本地稿继承真实来源，让质量门禁凭真实锚点通过，而不是放宽门禁。
+    if let Some(canonical) = canonical {
+        inherit_local_provenance(&mut draft, canonical);
+    }
+    // 固定标签选项（TFNG/YNNG）没有独立原文来源：挂上题组区域的真实锚点，与本地一致。
+    stamp_fixed_truth_option_provenance(&mut draft);
+
+    // T3.5 回退 A：inline completion 题组云端结构缺行内答案槽时，整组沿用本地结构 + 云端答案。
+    let mut structural_fallbacks: Vec<crate::schema::cloud_repair_v1::StructuralFallbackV1> =
+        Vec::new();
+    if let Some(canonical) = canonical {
+        apply_structural_fallbacks(
+            &mut draft,
+            canonical,
+            &group_canonical,
+            &group_stable,
+            &mut structural_fallbacks,
+        );
+    }
+
     // ── 6) 组装后端字段 ────────────────────────────────────────────
     let mut document = Map::new();
     document.insert(
@@ -3434,6 +3941,7 @@ pub(crate) fn normalize_cloud_authoring(
         source_coverage_notes,
         warnings,
         uncovered_question_numbers,
+        structural_fallbacks,
     })
 }
 
@@ -3473,6 +3981,7 @@ pub(crate) fn cloud_authoring_candidate_from_normalized(
         unresolved_regions: normalized.unresolved_regions,
         source_coverage_notes: normalized.source_coverage_notes,
         warnings: normalized.warnings,
+        structural_fallbacks: normalized.structural_fallbacks,
     })
 }
 
@@ -5403,12 +5912,26 @@ mod cloud_authoring_tests {
             .and_then(Value::as_array)
             .expect("后台必须从 instructions 生成 signature evidence");
 
-        assert_eq!(evidence.len(), 1);
-        assert_eq!(evidence[0]["sourceFileId"], "early-approaches-pdf");
-        assert_eq!(evidence[0]["sourceHash"], "a".repeat(64));
-        assert_eq!(evidence[0]["pageIndex"], 2);
-        assert_eq!(evidence[0]["nodeIds"], json!(["source-instruction-node"]));
-        assert_eq!(evidence[0]["extractionMode"], "pdf_native");
+        // 模型伪造的 signature 一律不采信；证据只能来自 instruction 内容自身的来源锚点，
+        // 且必须重绑到本次导入。cloudfix 后内容子节点也会从本地稿继承真实来源，证据可多于一条。
+        assert!(!evidence.is_empty(), "必须从 instructions 生成 signature evidence");
+        assert!(
+            evidence.iter().all(|anchor| anchor["sourceFileId"] == "early-approaches-pdf"
+                && anchor["sourceHash"] == "a".repeat(64)
+                && anchor["extractionMode"] == "pdf_native"),
+            "所有证据锚点必须重绑到本次导入：{evidence:?}"
+        );
+        assert!(
+            evidence.iter().all(|anchor| anchor["pageIndex"] != json!(99)
+                && anchor["nodeIds"] != json!(["forged"])),
+            "模型伪造的 signature 证据不得被采信：{evidence:?}"
+        );
+        // instruction 段落自身给出的来源：节点引用保留、文件身份被纠正后仍在证据里。
+        assert!(
+            evidence.iter().any(|anchor| anchor["nodeIds"] == json!(["source-instruction-node"])
+                && anchor["pageIndex"] == json!(2)),
+            "instruction 自身的来源锚点应保留并重绑：{evidence:?}"
+        );
     }
 
     /// 云端识别出的**新增**对象：后端分配稳定 ID，绝不整类降级成人工问题。
@@ -6093,4 +6616,282 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
             normalized.warnings
         );
     }
+
+    // cloudfix-round 回归：真实模型（DeepSeek）产出的、内容正确的候选必须能被采纳。
+    // 这些用例先复现第 2 节证据，实现后逐条转绿；门禁不放宽，靠归一化补齐来源。
+
+    /// T2：非关键字段缺失（heading 漏 `level`）不得让整份候选在装配期反序列化失败。
+    /// 现状：`HeadingNodeV2.level` 是必填 u8，一个非关键字段缺失就把整份候选作废。
+    #[test]
+    fn cloudfix_missing_heading_level_defaults_instead_of_voiding_candidate() {
+        let canonical = golden_authoring();
+        let mut draft = cloud_draft(&[14, 15], "cloud");
+        // 模型照转写规范给了 heading 但漏了 level：这是非关键字段，应补默认 2 继续。
+        draft["taskGroups"][0]["instructions"] = json!([{
+            "type": "heading",
+            "id": "cloud-ins-heading",
+            "children": [{
+                "type": "text",
+                "id": "cloud-ins-heading-text",
+                "text": "Questions 14 and 15"
+            }]
+        }]);
+        let raw = json!({ "authoring": draft });
+
+        let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), &raw)
+            .expect("题组能唯一对齐时标准化必须成功");
+        let candidate = cloud_authoring_candidate_from_normalized(&identity(), normalized)
+            .expect("非关键字段 level 缺失应补默认值，不得整份作废");
+
+        let assembled = serde_json::to_value(&candidate.authoring).expect("候选必须可序列化");
+        assert_eq!(
+            assembled.pointer("/taskGroups/0/instructions/0/level"),
+            Some(&json!(2)),
+            "heading.level 缺失应补默认 2"
+        );
+    }
+
+    /// T3.1/T3.3：唯一对齐到本地节点的云端节点，必须继承本地 sourceAnchors（及签名证据），
+    /// 而不是留空 `sourceAnchors: []` 却仍标 `provenanceStatus: "source"`。
+    /// 现状：`fill_content_node_defaults` 只补空数组，来源不继承 →
+    /// INSTRUCTION_PROVENANCE_MISSING / INSTRUCTION_SIGNATURE_EVIDENCE_MISSING / PROVENANCE_MISSING。
+    #[test]
+    fn cloudfix_matched_cloud_nodes_inherit_local_source_anchors() {
+        let canonical = golden_authoring();
+        // cloud_draft 的指令 / 提示 / 选项节点都带空 sourceAnchors（模型照契约不写来源）。
+        let raw = json!({ "authoring": cloud_draft(&[14, 15], "cloud") });
+        let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), &raw)
+            .expect("题组能唯一对齐时标准化必须成功");
+        let document = &normalized.document;
+
+        let instruction_anchors = document
+            .pointer("/taskGroups/0/instructions/0/sourceAnchors")
+            .and_then(Value::as_array);
+        assert!(
+            instruction_anchors.is_some_and(|anchors| !anchors.is_empty()),
+            "指令节点唯一对齐后应继承本地来源锚点，不能留空却冒充 source：{:?}",
+            document.pointer("/taskGroups/0/instructions/0")
+        );
+
+        let evidence = document
+            .pointer("/taskGroups/0/instructionSignature/evidenceAnchors")
+            .and_then(Value::as_array);
+        assert!(
+            evidence.is_some_and(|anchors| !anchors.is_empty()),
+            "instructionSignature 证据锚点应随指令来源补齐：{:?}",
+            document.pointer("/taskGroups/0/instructionSignature")
+        );
+
+        let option_anchors = document
+            .pointer("/taskGroups/0/optionBank/options/0/sourceAnchors")
+            .and_then(Value::as_array);
+        assert!(
+            option_anchors.is_some_and(|anchors| !anchors.is_empty()),
+            "对齐到本地选项的云端选项应继承本地来源锚点：{:?}",
+            document.pointer("/taskGroups/0/optionBank/options/0")
+        );
+    }
+
+    /// T3.4：responseGroup 内联选项（TFNG 按题拆分后生成的 true/false/ng）新建的 optionId
+    /// 必须登记进 id_map，否则重写后残留临时 id → unresolvedReferences → 候选被判 partial。
+    #[test]
+    fn cloudfix_response_group_inline_option_ids_are_registered() {
+        let canonical = golden_authoring();
+        let inline_options = |q: u32| {
+            json!([
+                {"optionId": format!("cloud-tf{q}-true"), "label": "TRUE",
+                 "content": [{"type":"text","id":format!("cloud-tf{q}-true-text"),"sourceAnchors":[],"text":"TRUE"}],
+                 "sourceAnchors": []},
+                {"optionId": format!("cloud-tf{q}-false"), "label": "FALSE",
+                 "content": [{"type":"text","id":format!("cloud-tf{q}-false-text"),"sourceAnchors":[],"text":"FALSE"}],
+                 "sourceAnchors": []},
+                {"optionId": format!("cloud-tf{q}-ng"), "label": "NOT GIVEN",
+                 "content": [{"type":"text","id":format!("cloud-tf{q}-ng-text"),"sourceAnchors":[],"text":"NOT GIVEN"}],
+                 "sourceAnchors": []}
+            ])
+        };
+        let mut slots = Map::new();
+        for q in [1u32, 2] {
+            slots.insert(
+                format!("cloud-q{q}"),
+                json!({
+                    "slotId": format!("cloud-q{q}"), "questionNumber": q,
+                    "displayLabel": q.to_string(), "hostNodeId": format!("cloud-rg-q{q}"),
+                    "hostType": "prompt", "interaction": "radio",
+                    "participation": "scoring", "sourceAnchors": []
+                }),
+            );
+        }
+        let draft = json!({
+            "taskGroups": [{
+                "taskId": "cloud-tg-1",
+                "displayRange": {"kind":"range","start":1,"end":2},
+                "taskType": "true_false_not_given",
+                "instructions": [paragraph("cloud-ins", "cloud-ins-text", "Do the following statements agree?")],
+                "responseGroups": [
+                    {"responseGroupId":"cloud-rg-q1","kind":"choice","slotIds":["cloud-q1"],"options": inline_options(1)},
+                    {"responseGroupId":"cloud-rg-q2","kind":"choice","slotIds":["cloud-q2"],"options": inline_options(2)}
+                ],
+                "sourceAnchors": []
+            }],
+            "answerSlots": Value::Object(slots),
+            "answerKey": {
+                "cloud-q1": {"kind":"option","labels":["TRUE"],"assignment":"unordered_set"},
+                "cloud-q2": {"kind":"option","labels":["FALSE"],"assignment":"unordered_set"}
+            },
+            "assets": []
+        });
+        let raw = json!({ "authoring": draft });
+
+        let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), &raw)
+            .expect("标准化必须成功");
+        assert!(
+            normalized.unresolved_references.is_empty(),
+            "responseGroup 内联选项 id 未登记导致未解析引用：{:?}",
+            normalized.unresolved_references
+        );
+        let serialized = serde_json::to_string(&normalized.document).expect("候选必须可序列化");
+        assert!(
+            !serialized.contains("cloud-tf"),
+            "临时选项 id 必须被重写成后端稳定 id，不得残留：{serialized}"
+        );
+    }
+
+    /// T3.2：固定标签选项（TFNG true/false/ng）本无独立原文来源，按本地 fixed_truth_options
+    /// 的做法挂上题组区域的第一个真实锚点，凭真实来源过 PROVENANCE 门禁——不放宽、不用 manual。
+    #[test]
+    fn cloudfix_fixed_truth_options_inherit_group_region_anchor() {
+        let canonical = golden_authoring();
+        let group_anchor = json!({
+            "sourceFileId": "will-be-rebound", "pageIndex": 1, "nodeIds": ["line-tfng-stem"],
+            "extractionMode": "pdf_native", "sourceHash": "a".repeat(64)
+        });
+        let inline_options = json!([
+            {"optionId":"cloud-tf1-true","label":"TRUE","content":[{"type":"text","id":"cloud-tf1-true-text","sourceAnchors":[],"text":"TRUE"}],"sourceAnchors":[]},
+            {"optionId":"cloud-tf1-false","label":"FALSE","content":[{"type":"text","id":"cloud-tf1-false-text","sourceAnchors":[],"text":"FALSE"}],"sourceAnchors":[]},
+            {"optionId":"cloud-tf1-ng","label":"NOT GIVEN","content":[{"type":"text","id":"cloud-tf1-ng-text","sourceAnchors":[],"text":"NOT GIVEN"}],"sourceAnchors":[]}
+        ]);
+        let draft = json!({
+            "taskGroups": [{
+                "taskId":"cloud-tg-1",
+                "displayRange":{"kind":"range","start":1,"end":1},
+                "taskType":"true_false_not_given",
+                "instructions":[paragraph("cloud-ins","cloud-ins-text","Do the following statements agree with the passage?")],
+                "responseGroups":[{"responseGroupId":"cloud-rg-q1","kind":"choice","slotIds":["cloud-q1"],"options": inline_options}],
+                "sourceAnchors":[group_anchor]
+            }],
+            "answerSlots":{"cloud-q1":{"slotId":"cloud-q1","questionNumber":1,"displayLabel":"1","hostType":"prompt","interaction":"radio","participation":"scoring","sourceAnchors":[]}},
+            "answerKey":{"cloud-q1":{"kind":"option","labels":["TRUE"],"assignment":"unordered_set"}},
+            "assets":[]
+        });
+        let raw = json!({ "authoring": draft });
+
+        let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), &raw)
+            .expect("标准化必须成功");
+        for index in 0..3 {
+            let anchors = normalized
+                .document
+                .pointer(&format!("/taskGroups/0/responseGroups/0/options/{index}/sourceAnchors"))
+                .and_then(Value::as_array);
+            assert!(
+                anchors.is_some_and(|a| !a.is_empty()),
+                "固定标签选项 {index} 应挂上题组区域的真实来源锚点：{:?}",
+                normalized.document.pointer(&format!("/taskGroups/0/responseGroups/0/options/{index}"))
+            );
+        }
+    }
+
+    /// T3.5 回退 A：inline completion 题组的云端 stimulus 缺行内答案槽时，整组沿用本地结构与
+    /// 宿主，只保留云端答案；有实质文字差异产出可复核记录（本地/云端片段、差异处数）。
+    #[test]
+    fn cloudfix_structural_fallback_keeps_local_hosts_and_cloud_answers() {
+        let anchor = json!({
+            "sourceFileId":"notes-pdf","pageIndex":1,"nodeIds":["line-notes"],
+            "extractionMode":"pdf_native","sourceHash":"a".repeat(64)
+        });
+        let local_slot = |q: u32| json!({
+            "type":"answer_slot","id":format!("local-notes-slot-q{q}"),
+            "sourceAnchors":[anchor.clone()],"provenanceStatus":"source",
+            "slotId":format!("q{q}"),"displayLabel":q.to_string(),"inline":true
+        });
+        let canonical = json!({
+            "taskGroups":[{
+                "taskId":"local-notes",
+                "displayRange":{"kind":"range","start":6,"end":7},
+                "taskType":"note_completion",
+                "instructions":[paragraph("local-notes-ins","local-notes-ins-text","Complete the notes.")],
+                "stimulus":[{
+                    "type":"paragraph","id":"local-notes-stim","sourceAnchors":[anchor.clone()],
+                    "provenanceStatus":"source","children":[
+                        {"type":"text","id":"local-notes-t1","sourceAnchors":[anchor.clone()],"provenanceStatus":"source","text":"Found in the "},
+                        local_slot(6),
+                        {"type":"text","id":"local-notes-t2","sourceAnchors":[anchor.clone()],"provenanceStatus":"source","text":" region, dated to "},
+                        local_slot(7),
+                        {"type":"text","id":"local-notes-t3","sourceAnchors":[anchor.clone()],"provenanceStatus":"source","text":" years."}
+                    ]
+                }],
+                "responseGroups":[{"responseGroupId":"local-notes-rg","kind":"gap_fill","slotIds":["q6","q7"],"sourceAnchors":[anchor.clone()]}],
+                "sourceAnchors":[anchor.clone()]
+            }],
+            "answerSlots":{
+                "q6":{"slotId":"q6","questionNumber":6,"displayLabel":"6","hostNodeId":"local-notes-slot-q6","hostType":"prompt","interaction":"text_entry","participation":"scoring","sourceAnchors":[anchor.clone()]},
+                "q7":{"slotId":"q7","questionNumber":7,"displayLabel":"7","hostNodeId":"local-notes-slot-q7","hostType":"prompt","interaction":"text_entry","participation":"scoring","sourceAnchors":[anchor.clone()]}
+            },
+            "answerKey":{"q6":{"kind":"text","values":["Afar"]},"q7":{"kind":"text","values":["3.2 million"]}}
+        });
+
+        let draft = json!({
+            "taskGroups":[{
+                "taskId":"cloud-tg-1",
+                "displayRange":{"kind":"range","start":6,"end":7},
+                "taskType":"note_completion",
+                "instructions":[paragraph("cloud-ins","cloud-ins-text","Complete the notes below.")],
+                "stimulus":[{
+                    "type":"paragraph","id":"cloud-stim","sourceAnchors":[],
+                    "children":[{"type":"text","id":"cloud-stim-text","sourceAnchors":[],"text":"Found in the Afar region of Ethiopia, dated to about 3.2 million years before present."}]
+                }],
+                "responseGroups":[{"responseGroupId":"cloud-rg","kind":"gap_fill","slotIds":["cloud-q6","cloud-q7"],"sourceAnchors":[]}],
+                "sourceAnchors":[]
+            }],
+            "answerSlots":{
+                "cloud-q6":{"slotId":"cloud-q6","questionNumber":6,"displayLabel":"6","hostNodeId":"cloud-stim","hostType":"prompt","interaction":"text_entry","participation":"scoring","sourceAnchors":[]},
+                "cloud-q7":{"slotId":"cloud-q7","questionNumber":7,"displayLabel":"7","hostNodeId":"cloud-stim","hostType":"prompt","interaction":"text_entry","participation":"scoring","sourceAnchors":[]}
+            },
+            "answerKey":{"cloud-q6":{"kind":"text","values":["Afar"]},"cloud-q7":{"kind":"text","values":["3.2 million"]}}
+        });
+        let raw = json!({ "authoring": draft });
+
+        let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), &raw)
+            .expect("标准化必须成功");
+
+        // 该组 stimulus 换成本地结构：每个题号都有唯一行内答案槽宿主。
+        let stimulus = normalized
+            .document
+            .pointer("/taskGroups/0/stimulus")
+            .expect("回退后必须有 stimulus");
+        for slot_id in ["q6", "q7"] {
+            assert_eq!(
+                count_inline_answer_slots(stimulus, slot_id),
+                1,
+                "回退后每个题号应有唯一行内答案槽：{stimulus:?}"
+            );
+        }
+        // 云端答案保留。
+        assert_eq!(
+            normalized.document.pointer("/answerKey/q6/values/0"),
+            Some(&json!("Afar"))
+        );
+        // 回退记录产出，含实质文字差异的可复核片段。
+        assert_eq!(normalized.structural_fallbacks.len(), 1);
+        let fallback = &normalized.structural_fallbacks[0];
+        assert_eq!(fallback.task_id, "local-notes");
+        assert_eq!(fallback.reason, "inline_answer_slots_missing");
+        assert_eq!(fallback.adopted, "local_structure_cloud_answers");
+        assert!(
+            fallback.text_difference_count > 0,
+            "云端与本地文字有实质差异，差异处数应 > 0"
+        );
+        assert!(fallback.local_fragment.is_some() && fallback.cloud_fragment.is_some());
+    }
 }
+

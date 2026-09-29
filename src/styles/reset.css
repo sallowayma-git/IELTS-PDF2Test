@@ -17,6 +17,12 @@ html, body, #root {
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 
+/* 键盘操作在题库、抽屉和设置里沿用同一条可见焦点环；工作区纸面变量会按层级覆盖。 */
+:where(button, a[href], [role="button"], input, select, textarea):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* Grid/flex 子项默认 min-width:auto，会被 min-content 顶开容器。 */
 :is(.app-main, .app-main-content, .panel, .grid-child, .flex-child, .table-wrap) { min-width: 0; }
 

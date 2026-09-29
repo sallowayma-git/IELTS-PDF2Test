@@ -274,7 +274,7 @@ export function WritingPanel({ refresh }: { refresh: () => void }) {
                 </label>
                 <div className="writing-edit-actions">
                   <button className="primary" disabled={busy} onClick={handleSave}>保存</button>
-                  <button disabled={busy || editing.status !== "Draft"} onClick={handleMarkReady}>标记可导出</button>
+                  <button className="ghost" disabled={busy || editing.status !== "Draft"} onClick={handleMarkReady}>标记可导出</button>
                   <button className="ghost" disabled={busy} onClick={handleDelete}>删除</button>
                 </div>
                 <p className="writing-status-hint">

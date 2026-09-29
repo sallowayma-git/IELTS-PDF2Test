@@ -5,7 +5,7 @@
 //! question identities, and the hard-failure codes emitted by `ielts_grammar::quality`.
 
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// The only hard failures that do not make an otherwise complete candidate unsafe to promote.
@@ -105,8 +105,9 @@ fn instruction_question_numbers(authoring: &Value) -> BTreeSet<u32> {
         .collect()
 }
 
-/// Return stable, user-readable reasons when the candidate must not be adopted.
-pub(crate) fn adoption_rejection_reasons(candidate: &Value, local: &Value) -> Vec<String> {
+/// 文档级（整份）不可采纳原因：状态 / 未解析引用 / 运行时编译 / 题号覆盖。
+/// **不含**按题组的质量硬阻断——后者在 [`plan_group_adoption`] 里按题组归并。
+fn document_rejection_reasons(candidate: &Value, local: &Value) -> Vec<String> {
     let mut reasons = Vec::new();
     let authoring = candidate.get("authoring").unwrap_or(&Value::Null);
 
@@ -127,27 +128,6 @@ pub(crate) fn adoption_rejection_reasons(candidate: &Value, local: &Value) -> Ve
         == Some("passed");
     if !runtime_passed && !answer_only_runtime_failure {
         reasons.push("云端候选未通过学生端 V2 运行时编译".to_string());
-    }
-
-    let blocking_hard_failures = authoring
-        .pointer("/quality/hardFailures")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .filter(|code| {
-            !is_adoption_exempt_hard_failure(code)
-                && !(*code == "RUNTIME_COMPILER_FAILED" && answer_only_runtime_failure)
-        })
-        .collect::<BTreeSet<_>>();
-    if !blocking_hard_failures.is_empty() {
-        reasons.push(format!(
-            "云端候选存在不可豁免的质量硬阻断：{}",
-            blocking_hard_failures
-                .into_iter()
-                .collect::<Vec<_>>()
-                .join("、")
-        ));
     }
 
     let local_numbers = local
@@ -195,6 +175,204 @@ pub(crate) fn adoption_rejection_reasons(candidate: &Value, local: &Value) -> Ve
     }
 
     reasons
+}
+
+/// 非豁免的阻塞硬阻断码集合（`RUNTIME_COMPILER_FAILED` 在仅剩答案未解时豁免）。
+fn blocking_hard_failure_codes(authoring: &Value) -> BTreeSet<String> {
+    let answer_only_runtime_failure = runtime_failed_only_for_unresolved_answers(authoring);
+    authoring
+        .pointer("/quality/hardFailures")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|code| {
+            !is_adoption_exempt_hard_failure(code)
+                && !(*code == "RUNTIME_COMPILER_FAILED" && answer_only_runtime_failure)
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+/// Return stable, user-readable reasons when the candidate must not be adopted **as a whole**.
+pub(crate) fn adoption_rejection_reasons(candidate: &Value, local: &Value) -> Vec<String> {
+    let mut reasons = document_rejection_reasons(candidate, local);
+    let authoring = candidate.get("authoring").unwrap_or(&Value::Null);
+    let blocking = blocking_hard_failure_codes(authoring);
+    if !blocking.is_empty() {
+        reasons.push(format!(
+            "云端候选存在不可豁免的质量硬阻断：{}",
+            blocking.into_iter().collect::<Vec<_>>().join("、")
+        ));
+    }
+    reasons
+}
+
+/// 候选题组身份是否真实存在于候选稿里。
+fn group_exists(authoring: &Value, task_id: &str) -> bool {
+    authoring
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|group| group.get("taskId").and_then(Value::as_str) == Some(task_id))
+}
+
+/// 持有某答案槽的题组身份（按 responseGroups[].slotIds 的字符串成员反查——slotId 在那里是
+/// 裸字符串，`group_ids_for_reference` 的按键匹配查不到它）。
+fn group_ids_owning_slot(authoring: &Value, slot_id: &str) -> BTreeSet<String> {
+    authoring
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|group| {
+            group
+                .get("responseGroups")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .any(|response| {
+                    response
+                        .get("slotIds")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .any(|value| value.as_str() == Some(slot_id))
+                })
+        })
+        .filter_map(|group| group.get("taskId").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect()
+}
+
+/// 阻塞质量问题按题组归并。返回（题组 taskId → 原因）与无法归属到任何题组的**文档级**原因。
+/// 归属规则：`task` 目标即 taskId；`response_group` / `slot` 目标经引用查其所属题组；
+/// 归不到题组的（passage、整体覆盖、answerKey 结构等）落文档级——不静默忽略。
+fn hard_failures_by_group(candidate: &Value) -> (BTreeMap<String, Vec<String>>, Vec<String>) {
+    let authoring = candidate.get("authoring").unwrap_or(&Value::Null);
+    let answer_only_runtime_failure = runtime_failed_only_for_unresolved_answers(authoring);
+    let mut by_group: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut document_level: Vec<String> = Vec::new();
+    for issue in authoring
+        .pointer("/quality/issues")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if issue.get("severity").and_then(Value::as_str) != Some("blocking") {
+            continue;
+        }
+        let code = issue.get("code").and_then(Value::as_str).unwrap_or_default();
+        if is_adoption_exempt_hard_failure(code)
+            || (code == "RUNTIME_COMPILER_FAILED" && answer_only_runtime_failure)
+        {
+            continue;
+        }
+        let target_type = issue.get("targetType").and_then(Value::as_str).unwrap_or("");
+        let target_id = issue.get("targetId").and_then(Value::as_str).unwrap_or("");
+        let message = issue.get("message").and_then(Value::as_str).unwrap_or(code);
+        let owners: BTreeSet<String> = match target_type {
+            "task" if group_exists(authoring, target_id) => {
+                BTreeSet::from([target_id.to_string()])
+            }
+            "response_group" => group_ids_for_reference(authoring, target_id),
+            "slot" => group_ids_owning_slot(authoring, target_id),
+            _ => BTreeSet::new(),
+        };
+        let reason = format!("{code}：{message}");
+        if owners.is_empty() {
+            document_level.push(reason);
+        } else {
+            for owner in owners {
+                by_group.entry(owner).or_default().push(reason.clone());
+            }
+        }
+    }
+    (by_group, document_level)
+}
+
+/// 收集候选 passage 里所有节点 id（含 paragraphMap 的目标 id）。最终文档保留本地 passage，
+/// 候选 passage 即本地 passage，用它判定 heading 宿主段落是否可映射。
+fn passage_node_ids(authoring: &Value) -> BTreeSet<String> {
+    fn collect(value: &Value, out: &mut BTreeSet<String>) {
+        match value {
+            Value::Array(items) => items.iter().for_each(|item| collect(item, out)),
+            Value::Object(map) => {
+                if let Some(id) = map.get("id").and_then(Value::as_str) {
+                    out.insert(id.to_string());
+                }
+                for child in map.values() {
+                    collect(child, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut ids = BTreeSet::new();
+    if let Some(passage) = authoring.get("passage") {
+        collect(passage, &mut ids);
+    }
+    ids
+}
+
+/// heading 宿主段落映射检查：引用了本地 passage 里不存在的段落 id 的题组判为不合格。
+fn groups_with_unmapped_passage_hosts(authoring: &Value) -> Vec<(String, String)> {
+    let passage_ids = passage_node_ids(authoring);
+    let mut failures = Vec::new();
+    for (slot_id, slot) in authoring
+        .get("answerSlots")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+    {
+        if slot.get("hostType").and_then(Value::as_str) != Some("passage_paragraph") {
+            continue;
+        }
+        let host_id = slot.get("hostNodeId").and_then(Value::as_str).unwrap_or("");
+        if host_id.is_empty() || !passage_ids.contains(host_id) {
+            for owner in group_ids_owning_slot(authoring, slot_id) {
+                failures.push((
+                    owner,
+                    format!("题组的 heading 宿主段落 {host_id} 在本地原文里不存在，无法映射"),
+                ));
+            }
+        }
+    }
+    failures
+}
+
+/// 按题组采纳的判定结果。`document_reasons` 非空 ⇒ 整份不采纳（有归不到题组的硬阻断）。
+#[derive(Debug)]
+pub(crate) struct GroupAdoptionPlan {
+    pub document_reasons: Vec<String>,
+    pub qualified_task_ids: Vec<String>,
+    pub unqualified: Vec<(String, Vec<String>)>,
+}
+
+/// 逐题组评估采纳：文档级阻断整份拒；否则合格题组采纳、不合格保留本地并逐条给原因。
+pub(crate) fn plan_group_adoption(candidate: &Value, local: &Value) -> GroupAdoptionPlan {
+    let authoring = candidate.get("authoring").unwrap_or(&Value::Null);
+    let mut document_reasons = document_rejection_reasons(candidate, local);
+    let (mut group_failures, document_level_hard) = hard_failures_by_group(candidate);
+    document_reasons.extend(document_level_hard);
+    for (task_id, reason) in groups_with_unmapped_passage_hosts(authoring) {
+        group_failures.entry(task_id).or_default().push(reason);
+    }
+    let qualified_task_ids = authoring
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|group| group.get("taskId").and_then(Value::as_str))
+        .filter(|task_id| !group_failures.contains_key(*task_id))
+        .map(str::to_string)
+        .collect();
+    GroupAdoptionPlan {
+        document_reasons,
+        qualified_task_ids,
+        unqualified: group_failures.into_iter().collect(),
+    }
 }
 
 #[derive(Debug)]
@@ -705,6 +883,74 @@ pub(crate) fn merge_human_edits(
     Ok(preserved_groups.into_iter().collect())
 }
 
+/// 一个题组声明的答案槽 id（来自 responseGroups[].slotIds）。
+fn group_slot_ids(group: &Value) -> Vec<String> {
+    group
+        .get("responseGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|response| {
+            response
+                .get("slotIds")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+/// 以本地稿为基底，把**合格**的云端题组换入：替换/新增题组，并覆盖该组槽位的
+/// answerSlots 与 answerKey（optionBank 随题组一起换入）。passage、paragraphMap 及其它
+/// 非题组字段一律保留基底（本地），不被云端字段污染。
+fn adopt_qualified_groups(base: &mut Value, cloud: &Value, qualified: &[String]) {
+    for task_id in qualified {
+        let Some(cloud_group) = cloud
+            .get("taskGroups")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|group| group.get("taskId").and_then(Value::as_str) == Some(task_id.as_str()))
+            .cloned()
+        else {
+            continue;
+        };
+        let slot_ids = group_slot_ids(&cloud_group);
+
+        let base_groups = base
+            .get_mut("taskGroups")
+            .and_then(Value::as_array_mut)
+            .expect("本地稿必有 taskGroups 数组");
+        match base_groups
+            .iter()
+            .position(|group| group.get("taskId").and_then(Value::as_str) == Some(task_id.as_str()))
+        {
+            Some(index) => base_groups[index] = cloud_group,
+            None => base_groups.push(cloud_group),
+        }
+
+        for slot_id in &slot_ids {
+            if let Some(slot) = cloud.pointer(&format!("/answerSlots/{slot_id}")).cloned() {
+                if let Some(slots) = base.get_mut("answerSlots").and_then(Value::as_object_mut) {
+                    slots.insert(slot_id.clone(), slot);
+                }
+            }
+            if let Some(keys) = base.get_mut("answerKey").and_then(Value::as_object_mut) {
+                match cloud.pointer(&format!("/answerKey/{slot_id}")) {
+                    Some(answer) => {
+                        keys.insert(slot_id.clone(), answer.clone());
+                    }
+                    None => {
+                        keys.remove(slot_id);
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Promote a qualified full candidate using the canonical editor CAS/journal transaction.
 /// A version conflict is retried from a fresh canonical + human journal snapshot.
 pub(crate) fn adopt_cloud_candidate(
@@ -713,6 +959,7 @@ pub(crate) fn adopt_cloud_candidate(
     batch_id: &str,
     candidate_base_version: i64,
     cloud_authoring: &Value,
+    qualified_task_ids: &[String],
 ) -> Result<AdoptionCommit, String> {
     let run_id = crate::cloud_repair::repair_run_id_for(batch_id);
     let request_id = format!("cloud-candidate-adoption:{batch_id}");
@@ -734,10 +981,9 @@ pub(crate) fn adopt_cloud_candidate(
             item_id,
             candidate_base_version,
         )?;
-        let mut merged = cloud_authoring.clone();
-        if let Some(assets) = current.get("assets") {
-            merged["assets"] = assets.clone();
-        }
+        let mut merged = current.clone();
+        // 以本地为基底，只换入合格的云端题组；passage / paragraphMap / 其它非题组字段保留本地。
+        adopt_qualified_groups(&mut merged, cloud_authoring, qualified_task_ids);
         let preserved_group_ids = merge_human_edits(&current, &mut merged, &journal)?;
         if let (Some(current_audit), Some(audit)) = (
             current.get("audit").and_then(Value::as_object),
@@ -1065,6 +1311,97 @@ mod tests {
         assert_eq!(
             cloud.pointer("/answerKey/q15/values/0"),
             Some(&json!("user 15"))
+        );
+    }
+
+    // T4 按题组采纳判定。
+
+    #[test]
+    fn cloudfix_all_groups_qualified_when_no_blocking_issue() {
+        let mut cloud = candidate();
+        cloud["authoring"]["quality"]["issues"] = json!([]);
+        let plan = plan_group_adoption(&cloud, &local());
+        assert!(
+            plan.document_reasons.is_empty(),
+            "不该有文档级原因：{:?}",
+            plan.document_reasons
+        );
+        assert!(plan.unqualified.is_empty());
+        assert!(plan
+            .qualified_task_ids
+            .iter()
+            .any(|id| id == "early-approaches-q14-15"));
+    }
+
+    #[test]
+    fn cloudfix_group_hard_block_does_not_sink_other_qualified_groups() {
+        let mut cloud = candidate();
+        cloud["authoring"]["taskGroups"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "taskId": "group-2",
+                "responseGroups": [{"responseGroupId":"group-2-rg","slotIds":[]}]
+            }));
+        cloud["authoring"]["quality"]["issues"] = json!([{
+            "code":"PROVENANCE_MISSING","severity":"blocking",
+            "targetType":"task","targetId":"early-approaches-q14-15",
+            "message":"prompt/stimulus 缺少 source anchor"
+        }]);
+        let plan = plan_group_adoption(&cloud, &local());
+        assert!(
+            plan.document_reasons.is_empty(),
+            "组级阻断不应升级成文档级：{:?}",
+            plan.document_reasons
+        );
+        assert!(
+            plan.unqualified
+                .iter()
+                .any(|(id, _)| id == "early-approaches-q14-15"),
+            "有阻断的组应不合格：{:?}",
+            plan.unqualified
+        );
+        assert!(
+            plan.qualified_task_ids.iter().any(|id| id == "group-2"),
+            "合格组不应被拖垮：{:?}",
+            plan.qualified_task_ids
+        );
+        assert!(!plan
+            .qualified_task_ids
+            .iter()
+            .any(|id| id == "early-approaches-q14-15"));
+    }
+
+    #[test]
+    fn cloudfix_document_level_block_rejects_whole_candidate() {
+        let mut cloud = candidate();
+        cloud["authoring"]["quality"]["issues"] = json!([{
+            "code":"SIGNIFICANT_REGION_UNASSIGNED","severity":"blocking",
+            "targetType":"recognition","targetId":"document",
+            "message":"显著源节点未认领"
+        }]);
+        let plan = plan_group_adoption(&cloud, &local());
+        assert!(
+            plan.document_reasons
+                .iter()
+                .any(|reason| reason.contains("SIGNIFICANT_REGION_UNASSIGNED")),
+            "归不到题组的阻断必须落文档级、整份拒：{:?}",
+            plan.document_reasons
+        );
+    }
+
+    #[test]
+    fn cloudfix_heading_group_with_unmapped_passage_host_is_unqualified() {
+        let mut cloud = candidate();
+        cloud["authoring"]["quality"]["issues"] = json!([]);
+        cloud["authoring"]["answerSlots"]["q14"]["hostType"] = json!("passage_paragraph");
+        cloud["authoring"]["answerSlots"]["q14"]["hostNodeId"] = json!("invented-paragraph");
+        let plan = plan_group_adoption(&cloud, &local());
+        assert!(
+            plan.unqualified.iter().any(|(id, reasons)| id == "early-approaches-q14-15"
+                && reasons.iter().any(|reason| reason.contains("invented-paragraph"))),
+            "heading 宿主段落映射不上的组应不合格：{:?}",
+            plan.unqualified
         );
     }
 }
