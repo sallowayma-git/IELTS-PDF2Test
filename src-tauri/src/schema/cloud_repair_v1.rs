@@ -275,6 +275,10 @@ pub struct CloudAuthoringCandidateV1 {
     pub source_coverage_notes: Vec<String>,
     #[serde(default)]
     pub warnings: Vec<String>,
+    /// 结构回退记录：某题组的云端结构不达标（如缺行内答案槽），改为沿用本地结构 + 宿主节点，
+    /// 只采纳云端答案；有实质文字差异的把本地/云端片段留作可复核数据。面板展示由后续会话处理。
+    #[serde(default)]
+    pub structural_fallbacks: Vec<StructuralFallbackV1>,
 }
 
 impl CloudAuthoringCandidateV1 {
@@ -286,6 +290,26 @@ impl CloudAuthoringCandidateV1 {
     pub fn has_unresolved_references(&self) -> bool {
         !self.unresolved_references.is_empty()
     }
+}
+
+/// 一个题组的结构回退记录：云端结构不达标，改为沿用本地结构 + 宿主节点、只采纳云端答案。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct StructuralFallbackV1 {
+    pub task_id: String,
+    /// 稳定回退原因码（如 `inline_answer_slots_missing`）。
+    pub reason: String,
+    /// 采纳内容说明（如 `local_structure_cloud_answers`）。
+    pub adopted: String,
+    /// 云端该组 stimulus 与本地规范化文本的实质差异处数（0 = 无实质差异）。
+    pub text_difference_count: usize,
+    /// 有实质差异时保留的本地文本片段（供人工复核；面板展示由后续会话处理）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_fragment: Option<String>,
+    /// 有实质差异时保留的云端文本片段。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud_fragment: Option<String>,
 }
 
 /// 候选里显式标注的「没读到 / 读不全」区域。

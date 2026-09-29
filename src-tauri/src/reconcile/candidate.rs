@@ -1715,6 +1715,8 @@ pub(crate) struct NormalizedCloudAuthoring {
     pub warnings: Vec<String>,
     /// 分块识别时，失败的块没有覆盖到的题号（升序去重）。非空 ⇒ 候选至多 `Partial`。
     pub uncovered_question_numbers: Vec<u32>,
+    /// 结构回退记录：结构不达标的题组沿用本地结构 + 云端答案（T3.5）。
+    pub structural_fallbacks: Vec<crate::schema::cloud_repair_v1::StructuralFallbackV1>,
 }
 
 /// 权威稿里一个题组的**身份索引**（只读）。
@@ -2633,6 +2635,194 @@ fn stamp_fixed_truth_option_provenance(draft: &mut Value) {
     }
 }
 
+/// inline completion 题型（与 quality.rs SLOT_HOST_MISSING 判定的题型集合一致）。
+fn is_inline_completion_type(task_type: &str) -> bool {
+    matches!(
+        task_type,
+        "sentence_completion" | "summary_completion" | "note_completion" | "form_completion"
+    )
+}
+
+/// 统计一段内容里指定 slotId 的 inline answer_slot 宿主节点数。
+fn count_inline_answer_slots(value: &Value, slot_id: &str) -> usize {
+    match value {
+        Value::Array(items) => items
+            .iter()
+            .map(|item| count_inline_answer_slots(item, slot_id))
+            .sum(),
+        Value::Object(map) => {
+            let here = usize::from(
+                map.get("type").and_then(Value::as_str) == Some("answer_slot")
+                    && map.get("slotId").and_then(Value::as_str) == Some(slot_id),
+            );
+            here + map
+                .values()
+                .map(|child| count_inline_answer_slots(child, slot_id))
+                .sum::<usize>()
+        }
+        _ => 0,
+    }
+}
+
+/// 「忽略空白 / 连字 / PDF 字符间距」的比较键：只留字母数字并小写。
+/// 用于判定云端与本地该组 stimulus 是否有**实质**文字差异（"Do t h e" == "Do the"）。
+fn text_compare_key(text: &str) -> String {
+    text.chars()
+        .filter(|ch| ch.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// 词级差异处数（实质差异时才算）：两侧词频多重集的对称差大小。
+fn word_difference_count(local: &str, cloud: &str) -> usize {
+    fn counts(text: &str) -> BTreeMap<String, i64> {
+        let mut map = BTreeMap::new();
+        for word in text.to_lowercase().split_whitespace() {
+            *map.entry(word.to_string()).or_insert(0) += 1;
+        }
+        map
+    }
+    let left = counts(local);
+    let right = counts(cloud);
+    let mut keys: BTreeSet<&String> = BTreeSet::new();
+    keys.extend(left.keys());
+    keys.extend(right.keys());
+    keys.into_iter()
+        .map(|key| {
+            (left.get(key).copied().unwrap_or(0) - right.get(key).copied().unwrap_or(0)).unsigned_abs()
+                as usize
+        })
+        .sum()
+}
+
+fn truncate_fragment(text: &str) -> String {
+    const MAX: usize = 600;
+    if text.chars().count() <= MAX {
+        text.to_string()
+    } else {
+        let head: String = text.chars().take(MAX).collect();
+        format!("{head}…")
+    }
+}
+
+/// T3.5 回退 A：inline completion 题组的云端 stimulus 缺行内答案槽宿主时，整组沿用本地稿的
+/// 结构与宿主节点（instructions / stimulus / optionBank / responseGroups / sourceAnchors 与
+/// 答案槽宿主），只保留云端答案（answerKey 不动）。云端对该组 stimulus 的文字若有实质差异，
+/// 产出一条可复核记录（本地片段 / 云端片段 / 差异处数），面板展示由后续会话处理。
+fn apply_structural_fallbacks(
+    draft: &mut Value,
+    canonical: &Value,
+    group_canonical: &[Option<usize>],
+    group_stable: &[Option<String>],
+    out: &mut Vec<crate::schema::cloud_repair_v1::StructuralFallbackV1>,
+) {
+    let group_count = draft
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    for index in 0..group_count {
+        let Some(Some(target)) = group_canonical.get(index).cloned() else {
+            continue;
+        };
+        // 只读阶段：判定是否需要回退，并取出所需文本 / 槽位。
+        let (needs_fallback, slot_ids, cloud_text) = {
+            let group = &draft["taskGroups"][index];
+            let task_type = group.get("taskType").and_then(Value::as_str).unwrap_or("");
+            if !is_inline_completion_type(task_type) {
+                continue;
+            }
+            let slot_ids: Vec<String> = group
+                .get("responseGroups")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .flat_map(|rg| {
+                    rg.get("slotIds")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect();
+            let stimulus = group.get("stimulus").cloned().unwrap_or(Value::Null);
+            let missing = slot_ids
+                .iter()
+                .any(|slot_id| count_inline_answer_slots(&stimulus, slot_id) != 1);
+            (missing, slot_ids, nodes_text(&stimulus))
+        };
+        if !needs_fallback {
+            continue;
+        }
+        let Some(canon_group) = canonical
+            .get("taskGroups")
+            .and_then(Value::as_array)
+            .and_then(|groups| groups.get(target))
+            .cloned()
+        else {
+            continue;
+        };
+        let local_text = nodes_text(canon_group.get("stimulus").unwrap_or(&Value::Null));
+
+        // 结构字段整组换成本地稿的（保留云端 taskType / taskId / displayRange）。
+        for key in [
+            "instructions",
+            "stimulus",
+            "optionBank",
+            "responseGroups",
+            "sourceAnchors",
+        ] {
+            match canon_group.get(key) {
+                Some(value) => {
+                    draft["taskGroups"][index][key] = value.clone();
+                }
+                None => {
+                    if let Some(object) = draft["taskGroups"][index].as_object_mut() {
+                        object.remove(key);
+                    }
+                }
+            }
+        }
+        // 答案槽宿主换成本地的；答案（answerKey）保留云端。
+        for slot_id in &slot_ids {
+            if let Some(canon_slot) = canonical
+                .pointer(&format!("/answerSlots/{slot_id}"))
+                .cloned()
+            {
+                if let Some(slots) = draft.get_mut("answerSlots").and_then(Value::as_object_mut) {
+                    slots.insert(slot_id.clone(), canon_slot);
+                }
+            }
+        }
+
+        let substantive = text_compare_key(&cloud_text) != text_compare_key(&local_text);
+        let task_id = group_stable
+            .get(index)
+            .cloned()
+            .flatten()
+            .or_else(|| {
+                draft["taskGroups"][index]
+                    .get("taskId")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_default();
+        out.push(crate::schema::cloud_repair_v1::StructuralFallbackV1 {
+            task_id,
+            reason: "inline_answer_slots_missing".to_string(),
+            adopted: "local_structure_cloud_answers".to_string(),
+            text_difference_count: if substantive {
+                word_difference_count(&local_text, &cloud_text)
+            } else {
+                0
+            },
+            local_fragment: substantive.then(|| truncate_fragment(&local_text)),
+            cloud_fragment: substantive.then(|| truncate_fragment(&cloud_text)),
+        });
+    }
+}
+
 /// 补齐**后端拥有**、模型被明确告知不要输出的字段。
 ///
 /// 输出契约告诉模型：`sourceAnchors` 可选、`provenanceStatus` 不许写。那么照契约回复的
@@ -3283,6 +3473,7 @@ pub(crate) fn normalize_cloud_authoring(
             source_coverage_notes,
             warnings,
             uncovered_question_numbers,
+            structural_fallbacks: Vec::new(),
         });
     }
 
@@ -3566,6 +3757,19 @@ pub(crate) fn normalize_cloud_authoring(
     // 固定标签选项（TFNG/YNNG）没有独立原文来源：挂上题组区域的真实锚点，与本地一致。
     stamp_fixed_truth_option_provenance(&mut draft);
 
+    // T3.5 回退 A：inline completion 题组云端结构缺行内答案槽时，整组沿用本地结构 + 云端答案。
+    let mut structural_fallbacks: Vec<crate::schema::cloud_repair_v1::StructuralFallbackV1> =
+        Vec::new();
+    if let Some(canonical) = canonical {
+        apply_structural_fallbacks(
+            &mut draft,
+            canonical,
+            &group_canonical,
+            &group_stable,
+            &mut structural_fallbacks,
+        );
+    }
+
     // ── 6) 组装后端字段 ────────────────────────────────────────────
     let mut document = Map::new();
     document.insert(
@@ -3737,6 +3941,7 @@ pub(crate) fn normalize_cloud_authoring(
         source_coverage_notes,
         warnings,
         uncovered_question_numbers,
+        structural_fallbacks,
     })
 }
 
@@ -3776,6 +3981,7 @@ pub(crate) fn cloud_authoring_candidate_from_normalized(
         unresolved_regions: normalized.unresolved_regions,
         source_coverage_notes: normalized.source_coverage_notes,
         warnings: normalized.warnings,
+        structural_fallbacks: normalized.structural_fallbacks,
     })
 }
 
@@ -6593,6 +6799,99 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
                 normalized.document.pointer(&format!("/taskGroups/0/responseGroups/0/options/{index}"))
             );
         }
+    }
+
+    /// T3.5 回退 A：inline completion 题组的云端 stimulus 缺行内答案槽时，整组沿用本地结构与
+    /// 宿主，只保留云端答案；有实质文字差异产出可复核记录（本地/云端片段、差异处数）。
+    #[test]
+    fn cloudfix_structural_fallback_keeps_local_hosts_and_cloud_answers() {
+        let anchor = json!({
+            "sourceFileId":"notes-pdf","pageIndex":1,"nodeIds":["line-notes"],
+            "extractionMode":"pdf_native","sourceHash":"a".repeat(64)
+        });
+        let local_slot = |q: u32| json!({
+            "type":"answer_slot","id":format!("local-notes-slot-q{q}"),
+            "sourceAnchors":[anchor.clone()],"provenanceStatus":"source",
+            "slotId":format!("q{q}"),"displayLabel":q.to_string(),"inline":true
+        });
+        let canonical = json!({
+            "taskGroups":[{
+                "taskId":"local-notes",
+                "displayRange":{"kind":"range","start":6,"end":7},
+                "taskType":"note_completion",
+                "instructions":[paragraph("local-notes-ins","local-notes-ins-text","Complete the notes.")],
+                "stimulus":[{
+                    "type":"paragraph","id":"local-notes-stim","sourceAnchors":[anchor.clone()],
+                    "provenanceStatus":"source","children":[
+                        {"type":"text","id":"local-notes-t1","sourceAnchors":[anchor.clone()],"provenanceStatus":"source","text":"Found in the "},
+                        local_slot(6),
+                        {"type":"text","id":"local-notes-t2","sourceAnchors":[anchor.clone()],"provenanceStatus":"source","text":" region, dated to "},
+                        local_slot(7),
+                        {"type":"text","id":"local-notes-t3","sourceAnchors":[anchor.clone()],"provenanceStatus":"source","text":" years."}
+                    ]
+                }],
+                "responseGroups":[{"responseGroupId":"local-notes-rg","kind":"gap_fill","slotIds":["q6","q7"],"sourceAnchors":[anchor.clone()]}],
+                "sourceAnchors":[anchor.clone()]
+            }],
+            "answerSlots":{
+                "q6":{"slotId":"q6","questionNumber":6,"displayLabel":"6","hostNodeId":"local-notes-slot-q6","hostType":"prompt","interaction":"text_entry","participation":"scoring","sourceAnchors":[anchor.clone()]},
+                "q7":{"slotId":"q7","questionNumber":7,"displayLabel":"7","hostNodeId":"local-notes-slot-q7","hostType":"prompt","interaction":"text_entry","participation":"scoring","sourceAnchors":[anchor.clone()]}
+            },
+            "answerKey":{"q6":{"kind":"text","values":["Afar"]},"q7":{"kind":"text","values":["3.2 million"]}}
+        });
+
+        let draft = json!({
+            "taskGroups":[{
+                "taskId":"cloud-tg-1",
+                "displayRange":{"kind":"range","start":6,"end":7},
+                "taskType":"note_completion",
+                "instructions":[paragraph("cloud-ins","cloud-ins-text","Complete the notes below.")],
+                "stimulus":[{
+                    "type":"paragraph","id":"cloud-stim","sourceAnchors":[],
+                    "children":[{"type":"text","id":"cloud-stim-text","sourceAnchors":[],"text":"Found in the Afar region of Ethiopia, dated to about 3.2 million years before present."}]
+                }],
+                "responseGroups":[{"responseGroupId":"cloud-rg","kind":"gap_fill","slotIds":["cloud-q6","cloud-q7"],"sourceAnchors":[]}],
+                "sourceAnchors":[]
+            }],
+            "answerSlots":{
+                "cloud-q6":{"slotId":"cloud-q6","questionNumber":6,"displayLabel":"6","hostNodeId":"cloud-stim","hostType":"prompt","interaction":"text_entry","participation":"scoring","sourceAnchors":[]},
+                "cloud-q7":{"slotId":"cloud-q7","questionNumber":7,"displayLabel":"7","hostNodeId":"cloud-stim","hostType":"prompt","interaction":"text_entry","participation":"scoring","sourceAnchors":[]}
+            },
+            "answerKey":{"cloud-q6":{"kind":"text","values":["Afar"]},"cloud-q7":{"kind":"text","values":["3.2 million"]}}
+        });
+        let raw = json!({ "authoring": draft });
+
+        let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), &raw)
+            .expect("标准化必须成功");
+
+        // 该组 stimulus 换成本地结构：每个题号都有唯一行内答案槽宿主。
+        let stimulus = normalized
+            .document
+            .pointer("/taskGroups/0/stimulus")
+            .expect("回退后必须有 stimulus");
+        for slot_id in ["q6", "q7"] {
+            assert_eq!(
+                count_inline_answer_slots(stimulus, slot_id),
+                1,
+                "回退后每个题号应有唯一行内答案槽：{stimulus:?}"
+            );
+        }
+        // 云端答案保留。
+        assert_eq!(
+            normalized.document.pointer("/answerKey/q6/values/0"),
+            Some(&json!("Afar"))
+        );
+        // 回退记录产出，含实质文字差异的可复核片段。
+        assert_eq!(normalized.structural_fallbacks.len(), 1);
+        let fallback = &normalized.structural_fallbacks[0];
+        assert_eq!(fallback.task_id, "local-notes");
+        assert_eq!(fallback.reason, "inline_answer_slots_missing");
+        assert_eq!(fallback.adopted, "local_structure_cloud_answers");
+        assert!(
+            fallback.text_difference_count > 0,
+            "云端与本地文字有实质差异，差异处数应 > 0"
+        );
+        assert!(fallback.local_fragment.is_some() && fallback.cloud_fragment.is_some());
     }
 }
 
