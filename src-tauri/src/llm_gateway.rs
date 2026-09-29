@@ -215,6 +215,10 @@ fn next_llm_call_index(root: &Path, job_id: &str) -> CommandResult<u64> {
         Err(error) => return Err(format!("llm_call_sequence_read_failed:{error}")),
     };
     let next = current.saturating_add(1);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("llm_call_sequence_write_failed:{error}"))?;
+    }
     fs::write(&path, next.to_string())
         .map_err(|error| format!("llm_call_sequence_write_failed:{error}"))?;
     Ok(next)
