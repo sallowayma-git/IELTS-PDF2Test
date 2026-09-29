@@ -4897,6 +4897,9 @@ fn physical_ignored_reasons(
                 && near_page_edge
                 && compact_text.chars().count() <= 40
                 && !declares_question_numbers(&compact_text)
+                // 提到题目/答案的边缘短文本可能是分节说明片段，宁可保留为显著内容也不当页眉忽略。
+                && !compact_text.contains("question")
+                && !compact_text.contains("answer")
             {
                 ignored.insert(region_id.to_string(), "running_header_or_footer".to_string());
                 continue;
