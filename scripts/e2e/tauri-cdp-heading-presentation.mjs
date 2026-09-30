@@ -248,8 +248,9 @@ async function waitForCloudTerminal(itemId, timeoutMs = 480000) {
       );
     }
     if (fs.existsSync(databasePath)) {
-      const db = new DatabaseSync(databasePath);
+      const db = new DatabaseSync(databasePath, { readOnly: true });
       try {
+        db.exec("PRAGMA busy_timeout = 5000");
         db.exec("PRAGMA query_only = ON");
         lastJobState = db.prepare(
           "SELECT stage, local_status, cloud_status FROM processing_jobs_v2 WHERE id = ?",
