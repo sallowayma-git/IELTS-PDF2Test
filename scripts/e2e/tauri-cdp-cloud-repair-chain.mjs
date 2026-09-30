@@ -39,7 +39,7 @@
  * 退出码：0 通过 / 1 失败 / 2 部分无法执行 / 3 环境不满足 / 5 全部无法执行
  */
 
-import { spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -63,7 +63,7 @@ import {
   writeReport,
 } from "./lib/tauri-cdp-harness.mjs";
 import { computeScenarioVerdict, SCENARIO_STATUS } from "./lib/chain-verdict.mjs";
-import { deriveAnswerRepairScenario, deriveRepairScenario, diagnoseAnswerClaimL1, loadRepairGolden, textOfNodes } from "./lib/cloud-repair-scenario.mjs";
+import { collectTextNodes, deriveAnswerRepairScenario, deriveRepairScenario, diagnoseAnswerClaimL1, loadRepairGolden, textOfNodes } from "./lib/cloud-repair-scenario.mjs";
 import { loadPublishedPackageWithRealProviderAsync } from "./lib/student-real-provider.mjs";
 
 const exePath = path.join(repoRoot, "src-tauri", "target", "debug", "ielts-author-studio.exe");
@@ -404,7 +404,24 @@ function writeProfile() {
 }
 
 /** 作业目录里网关调用的痕迹与**模型工具往返记录**。 */
-function llmTraces(jobId) {
+function compactSourceText(value) {
+  return String(value ?? "").normalize("NFKC").replace(/[^\p{L}\p{N}]+/gu, "").toLowerCase();
+}
+
+function sourceTextContains(source, quote) {
+  const compactSource = compactSourceText(source);
+  const compactQuote = compactSourceText(quote);
+  return compactSource.length > 0 && compactQuote.length > 0 && compactSource.includes(compactQuote);
+}
+
+function originalPdfPageTexts(pdfPath) {
+  const script = "import fitz,json,sys; doc=fitz.open(sys.argv[1]); print(json.dumps([page.get_text('text') for page in doc],ensure_ascii=False))";
+  const python = process.env.PDF2TEST_PDF_TEXT_PYTHON ?? "python";
+  const pages = JSON.parse(execFileSync(python, ["-c", script, pdfPath], { encoding: "utf8" }));
+  return new Map(pages.map((text, index) => [index + 1, String(text ?? "")]));
+}
+
+function llmTraces(jobId, sourceTextChecks = []) {
   const jobDir = path.join(appDataDir, "jobs", String(jobId ?? ""));
   const dir = path.join(jobDir, "cache", "llm");
   const traces = { dir, exists: fs.existsSync(dir), byCommand: {}, repairRounds: [], callRecords: [] };
@@ -430,6 +447,18 @@ function llmTraces(jobId) {
               .map((page) => Number(page?.pageIndex))
               .filter((page) => Number.isInteger(page))
           : [];
+        const sourceEvidencePages = Array.isArray(input.context?.sourceEvidence?.pages)
+          ? input.context.sourceEvidence.pages
+          : [];
+        const sourceTextResults = sourceTextChecks.map((check) => {
+          const page = sourceEvidencePages.find((entry) => Number(entry?.pageIndex) === Number(check.pageIndex));
+          const requestText = (page?.lines ?? []).map((line) => line?.text ?? "").join("\n");
+          return {
+            pageIndex: Number(check.pageIndex),
+            lineCount: Array.isArray(page?.lines) ? page.lines.length : 0,
+            includesExpectedText: sourceTextContains(requestText, check.text),
+          };
+        });
         const toolObservations = (input.observations ?? []).map((observation) => {
           const result = observation?.result ?? {};
           const directPages = Array.isArray(result.pages) ? result.pages : [];
@@ -468,6 +497,7 @@ function llmTraces(jobId) {
           comparisonMode: input.context?.comparisonMode ?? null,
           packetMode: input.context?.contextMode === "packets",
           packetPages,
+          sourceTextResults,
         });
       } catch {
         traces.repairRounds.push({ stamp: entry.stamp, error: "unparsable" });
@@ -825,47 +855,6 @@ function sha256OfFile(filePath) {
 }
 
 /**
- * 读作业目录里**解析器层**抽取出来的逐页原文文本。
- *
- * 与后端 `source_page_texts` 读同一批产物、同样的页号归一（DocumentIR 是 0-based，
- * 归一成 1-based）。这里是**独立**读一遍：模型说它引用了原文，验收侧就自己去看
- * 原文里到底有没有这句话——两边都读同一份 artifact，但走的是两条代码路径。
- */
-function sourcePageTextsFromJob(jobId) {
-  const dir = path.join(appDataDir, "jobs", String(jobId ?? ""));
-  const out = new Map();
-  const readPage = (page, pick) => {
-    const index = Number(page?.pageIndex);
-    if (!Number.isInteger(index) || index < 0) return;
-    const text = pick(page);
-    if (typeof text === "string" && text.trim()) out.set(index + 1, text.trim());
-  };
-  const documentIr = path.join(dir, "document-ir.json");
-  if (fs.existsSync(documentIr)) {
-    const parsed = JSON.parse(fs.readFileSync(documentIr, "utf8"));
-    for (const page of parsed?.pages ?? []) {
-      readPage(page, (entry) => {
-        if (Array.isArray(entry?.lines)) {
-          return entry.lines.map((line) => line?.text ?? "").filter((line) => line.trim()).join("\n");
-        }
-        if (Array.isArray(entry?.spans)) return entry.spans.map((span) => span?.text ?? "").join("");
-        return "";
-      });
-    }
-  }
-  if (out.size === 0) {
-    const compare = path.join(dir, "document-ir-v2.shadow.compare.json");
-    if (fs.existsSync(compare)) {
-      const parsed = JSON.parse(fs.readFileSync(compare, "utf8"));
-      for (const page of parsed?.pages ?? []) {
-        readPage(page, (entry) => entry?.v1Text ?? entry?.v2Text ?? "");
-      }
-    }
-  }
-  return out;
-}
-
-/**
  * 本地稿的**真实形状**：题组/题面数量、空题面与占位题面各多少、blocking 代码。
  *
  * 单独抽出来是因为它要在**多条**退出路径上写进报告。以前它只写在「派生失败」那一个
@@ -1058,6 +1047,8 @@ async function main() {
     return;
   }
 
+  const pdfPageTexts = originalPdfPageTexts(fixturePath);
+  report.scenario.sourcePdfTextPages = pdfPageTexts.size;
   const derived = deriveRepairScenario(prepassDraft.ds, golden);
   if (!derived?.ok) {
     // 前提不成立时，必须把**这份稿子的真实形状**写进报告：只说「没有页脚残留」
@@ -1104,6 +1095,26 @@ async function main() {
     writeFinalReport();
     return;
   }
+  const correctionGroup = derived.candidate.taskGroups.find((group) => group.taskId === derived.fix.taskId);
+  const correctionResponse = (correctionGroup?.responseGroups ?? []).find(
+    (response) => response.responseGroupId === derived.fix.responseGroupId,
+  );
+  const correctionPromptNodes = collectTextNodes(correctionResponse?.prompt ?? []);
+  if (correctionPromptNodes.length !== 1) {
+    throw new Error(`content_not_aligned 场景无法定位 ${derived.fix.responseGroupId} 的单一题面节点`);
+  }
+  // The fixture has no natural group-3 review; reuse its real local q40 recognition error.
+  correctionPromptNodes[0].text = derived.fix.before;
+  derived.plan.rulings.push({
+    targetType: "task_group",
+    targetId: "group-2",
+    field: "task_group",
+    ruling: "current_is_correct",
+    reason: "按真实复核反馈核对 group-2 的说明与 q32 题干；原卷支持当前题组内容，保留云端正式稿。",
+    evidenceKeyword: "NOT GIVEN if it is impossible to say",
+  });
+  derived.plan.answerClaim.searchPages = [1];
+  derived.claim.searchPages = [1];
   const humanProbe = humanProtectionProbe(prepassDraft.ds, [derived.claim?.slotId].filter(Boolean));
   if (humanProbe) {
     // Harness-only competing answer values let the real editor journal exercise the same
@@ -1121,6 +1132,11 @@ async function main() {
   report.scenario.fix = derived.fix;
   report.scenario.rule = derived.rule;
   report.scenario.unresolved = derived.plan.unresolved;
+  report.scenario.mechanismTriggers = {
+    correction: { taskId: derived.fix.taskId, reason: "content_not_aligned", sourcePageOneBased: derived.fix.sourcePageOneBased },
+    adjudication: { taskId: "group-2", reason: "instruction_stem_overlap" },
+    missingPage: { slotId: derived.claim.slotId, questionNumber: derived.claim.questionNumber, searchPages: derived.claim.searchPages },
+  };
   report.scenario.differences = [
     `response_group:${derived.fix.responseGroupId}:prompt`,
     // W1 是必需差异；派生器没有 claim 时会拒绝返回可执行场景。
@@ -1428,7 +1444,13 @@ async function main() {
   report.observed.canonicalChanges = changes;
   report.observed.editVersion = { before: versionBefore, after: versionAfter };
   report.observed.promptText = { before: promptBefore, after: promptAfter };
-  report.modelTraces = { llm: llmTraces(itemId), toolCalls: repairToolCalls(itemId) };
+  report.modelTraces = {
+    llm: llmTraces(itemId, [{
+      pageIndex: derived.fix.sourcePageOneBased,
+      text: `${derived.fix.questionNumber} ${derived.fix.after}`,
+    }]),
+    toolCalls: repairToolCalls(itemId),
+  };
   report.observed.candidateAdoption = finalRepair.candidateAdoption ?? null;
 
   // ---- 10. 断言：云端**自己**改了什么 ----
@@ -1448,6 +1470,25 @@ async function main() {
   if (finalRepair.candidateAdoption?.adopted !== true) {
     problems.push(`云端候选应先被正式采纳，实际 ${JSON.stringify(finalRepair.candidateAdoption ?? null)}`);
   }
+  const reviewGroupIds = new Set((finalRepair.candidateAdoption?.needsCloudReview ?? [])
+    .map((entry) => entry?.taskId ?? entry?.targetId)
+    .filter((taskId) => typeof taskId === "string"));
+  const nonReviewGroupIds = (derived.candidate.taskGroups ?? [])
+    .map((group) => group?.taskId)
+    .filter((taskId) => typeof taskId === "string" && !reviewGroupIds.has(taskId));
+  const adoptedGroupIds = finalRepair.candidateAdoption?.adoptedTaskIds ?? [];
+  const notAdoptedWithoutReview = nonReviewGroupIds.filter((taskId) => !adoptedGroupIds.includes(taskId));
+  if (notAdoptedWithoutReview.length > 0) {
+    problems.push(`没有触发复核的题组未被整体采纳：${notAdoptedWithoutReview.join("、")}`);
+  }
+  if (finalRepair.candidateAdoption?.passageAdopted !== true) {
+    problems.push("低相似句应保留为顾问级复核提示，同时整体采纳原文 passage");
+  }
+  report.observed.noTriggerAdoption = {
+    reviewGroupIds: [...reviewGroupIds],
+    adoptedGroupIds,
+    passageAdopted: finalRepair.candidateAdoption?.passageAdopted ?? null,
+  };
   // 版本必须**两个都读到了**才谈得上「推进」。显式拒绝 null：`2 > null` 在 JS 里是 true
   // （null 被转成 0），把「快照缺失」读成「版本推进了」。
   if (versionBefore == null || versionAfter == null) {
@@ -1588,10 +1629,15 @@ async function main() {
     const toolCalls = report.modelTraces.toolCalls ?? [];
     const sourceRounds = toolCalls.filter((call) => call.tool === "read_source");
     const quotes = toolCalls.flatMap((call) => call.evidence ?? []);
-    const pageTexts = sourcePageTextsFromJob(itemId);
+    const pageTexts = pdfPageTexts;
     const expectedPageText = pageTexts.get(Number(annotated.sourcePage.oneBased)) ?? null;
     const mode = repairContextMode();
     const problems = [];
+    const requestSourceRounds = (report.modelTraces.llm.repairRounds ?? []).filter((round) =>
+      (round.sourceTextResults ?? []).some((check) =>
+        Number(check.pageIndex) === Number(annotated.sourcePage.oneBased) && check.includesExpectedText,
+      ),
+    );
 
     // (0) 回合本身必须存在：原文没有真的到过模型手里，后面两条都无从谈起。
     //
@@ -1606,16 +1652,16 @@ async function main() {
         (round.packetPages ?? []).includes(Number(annotated.sourcePage.oneBased)),
       );
       if (roundsWithPage.length === 0) {
-        problems.push(
-          `包模式下没有任何一轮请求带着第 ${annotated.sourcePage.oneBased} 页的原文文本：`
-            + "改对了也只能是从剧本抄的，证明不了「依据原文件」",
-        );
+        problems.push(`包模式下没有任何一轮请求带着第 ${annotated.sourcePage.oneBased} 页`);
+      }
+      if (requestSourceRounds.length === 0) {
+        problems.push(`包模式修复请求没有携带原 PDF 第 ${annotated.sourcePage.oneBased} 页的题号行`);
       }
     } else if (sourceRounds.length === 0) {
       problems.push("整条修复回合里没有一次 read_source：改对了也只是照剧本抄的，证明不了「依据原文件」");
     }
     if (!expectedPageText) {
-      problems.push(`作业目录里读不到第 ${annotated.sourcePage.oneBased} 页的原文文本，无法核对引文`);
+      problems.push(`原 PDF 中读不到第 ${annotated.sourcePage.oneBased} 页，无法核对引文`);
     }
     // (1) 期望值来自人工标注的 fixture —— 与脚本派生彻底脱钩。
     if (promptAfter !== annotated.originalFileSays) {
@@ -1626,10 +1672,10 @@ async function main() {
     // (2) fixture 的标注必须与**真实原文件**对得上：原文里那一行确实是「题号 + 真值」。
     //     对不上说明标注写错了（或文件换了），这时上面的比较没有意义。
     const expectedLine = `${annotated.target.questionNumber} ${annotated.originalFileSays}`;
-    if (expectedPageText && !expectedPageText.includes(expectedLine)) {
+    if (expectedPageText && !sourceTextContains(expectedPageText, expectedLine)) {
       problems.push(`原文第 ${annotated.sourcePage.oneBased} 页里找不到「${expectedLine}」，golden 标注与真实原文件不一致`);
     }
-    if (expectedPageText && !expectedPageText.includes(annotated.originalFileQuote)) {
+    if (expectedPageText && !sourceTextContains(expectedPageText, annotated.originalFileQuote)) {
       problems.push(`golden 自带的引文在原文里找不到：${JSON.stringify(annotated.originalFileQuote)}`);
     }
     // (3) 引文必须能被证伪：模型给出的每一条引文都要在原文里逐字找到。
@@ -1649,10 +1695,10 @@ async function main() {
       const pageIndex = Number(quote?.pageIndex);
       const pageText = Number.isInteger(pageIndex) ? pageTexts.get(pageIndex) ?? null : null;
       if (!pageText) {
-        problems.push(`模型引文声明了第 ${quote?.pageIndex} 页，但作业目录里读不到该页原文`);
+        problems.push(`模型引文声明了第 ${quote?.pageIndex} 页，但原 PDF 中没有该页`);
         continue;
       }
-      if (!pageText.includes(text)) {
+      if (!sourceTextContains(pageText, text)) {
         problems.push(`模型的引文在第 ${pageIndex} 页原文里找不到：${JSON.stringify(text)}`);
       }
     }
@@ -1673,10 +1719,12 @@ async function main() {
       roundsCarryingSourcePage: (report.modelTraces.llm.repairRounds ?? []).filter((round) =>
         (round.packetPages ?? []).includes(Number(annotated.sourcePage.oneBased)),
       ).length,
+      roundsCarryingOriginalQuestionText: requestSourceRounds.length,
       quotes: quotes.map((quote) => ({ pageIndex: quote?.pageIndex ?? null, quote: quote.quote })),
       sourcePageOneBased: annotated.sourcePage.oneBased,
       sourcePageTextLength: expectedPageText?.length ?? 0,
       pagesAvailable: [...pageTexts.keys()].sort((a, b) => a - b),
+      sourceTextSource: "original PDF via PyMuPDF",
       expectedPrompt: annotated.originalFileSays,
       actualPrompt: promptAfter,
     };
@@ -1717,18 +1765,28 @@ async function main() {
   if (adoptedInputs.length === 0) {
     feedbackProblems.push("修复请求没有声明 adopted_cloud_vs_local_snapshot，无法证明云端正式稿是当前稿");
   }
-  const expectedPromptRuling = `response_group:${derived.fix.responseGroupId}:prompt=current_is_correct`;
-  const promptRuling = rounds.find(
-    (round) => round.tool === "record_ruling" && (round.rulings ?? []).includes(expectedPromptRuling),
+  const group2Inputs = adoptedInputs.filter((round) => (round.differenceTargets ?? []).some((difference) =>
+    difference?.targetType === "task_group"
+      && difference?.targetId === "group-2"
+      && difference?.field === "task_group",
+  ));
+  if (group2Inputs.length === 0) {
+    feedbackProblems.push("修复请求没有把 group-2 的 instruction_stem_overlap 真实反馈带给模型");
+  }
+  const expectedGroup2Ruling = "task_group:group-2:task_group=current_is_correct";
+  const group2Ruling = rounds.find(
+    (round) => round.tool === "record_ruling" && (round.rulings ?? []).includes(expectedGroup2Ruling),
   );
-  if (!promptRuling) {
-    feedbackProblems.push("没有为原文支持的云端正式题面记录 current_is_correct 裁定");
-  } else if (!(promptRuling.evidence ?? []).some((entry) => {
+  if (!group2Ruling) {
+    feedbackProblems.push("模型没有按 group-2 的真实复核反馈记录题组级 current_is_correct 裁定");
+  } else if (!(group2Ruling.evidence ?? []).some((entry) => {
     const quote = String(entry.quote ?? "");
-    return Number(entry.pageIndex) === Number(derived.fix.sourcePageOneBased)
-      && quote.includes(`${derived.fix.questionNumber} ${derived.fix.after}`);
+    const originalPage = pdfPageTexts.get(Number(entry.pageIndex)) ?? "";
+    return Number(entry.pageIndex) === 3
+      && sourceTextContains(quote, "NOT GIVEN if it is impossible to say")
+      && sourceTextContains(originalPage, quote);
   })) {
-    feedbackProblems.push("云端正式题面的裁定没有带上原文题号行的逐字引文");
+    feedbackProblems.push("group-2 题组级裁定没有带上经原 PDF 第 3 页核验的说明引文");
   }
   if (contextMode === "packets") {
     const unknown = rounds
@@ -1764,11 +1822,12 @@ async function main() {
       contextMode,
       rounds: rounds.map((round) => round.tool),
       baseVersions: rounds.filter((round) => round.tool === "apply_edits").map((round) => round.baseVersion ?? null),
-      promptRuling: expectedPromptRuling,
-      rulingEvidence: promptRuling?.evidence ?? [],
+      group2Ruling: expectedGroup2Ruling,
+      group2FeedbackRounds: group2Inputs.map((round) => ({ stamp: round.stamp, packetId: round.packetId })),
+      rulingEvidence: group2Ruling?.evidence ?? [],
       comparisonMode: adoptedInputs[0]?.comparisonMode,
       draftEditVersions: roundInputs.map((round) => round.draftEditVersion ?? null),
-      behaviorChange: "The adopted candidate already contains the source-backed prompt; repair records the evidence-backed ruling instead of re-applying it.",
+      behaviorChange: "The model adjudicates group-2's real instruction_stem_overlap feedback using source text from the original PDF.",
     });
   } else {
     record("model-adjudicated-adopted-cloud-from-real-feedback", SCENARIO_STATUS.FAILED, { contextMode, problems: feedbackProblems });
@@ -1814,6 +1873,12 @@ async function main() {
   const packetProblems = [];
   if (packetCalls.length === 0) {
     packetProblems.push("没有任何修复调用带上包 id：包模式没有真的生效（或可观测性字段没落盘）");
+  }
+  if (![27, 28].includes(Number(derived.claim?.questionNumber))) {
+    packetProblems.push(`缺页场景应使用 q27/q28 的未解析答案，实际 q${derived.claim?.questionNumber ?? "?"}`);
+  }
+  if (JSON.stringify(derived.claim?.searchPages ?? []) !== JSON.stringify([1])) {
+    packetProblems.push(`q27/q28 的 passage 证据页应为第 1 页，实际 ${JSON.stringify(derived.claim?.searchPages ?? [])}`);
   }
   if (!answerClaimL1.ok) {
     packetProblems.push(
