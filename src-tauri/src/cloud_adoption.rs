@@ -448,7 +448,7 @@ fn recheck_task_type(group: &Value) -> TypeVerdict {
         .to_string();
     let text = group_instruction_text(group);
     let Some(detected) =
-        crate::ielts_grammar::instruction_signature::classify_instruction_task_type(&text)
+        crate::ielts_grammar::classify_instruction_task_type(&text)
     else {
         return TypeVerdict::Accept;
     };
@@ -1962,6 +1962,7 @@ mod tests {
             coverage: 1.0,
             coverage_ok: true,
             order_violations: 0,
+            order_in_order_ratio: 1.0,
             monotonic: true,
             group_aligned: groups.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
             group_reasons: BTreeMap::new(),

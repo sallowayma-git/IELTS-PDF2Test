@@ -30,6 +30,9 @@ pub(crate) struct AlignmentConfig {
     pub length_ratio_max: f64,
     /// 显著源区域被覆盖的最低比例。
     pub coverage_min: f64,
+    /// 命中位置按阅读顺序递增的最低比例（最长非降子序列 / 命中总数）。少量短句歧义命中
+    /// 造成的小幅逆序可容忍，只有大面积错位才判非单调。
+    pub order_pass_ratio: f64,
     /// 抽查种子（由 sourceSha256 + batchId 派生，保证可复现）。
     pub sample_seed: u64,
     /// 每个节点抽查的句子上限。
@@ -45,6 +48,7 @@ impl Default for AlignmentConfig {
             length_ratio_min: 0.5,
             length_ratio_max: 1.5,
             coverage_min: 0.8,
+            order_pass_ratio: 0.95,
             sample_seed: 0,
             sample_per_node: 3,
         }
@@ -416,23 +420,27 @@ struct SentenceHit {
     end: usize,
 }
 
-/// 在原卷 key 里为一句云端文本定位：精确子串优先（相似度 1.0），否则全局滑窗取最高相似度。
-fn match_sentence(model: &SourceModel, sentence: &[char]) -> SentenceHit {
-    let hay = &model.key;
-    if sentence.is_empty() {
-        return SentenceHit { similarity: 1.0, start: 0, end: 0 };
+/// 原卷 key 里 `needle` 是否至少出现两次（重复句不参与单调判定）。
+fn occurs_at_least_twice(hay: &[char], needle: &[char]) -> bool {
+    match find_sub(hay, needle, 0) {
+        Some(first) => find_sub(hay, needle, first + 1).is_some(),
+        None => false,
     }
-    if hay.is_empty() {
-        return SentenceHit { similarity: 0.0, start: 0, end: 0 };
-    }
-    if let Some(pos) = find_sub(hay, sentence, 0) {
-        return SentenceHit { similarity: 1.0, start: pos, end: pos + sentence.len() };
-    }
+}
+
+/// 在 `[from..]` 区域内滑窗找与 `sentence` 最相似的一段（预筛 + 编辑距离细化）。
+fn best_fuzzy(hay: &[char], sentence: &[char], from: usize) -> SentenceHit {
     let win = sentence.len().min(hay.len()).max(1);
+    if from + win > hay.len() {
+        let start = hay.len().saturating_sub(win);
+        let end = hay.len();
+        let ratio = levenshtein_ratio(sentence, &hay[start..end]);
+        return SentenceHit { similarity: ratio, start, end };
+    }
     let step = (win / 8).max(1);
-    let mut best_start = 0usize;
+    let mut best_start = from;
     let mut best_prefilter = -1.0f64;
-    let mut i = 0usize;
+    let mut i = from;
     while i + win <= hay.len() {
         let d = bigram_dice(sentence, &hay[i..i + win]);
         if d > best_prefilter {
@@ -441,10 +449,13 @@ fn match_sentence(model: &SourceModel, sentence: &[char]) -> SentenceHit {
         }
         i += step;
     }
-    // 在预筛最优点邻域内用编辑距离细化，兼顾长度偏移。
-    let lo = best_start.saturating_sub(step);
+    let lo = best_start.saturating_sub(step).max(from);
     let hi = (best_start + step).min(hay.len().saturating_sub(win));
-    let mut best = SentenceHit { similarity: 0.0, start: best_start, end: best_start + win };
+    let mut best = SentenceHit {
+        similarity: 0.0,
+        start: best_start,
+        end: (best_start + win).min(hay.len()),
+    };
     for start in lo..=hi {
         let end = (start + win).min(hay.len());
         let ratio = levenshtein_ratio(sentence, &hay[start..end]);
@@ -453,6 +464,35 @@ fn match_sentence(model: &SourceModel, sentence: &[char]) -> SentenceHit {
         }
     }
     best
+}
+
+/// 在原卷 key 里为一句云端文本定位。顺序感知：先在命中游标 `from` 之后的窗口里找
+/// （精确优先、再模糊），够好就用以保持阅读顺序；否则回退全局搜索。
+fn match_sentence(model: &SourceModel, sentence: &[char], from: usize, accept: f64) -> SentenceHit {
+    let hay = &model.key;
+    if sentence.is_empty() {
+        return SentenceHit { similarity: 1.0, start: 0, end: 0 };
+    }
+    if hay.is_empty() {
+        return SentenceHit { similarity: 0.0, start: 0, end: 0 };
+    }
+    let from = from.min(hay.len());
+    if let Some(pos) = find_sub(hay, sentence, from) {
+        return SentenceHit { similarity: 1.0, start: pos, end: pos + sentence.len() };
+    }
+    let forward = best_fuzzy(hay, sentence, from);
+    if forward.similarity >= accept {
+        return forward;
+    }
+    if let Some(pos) = find_sub(hay, sentence, 0) {
+        return SentenceHit { similarity: 1.0, start: pos, end: pos + sentence.len() };
+    }
+    let global = best_fuzzy(hay, sentence, 0);
+    if global.similarity >= forward.similarity {
+        global
+    } else {
+        forward
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -634,6 +674,7 @@ fn align_node(
     config: &AlignmentConfig,
     covered: &mut BTreeSet<usize>,
     matched_positions: &mut Vec<usize>,
+    cursor: &mut usize,
 ) -> (NodeAlignment, Vec<SentenceEval>) {
     let readable = normalize_readable(&input.text);
     let sentences = split_sentences(&readable);
@@ -660,7 +701,7 @@ fn align_node(
             });
             continue;
         }
-        let hit = match_sentence(model, &key);
+        let hit = match_sentence(model, &key, *cursor, config.sentence_threshold);
         non_trivial += 1;
         sim_sum += hit.similarity;
         min_sim = min_sim.min(hit.similarity);
@@ -670,7 +711,18 @@ fn align_node(
         let mut sentence_ids = Vec::new();
         if hit.similarity >= config.sentence_threshold {
             matched += 1;
-            matched_positions.push(hit.start);
+            // 短句（<5 词）与原卷中重复出现的句子不参与单调判定：它们的命中位置有歧义，
+            // 会造成假逆序。词数按 ≥2 字符的词元统计——字形逐字空格（"n a m e"）不能把
+            // "candidate name" 这类短标签撑成长句。命中率与覆盖率仍照常计入。
+            let word_count = sentence
+                .split_whitespace()
+                .filter(|word| word.chars().count() >= 2)
+                .count();
+            if word_count >= 5 && !occurs_at_least_twice(&model.key, &key) {
+                matched_positions.push(hit.start);
+            }
+            // 命中游标只前进不后退，供顺序感知匹配定位下一句。
+            *cursor = (*cursor).max(hit.end);
             for index in units_overlapping(model, hit.start, hit.end) {
                 covered.insert(index);
                 let unit = &model.units[index];
@@ -747,8 +799,10 @@ pub(crate) struct AlignmentReport {
     /// 显著源区域被命中的比例。
     pub coverage: f64,
     pub coverage_ok: bool,
-    /// 命中位置在阅读顺序上的逆序次数（0 表示单调）。
+    /// 命中位置在阅读顺序上的逆序次数（相邻大幅回跳，仅供诊断）。
     pub order_violations: usize,
+    /// 命中位置按阅读顺序递增的比例（最长非降子序列 / 命中总数）。
+    pub order_in_order_ratio: f64,
     pub monotonic: bool,
     /// 每个题组是否所有题目内容节点都对齐，及不合格原因。
     pub group_aligned: BTreeMap<String, bool>,
@@ -792,6 +846,22 @@ fn sample_indices(seed: u64, node_id: &str, sentence_count: usize, take: usize) 
 /// 命中位置允许的回溯容差（字符）：同区域内小幅回跳不算乱序。
 const ORDER_SLACK: usize = 100;
 
+/// 最长非降子序列长度（O(n log n)）：命中位置里有多少能构成阅读顺序递增的一条链。
+/// 单个离群命中不会连累整条链，据此判断错位是零星还是大面积。
+fn longest_non_decreasing(positions: &[usize]) -> usize {
+    let mut tails: Vec<usize> = Vec::new();
+    for &value in positions {
+        // 上界查找：允许相等（非降），把 value 放到第一个 > value 的位置。
+        let idx = tails.partition_point(|&tail| tail <= value);
+        if idx == tails.len() {
+            tails.push(value);
+        } else {
+            tails[idx] = value;
+        }
+    }
+    tails.len()
+}
+
 /// 对整个云端候选做对齐校验。原卷无文本层时返回 `NoTextLayer`。
 pub(crate) fn assess_alignment(
     document_ir: &Value,
@@ -811,11 +881,12 @@ pub(crate) fn assess_alignment(
     let mut group_aligned: BTreeMap<String, bool> = BTreeMap::new();
     let mut group_reasons: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut samples = Vec::new();
+    let mut cursor = 0usize;
 
     for input in &inputs {
         cloud_len += normalize_readable(&input.text).chars().count();
         let (alignment, evals) =
-            align_node(&model, input, config, &mut covered, &mut matched_positions);
+            align_node(&model, input, config, &mut covered, &mut matched_positions, &mut cursor);
 
         if input.kind == NodeKind::Passage {
             for eval in &evals {
@@ -889,6 +960,11 @@ pub(crate) fn assess_alignment(
         .windows(2)
         .filter(|pair| pair[1] + ORDER_SLACK < pair[0])
         .count();
+    let order_in_order_ratio = if matched_positions.len() < 2 {
+        1.0
+    } else {
+        longest_non_decreasing(&matched_positions) as f64 / matched_positions.len() as f64
+    };
     let passage_pass = passage_total == 0
         || (passage_matched as f64 / passage_total as f64) >= config.passage_pass_ratio;
 
@@ -903,7 +979,8 @@ pub(crate) fn assess_alignment(
         coverage,
         coverage_ok: coverage >= config.coverage_min,
         order_violations,
-        monotonic: order_violations == 0,
+        order_in_order_ratio,
+        monotonic: order_in_order_ratio >= config.order_pass_ratio,
         group_aligned,
         group_reasons,
         samples,
@@ -955,6 +1032,7 @@ impl AlignmentReport {
             "coverage": self.coverage,
             "coverageOk": self.coverage_ok,
             "orderViolations": self.order_violations,
+            "orderInOrderRatio": self.order_in_order_ratio,
             "monotonic": self.monotonic,
             "groupAligned": serde_json::to_value(&self.group_aligned).unwrap_or(Value::Null),
             "groupReasons": serde_json::to_value(&self.group_reasons).unwrap_or(Value::Null),
@@ -1312,7 +1390,7 @@ mod tests {
 
         let mut assessed = 0usize;
         let mut table = String::from(
-            "\n私有卷 理想候选全量对齐通过率表\nfixture | 文本层 | 原文命中 | 覆盖率 | 长度比 | 单调 | passage节点 | 锚点数\n",
+            "\n私有卷 理想候选全量对齐通过率表\nfixture | 文本层 | 原文命中 | 覆盖率 | 长度比 | 单调(顺序比) | passage节点 | 锚点数\n",
         );
         let mut failures = Vec::new();
         for (index, fixture) in fixtures.iter().enumerate() {
@@ -1332,20 +1410,22 @@ mod tests {
                     let anchor_total: usize = report.nodes.iter().map(|node| node.anchors.len()).sum();
                     let passage_nodes = report.nodes.iter().filter(|n| n.kind_label == "passage").count();
                     table.push_str(&format!(
-                        "{id} | 有 | {}/{} | {:.2} | {:.2} | {} | {} | {}\n",
+                        "{id} | 有 | {}/{} | {:.2} | {:.2} | {}({:.2}) | {} | {}\n",
                         report.passage_sentence_matched,
                         report.passage_sentence_total,
                         report.coverage,
                         report.length_ratio,
                         if report.monotonic { "是" } else { "否" },
+                        report.order_in_order_ratio,
                         passage_nodes,
                         anchor_total,
                     ));
                     if !(report.passage_pass && report.coverage_ok && report.monotonic && report.length_ratio_ok) {
                         failures.push(format!(
-                            "{id}: passage_pass={} coverage_ok={}({:.2}) monotonic={} length_ratio_ok={}({:.2})",
+                            "{id}: passage_pass={} coverage_ok={}({:.2}) monotonic={}(顺序比 {:.2}, 逆序 {}) length_ratio_ok={}({:.2})",
                             report.passage_pass, report.coverage_ok, report.coverage,
-                            report.monotonic, report.length_ratio_ok, report.length_ratio
+                            report.monotonic, report.order_in_order_ratio, report.order_violations,
+                            report.length_ratio_ok, report.length_ratio
                         ));
                     }
                 }
