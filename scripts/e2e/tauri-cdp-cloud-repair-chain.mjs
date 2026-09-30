@@ -65,6 +65,7 @@ import {
 import { computeScenarioVerdict, SCENARIO_STATUS } from "./lib/chain-verdict.mjs";
 import { collectTextNodes, deriveAnswerRepairScenario, deriveRepairScenario, diagnoseAnswerClaimL1, loadRepairGolden, textOfNodes } from "./lib/cloud-repair-scenario.mjs";
 import { loadPublishedPackageWithRealProviderAsync } from "./lib/student-real-provider.mjs";
+import { loadTestInferredAnswers, sanitizeCleanCandidate } from "./lib/clean-authoring-candidate.mjs";
 
 const exePath = path.join(repoRoot, "src-tauri", "target", "debug", "ielts-author-studio.exe");
 const keep = process.argv.includes("--keep");
@@ -419,64 +420,6 @@ function originalPdfPageTexts(pdfPath) {
   const python = process.env.PDF2TEST_PDF_TEXT_PYTHON ?? "python";
   const pages = JSON.parse(execFileSync(python, ["-c", script, pdfPath], { encoding: "utf8" }));
   return new Map(pages.map((text, index) => [index + 1, String(text ?? "")]));
-}
-
-function sanitizeDerivedCandidate(seed, localDraft, golden, pdfPages) {
-  const candidate = JSON.parse(JSON.stringify(seed));
-  const group2 = candidate.taskGroups.find((group) => group.taskId === "group-2");
-  const instructionNode = collectTextNodes(group2?.instructions ?? [])[0];
-  if (!instructionNode) throw new Error("clean candidate 找不到 group-2 的说明文本");
-  const overlapPhrase = "NOT GIVEN if it is impossible to say what the writer thinks about this";
-  const cleanPhrase = "NOT GIVEN if the passage does not disclose the writer's view";
-  const instructionBefore = instructionNode.text;
-  // Preserve the response rule while avoiding the coarse shared-region hit.
-  instructionNode.text = instructionBefore.replace(overlapPhrase, cleanPhrase);
-  if (instructionNode.text === instructionBefore) throw new Error("clean candidate 找不到 group-2 overlap 说明片段");
-
-  const pageOne = String(pdfPages.get(1) ?? "").normalize("NFKC").replace(/\s+/gu, " ").trim();
-  const paragraphStart = pageOne.indexOf("Ever since its elevation");
-  const paragraphEndToken = "intrinsic interest of the topic.";
-  const paragraphEnd = pageOne.indexOf(paragraphEndToken, paragraphStart);
-  if (paragraphStart < 0 || paragraphEnd < 0) throw new Error("原 PDF 第 1 页未能定位 passage 对齐段落");
-  const originalParagraph = pageOne.slice(paragraphStart, paragraphEnd + paragraphEndToken.length);
-  const passageNode = collectTextNodes(candidate.passage?.content ?? [])
-    .find((node) => node.id === "passage-paragraph-2-text");
-  if (!passageNode) throw new Error("clean candidate 找不到 passage-paragraph-2-text");
-  const passageBefore = passageNode.text;
-  passageNode.text = originalParagraph;
-
-  const missingAnswerTruth = [];
-  const answerTruthUsed = [];
-  const answerTruth = golden.passageAnswerTruth ?? {};
-  for (const slotId of ["q27", "q28"]) {
-    const entry = answerTruth[slotId];
-    const label = typeof entry?.answer === "string" ? entry.answer.trim() : "";
-    const evidencePage = Number(entry?.evidencePageOneBased);
-    const evidenceQuote = String(entry?.evidenceQuote ?? "");
-    if (label && Number.isInteger(evidencePage) && evidencePage > 0 && evidenceQuote) {
-      if (!sourceTextContains(pdfPages.get(evidencePage), evidenceQuote)) {
-        throw new Error(`${slotId} 夹具答案引文在原 PDF 第 ${evidencePage} 页找不到`);
-      }
-      const group = candidate.taskGroups.find((taskGroup) => (taskGroup.responseGroups ?? [])
-        .some((response) => (response.slotIds ?? []).includes(slotId)));
-      const optionExists = (group?.optionBank?.options ?? []).some((option) => option?.label === label);
-      if (!optionExists) throw new Error(`${slotId} 夹具答案 ${label} 不在题组的原卷选项库中`);
-      candidate.answerKey[slotId] = { kind: "option", labels: [label], assignment: "per_slot" };
-      answerTruthUsed.push({ slotId, answer: label, evidencePageOneBased: evidencePage, evidenceQuote });
-    } else {
-      candidate.answerKey[slotId] = JSON.parse(JSON.stringify(localDraft.answerKey?.[slotId] ?? { kind: "unresolved" }));
-      missingAnswerTruth.push(slotId);
-    }
-  }
-
-  return {
-    candidate,
-    group2InstructionChanged: instructionNode.text !== instructionBefore,
-    passageTextChanged: passageNode.text !== passageBefore,
-    answerTruthUsed,
-    missingAnswerTruth,
-    answerTruthSource: "golden.passageAnswerTruth",
-  };
 }
 
 function llmTraces(jobId, sourceTextChecks = []) {
@@ -2635,7 +2578,7 @@ async function main() {
   const primaryItemId = itemId;
   const cleanCandidatePath = path.join(scenarioDir, "authoring-candidate-clean.json");
   const cleanPlanPath = path.join(scenarioDir, "repair-plan-clean.json");
-  const cleanSanitization = sanitizeDerivedCandidate(cleanCandidateSeed, prepassDraft.ds, golden, pdfPageTexts);
+  const cleanSanitization = sanitizeCleanCandidate(cleanCandidateSeed, loadTestInferredAnswers(repoRoot), pdfPageTexts);
   fs.writeFileSync(cleanCandidatePath, JSON.stringify(cleanSanitization.candidate, null, 2));
   fs.writeFileSync(cleanPlanPath, JSON.stringify(derived.plan, null, 2));
 
@@ -2711,7 +2654,7 @@ async function main() {
   }
   if (conflictTodos.length > 0) cleanProblems.push(`clean candidate 仍有 ${conflictTodos.length} 条冲突类待办`);
   if (cleanSanitization.missingAnswerTruth.length > 0) {
-    cleanProblems.push(`golden 没有 q27/q28 答案真值：${cleanSanitization.missingAnswerTruth.join("、")}`);
+    cleanProblems.push(`测试推断夹具没有完整的 q27–q40 答案：${cleanSanitization.missingAnswerTruth.join("、")}`);
   }
   report.observed.cleanCandidatePhase = {
     itemId: cleanItemId,
@@ -2719,8 +2662,12 @@ async function main() {
     plan: cleanPlanPath,
     sanitization: {
       group2InstructionChanged: cleanSanitization.group2InstructionChanged,
+      group2StructureRestored: cleanSanitization.group2StructureRestored,
+      restoredQuestions: cleanSanitization.restoredQuestions,
       passageTextChanged: cleanSanitization.passageTextChanged,
       answerTruthSource: cleanSanitization.answerTruthSource,
+      answerTruthKind: cleanSanitization.answerTruthKind,
+      hasOfficialAnswerPage: cleanSanitization.hasOfficialAnswerPage,
       answerTruthUsed: cleanSanitization.answerTruthUsed,
       missingAnswerTruth: cleanSanitization.missingAnswerTruth,
     },
