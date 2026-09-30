@@ -843,6 +843,14 @@ async function runIneligibleCandidateFallback(derived) {
 
     const after = dumpDb(path.join(runDir, "db-ineligible-fallback-after.json"), "IneligibleFallbackAfter");
     const adoption = finalRepair.candidateAdoption ?? null;
+    const processingJob = (after?.processingJobs ?? []).find((job) => job.id === fallbackItemId) ?? null;
+    const editLockActive = Boolean(
+      processingJob
+      && ["queued", "running", "preparing_source", "local_recognition", "cloud_recognition", "reconciling"]
+        .includes(processingJob.stage)
+      && (["queued", "running"].includes(processingJob.cloud_status)
+        || processingJob.stage === "reconciling"),
+    );
     const finalPrompt = promptTextOf(after?.item?.canonical, derived.fix.responseGroupId);
     const journal = Array.isArray(after?.journal) ? after.journal : [];
     const adoptionWrites = journal.filter((entry) => entry.edit_origin === "cloud_candidate_adoption");
@@ -853,6 +861,10 @@ async function runIneligibleCandidateFallback(derived) {
     if (!String(adoption?.reason ?? "").includes("未完整归一化成功")) {
       problems.push(`拒绝原因没有记录候选覆盖不完整：${String(adoption?.reason ?? "")}`);
     }
+    if (!processingJob || processingJob.stage !== "ready_for_review") {
+      problems.push(`修复后 processing job 没有推进到可编辑终态：${JSON.stringify(processingJob)}`);
+    }
+    if (editLockActive) problems.push("修复终态后 processing job 仍锁定编辑");
     if (adoptionWrites.length > 0) problems.push("不合格候选仍写入了云端采纳修订");
     if (repairWrites.length === 0) problems.push("回退后没有以云端校核事务修复本地正式稿");
     if (finalPrompt !== derived.fix.after) {
@@ -866,6 +878,8 @@ async function runIneligibleCandidateFallback(derived) {
         itemId: fallbackItemId,
         localPrompt,
         finalPrompt,
+        processingJob,
+        editLockActive,
         adoption,
         candidateAdoptionJournalRows: adoptionWrites.length,
         cloudRepairJournalRows: repairWrites.length,

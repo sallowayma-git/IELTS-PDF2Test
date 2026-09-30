@@ -665,6 +665,99 @@ fn repair_loop_stops_on_repeated_identical_calls() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// CAS 版本号变化不能把同一条无效编辑伪装成进展。
+#[test]
+fn packet_loop_stops_when_the_same_edit_reappears_after_replanning() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+
+    let response_group = canonical["taskGroups"]
+        .as_array()
+        .and_then(|groups| {
+            groups
+                .iter()
+                .find(|group| group["taskId"] == "early-approaches-q14-15")
+        })
+        .and_then(|group| group["responseGroups"].as_array())
+        .and_then(|groups| groups.first())
+        .cloned()
+        .expect("golden 中必须有 q14/q15 的 response group");
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 20);
+    let mut calls = 0u32;
+    let report = run_packets(&request, |context: &Value, _observations: &[Value]| {
+        calls += 1;
+        Ok(json!({
+            "callId": format!("repeat-{calls}"),
+            "tool": "apply_edits",
+            "arguments": {
+                "baseVersion": context.pointer("/draftSlice/editVersion"),
+                "commands": [{
+                    "op": "setResponseGroup",
+                    "taskId": "early-approaches-q14-15",
+                    "responseGroup": response_group.clone(),
+                }],
+                "evidence": [{
+                    "sourceFileId": "early-approaches-pdf",
+                    "pageIndex": 1,
+                    "quote": "Early approaches to organisational design."
+                }]
+            }
+        }))
+    })
+    .expect("包模式必须返回终态报告");
+
+    assert!(
+        report.applied_count > 0,
+        "测试前提必须是首条结构编辑已实际落库：{:#?}",
+        report.observations
+    );
+    assert!(
+        calls <= 2,
+        "baseVersion 变化不应让重复 responseGroup 编辑继续循环，实际调用 {calls} 次"
+    );
+    assert_ne!(report.status, REPAIR_STATUS_RUNNING);
+    assert!(
+        report
+            .packets
+            .iter()
+            .any(|packet| packet["status"] == "no_progress"),
+        "重复编辑应以 no_progress 收摊：{:#?}",
+        report.packets
+    );
+    std::fs::remove_dir_all(&root).expect("清理临时目录");
+}
+
+#[test]
+fn packet_loop_stops_at_the_per_packet_round_limit() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 20);
+    let mut calls = 0u32;
+    let report = run_packets(&request, |_packet: &Value, _observations: &[Value]| {
+        calls += 1;
+        Ok(json!({
+            "callId": format!("source-{calls}"),
+            "tool": "read_source",
+            "arguments": {"pageIndex": calls}
+        }))
+    })
+    .expect("达到上限时也必须返回终态报告");
+
+    assert_eq!(calls, PACKET_MAX_ROUNDS);
+    assert_eq!(report.rounds, PACKET_MAX_ROUNDS);
+    assert_eq!(report.status, REPAIR_STATUS_BUDGET_EXHAUSTED);
+    assert_eq!(report.packets.len(), 1);
+    assert_eq!(report.packets[0]["status"], "rounds_exhausted");
+    std::fs::remove_dir_all(&root).expect("清理临时目录");
+}
+
 /// 没有 job 时 `read_source` 如实失败，绝不编造原文证据。
 #[test]
 fn read_source_evidence_fails_instead_of_fabricating() {
@@ -2714,6 +2807,12 @@ fn every_exit_path_returns_a_terminal_report_and_never_leaves_running() {
     assert_eq!(report.status, REPAIR_STATUS_UNAVAILABLE);
     // 开工确实写了 running —— 这正是「必须有人写终态」的原因。
     assert_eq!(seen.borrow()[0].status, REPAIR_STATUS_RUNNING);
+    let packet_report = run_packets(&request, |_packet: &Value, _observations: &[Value]| {
+        Err("llm_http_500:packet".to_string())
+    })
+    .expect("包模式中的调用错误也必须转成终态报告");
+    assert_eq!(packet_report.status, REPAIR_STATUS_UNAVAILABLE);
+    assert_eq!(packet_report.last_error.as_deref(), Some("llm_http_500:packet"));
     // 循环之外的失败（join 失败 / 开工前丢 lease）走兜底摘要，同样必须是终态。
     let fallback = unavailable_summary(&root, ITEM_ID, BATCH_ID, "join failed");
     assert_eq!(fallback["status"], REPAIR_STATUS_UNAVAILABLE);

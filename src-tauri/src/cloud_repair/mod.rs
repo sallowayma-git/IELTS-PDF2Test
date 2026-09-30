@@ -1455,6 +1455,23 @@ fn parse_tool_call(raw: &Value) -> Result<CloudRepairToolCallV1, String> {
     Ok(call)
 }
 
+fn packet_tool_call_fingerprint(
+    packet_id: &str,
+    call: &CloudRepairToolCallV1,
+    escalation_level: u32,
+) -> String {
+    let mut arguments = call.arguments.clone();
+    // CAS tokens change after a write even when the proposed content has made no progress.
+    if call.tool == "apply_edits" {
+        if let Some(object) = arguments.as_object_mut() {
+            object.remove("baseVersion");
+        }
+    }
+    let arguments = serde_json::to_string(&arguments)
+        .expect("JSON tool arguments must serialize for repeat detection");
+    format!("{packet_id}:{}:{escalation_level}:{arguments}", call.tool)
+}
+
 /// 包模式下执行一次工具调用需要的东西。
 ///
 /// 抓取类工具全部只读、不接受路径、只作用于本 job，并**共用同一个包内预算**
@@ -3328,6 +3345,7 @@ where
     let mut incomplete = false;
     // 已经收工的包（按**稳定 id**）。重切之后按 id 过滤，已做完的不会被重新排队。
     let mut done_packets: BTreeSet<String> = BTreeSet::new();
+    let mut repeats: BTreeMap<String, u32> = BTreeMap::new();
     // 以初始包数固定总上限，重切不能增加剩余请求额度，否则编辑循环会越跑越长。
     let global_round_cap = PACKET_MAX_ROUNDS * (queue.len().max(1) as u32);
 
@@ -3407,7 +3425,6 @@ where
         let mut packet_insufficient = 0usize;
         let mut packet_unverified = 0usize;
         let mut packet_status = "rounds_exhausted";
-        let mut repeats: BTreeMap<String, u32> = BTreeMap::new();
         let mut escalated = false;
         // 该收摊了：记录完本包诊断就退出外层循环（取消 / 超时 / 全局预算 / 模型 finish /
         // 网关不可用）。用标志而不是 `break 'packets`，是为了**不让这一包的诊断丢掉**。
@@ -3426,13 +3443,13 @@ where
                 stop_all = true;
                 break;
             }
+            if packet_rounds >= PACKET_MAX_ROUNDS {
+                break;
+            }
             if rounds >= global_round_cap {
                 status = REPAIR_STATUS_BUDGET_EXHAUSTED;
                 packet_status = "global_round_budget";
                 stop_all = true;
-                break;
-            }
-            if packet_rounds >= PACKET_MAX_ROUNDS {
                 break;
             }
             packet_rounds += 1;
@@ -3487,13 +3504,8 @@ where
             // 已经给它加了材料（L2 整页图 / L3 整份原文）——那不是「原地打转」，而是升级
             // 阶梯在推进。若不带上级别，L1 的第三次重复就会被判成 `no_progress` 而**掐断
             // 阶梯**，本包永远到不了 L4，最后只好谎报「预算耗尽」。
-            let fingerprint = format!(
-                "{}:{}:{}",
-                call.tool,
-                level,
-                serde_json::to_string(&call.arguments).unwrap_or_default()
-            );
-            let counter = repeats.entry(fingerprint).or_insert(0);
+            let fingerprint = packet_tool_call_fingerprint(&packet_id, &call, level);
+            let counter = repeats.entry(fingerprint.clone()).or_insert(0);
             *counter += 1;
             if *counter > REPEAT_LIMIT {
                 packet_observations.push(
@@ -3507,6 +3519,7 @@ where
                 .unwrap_or(Value::Null),
             );
                 packet_status = "no_progress";
+                done_packets.insert(packet_id.clone());
                 break;
             }
 
@@ -3524,6 +3537,10 @@ where
                 };
                 execute_tool(request, &call, rounds, &packet, Some(&mut tools))
             };
+            // A stale version was never applied; allow the same edit with a refreshed CAS token.
+            if result.errors.iter().any(|error| error.contains("EDIT_VERSION_CONFLICT")) {
+                repeats.remove(&fingerprint);
+            }
             // P9：没有文本层时的「证据未核验」如实累计——进逐包诊断与整次摘要。
             packet_unverified += evidence_unverifiable_count(&result.result);
             unverified_evidence += evidence_unverifiable_count(&result.result);
@@ -3687,6 +3704,9 @@ where
             "rounds_exhausted" | "no_progress" | "global_round_budget" | "deadline"
         ) {
             incomplete = true;
+        }
+        if matches!(packet_status, "rounds_exhausted" | "no_progress" | "context_insufficient") {
+            done_packets.insert(packet_id.clone());
         }
         packet_reports.push(json!({
             "packetId": packet_id,
