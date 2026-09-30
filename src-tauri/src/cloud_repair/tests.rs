@@ -4056,6 +4056,62 @@ fn seed_adopted_local_snapshot(root: &Path, local_authoring: &Value) {
 }
 
 #[test]
+fn empty_adoption_review_list_does_not_hide_blocking_quality() {
+    let root = temp_root();
+    let mut cloud = golden_authoring();
+    cloud["quality"]["issues"] = json!([{
+        "issueId": "bad-q14", "code": "ANSWER_KEY_MISSING_SLOT", "severity": "blocking",
+        "message": "q14 missing answer", "targetType": "slot", "targetId": "q14"
+    }]);
+    seed_item(&root, &cloud);
+    seed_packet_job(&root);
+    seed_adopted_local_snapshot(&root, &cloud);
+    let conn = open_library_connection(&root).expect("open library connection");
+    store::write_batch_repair(&conn, BATCH_ID, &json!({
+        "candidateAdoption": {"adopted": true, "needsCloudReview": []}
+    })).expect("persist empty review list");
+    drop(conn);
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 4);
+    let mut calls = 0;
+    let report = run_packets(&request, |_context: &Value, _observations: &[Value]| {
+        calls += 1;
+        Ok(json!({"callId": "finish", "tool": "finish_packet", "arguments": {}}))
+    }).expect("blocking quality must still reach a terminal report");
+    assert!(calls > 0, "blocking quality must still create a repair packet");
+    assert!(report.remaining_tasks.iter().any(|task| task["blocking"] == true));
+    assert_eq!(report.status, REPAIR_STATUS_NEEDS_ATTENTION);
+    std::fs::remove_dir_all(root).expect("remove temporary fixture");
+}
+
+#[test]
+fn adopted_clean_candidate_has_no_repairs_or_conflict_tasks() {
+    let root = temp_root();
+    let cloud = golden_authoring();
+    let mut local = cloud.clone();
+    local["answerKey"]["q14"] = json!({"kind": "unresolved"});
+    seed_item(&root, &cloud);
+    seed_packet_job(&root);
+    seed_adopted_local_snapshot(&root, &local);
+    let conn = open_library_connection(&root).expect("open library connection");
+    store::write_batch_repair(&conn, BATCH_ID, &json!({
+        "candidateAdoption": {"adopted": true, "needsCloudReview": []}
+    })).expect("persist empty adoption review list");
+    drop(conn);
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 4);
+    let mut calls = 0;
+    let report = run_packets(&request, |_context: &Value, _observations: &[Value]| {
+        calls += 1;
+        Ok(json!({"callId": "finish", "tool": "finish_packet", "arguments": {}}))
+    }).expect("clean adoption must finish");
+    assert_eq!(calls, 0, "an unresolved local snapshot is not a conflict after clean cloud adoption");
+    assert_eq!(report.status, REPAIR_STATUS_COMPLETED);
+    assert!(report.remaining_tasks.is_empty(), "{:?}", report.remaining_tasks);
+    std::fs::remove_dir_all(root).expect("remove temporary fixture");
+}
+
+#[test]
 fn adopted_cloud_keeps_undecidable_non_answer_but_leaves_answer_for_the_user() {
     let root = temp_root();
     let mut cloud = golden_authoring();

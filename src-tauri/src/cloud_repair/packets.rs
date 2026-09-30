@@ -256,6 +256,34 @@ fn owner_of(difference: &Value, canonical: &GroupIndex, candidate: &GroupIndex) 
     Owner::Document
 }
 
+// Adoption has already settled other groups; local differences must not reopen them.
+pub(crate) fn differences_for_review_targets(
+    canonical: &Value,
+    candidate: &Value,
+    differences: Vec<Value>,
+    targets: &[Value],
+) -> Vec<Value> {
+    let canonical_index = GroupIndex::build(canonical);
+    let candidate_index = GroupIndex::build(candidate);
+    let owners: BTreeSet<Owner> = targets.iter().filter_map(|target| {
+        let (kind, id) = if let Some(slot) = target.get("slotId").and_then(Value::as_str) {
+            ("slot", slot)
+        } else if let Some(task) = target.get("taskId").and_then(Value::as_str) {
+            ("task_group", task)
+        } else {
+            return None;
+        };
+        Some(owner_of(&json!({"targetType": kind, "targetId": id}), &canonical_index, &candidate_index))
+    }).collect();
+    differences.into_iter().filter(|difference| {
+        let owner = owner_of(difference, &canonical_index, &candidate_index);
+        owners.iter().any(|wanted| match (&owner, wanted) {
+            (Owner::Groups(actual), Owner::Groups(wanted)) => !actual.is_disjoint(wanted),
+            _ => &owner == wanted,
+        })
+    }).collect()
+}
+
 /// 阻塞质量问题的归属：按 `targetIds` 找题组，找不到就是文档级。
 fn owner_of_issue(issue: &Value, canonical: &GroupIndex, candidate: &GroupIndex) -> Owner {
     let owners: BTreeSet<String> = issue

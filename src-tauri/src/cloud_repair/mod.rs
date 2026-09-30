@@ -997,6 +997,29 @@ fn batch_uses_adopted_cloud_as_canonical(root: &Path, batch_id: &str) -> Command
         == Some(true))
 }
 
+fn reviewed_comparison_differences(
+    root: &Path,
+    batch_id: &str,
+    canonical: &Value,
+    challenger: &Value,
+    adopted: bool,
+) -> CommandResult<Vec<Value>> {
+    let differences = candidate_differences(canonical, challenger);
+    if !adopted {
+        return Ok(differences);
+    }
+    let conn = open_library_connection(root)?;
+    let repair = store::read_batch_repair(&conn, batch_id)?;
+    let targets = repair.as_ref().and_then(|repair| {
+        repair.pointer("/candidateAdoption/needsCloudReview").and_then(Value::as_array)
+    });
+    // Old receipts lack an adoption review plan; keep their conservative comparison behavior.
+    Ok(match targets {
+        Some(targets) => packets::differences_for_review_targets(canonical, challenger, differences, targets),
+        None => differences,
+    })
+}
+
 /// Return the comparison challenger: cloud candidate on the unchanged fallback path, or the
 /// immutable full local authoring snapshot after cloud adoption.
 fn comparison_challenger(
@@ -1040,7 +1063,7 @@ pub(crate) fn build_repair_context(
     let differences = if challenger_authoring.is_null() {
         Vec::new()
     } else {
-        candidate_differences(&canonical, &challenger_authoring)
+        reviewed_comparison_differences(root, batch_id, &canonical, &challenger_authoring, adopted)?
     };
 
     let source_file_id = canonical
@@ -2561,7 +2584,7 @@ fn remaining_tasks(
 
     // ── 2) 尚未裁定的内容差异 ─────────────────────────────────────────────
     if let Some(challenger) = challenger.as_ref() {
-        for difference in candidate_differences(&canonical, challenger) {
+        for difference in reviewed_comparison_differences(root, batch_id, &canonical, challenger, adopted)? {
             let (target_type, target_id, field) = difference_key(&difference);
             let task_id = format!("cloud-diff:{target_type}:{target_id}:{field}");
             match fresh_ruling_for_difference(rulings, &difference) {
