@@ -14,6 +14,7 @@
 use std::fs;
 use std::path::Path;
 
+use rusqlite::OptionalExtension;
 use serde_json::Value;
 
 use super::repository::{get_item, seed_canonical_ds, upsert_item_shell, UpsertItemInput};
@@ -307,6 +308,62 @@ pub(crate) fn ensure_initial_canonical(root: &Path, job_id: &str) -> CommandResu
         .unwrap_or(false))
 }
 
+/// Re-evaluate only obsolete compatibility reports. Compare the exact document
+/// and edit version on write so a concurrent user save can never be overwritten.
+fn refresh_legacy_compatibility_quality(
+    conn: &rusqlite::Connection,
+    root: &Path,
+    job_id: &str,
+) -> CommandResult<bool> {
+    let row:Option<(String,i64)>=conn.query_row("SELECT canonical_ds_json,current_edit_version FROM library_items_v2 WHERE id=?1 AND canonical_ds_json IS NOT NULL",[job_id],|row|Ok((row.get(0)?,row.get(1)?))).optional()
+        .map_err(|error|format!("library_refresh_legacy_quality:{error}"))?;
+    let Some((original_json, version)) = row else {
+        return Ok(false);
+    };
+    let original: Value = serde_json::from_str(&original_json)
+        .map_err(|error| format!("library_refresh_legacy_quality:{error}"))?;
+    let legacy = matches!(
+        original
+            .pointer("/quality/compilerProbes/v1Compatibility/status")
+            .and_then(Value::as_str),
+        Some("passed" | "failed")
+    ) || original
+        .pointer("/quality/hardFailures")
+        .and_then(Value::as_array)
+        .is_some_and(|codes| {
+            codes
+                .iter()
+                .any(|code| code.as_str() == Some("V1_COMPATIBILITY_COMPILER_FAILED"))
+        })
+        || original
+            .pointer("/quality/issues")
+            .and_then(Value::as_array)
+            .is_some_and(|issues| {
+                issues.iter().any(|issue| {
+                    issue.get("code").and_then(Value::as_str)
+                        == Some("V1_COMPATIBILITY_COMPILER_FAILED")
+                })
+            });
+    if !legacy {
+        return Ok(false);
+    }
+    let mut refreshed = original.clone();
+    crate::authoring_v2_commands::refresh_quality_report(root, job_id, &mut refreshed)?;
+    save_refreshed_quality(conn, job_id, version, &original_json, &refreshed)
+}
+
+fn save_refreshed_quality(
+    conn: &rusqlite::Connection,
+    job_id: &str,
+    version: i64,
+    original_json: &str,
+    refreshed: &Value,
+) -> CommandResult<bool> {
+    conn.execute("UPDATE library_items_v2 SET canonical_ds_json=?2 WHERE id=?1 AND current_edit_version=?3 AND canonical_ds_json=?4",
+        rusqlite::params![job_id,refreshed.to_string(),version,original_json])
+        .map(|count|count>0).map_err(|error|format!("library_refresh_legacy_quality:{error}"))
+}
+
 /// 迁移单个 item（按需填充入口：工作区首次访问 / 发布预检）。
 ///
 /// 返回是否**本次填充**了权威稿。已有稿的条目只走存量兼容修复，返回值是该修复是否
@@ -315,7 +372,8 @@ pub(crate) fn migrate_single_item(root: &Path, job_id: &str) -> CommandResult<bo
     let conn = super::repository::open_library_connection(root)?;
     if let Some(existing) = get_item(&conn, job_id)? {
         if existing.has_canonical_ds {
-            return repair_shadow_seed(&conn, root, job_id);
+            let repaired = repair_shadow_seed(&conn, root, job_id)?;
+            return Ok(refresh_legacy_compatibility_quality(&conn, root, job_id)? || repaired);
         }
     }
     drop(conn);
@@ -353,6 +411,42 @@ mod tests {
             )
             .unwrap();
         }
+    }
+
+    #[test]
+    fn old_quality_is_refreshed_once_without_edit_version_or_content_changes() {
+        let root = temp_root();
+        crate::util::ensure_app_dirs(&root).unwrap();
+        seed_job(&root, "job-a", true);
+        ensure_initial_canonical(&root, "job-a").unwrap();
+        let conn = super::super::repository::open_library_connection(&root).unwrap();
+        let (mut ds, version) = get_canonical_ds(&conn, "job-a").unwrap().unwrap();
+        ds["quality"] = serde_json::json!({"compilerProbes":{"v1Compatibility":{"status":"failed"}},"hardFailures":["V1_COMPATIBILITY_COMPILER_FAILED"],"issues":[]});
+        conn.execute(
+            "UPDATE library_items_v2 SET canonical_ds_json=?1 WHERE id='job-a'",
+            [serde_json::to_string_pretty(&ds).unwrap()],
+        )
+        .unwrap();
+        assert!(migrate_single_item(&root, "job-a").unwrap());
+        let (refreshed, next) = get_canonical_ds(&conn, "job-a").unwrap().unwrap();
+        assert_eq!(version, next);
+        assert_eq!(refreshed["exam"], ds["exam"]);
+        assert_eq!(
+            refreshed["quality"]["compilerProbes"]["v1Compatibility"]["status"],
+            "skipped"
+        );
+        assert!(!refreshed["quality"]["hardFailures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "V1_COMPATIBILITY_COMPILER_FAILED"));
+        assert!(!migrate_single_item(&root, "job-a").unwrap());
+        // CAS must decline a refresh prepared before a concurrent user modification.
+        conn.execute("UPDATE library_items_v2 SET current_edit_version=current_edit_version+1, title='human' WHERE id='job-a'",[]).unwrap();
+        assert!(
+            !save_refreshed_quality(&conn, "job-a", version, &refreshed.to_string(), &ds).unwrap()
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

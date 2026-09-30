@@ -732,7 +732,7 @@ function humanProtectionProbe(ds, excludedSlotIds = []) {
   return null;
 }
 
-/** Real-app fallback proof: a normalized but ineligible candidate must not replace local draft. */
+/** Real-app proof: a partial candidate (explicit coverage defect) still enters the editor and repair follows up. */
 async function runIneligibleCandidateFallback(derived) {
   const primaryItemId = itemId;
   let fallbackItemId = null;
@@ -740,9 +740,8 @@ async function runIneligibleCandidateFallback(derived) {
   const candidateFile = path.join(scenarioDir, "authoring-candidate-ineligible.json");
   try {
     const ineligible = JSON.parse(JSON.stringify(derived.candidate));
-    // A failed chunk is an explicit candidate-level coverage defect. It remains structurally
-    // normalizable, but the candidate is partial and therefore ineligible for whole adoption.
-    // Keep authoring content untouched so this isolates the existing local-base repair fallback.
+    // A failed chunk is an explicit candidate-level coverage defect. The candidate stays
+    // structurally normalizable, so it is received like any other and repaired afterwards.
     ineligible.uncoveredQuestionNumbers = [999];
     fs.writeFileSync(candidateFile, JSON.stringify(ineligible, null, 2));
 
@@ -802,24 +801,22 @@ async function runIneligibleCandidateFallback(derived) {
     const journal = Array.isArray(after?.journal) ? after.journal : [];
     const adoptionWrites = journal.filter((entry) => entry.edit_origin === "cloud_candidate_adoption");
     const repairWrites = journal.filter((entry) => entry.edit_origin === "cloud_repair");
-    if (adoption?.adopted !== false || adoption?.status !== "not_adopted") {
-      problems.push(`候选未被明确拒绝采纳：${JSON.stringify(adoption)}`);
-    }
-    if (!String(adoption?.reason ?? "").includes("未完整归一化成功")) {
-      problems.push(`拒绝原因没有记录候选覆盖不完整：${String(adoption?.reason ?? "")}`);
+    // 候选一律先进入编辑器：标记了覆盖缺口的部分候选也不在入口被拒，由修复循环跟进。
+    if (adoption?.adopted !== true) {
+      problems.push(`部分候选没有先进入编辑器：${JSON.stringify(adoption)}`);
     }
     if (!processingJob || processingJob.stage !== "ready_for_review") {
       problems.push(`修复后 processing job 没有推进到可编辑终态：${JSON.stringify(processingJob)}`);
     }
     if (editLockActive) problems.push("修复终态后 processing job 仍锁定编辑");
-    if (adoptionWrites.length > 0) problems.push("不合格候选仍写入了云端采纳修订");
-    if (repairWrites.length === 0) problems.push("回退后没有以云端校核事务修复本地正式稿");
+    if (adoptionWrites.length === 0) problems.push("部分候选没有写入云端采纳修订");
+    if (repairWrites.length === 0) problems.push("采用后没有以云端校核事务修复对不上原卷的题面");
     if (finalPrompt !== derived.fix.after) {
-      problems.push(`本地稿回退修复没有得到原文题面：${JSON.stringify(finalPrompt)}`);
+      problems.push(`采用后的修复没有得到原文题面：${JSON.stringify(finalPrompt)}`);
     }
 
     record(
-      "ineligible-candidate-falls-back-to-local-base",
+      "partial-candidate-enters-editor-then-repaired",
       problems.length === 0 ? SCENARIO_STATUS.PASSED : SCENARIO_STATUS.FAILED,
       {
         itemId: fallbackItemId,
@@ -835,7 +832,7 @@ async function runIneligibleCandidateFallback(derived) {
     );
   } catch (error) {
     problems.push(String(error?.message ?? error));
-    record("ineligible-candidate-falls-back-to-local-base", SCENARIO_STATUS.FAILED, {
+    record("partial-candidate-enters-editor-then-repaired", SCENARIO_STATUS.FAILED, {
       itemId: fallbackItemId,
       problems,
     });
@@ -967,6 +964,7 @@ async function main() {
     extraBrowserArgs: extraArgs,
     appEnv: {
       EPIC8_ALLOW_PLAINTEXT_SECRET_FALLBACK: "1",
+      IELTS_LLM_DIAGNOSTICS: "1",
       ...(isPdf ? {} : { PDF2TEST_AUTOMATION_SOURCE_FILES: staged }),
     },
   });

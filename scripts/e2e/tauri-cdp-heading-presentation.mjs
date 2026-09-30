@@ -336,7 +336,7 @@ async function main() {
     exePath,
     runDir,
     extraBrowserArgs: "--no-sandbox --disable-gpu",
-    appEnv: { EPIC8_ALLOW_PLAINTEXT_SECRET_FALLBACK: "1" },
+    appEnv: { EPIC8_ALLOW_PLAINTEXT_SECRET_FALLBACK: "1", IELTS_LLM_DIAGNOSTICS: "1" },
   });
   await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, { timeoutMs: 40000, label: "library" });
   const prepassId = await importThroughUi();

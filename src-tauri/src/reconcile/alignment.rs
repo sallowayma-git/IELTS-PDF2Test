@@ -28,8 +28,10 @@ pub(crate) struct AlignmentConfig {
     pub invented_max_count: usize,
     /// 原文整体采纳时容忍的凭空句上限：占原文句总数的比例不超过此值。
     pub invented_max_ratio: f64,
-    /// 原文节点整体采用云端所需的命中句比例。
+    /// 原文抽样句的命中比例下限；低于它才把原文整体列为一个复核目标。
     pub passage_pass_ratio: f64,
+    /// 全卷原文抽样句上限（每段抽 1–3 句，超出时按种子确定性裁到此数）。
+    pub passage_sample_cap: usize,
     /// 题组整体采用云端所需的内容对齐比例（命中句 / 题目内容句总数）。
     pub group_align_ratio: f64,
     /// 云端原文可读长度 / 原卷原文可读长度的允许下、上限（防截断、防冗余注水）。
@@ -53,7 +55,8 @@ impl Default for AlignmentConfig {
             invented_threshold: 0.6,
             invented_max_count: 2,
             invented_max_ratio: 0.03,
-            passage_pass_ratio: 0.85,
+            passage_pass_ratio: 0.8,
+            passage_sample_cap: 30,
             group_align_ratio: 0.8,
             length_ratio_min: 0.5,
             length_ratio_max: 1.5,
@@ -103,6 +106,15 @@ fn normalize_readable(text: &str) -> String {
         out.pop();
     }
     out
+}
+
+/// Loose key for deciding whether two recognitions differ only by letter spacing, hyphenation,
+/// whitespace, quotes or case. Used where no source text layer exists to align against.
+pub(crate) fn loose_text_key(text: &str) -> String {
+    compact_key(&normalize_readable(text))
+        .chars()
+        .filter(|ch| *ch != '-')
+        .collect()
 }
 
 /// 空格无关的匹配 key：抹掉全部空白。字符间距差异（`d o t h e`）与普通空格在此一并消失。
@@ -1057,8 +1069,13 @@ pub(crate) struct SampleEntry {
 #[derive(Debug, Clone)]
 pub(crate) struct AlignmentReport {
     pub nodes: Vec<NodeAlignment>,
-    /// 原文（passage）整体命中率是否达标、可整体采用云端原文。
+    /// 原文抽样句命中率是否达标（≥ `passage_pass_ratio`）。原文句子的逐句命中数只作诊断，
+    /// 原卷文字层常有提取错误，逐句不符不直接触发修复。
     pub passage_pass: bool,
+    pub passage_sample_total: usize,
+    pub passage_sample_matched: usize,
+    /// 抽样中对不上的句子（顾问级提示，不进修复清单）。
+    pub passage_sample_misses: Vec<Value>,
     pub passage_sentence_total: usize,
     pub passage_sentence_matched: usize,
     /// 原文里整句对不上/凭空的句子（{nodeId, sentence, similarity}）——即使原文整体采纳，
@@ -1152,6 +1169,8 @@ pub(crate) fn assess_alignment(
     let mut passage_total = 0usize;
     let mut passage_matched = 0usize;
     let mut passage_invented: Vec<Value> = Vec::new();
+    // (排序键, 节点 id, 句子, 相似度)：按种子确定性抽样，全卷上限 passage_sample_cap。
+    let mut passage_pool: Vec<(u64, String, String, f64)> = Vec::new();
     let mut group_matched: BTreeMap<String, usize> = BTreeMap::new();
     let mut group_total: BTreeMap<String, usize> = BTreeMap::new();
     let mut group_aligned: BTreeMap<String, bool> = BTreeMap::new();
@@ -1185,6 +1204,17 @@ pub(crate) fn assess_alignment(
                         }));
                     }
                 }
+            }
+            let gradable: Vec<&SentenceEval> = evals.iter().filter(|eval| !eval.trivial).collect();
+            let take = gradable.len().div_ceil(4).clamp(1, 3);
+            for pick in sample_indices(config.sample_seed, &alignment.node_id, gradable.len(), take) {
+                let eval = gradable[pick];
+                passage_pool.push((
+                    fnv1a(config.sample_seed, &format!("{}#{pick}", alignment.node_id)),
+                    alignment.node_id.clone(),
+                    eval.text.chars().take(160).collect(),
+                    eval.similarity,
+                ));
             }
         }
         // 题组内容对齐按**比例**判定（命中句 / 题目内容句总数 ≥ group_align_ratio），
@@ -1264,8 +1294,23 @@ pub(crate) fn assess_alignment(
     } else {
         longest_non_decreasing(&matched_positions) as f64 / matched_positions.len() as f64
     };
-    let passage_pass = passage_total == 0
-        || (passage_matched as f64 / passage_total as f64) >= config.passage_pass_ratio;
+    passage_pool.sort_by_key(|entry| entry.0);
+    passage_pool.truncate(config.passage_sample_cap);
+    let passage_sample_total = passage_pool.len();
+    let passage_sample_matched = passage_pool
+        .iter()
+        .filter(|entry| entry.3 >= config.sentence_threshold)
+        .count();
+    let passage_sample_misses: Vec<Value> = passage_pool
+        .iter()
+        .filter(|entry| entry.3 < config.sentence_threshold)
+        .map(|entry| {
+            json!({"nodeId": entry.1, "sentence": entry.2, "similarity": entry.3})
+        })
+        .collect();
+    let passage_pass = passage_sample_total == 0
+        || (passage_sample_matched as f64 / passage_sample_total as f64)
+            >= config.passage_pass_ratio;
     // 原文凭空句容忍：少量（≤invented_max_count 且 ≤invented_max_ratio 占比）仍整体采纳，
     // 这些句子交给修复循环单独处理，而不是因此整篇原文都不采纳。
     let passage_invented_ok = passage_invented.len() <= config.invented_max_count
@@ -1293,6 +1338,9 @@ pub(crate) fn assess_alignment(
     AlignmentOutcome::Assessed(Box::new(AlignmentReport {
         nodes,
         passage_pass,
+        passage_sample_total,
+        passage_sample_matched,
+        passage_sample_misses,
         passage_sentence_total: passage_total,
         passage_sentence_matched: passage_matched,
         passage_invented,
@@ -1349,6 +1397,9 @@ impl AlignmentReport {
             .collect::<Vec<_>>();
         json!({
             "passagePass": self.passage_pass,
+            "passageSampleTotal": self.passage_sample_total,
+            "passageSampleMatched": self.passage_sample_matched,
+            "passageSampleMisses": self.passage_sample_misses,
             "passageSentenceTotal": self.passage_sentence_total,
             "passageSentenceMatched": self.passage_sentence_matched,
             "passageInvented": self.passage_invented,
@@ -1635,6 +1686,59 @@ mod tests {
             report.passage_invented
         );
         assert!(report.passage_invented_ok);
+    }
+
+    fn many_paragraph_fixture(paragraphs: usize, corrupt: bool) -> (Value, Value) {
+        let mut lines = Vec::new();
+        let mut nodes = Vec::new();
+        for index in 0..paragraphs {
+            let source = format!(
+                "Paragraph {index} describes excavation season number {index} at the coastal site.                  Workers recorded pottery fragments in trench {index} during the survey."
+            );
+            let cloud = if corrupt {
+                format!("Completely unrelated invented filler sentence number {index} about something else entirely. Another fabricated statement {index} with no counterpart.")
+            } else {
+                source.clone()
+            };
+            lines.push((format!("l{index}"), source));
+            nodes.push((format!("p{index}"), cloud));
+        }
+        let line_refs: Vec<(&str, &str)> = lines.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+        let node_refs: Vec<(&str, &str)> = nodes.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+        (source_doc(&line_refs), passage_authoring(&node_refs))
+    }
+
+    #[test]
+    fn passage_is_sampled_per_paragraph_capped_and_reproducible_by_seed() {
+        let (doc, authoring) = many_paragraph_fixture(40, false);
+        let config = AlignmentConfig { sample_seed: 99, ..Default::default() };
+        let run = |config: &AlignmentConfig| match assess_alignment(&doc, &authoring, config) {
+            AlignmentOutcome::Assessed(report) => report,
+            AlignmentOutcome::NoTextLayer => panic!("fixture has a text layer"),
+        };
+        let first = run(&config);
+        assert_eq!(first.passage_sample_total, 30, "全卷抽样上限 30 句");
+        assert_eq!(first.passage_sample_matched, 30);
+        assert!(first.passage_pass && first.passage_sample_misses.is_empty());
+        let second = run(&config);
+        assert_eq!(first.passage_sample_total, second.passage_sample_total);
+        // 少于上限时每段至少抽 1 句、至多 3 句。
+        let (small_doc, small_authoring) = many_paragraph_fixture(5, false);
+        let AlignmentOutcome::Assessed(small) = assess_alignment(&small_doc, &small_authoring, &config) else { panic!() };
+        assert!((5..=15).contains(&small.passage_sample_total), "{}", small.passage_sample_total);
+    }
+
+    #[test]
+    fn sampled_misses_below_eighty_percent_fail_the_passage_but_a_few_misses_do_not() {
+        let (doc, bad) = many_paragraph_fixture(12, true);
+        let AlignmentOutcome::Assessed(report) = assess_alignment(&doc, &bad, &AlignmentConfig::default()) else { panic!() };
+        assert!(!report.passage_pass, "抽样命中率低于 80% 才把原文判为不合格");
+        assert_eq!(report.passage_sample_misses.len(), report.passage_sample_total);
+        // 只有一段被改坏：抽样命中率仍 ≥80%，原文整体信任，坏句只是顾问级提示。
+        let (doc, mut authoring) = many_paragraph_fixture(12, false);
+        authoring["passage"]["content"][3]["text"] = json!("Completely unrelated invented filler sentence about nothing in the source. Another fabricated statement without counterpart.");
+        let AlignmentOutcome::Assessed(report) = assess_alignment(&doc, &authoring, &AlignmentConfig::default()) else { panic!() };
+        assert!(report.passage_pass, "{} / {}", report.passage_sample_matched, report.passage_sample_total);
     }
 
     #[test]

@@ -324,6 +324,12 @@ fn refine_view_for_reader(
             repair,
         ));
     }
+    let mut repair = view.repair.clone().unwrap_or(Value::Null);
+    if store::attach_latest_cloud_undo(conn, &batch.library_item_id, &mut repair).is_ok()
+        && repair.is_object()
+    {
+        view.repair = Some(repair);
+    }
 }
 
 // ── 完整识别周期（本地已有稿 → 云端 → 核验 → 裁决 → 自动应用）──────────
@@ -829,8 +835,7 @@ pub(crate) fn apply_recognition_decisions_core(
     // 驳回虽不写权威稿，但它同样是人对识别结果的处理决定，与接受/撤销同受
     // 「云端校核进行中」锁约束（前端锁定的是同一组入口）；云端校核可能正要
     // 依据这些待办状态继续修复，此刻改写状态会与机器写入交错。
-    let cloud_review_locked =
-        crate::processing::queue::cloud_review_in_progress(&conn, &item_id)?;
+    let cloud_review_locked = crate::processing::queue::cloud_review_in_progress(&conn, &item_id)?;
     for decision_id in &request.reject {
         let Some(index) = items
             .iter()
@@ -1751,6 +1756,69 @@ mod tests {
     /// 重开时由 `load_decision_items` 读回，`build_view` 再按状态过滤——因此用户处理过的项
     /// 不会重新变成待办，也不会凭空消失。此前**没有任何「文件库 + 断连重开」的测试**
     /// 覆盖这条链路：`store.rs` 里那条用的是内存库，语义上根本测不到「重开」。
+    /// 云端内容采纳后作废的本地识别决策不能被发布门禁当成未解决项拦截。
+    #[test]
+    fn cloud_adopted_supersession_leaves_nothing_for_the_publish_gate_to_block_on() {
+        let root = std::env::temp_dir().join(format!("pdf2test-supersede-{}", Uuid::new_v4().simple()));
+        ensure_app_dirs(&root).expect("app dirs");
+        let item_id = "supersede-item";
+        let canonical = canonical_from_golden(&original_option());
+        let decision = RecognitionDecisionV1 {
+            schema_version: RECOGNITION_DECISION_V1_SCHEMA_VERSION.to_string(),
+            batch_id: "batch-sup".to_string(),
+            item_id: item_id.to_string(),
+            job_id: item_id.to_string(),
+            base_edit_version: 0,
+            generated_at: "2026-09-30T00:00:00Z".to_string(),
+            chain_status: ChainStatusSummaryV1 {
+                local: ChainStatusV1::Succeeded,
+                cloud: ChainStatusV1::Succeeded,
+                source: ChainStatusV1::Succeeded,
+                cloud_reason_code: None,
+                source_reason_code: None,
+            },
+            items: vec![decision_item("slot-1", DecisionStatusV1::Open, DecisionResolutionV1::NeedsReview)],
+            summary: DecisionSummaryV1 { agreed: 0, auto_fixed: 0, needs_review: 1, unverifiable: 0 },
+        };
+        {
+            let conn = open_library_connection(&root).expect("db");
+            upsert_item_shell(
+                &conn,
+                &UpsertItemInput { id: item_id, modality: "reading", title: "t", status: "action_required", source_asset_id: None },
+            )
+            .expect("shell");
+            seed_canonical_ds(&conn, item_id, &canonical.to_string(), "action_required").expect("canonical");
+            store::upsert_batch(&conn, &decision).expect("batch");
+            store::replace_decision_items(&conn, &decision).expect("items");
+        }
+        let superseded = supersede_cloud_adopted_decisions(&root, "batch-sup", &[1], &[]).expect("supersede");
+        assert_eq!(superseded, 1);
+        let conn = open_library_connection(&root).expect("db");
+        let items = store::load_decision_items(&conn, "batch-sup").expect("items");
+        assert!(items
+            .iter()
+            .all(|item| !item.is_actionable()
+                && item.status == DecisionStatusV1::Superseded
+                && item.reason_code == reason::CLOUD_ADOPTED));
+        drop(conn);
+        for scope in [
+            crate::authoring_validation::PublishScope::CanonicalDirect,
+            crate::authoring_validation::PublishScope::FullDerived,
+        ] {
+            let verdict = crate::authoring_validation::publish_verdict(&root, item_id, &canonical, Some(1), scope);
+            assert!(
+                !verdict
+                    .reasons()
+                    .iter()
+                    .any(|reason| reason.code == "RECOGNITION_CHOICE_UNRESOLVED"
+                        || reason.code == "RECOGNITION_CHOICES_UNAVAILABLE"),
+                "{:?}",
+                verdict.reasons()
+            );
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn decision_status_survives_a_reopen_and_never_returns_to_actionable() {
         let root =

@@ -599,6 +599,36 @@ impl EditFootprint {
             extend_with_context(document, &[task_id.to_string()], out);
         };
         match op {
+            // Trusted internal replacement only: compute its actual delta rather
+            // than treating an unchanged sibling as an attempted overwrite.
+            "replaceAuthoringDocument" => {
+                if let Some(after) = command.get("authoring") {
+                    for key in cloud_candidate_change_targets(document, after) {
+                        if read_change_value(document, &key) == read_change_value(after, &key) {
+                            continue;
+                        }
+                        if let Some(task_id) = key.strip_prefix(TASK_GROUP_PREFIX) {
+                            group_roots(task_id, &mut targets);
+                            targets.extend(task_group_owned_ids(after, task_id));
+                            extend_with_context(after, &[task_id.to_string()], &mut targets);
+                        } else if let Some(slot_id) = key.strip_prefix(ANSWER_KEY_PREFIX) {
+                            extend_with_context(document, &[slot_id.to_string()], &mut targets);
+                            extend_with_context(after, &[slot_id.to_string()], &mut targets);
+                        } else if let Some(field) = key.strip_prefix(TOP_FIELD_PREFIX) {
+                            targets.insert(key.clone());
+                            for value in [document.get(field), after.get(field)]
+                                .into_iter()
+                                .flatten()
+                            {
+                                collect_subtree_ids(value, &mut targets);
+                            }
+                        } else {
+                            extend_with_context(document, &[key.clone()], &mut targets);
+                            extend_with_context(after, &[key], &mut targets);
+                        }
+                    }
+                }
+            }
             // 单节点类：目标节点 + 其祖先 + 其子树（删除 / 整块替换会一并带走子树）。
             "replaceText" | "setNodeAttrs" => {
                 extend_with_context(document, &strings_of(command.get("nodeId")), &mut targets);
@@ -914,6 +944,7 @@ fn merge_protected_edits(
 /// 只记录命令直接点名的那几个对象，不记录整棵下钻的子树：后者等于每个回合都存一份
 /// 近整卷的历史版本，既臃肿又与「有界恢复」的既定纪律冲突。单个目标过大时如实记为
 /// `tooLarge` 并**放弃该目标的撤销能力**，而不是截断出一份假的 before。
+/// 最新云端运行的必要撤销差异不做此降级，其体积由整轮保留策略约束。
 const MAX_CHANGE_ENTRY_BYTES: usize = 64 * 1024;
 
 fn capture_change_targets(commands: &[Value]) -> Vec<String> {
@@ -1016,12 +1047,50 @@ fn cloud_candidate_change_targets(before: &Value, after: &Value) -> BTreeSet<Str
         if let Some(groups) = document.get("taskGroups").and_then(Value::as_array) {
             for group in groups {
                 if let Some(task_id) = group.get("taskId").and_then(Value::as_str) {
-                    targets.insert(format!("{TASK_GROUP_PREFIX}{task_id}"));
+                    let key = format!("{TASK_GROUP_PREFIX}{task_id}");
+                    if read_change_value(before, &key) != read_change_value(after, &key) {
+                        targets.insert(key);
+                    }
                 }
             }
         }
     }
+    remove_nested_change_targets(&mut targets, &[before, after]);
     targets
+}
+
+/// A path diff at its owning root already covers nested identities. Recording
+/// both doubles large text and produces spurious skipped targets during undo.
+fn remove_nested_change_targets(targets: &mut BTreeSet<String>, documents: &[&Value]) {
+    let mut covered = BTreeSet::new();
+    for key in targets
+        .iter()
+        .filter(|key| key.starts_with(TOP_FIELD_PREFIX) || key.starts_with(TASK_GROUP_PREFIX))
+    {
+        if let Some(task_id) = key.strip_prefix(TASK_GROUP_PREFIX) {
+            covered.insert(task_id.to_string());
+        }
+        for document in documents {
+            collect_subtree_ids(&read_change_value(document, key), &mut covered);
+        }
+    }
+    let external_slots = documents
+        .iter()
+        .flat_map(|document| {
+            document
+                .get("answerSlots")
+                .and_then(Value::as_object)
+                .into_iter()
+                .flat_map(|slots| slots.keys().cloned())
+        })
+        .collect::<BTreeSet<_>>();
+    targets.retain(|key| {
+        key.starts_with(TOP_FIELD_PREFIX)
+            || key.starts_with(TASK_GROUP_PREFIX)
+            || key.starts_with(ANSWER_KEY_PREFIX)
+            || external_slots.contains(key)
+            || !covered.contains(key)
+    });
 }
 
 fn capture_transaction_change_targets(
@@ -1073,6 +1142,7 @@ fn capture_transaction_change_targets(
             }
         }
     }
+    remove_nested_change_targets(&mut targets, &[document]);
     targets.into_iter().collect()
 }
 
@@ -1186,19 +1256,30 @@ fn build_change_diff(
     document: &Value,
     targets: &[String],
 ) -> Value {
+    build_change_diff_with_exact_undo(before, document, targets, false)
+}
+
+fn build_change_diff_with_exact_undo(
+    before: &serde_json::Map<String, Value>,
+    document: &Value,
+    targets: &[String],
+    exact_undo: bool,
+) -> Value {
     let mut result = serde_json::Map::new();
     for id in targets {
         let before_value = before.get(id).cloned().unwrap_or(Value::Null);
         let after_value = read_change_value(document, id);
-        let entries: Vec<Value> = crate::library::change_diff::diff_values(&before_value, &after_value)
-            .iter()
-            .map(crate::library::change_diff::entry_to_json)
-            .collect();
+        let entries: Vec<Value> =
+            crate::library::change_diff::diff_values(&before_value, &after_value)
+                .iter()
+                .map(crate::library::change_diff::entry_to_json)
+                .collect();
         let entry = serde_json::json!({ "diff": Value::Array(entries) });
-        if serde_json::to_vec(&entry)
-            .map(|bytes| bytes.len())
-            .unwrap_or(usize::MAX)
-            > MAX_CHANGE_ENTRY_BYTES
+        if !exact_undo
+            && serde_json::to_vec(&entry)
+                .map(|bytes| bytes.len())
+                .unwrap_or(usize::MAX)
+                > MAX_CHANGE_ENTRY_BYTES
         {
             result.insert(id.clone(), serde_json::json!({ "tooLarge": true }));
         } else {
@@ -1316,7 +1397,7 @@ pub(crate) fn undo_cloud_repair_run(
             .prepare(
                 "SELECT COALESCE(change_json, 'null') FROM editor_journal_v1
                   WHERE library_item_id = ?1 AND repair_run_id = ?2
-                    AND edit_origin IN ('cloud_repair', 'cloud_candidate_adoption')
+                    AND edit_origin IN ('cloud_repair', 'cloud_candidate_adoption', 'answer_page_recognition')
                   ORDER BY id ASC",
             )
             .map_err(|error| format!("library_v2_undo_prepare:{error}"))?;
@@ -1344,15 +1425,25 @@ pub(crate) fn undo_cloud_repair_run(
         first_before: Option<Value>,
         last_after: Option<Value>,
     }
-    type TargetMap = std::collections::BTreeMap<String, (bool, std::collections::BTreeMap<String, MergedEntry>)>;
+    type TargetMap =
+        std::collections::BTreeMap<String, (bool, std::collections::BTreeMap<String, MergedEntry>)>;
     let mut targets: TargetMap = TargetMap::new();
     let absorb = |targets: &mut TargetMap, id: &str, entry: change_diff::DiffEntry| {
         let key = serde_json::to_string(&entry.path).unwrap_or_default();
-        let slot = targets.entry(id.to_string()).or_insert_with(|| (false, std::collections::BTreeMap::new()));
+        let slot = targets
+            .entry(id.to_string())
+            .or_insert_with(|| (false, std::collections::BTreeMap::new()));
         match slot.1.get_mut(&key) {
             Some(existing) => existing.last_after = entry.after,
             None => {
-                slot.1.insert(key, MergedEntry { path: entry.path, first_before: entry.before, last_after: entry.after });
+                slot.1.insert(
+                    key,
+                    MergedEntry {
+                        path: entry.path,
+                        first_before: entry.before,
+                        last_after: entry.after,
+                    },
+                );
             }
         }
     };
@@ -1361,14 +1452,21 @@ pub(crate) fn undo_cloud_repair_run(
         if let Some(target_map) = parsed.get("targets").and_then(Value::as_object) {
             for (id, target) in target_map {
                 // 空 diff 也登记：无变化目标仍算本轮触及，回填是空操作但仍进 restored。
-                targets.entry(id.clone()).or_insert_with(|| (false, std::collections::BTreeMap::new()));
+                targets
+                    .entry(id.clone())
+                    .or_insert_with(|| (false, std::collections::BTreeMap::new()));
                 if target.get("tooLarge").and_then(Value::as_bool) == Some(true) {
                     if let Some(slot) = targets.get_mut(id.as_str()) {
                         slot.0 = true;
                     }
                     continue;
                 }
-                for entry_json in target.get("diff").and_then(Value::as_array).into_iter().flatten() {
+                for entry_json in target
+                    .get("diff")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
                     if let Some(entry) = change_diff::entry_from_json(entry_json) {
                         absorb(&mut targets, id.as_str(), entry);
                     }
@@ -1385,15 +1483,26 @@ pub(crate) fn undo_cloud_repair_run(
             .collect();
         for id in ids {
             let before_value = before.and_then(|map| map.get(&id));
-            if before_value.and_then(|value| value.get("tooLarge")).and_then(Value::as_bool) == Some(true) {
-                targets.entry(id.clone()).or_insert_with(|| (false, std::collections::BTreeMap::new())).0 = true;
+            if before_value
+                .and_then(|value| value.get("tooLarge"))
+                .and_then(Value::as_bool)
+                == Some(true)
+            {
+                targets
+                    .entry(id.clone())
+                    .or_insert_with(|| (false, std::collections::BTreeMap::new()))
+                    .0 = true;
                 continue;
             }
-            absorb(&mut targets, id.as_str(), change_diff::DiffEntry {
-                path: Vec::new(),
-                before: before_value.cloned(),
-                after: after.and_then(|map| map.get(&id)).cloned(),
-            });
+            absorb(
+                &mut targets,
+                id.as_str(),
+                change_diff::DiffEntry {
+                    path: Vec::new(),
+                    before: before_value.cloned(),
+                    after: after.and_then(|map| map.get(&id)).cloned(),
+                },
+            );
         }
     }
 
@@ -1415,6 +1524,8 @@ pub(crate) fn undo_cloud_repair_run(
     let mut ds: Value =
         serde_json::from_str(&ds_json).map_err(|error| format!("library_v2_ds_corrupt:{error}"))?;
 
+    let undo_current = ds.clone();
+    let mut restored_group_positions = Vec::new();
     let mut restored = Vec::new();
     let mut skipped = Vec::new();
     let mut change_before = serde_json::Map::new();
@@ -1423,7 +1534,12 @@ pub(crate) fn undo_cloud_repair_run(
             skipped.push(id.clone());
             continue;
         }
-        let current = read_change_value(&ds, id);
+        // Unchanged context targets are journaled for grouping, but undoing them
+        // would falsely protect unrelated sibling slots as human intent.
+        if entries.is_empty() {
+            continue;
+        }
+        let current = read_change_value(&undo_current, id);
         // 逐路径判据：本轮动过的每条路径当前值都必须仍等于本轮写下的 after，否则说明这条
         // 路径之后被别处改过——跳过其所在目标，绝不覆盖后来的修改。
         let unchanged = entries
@@ -1439,7 +1555,11 @@ pub(crate) fn undo_cloud_repair_run(
         ordered.sort_by_key(|entry| entry.path.len());
         let mut ok = true;
         for entry in ordered {
-            if !change_diff::set_at(&mut restored_value, &entry.path, entry.first_before.as_ref()) {
+            if !change_diff::set_at(
+                &mut restored_value,
+                &entry.path,
+                entry.first_before.as_ref(),
+            ) {
                 ok = false;
                 break;
             }
@@ -1451,6 +1571,11 @@ pub(crate) fn undo_cloud_repair_run(
         change_before.insert(id.clone(), current);
         // 必须走 `write_change_value`：`answerKey:<slotId>` 条目内部没有身份字段，按 id 找对象找不到。
         if write_change_value(&mut ds, id, &restored_value) {
+            if let Some(task_id) = id.strip_prefix(TASK_GROUP_PREFIX) {
+                if let Some(index) = restored_value.get("index").and_then(Value::as_u64) {
+                    restored_group_positions.push((index as usize, task_id.to_string()));
+                }
+            }
             restored.push(id.clone());
         } else {
             // 稿件里已经没有这个对象（例如撤销一个新建对象）：什么都没改，如实跳过。
@@ -1460,6 +1585,19 @@ pub(crate) fn undo_cloud_repair_run(
     }
     if restored.is_empty() {
         return Err("EDIT_REPAIR_UNDO_NO_TARGETS".to_string());
+    }
+    // Compare every target against the same pre-undo state, then restore ordering
+    // in original-index order. One move must not invalidate another group's CAS.
+    restored_group_positions.sort_by_key(|(index, _)| *index);
+    if let Some(groups) = ds.get_mut("taskGroups").and_then(Value::as_array_mut) {
+        for (index, task_id) in restored_group_positions {
+            if let Some(current) = groups.iter().position(|group| {
+                group.get("taskId").and_then(Value::as_str) == Some(task_id.as_str())
+            }) {
+                let group = groups.remove(current);
+                groups.insert(index.min(groups.len()), group);
+            }
+        }
     }
 
     prepare_ds(&mut ds)?;
@@ -1474,6 +1612,25 @@ pub(crate) fn undo_cloud_repair_run(
         edit_status_for(&ds),
         &now,
     )?;
+    // A whole-run undo is human intent too. Its direct transaction bypasses
+    // apply_editor_commands_tx_with, so persist protection explicitly here.
+    let mut undo_targets = BTreeSet::new();
+    for id in &restored {
+        if let Some(slot_id) = id.strip_prefix(ANSWER_KEY_PREFIX) {
+            extend_with_context(&ds, &[slot_id.to_string()], &mut undo_targets);
+        } else if let Some(task_id) = id.strip_prefix(TASK_GROUP_PREFIX) {
+            undo_targets.extend(task_group_owned_ids(&ds, task_id));
+            extend_with_context(&ds, &[task_id.to_string()], &mut undo_targets);
+        } else if let Some(field) = id.strip_prefix(TOP_FIELD_PREFIX) {
+            undo_targets.insert(id.clone());
+            if let Some(value) = ds.get(field) {
+                collect_subtree_ids(value, &mut undo_targets);
+            }
+        } else {
+            extend_with_context(&ds, &[id.clone()], &mut undo_targets);
+        }
+    }
+    merge_protected_edits(&transaction, item_id, &undo_targets)?;
     // 撤销自身也按 diff-v1 记账（此行不会被撤销读取方回读，仅为格式一致）。
     let change = build_change_diff(&change_before, &ds, &restored);
     let result_summary = serde_json::json!({
@@ -1618,6 +1775,54 @@ struct JournalWrite<'a> {
     now: &'a str,
 }
 
+fn payload_digest(payload: &Value) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(payload.to_string().as_bytes()))
+}
+
+fn journal_payload(payload: &Value, origin: EditOrigin) -> Value {
+    if !matches!(
+        origin,
+        EditOrigin::CloudRepair
+            | EditOrigin::CloudCandidateAdoption
+            | EditOrigin::AnswerPageRecognition
+    ) {
+        return payload.clone();
+    }
+    let commands = payload
+        .get("commands")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|command| {
+            let mut summary = serde_json::Map::new();
+            for key in [
+                "op",
+                "nodeId",
+                "slotId",
+                "taskId",
+                "responseGroupId",
+                "assetId",
+            ] {
+                if let Some(value) = command.get(key) {
+                    summary.insert(key.to_string(), value.clone());
+                }
+            }
+            Value::Object(summary)
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({"journalFormat":"machine-summary-v1", "payloadSha256":payload_digest(payload), "commands":commands})
+}
+
+fn journal_payload_matches(previous: &Value, payload: &Value) -> bool {
+    if previous.get("journalFormat").and_then(Value::as_str) == Some("machine-summary-v1") {
+        previous.get("payloadSha256").and_then(Value::as_str)
+            == Some(payload_digest(payload).as_str())
+    } else {
+        previous == payload
+    }
+}
+
 fn insert_journal_row(
     transaction: &rusqlite::Transaction<'_>,
     write: &JournalWrite<'_>,
@@ -1632,7 +1837,7 @@ fn insert_journal_row(
                 write.item_id,
                 write.base_version,
                 write.request_id,
-                write.payload.to_string(),
+                journal_payload(write.payload, write.origin).to_string(),
                 write.now,
                 write.origin.as_str(),
                 write.repair_run_id,
@@ -1644,30 +1849,205 @@ fn insert_journal_row(
     Ok(())
 }
 
-/// 裁剪：人工记录保持原有的 200 条上限；自动修复记录**按 run 保留最近 5 轮**。
-///
-/// 既不能一律保留（journal 会无限增长），也不能一律按 200 条删：撤销所需的
-/// before/after 一旦被普通裁剪提前删掉，撤销按钮就会变成假的。
+/// Human undo retains its existing bound. Cloud rows are pruned only after a
+/// terminal run, never midway through a run when its original before values matter.
 fn prune_journal(transaction: &rusqlite::Transaction<'_>, item_id: &str) -> CommandResult<()> {
     transaction
         .execute(
-            "DELETE FROM editor_journal_v1
-              WHERE library_item_id = ?1
-                AND (
-                  (repair_run_id IS NULL AND id NOT IN (
-                     SELECT id FROM editor_journal_v1
-                      WHERE library_item_id = ?1 AND repair_run_id IS NULL
-                      ORDER BY id DESC LIMIT 200))
-                  OR
-                  (repair_run_id IS NOT NULL AND repair_run_id NOT IN (
-                     SELECT repair_run_id FROM editor_journal_v1
-                      WHERE library_item_id = ?1 AND repair_run_id IS NOT NULL
-                      GROUP BY repair_run_id ORDER BY MAX(id) DESC LIMIT 5))
-                )",
+            "DELETE FROM editor_journal_v1 WHERE library_item_id = ?1
+         AND edit_origin IN ('human','undo') AND id NOT IN (
+           SELECT id FROM editor_journal_v1 WHERE library_item_id = ?1
+           AND edit_origin IN ('human','undo') ORDER BY id DESC LIMIT 200)",
             [item_id],
         )
         .map_err(|error| format!("library_v2_journal_prune:{error}"))?;
     Ok(())
+}
+
+fn journal_change_is_effective(change: &Value) -> bool {
+    if change.get("format").and_then(Value::as_str) == Some("diff-v1") {
+        change
+            .get("targets")
+            .and_then(Value::as_object)
+            .is_some_and(|targets| {
+                targets.values().any(|entry| {
+                    entry.get("tooLarge").and_then(Value::as_bool) == Some(true)
+                        || entry
+                            .get("diff")
+                            .and_then(Value::as_array)
+                            .is_some_and(|diff| !diff.is_empty())
+                })
+            })
+    } else {
+        // Old before/after journals are still supported. Unknown/corrupt data is
+        // retained conservatively rather than deleting a possibly needed undo.
+        match (change.get("before"), change.get("after")) {
+            (Some(before), Some(after)) => before != after,
+            _ => true,
+        }
+    }
+}
+
+/// The undo entry belongs to the most recent effective, not-yet-undone terminal
+/// run, independently of whichever batch was most recently attempted.
+pub(crate) fn latest_effective_cloud_undo_run(
+    conn: &Connection,
+    item_id: &str,
+) -> CommandResult<Option<String>> {
+    if crate::processing::queue::cloud_review_in_progress(conn, item_id)? {
+        return Ok(None);
+    }
+    let rows = {
+        let mut statement=conn.prepare("SELECT repair_run_id,change_json FROM editor_journal_v1 WHERE library_item_id=?1 AND repair_run_id IS NOT NULL AND edit_origin IN ('cloud_repair','cloud_candidate_adoption','answer_page_recognition') ORDER BY id DESC")
+            .map_err(|error|format!("library_latest_cloud_undo:{error}"))?;
+        let rows = statement
+            .query_map([item_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })
+            .map_err(|error| format!("library_latest_cloud_undo:{error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("library_latest_cloud_undo:{error}"))?;
+        rows
+    };
+    for (run_id, change) in rows {
+        let effective = change
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+            .as_ref()
+            .map(journal_change_is_effective)
+            .unwrap_or(false);
+        if !effective {
+            continue;
+        }
+        let undone: bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM editor_journal_v1 WHERE library_item_id=?1 AND repair_run_id=?2 AND edit_origin='undo')",params![item_id,run_id],|row|row.get(0))
+            .map_err(|error|format!("library_latest_cloud_undo:{error}"))?;
+        if undone {
+            continue;
+        }
+        let Some(batch_id) = run_id.strip_prefix("cloud-repair:") else {
+            continue;
+        };
+        let raw:Option<Option<String>>=conn.query_row("SELECT repair_json FROM recognition_batches_v1 WHERE library_item_id=?1 AND batch_id=?2",params![item_id,batch_id],|row|row.get(0)).optional()
+            .map_err(|error|format!("library_latest_cloud_undo:{error}"))?;
+        let terminal = raw
+            .flatten()
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+            .and_then(|v| v.get("status").and_then(Value::as_str).map(str::to_owned))
+            .is_some_and(|status| {
+                matches!(
+                    status.as_str(),
+                    "completed"
+                        | "needs_attention"
+                        | "cancelled"
+                        | "budget_exhausted"
+                        | "unavailable"
+                        | "failed"
+                )
+            });
+        if terminal {
+            return Ok(Some(run_id));
+        }
+    }
+    Ok(None)
+}
+
+/// Keep the latest effective terminal cloud run plus all active/unknown runs.
+/// Failed or cancelled runs with no writes cannot displace the previous undo.
+pub(crate) fn finalize_cloud_run_retention(
+    conn: &Connection,
+    item_id: &str,
+    terminal_run_id: &str,
+) -> CommandResult<()> {
+    let transaction = conn
+        .unchecked_transaction()
+        .map_err(|error| format!("library_cloud_retention_tx:{error}"))?;
+    let runs = {
+        let mut statement = transaction.prepare(
+            "SELECT repair_run_id, MAX(id) FROM editor_journal_v1
+             WHERE library_item_id = ?1 AND repair_run_id IS NOT NULL
+               AND edit_origin IN ('cloud_repair', 'cloud_candidate_adoption', 'answer_page_recognition')
+             GROUP BY repair_run_id ORDER BY MAX(id) DESC")
+            .map_err(|error| format!("library_cloud_retention_query:{error}"))?;
+        let rows = statement
+            .query_map([item_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|error| format!("library_cloud_retention_rows:{error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("library_cloud_retention_rows:{error}"))?;
+        rows
+    };
+    let mut retained_terminal = false;
+    for (run_id, _) in runs {
+        let terminal = if run_id == terminal_run_id {
+            true
+        } else if let Some(batch_id) = run_id.strip_prefix("cloud-repair:") {
+            let raw: Option<Option<String>> = transaction.query_row(
+                "SELECT repair_json FROM recognition_batches_v1 WHERE batch_id = ?1 AND library_item_id = ?2",
+                params![batch_id, item_id], |row| row.get(0)).optional()
+                .map_err(|error| format!("library_cloud_retention_batch:{error}"))?;
+            raw.flatten()
+                .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+                .and_then(|value| {
+                    value
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                })
+                .is_some_and(|status| {
+                    matches!(
+                        status.as_str(),
+                        "completed"
+                            | "needs_attention"
+                            | "cancelled"
+                            | "budget_exhausted"
+                            | "unavailable"
+                            | "failed"
+                    )
+                })
+        } else {
+            false
+        };
+        if !terminal {
+            continue;
+        }
+        let effective = {
+            let mut statement = transaction.prepare("SELECT change_json FROM editor_journal_v1 WHERE library_item_id=?1 AND repair_run_id=?2 AND edit_origin IN ('cloud_repair','cloud_candidate_adoption','answer_page_recognition')")
+                .map_err(|error| format!("library_cloud_retention_changes:{error}"))?;
+            let changes = statement
+                .query_map(params![item_id, run_id], |row| {
+                    row.get::<_, Option<String>>(0)
+                })
+                .map_err(|error| format!("library_cloud_retention_changes:{error}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("library_cloud_retention_changes:{error}"))?;
+            changes.into_iter().any(|raw| {
+                raw.and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+                    .as_ref()
+                    .map(journal_change_is_effective)
+                    .unwrap_or(true)
+            })
+        };
+        if !effective {
+            transaction
+                .execute(
+                    "DELETE FROM editor_journal_v1 WHERE library_item_id=?1 AND repair_run_id=?2 AND edit_origin IN ('cloud_repair','cloud_candidate_adoption','answer_page_recognition')",
+                    params![item_id, run_id],
+                )
+                .map_err(|error| format!("library_cloud_retention_noop:{error}"))?;
+            continue;
+        }
+        if !retained_terminal {
+            retained_terminal = true;
+        } else {
+            transaction.execute(
+                "DELETE FROM editor_journal_v1 WHERE library_item_id = ?1 AND repair_run_id = ?2 AND edit_origin IN ('cloud_repair','cloud_candidate_adoption','answer_page_recognition')",
+                params![item_id, run_id])
+                .map_err(|error| format!("library_cloud_retention_prune:{error}"))?;
+        }
+    }
+    transaction
+        .commit()
+        .map_err(|error| format!("library_cloud_retention_commit:{error}"))
 }
 
 /// 编辑事务（计划 §9.5 / §3 接口契约）：版本校验 → 逐条应用 → 校验 →
@@ -1732,7 +2112,9 @@ pub(crate) fn apply_editor_commands_tx_with(
         if let Some((item_id, base_version, command_json)) = replay {
             let previous: Value =
                 serde_json::from_str(&command_json).map_err(|error| error.to_string())?;
-            if item_id != input.item_id || base_version != input.base_version || previous != payload
+            if item_id != input.item_id
+                || base_version != input.base_version
+                || !journal_payload_matches(&previous, &payload)
             {
                 return Err("EDIT_REQUEST_ID_REUSED".to_string());
             }
@@ -1832,7 +2214,15 @@ pub(crate) fn apply_editor_commands_tx_with(
             )
             .map_err(|error| format!("library_v2_tx_title:{error}"))?;
     }
-    let change = build_change_diff(&change_before, &ds, &change_targets);
+    let exact_undo = repair_run_id.is_some()
+        && matches!(
+            origin,
+            EditOrigin::CloudRepair
+                | EditOrigin::CloudCandidateAdoption
+                | EditOrigin::AnswerPageRecognition
+        );
+    let change =
+        build_change_diff_with_exact_undo(&change_before, &ds, &change_targets, exact_undo);
     let result_summary = serde_json::json!({
         "status": "applied",
         "appliedCount": input.commands.len(),
@@ -2143,11 +2533,8 @@ mod tests {
 
     /// 在 processing_jobs_v2 里放置一条处理任务行，用于模拟调度器的阶段/状态。
     fn stage_processing_job(conn: &Connection, stage: &str, cloud_status: &str) {
-        conn.execute(
-            "DELETE FROM processing_jobs_v2 WHERE id = 'pj-it-1'",
-            [],
-        )
-        .unwrap();
+        conn.execute("DELETE FROM processing_jobs_v2 WHERE id = 'pj-it-1'", [])
+            .unwrap();
         conn.execute(
             "INSERT INTO processing_jobs_v2
              (id, library_item_id, source_asset_id, stage, local_status, cloud_status,
@@ -2186,7 +2573,10 @@ mod tests {
                 "{stage}/{cloud_status}: {error}"
             );
             let (_, version) = get_canonical_ds(&conn, "it-1").unwrap().unwrap();
-            assert_eq!(version, base_version, "{stage}/{cloud_status}: 被拒的写入不得推进版本");
+            assert_eq!(
+                version, base_version,
+                "{stage}/{cloud_status}: 被拒的写入不得推进版本"
+            );
         }
         // 云端失败/取消后残留的 cloud_status 不得永久锁住编辑（失败不算进行中）。
         for (stage, cloud_status) in [("failed", "running"), ("cancelled", "running")] {
@@ -2438,7 +2828,14 @@ mod tests {
     fn human_write_paths_are_journalled_with_human_origin() {
         let mut conn = grouped_item();
         // 1) 结构动作 / 答案（setAnswer）走 EditOrigin::Human。
-        run_edit(&mut conn, vec![set_answer("slot-14", "human_value")], EditOrigin::Human, None, 1).unwrap();
+        run_edit(
+            &mut conn,
+            vec![set_answer("slot-14", "human_value")],
+            EditOrigin::Human,
+            None,
+            1,
+        )
+        .unwrap();
         // 2) 标题修改（commands 空、仅 title）走同一条人工保存链。
         apply_editor_commands_tx_with(
             &mut conn,
@@ -2510,7 +2907,7 @@ mod tests {
         let (ds, version) = get_canonical_ds(&conn, "it-1").unwrap().unwrap();
         assert_eq!(outcome.edit_version, version);
         assert!(
-            outcome.restored.contains(&"slot-14".to_string()),
+            outcome.restored.contains(&"answerKey:slot-14".to_string()),
             "仍等于修复值的 q14 必须回滚：{:?}",
             outcome.restored
         );
@@ -2631,7 +3028,17 @@ mod tests {
         let measure = |reordered: Vec<Value>| -> (i64, usize, i64, bool) {
             let ds_before = group_ds(&options);
             let conn = memory_repo();
-            upsert_item_shell(&conn, &UpsertItemInput { id: "it-1", modality: "reading", title: "t", status: "action_required", source_asset_id: None }).unwrap();
+            upsert_item_shell(
+                &conn,
+                &UpsertItemInput {
+                    id: "it-1",
+                    modality: "reading",
+                    title: "t",
+                    status: "action_required",
+                    source_asset_id: None,
+                },
+            )
+            .unwrap();
             seed_canonical_ds(&conn, "it-1", &ds_before.to_string(), "action_required").unwrap();
             let mut conn = conn;
             let patch = json!({
@@ -2644,17 +3051,29 @@ mod tests {
                 [], |row| row.get(0),
             ).unwrap();
             let parsed: Value = serde_json::from_str(&change_json).unwrap();
-            let diff = parsed.pointer("/targets/task-1/diff").and_then(Value::as_array).cloned().unwrap_or_default();
+            let diff = parsed
+                .pointer("/targets/task-1/diff")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
             let element_wise = diff.iter().any(|entry| {
-                let Some(path) = entry.get("path").and_then(Value::as_array) else { return false };
-                path.iter().any(|seg| seg.as_str() == Some("options")) && path.iter().any(Value::is_number)
+                let Some(path) = entry.get("path").and_then(Value::as_array) else {
+                    return false;
+                };
+                path.iter().any(|seg| seg.as_str() == Some("options"))
+                    && path.iter().any(Value::is_number)
             });
             let (ds_after, _) = get_canonical_ds(&conn, "it-1").unwrap().unwrap();
             let legacy = json!({
                 "before": {"task-1": read_change_value(&ds_before, "task-1")},
                 "after": {"task-1": read_change_value(&ds_after, "task-1")}
             });
-            (change_json.len() as i64, diff.len(), serde_json::to_string(&legacy).unwrap().len() as i64, element_wise)
+            (
+                change_json.len() as i64,
+                diff.len(),
+                serde_json::to_string(&legacy).unwrap().len() as i64,
+                element_wise,
+            )
         };
 
         let mut rotate = options.clone();
@@ -2668,9 +3087,18 @@ mod tests {
         let (new_swap, entries_swap, old_swap, _) = measure(swap);
         eprintln!("[quant] 拖选项·相邻对调（动 2 个位置）：旧整题组快照 {old_swap} 字节 → 新路径差异 {new_swap} 字节（{entries_swap} 条 diff）");
 
-        assert!(new_rot < old_rot, "整列错位下路径差异仍应小于整题组快照：新 {new_rot} vs 旧 {old_rot}");
-        assert!(ew_rot, "重排应逐元素记录（diff 路径深入到 options 数组下标），而不是整组一条");
-        assert!(new_swap < new_rot, "只拖一格应比整列错位记得更少：{new_swap} vs {new_rot}");
+        assert!(
+            new_rot < old_rot,
+            "整列错位下路径差异仍应小于整题组快照：新 {new_rot} vs 旧 {old_rot}"
+        );
+        assert!(
+            ew_rot,
+            "重排应逐元素记录（diff 路径深入到 options 数组下标），而不是整组一条"
+        );
+        assert!(
+            new_swap < new_rot,
+            "只拖一格应比整列错位记得更少：{new_swap} vs {new_rot}"
+        );
     }
 
     /// 逐路径撤销：只回滚本轮修复动过的路径，同一目标里用户后改的兄弟字段必须保留。
@@ -2678,21 +3106,40 @@ mod tests {
     fn undo_reverts_only_the_repaired_path_and_keeps_a_sibling_edit_in_the_same_target() {
         // 种子答案已带 note，云端修复只改 values[0]、不碰 note——这样才能制造「同目标不同路径」。
         let mut ds = grouped_ds();
-        ds["answerKey"]["slot-14"] = json!({ "kind": "text", "values": ["stencilling"], "note": "seed" });
+        ds["answerKey"]["slot-14"] =
+            json!({ "kind": "text", "values": ["stencilling"], "note": "seed" });
         let conn = memory_repo();
         upsert_item_shell(
             &conn,
-            &UpsertItemInput { id: "it-1", modality: "reading", title: "t", status: "action_required", source_asset_id: None },
+            &UpsertItemInput {
+                id: "it-1",
+                modality: "reading",
+                title: "t",
+                status: "action_required",
+                source_asset_id: None,
+            },
         )
         .unwrap();
         seed_canonical_ds(&conn, "it-1", &ds.to_string(), "action_required").unwrap();
         let mut conn = conn;
-        let answer = |values: &str, note: &str| {
-            json!({ "op": "setAnswer", "slotId": "slot-14", "value": { "kind": "text", "values": [values], "note": note } })
-        };
+        let answer = |values: &str, note: &str| json!({ "op": "setAnswer", "slotId": "slot-14", "value": { "kind": "text", "values": [values], "note": note } });
         // 云端修复须在人工写入前：反序会让 slot-14 被人工保护，挡住云端写入。
-        run_edit(&mut conn, vec![answer("cloud", "seed")], EditOrigin::CloudRepair, Some("run-C"), 1).unwrap();
-        run_edit(&mut conn, vec![answer("cloud", "user-note")], EditOrigin::Human, None, 2).unwrap();
+        run_edit(
+            &mut conn,
+            vec![answer("cloud", "seed")],
+            EditOrigin::CloudRepair,
+            Some("run-C"),
+            1,
+        )
+        .unwrap();
+        run_edit(
+            &mut conn,
+            vec![answer("cloud", "user-note")],
+            EditOrigin::Human,
+            None,
+            2,
+        )
+        .unwrap();
 
         undo_cloud_repair_run(&mut conn, "it-1", "run-C", 3, &noop_validate).unwrap();
         let (ds, _) = get_canonical_ds(&conn, "it-1").unwrap().unwrap();
@@ -2712,7 +3159,14 @@ mod tests {
     #[test]
     fn undo_reads_legacy_whole_object_change_rows() {
         let mut conn = grouped_item();
-        run_edit(&mut conn, vec![set_answer("slot-14", "cloudval")], EditOrigin::CloudRepair, Some("run-L"), 1).unwrap();
+        run_edit(
+            &mut conn,
+            vec![set_answer("slot-14", "cloudval")],
+            EditOrigin::CloudRepair,
+            Some("run-L"),
+            1,
+        )
+        .unwrap();
         // 改写成历史整对象格式模拟旧行：before 是修复前值，after 与当前稿一致。
         let legacy = serde_json::json!({
             "before": {
@@ -2801,6 +3255,326 @@ mod tests {
             Some(&json!("user answer"))
         );
         assert!(outcome.skipped.contains(&"answerKey:slot-14".to_string()));
+    }
+
+    #[test]
+    fn trusted_document_delta_can_change_one_answer_without_protected_sibling() {
+        let mut conn = grouped_item();
+        run_edit(
+            &mut conn,
+            vec![set_answer("slot-14", "human")],
+            EditOrigin::Human,
+            None,
+            1,
+        )
+        .unwrap();
+        let (before, version) = get_canonical_ds(&conn, "it-1").unwrap().unwrap();
+        let mut after = before.clone();
+        after["answerKey"]["slot-15"] = json!({"kind":"text","values":["cloud"]});
+        let command = json!({"op":"replaceAuthoringDocument","authoring":after});
+        let footprint = EditFootprint::for_command(&before, &command);
+        assert!(!footprint.targets.contains("slot-14"));
+        assert!(footprint.targets.contains("slot-15"));
+        apply_editor_commands_tx_with(
+            &mut conn,
+            &ApplyEditorCommandsInput {
+                item_id: "it-1".into(),
+                base_version: version,
+                request_id: Some("trusted-delta".into()),
+                commands: vec![command],
+                title: None,
+            },
+            EditOrigin::CloudRepair,
+            Some("cloud-repair:delta"),
+            &|doc, cmd| {
+                *doc = cmd["authoring"].clone();
+                Ok(())
+            },
+            &noop_validate,
+            &|_, _| Ok(()),
+        )
+        .unwrap();
+        let (current, _) = get_canonical_ds(&conn, "it-1").unwrap().unwrap();
+        assert_eq!(current["answerKey"]["slot-14"]["values"][0], "human");
+        assert_eq!(current["answerKey"]["slot-15"]["values"][0], "cloud");
+        let mut malicious = current.clone();
+        malicious["answerKey"]["slot-14"] = json!({"kind":"text","values":["overwrite"]});
+        let protected = human_protected_targets(&conn, "it-1", &current).unwrap();
+        assert!(EditFootprint::for_command(
+            &current,
+            &json!({"op":"replaceAuthoringDocument","authoring":malicious})
+        )
+        .first_conflict(&protected)
+        .is_some());
+    }
+
+    #[test]
+    fn compact_machine_payload_preserves_replay_and_answer_provenance() {
+        let payload = json!({"commands":[{"op":"replaceAuthoringDocument","authoring":{"huge": "a".repeat(100000)}},{"op":"setAnswer","slotId":"q1","answer":{"values":["secret"]}}],"title":null});
+        let compact = journal_payload(&payload, EditOrigin::CloudCandidateAdoption);
+        assert!(compact.to_string().len() < 400);
+        assert_eq!(compact["commands"][1]["slotId"], "q1");
+        assert!(journal_payload_matches(&compact, &payload));
+        let mut different = payload.clone();
+        different["commands"][1]["answer"] = json!({"values":["changed"]});
+        assert!(!journal_payload_matches(&compact, &different));
+        assert!(journal_payload_matches(&payload, &payload));
+        assert_eq!(journal_payload(&payload, EditOrigin::Human), payload);
+        assert!(!journal_change_is_effective(
+            &json!({"format":"diff-v1","targets":{"q1":{"diff":[]}}})
+        ));
+        assert!(journal_change_is_effective(
+            &json!({"format":"diff-v1","targets":{"q1":{"tooLarge":true}}})
+        ));
+    }
+
+    #[test]
+    fn whole_cloud_run_undo_removes_new_external_slot_even_when_group_references_it() {
+        let mut conn = grouped_item();
+        let mut cloud = grouped_ds();
+        cloud["taskGroups"][0]["stimulus"] = json!([{"id":"new-anchor","slotId":"slot-new"}]);
+        cloud["answerSlots"]["slot-new"] =
+            json!({"slotId":"slot-new","questionNumber":16,"interaction":"text"});
+        cloud["answerKey"]["slot-new"] = json!({"kind":"text","values":["new answer"]});
+        apply_editor_commands_tx_with(
+            &mut conn,
+            &ApplyEditorCommandsInput {
+                item_id: "it-1".into(),
+                base_version: 1,
+                request_id: Some("new-slot-cloud".into()),
+                commands: vec![json!({"op":"replaceAuthoringDocument","authoring":cloud})],
+                title: None,
+            },
+            EditOrigin::CloudCandidateAdoption,
+            Some("cloud-repair:newslot"),
+            &|doc, command| {
+                *doc = command["authoring"].clone();
+                Ok(())
+            },
+            &noop_validate,
+            &|_, _| Ok(()),
+        )
+        .unwrap();
+        undo_cloud_repair_run(&mut conn, "it-1", "cloud-repair:newslot", 2, &noop_validate)
+            .unwrap();
+        let (restored, _) = get_canonical_ds(&conn, "it-1").unwrap().unwrap();
+        assert!(restored["answerSlots"].get("slot-new").is_none());
+        assert!(restored["answerKey"].get("slot-new").is_none());
+        assert_eq!(restored["taskGroups"], grouped_ds()["taskGroups"]);
+    }
+
+    #[test]
+    fn whole_cloud_run_undo_restores_original_group_order() {
+        let mut conn = grouped_item();
+        let mut original = grouped_ds();
+        let mut groups = Vec::new();
+        for id in ["group-z", "group-a", "group-m", "group-b"] {
+            let mut group = original["taskGroups"][0].clone();
+            group["taskId"] = json!(id);
+            groups.push(group);
+        }
+        original["taskGroups"] = json!(groups);
+        conn.execute(
+            "UPDATE library_items_v2 SET canonical_ds_json=?1 WHERE id='it-1'",
+            [original.to_string()],
+        )
+        .unwrap();
+        let mut cloud = original.clone();
+        cloud["taskGroups"].as_array_mut().unwrap().rotate_left(2);
+        apply_editor_commands_tx_with(
+            &mut conn,
+            &ApplyEditorCommandsInput {
+                item_id: "it-1".into(),
+                base_version: 1,
+                request_id: Some("reorder-cloud".into()),
+                commands: vec![json!({"op":"replaceAuthoringDocument","authoring":cloud})],
+                title: None,
+            },
+            EditOrigin::CloudCandidateAdoption,
+            Some("cloud-repair:reorder"),
+            &|doc, command| {
+                *doc = command["authoring"].clone();
+                Ok(())
+            },
+            &noop_validate,
+            &|_, _| Ok(()),
+        )
+        .unwrap();
+        let outcome =
+            undo_cloud_repair_run(&mut conn, "it-1", "cloud-repair:reorder", 2, &noop_validate)
+                .unwrap();
+        assert!(outcome.skipped.is_empty());
+        let (restored, _) = get_canonical_ds(&conn, "it-1").unwrap().unwrap();
+        assert_eq!(restored["taskGroups"], original["taskGroups"]);
+    }
+
+    #[test]
+    fn whole_cloud_run_restores_a_passage_larger_than_the_human_journal_cap() {
+        let mut conn = grouped_item();
+        let original = grouped_ds();
+        let mut adopted = original.clone();
+        adopted["passage"] =
+            json!({"children":[{"id":"long-cloud-passage","text":"cloud passage ".repeat(10000)}]});
+        apply_editor_commands_tx_with(
+            &mut conn,
+            &ApplyEditorCommandsInput {
+                item_id: "it-1".into(),
+                base_version: 1,
+                request_id: Some("large-adoption".into()),
+                commands: vec![json!({"op":"replaceAuthoringDocument","authoring":adopted})],
+                title: None,
+            },
+            EditOrigin::CloudCandidateAdoption,
+            Some("cloud-repair:large"),
+            &|doc, command| {
+                *doc = command["authoring"].clone();
+                Ok(())
+            },
+            &noop_validate,
+            &|_, _| Ok(()),
+        )
+        .unwrap();
+        let change:String=conn.query_row("SELECT change_json FROM editor_journal_v1 WHERE repair_run_id='cloud-repair:large'",[],|row|row.get(0)).unwrap();
+        assert!(change.len() > MAX_CHANGE_ENTRY_BYTES);
+        assert!(!change.contains("tooLarge"));
+        let outcome =
+            undo_cloud_repair_run(&mut conn, "it-1", "cloud-repair:large", 2, &noop_validate)
+                .unwrap();
+        assert!(outcome.skipped.is_empty());
+        let (restored, _) = get_canonical_ds(&conn, "it-1").unwrap().unwrap();
+        assert_eq!(restored.get("passage"), original.get("passage"));
+    }
+
+    #[test]
+    fn answer_page_is_part_of_whole_cloud_run_undo() {
+        let mut conn = grouped_item();
+        run_edit(
+            &mut conn,
+            vec![set_answer("slot-14", "recognized")],
+            EditOrigin::AnswerPageRecognition,
+            Some("cloud-repair:answers"),
+            1,
+        )
+        .unwrap();
+        undo_cloud_repair_run(&mut conn, "it-1", "cloud-repair:answers", 2, &noop_validate)
+            .unwrap();
+        let (doc, _) = get_canonical_ds(&conn, "it-1").unwrap().unwrap();
+        assert_eq!(
+            doc.pointer("/answerKey/slot-14/values/0"),
+            Some(&grouped_ds()["answerKey"]["slot-14"]["values"][0])
+        );
+    }
+
+    fn mark_test_batch(conn: &Connection, batch: &str, status: &str) {
+        conn.execute("INSERT INTO recognition_batches_v1 (batch_id,library_item_id,job_id,base_edit_version,created_at,updated_at,repair_json) VALUES (?1,'it-1','it-1',1,'now','now',?2)",
+            params![batch, json!({"status":status}).to_string()]).unwrap();
+    }
+
+    #[test]
+    fn terminal_retention_keeps_human_undo_intent_from_previous_run() {
+        let mut conn = grouped_item();
+        mark_test_batch(&conn, "old", "completed");
+        mark_test_batch(&conn, "new", "completed");
+        run_edit(
+            &mut conn,
+            vec![set_answer("slot-14", "old cloud")],
+            EditOrigin::CloudRepair,
+            Some("cloud-repair:old"),
+            1,
+        )
+        .unwrap();
+        undo_cloud_repair_run(&mut conn, "it-1", "cloud-repair:old", 2, &noop_validate).unwrap();
+        run_edit(
+            &mut conn,
+            vec![set_answer("slot-15", "new cloud")],
+            EditOrigin::CloudRepair,
+            Some("cloud-repair:new"),
+            3,
+        )
+        .unwrap();
+        finalize_cloud_run_retention(&conn, "it-1", "cloud-repair:new").unwrap();
+        let count:i64=conn.query_row("SELECT COUNT(*) FROM editor_journal_v1 WHERE repair_run_id='cloud-repair:old' AND edit_origin='undo'",[],|row|row.get(0)).unwrap();
+        assert_eq!(count, 1);
+        let (doc, _) = get_canonical_ds(&conn, "it-1").unwrap().unwrap();
+        let protected = human_protected_targets(&conn, "it-1", &doc).unwrap();
+        assert!(protected.contains("slot-14") || protected.contains("answerKey:slot-14"));
+    }
+
+    #[test]
+    fn retention_waits_for_terminal_run_and_keeps_previous_on_empty_failure() {
+        let mut conn = grouped_item();
+        mark_test_batch(&conn, "old", "completed");
+        mark_test_batch(&conn, "new", "running");
+        run_edit(
+            &mut conn,
+            vec![set_answer("slot-14", "old")],
+            EditOrigin::CloudRepair,
+            Some("cloud-repair:old"),
+            1,
+        )
+        .unwrap();
+        run_edit(
+            &mut conn,
+            vec![set_answer("slot-15", "new")],
+            EditOrigin::CloudRepair,
+            Some("cloud-repair:new"),
+            2,
+        )
+        .unwrap();
+        // Per-write pruning must leave both runs intact, including the old undo.
+        finalize_cloud_run_retention(&conn, "it-1", "cloud-repair:empty-failure").unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(DISTINCT repair_run_id) FROM editor_journal_v1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(
+            latest_effective_cloud_undo_run(&conn, "it-1")
+                .unwrap()
+                .as_deref(),
+            Some("cloud-repair:old")
+        );
+        mark_test_batch(&conn, "noop", "completed");
+        run_edit(
+            &mut conn,
+            vec![set_answer("slot-15", "new")],
+            EditOrigin::CloudRepair,
+            Some("cloud-repair:noop"),
+            3,
+        )
+        .unwrap();
+        finalize_cloud_run_retention(&conn, "it-1", "cloud-repair:noop").unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(DISTINCT repair_run_id) FROM editor_journal_v1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2, "a terminal no-op cannot displace old undo");
+        // Once new becomes terminal it displaces old; active/unknown runs survive.
+        conn.execute(
+            "UPDATE recognition_batches_v1 SET repair_json=?1 WHERE batch_id='new'",
+            [json!({"status":"completed"}).to_string()],
+        )
+        .unwrap();
+        finalize_cloud_run_retention(&conn, "it-1", "cloud-repair:new").unwrap();
+        let old_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM editor_journal_v1 WHERE repair_run_id='cloud-repair:old'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(old_count, 0);
+        undo_cloud_repair_run(&mut conn, "it-1", "cloud-repair:new", 4, &noop_validate).unwrap();
+        assert_eq!(
+            latest_effective_cloud_undo_run(&conn, "it-1").unwrap(),
+            None
+        );
     }
 
     /// 记录已被裁剪的轮次如实不可撤销，不给一个点了没用的假按钮。

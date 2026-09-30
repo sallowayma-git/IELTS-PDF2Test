@@ -41,6 +41,124 @@ fn recognition_dir(root: &Path, job_id: &str) -> CommandResult<PathBuf> {
     Ok(safe_job_dir(root, job_id)?.join("recognition"))
 }
 
+/// Attach the retained whole-run undo without changing current-batch task/status
+/// reporting. A failed empty attempt must not hide the preceding valid undo.
+pub(crate) fn attach_latest_cloud_undo(
+    conn: &Connection,
+    item_id: &str,
+    repair: &mut Value,
+) -> CommandResult<()> {
+    let run = crate::library::repository::latest_effective_cloud_undo_run(conn, item_id)?;
+    if !repair.is_object() {
+        if run.is_none() {
+            return Ok(());
+        }
+        *repair = json!({"status":"unavailable","remainingTasks":[]});
+    }
+    repair["undoAvailable"] = json!(run.is_some());
+    repair["repairRunId"] = json!(run);
+    Ok(())
+}
+
+/// Reclaim only known terminal batches. Current/undo/active evidence and all
+/// sources or assets remain untouched; unknown files are deliberately preserved.
+pub(crate) fn prune_completed_artifacts_for_item(
+    root: &Path,
+    item_id: &str,
+) -> CommandResult<usize> {
+    let conn = crate::library::repository::open_library_connection(root)?;
+    let retained_runs = {
+        let mut stmt = conn.prepare("SELECT DISTINCT repair_run_id FROM editor_journal_v1 WHERE library_item_id = ?1 AND repair_run_id IS NOT NULL AND edit_origin IN ('cloud_repair','cloud_candidate_adoption','answer_page_recognition')")
+            .map_err(|error| format!("recognition_cleanup_runs:{error}"))?;
+        let rows = stmt
+            .query_map([item_id], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("recognition_cleanup_runs:{error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("recognition_cleanup_runs:{error}"))?;
+        rows
+    };
+    let batches = {
+        let mut stmt = conn.prepare("SELECT batch_id, job_id, repair_json FROM recognition_batches_v1 WHERE library_item_id = ?1")
+            .map_err(|error| format!("recognition_cleanup_batches:{error}"))?;
+        let rows = stmt
+            .query_map([item_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })
+            .map_err(|error| format!("recognition_cleanup_batches:{error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("recognition_cleanup_batches:{error}"))?;
+        rows
+    };
+    let mut removed = 0;
+    for (batch_id, job_id, raw) in batches {
+        let terminal = raw
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+            .and_then(|value| {
+                value
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .is_some_and(|status| {
+                matches!(
+                    status.as_str(),
+                    "completed"
+                        | "needs_attention"
+                        | "cancelled"
+                        | "budget_exhausted"
+                        | "unavailable"
+                        | "failed"
+                )
+            });
+        if !terminal || retained_runs.contains(&crate::cloud_repair::repair_run_id_for(&batch_id)) {
+            continue;
+        }
+        let current = read_json_opt(&recognition_dir(root, &job_id)?.join(CURRENT_BATCH_FILE))?;
+        if current
+            .as_ref()
+            .and_then(|v| v.get("batchId"))
+            .and_then(Value::as_str)
+            == Some(batch_id.as_str())
+        {
+            continue;
+        }
+        removed += prune_batch_procedure_files(root, &job_id, &batch_id)?;
+    }
+    Ok(removed)
+}
+
+fn prune_batch_procedure_files(root: &Path, job_id: &str, batch_id: &str) -> CommandResult<usize> {
+    let mut removed = 0;
+    for name in [
+        LOCAL_CANDIDATE_FILE,
+        LOCAL_AUTHORING_SNAPSHOT_FILE,
+        CLOUD_CANDIDATE_FILE,
+        CLOUD_AUTHORING_CANDIDATE_FILE,
+        REPAIR_SUMMARY_FILE,
+        SOURCE_VERIFICATION_FILE,
+        DECISION_FILE,
+    ] {
+        let path = artifact_path(root, job_id, batch_id, name)?;
+        // Never follow a symlink into an unrelated directory.
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_file() => {
+                std::fs::remove_file(&path)
+                    .map_err(|error| format!("recognition_cleanup_file:{error}"))?;
+                removed += 1;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("recognition_cleanup_metadata:{error}")),
+            _ => {}
+        }
+    }
+    // Repair rulings are product decisions, so remain readable from older batches.
+    Ok(removed)
+}
+
 fn artifact_path(root: &Path, job_id: &str, batch_id: &str, name: &str) -> CommandResult<PathBuf> {
     crate::util::validate_path_segment("batch_id", batch_id)?;
     Ok(recognition_dir(root, job_id)?.join(format!("{batch_id}.{name}")))
@@ -1237,6 +1355,65 @@ mod tests {
         update_decision_cloud_stage(&root, "job-1", "batch-missing", "succeeded", None).unwrap();
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn completed_artifact_cleanup_preserves_current_active_undo_and_product_rulings() {
+        let root = temp_root();
+        std::fs::create_dir_all(&root).unwrap();
+        let conn = crate::library::repository::open_library_connection(&root).unwrap();
+        conn.execute("INSERT INTO library_items_v2 (id, modality, title, status, created_at, updated_at) VALUES ('item-1','reading','t','processing','now','now')", []).unwrap();
+        for (batch, status) in [
+            ("old", "completed"),
+            ("current", "completed"),
+            ("undo", "completed"),
+            ("active", "running"),
+        ] {
+            conn.execute("INSERT INTO recognition_batches_v1 (batch_id,library_item_id,job_id,base_edit_version,created_at,updated_at,repair_json) VALUES (?1,'item-1','job-1',1,'now','now',?2)", params![batch,json!({"status":status}).to_string()]).unwrap();
+            write_json(
+                &artifact_path(&root, "job-1", batch, CLOUD_AUTHORING_CANDIDATE_FILE).unwrap(),
+                &json!({"candidate":batch}),
+            )
+            .unwrap();
+            write_json(
+                &artifact_path(&root, "job-1", batch, REPAIR_RULINGS_FILE).unwrap(),
+                &json!([{"decision":batch}]),
+            )
+            .unwrap();
+        }
+        write_current_batch(&root, "job-1", "current").unwrap();
+        conn.execute("INSERT INTO editor_journal_v1 (library_item_id,base_version,command_json,created_at,edit_origin,repair_run_id) VALUES ('item-1',1,'{}','now','cloud_repair','cloud-repair:undo')", []).unwrap();
+        let source = crate::util::safe_job_dir(&root, "job-1")
+            .unwrap()
+            .join("source")
+            .join("paper.pdf");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, b"source").unwrap();
+        assert_eq!(
+            prune_completed_artifacts_for_item(&root, "item-1").unwrap(),
+            1
+        );
+        assert!(
+            !artifact_path(&root, "job-1", "old", CLOUD_AUTHORING_CANDIDATE_FILE)
+                .unwrap()
+                .exists()
+        );
+        for batch in ["current", "undo", "active"] {
+            assert!(
+                artifact_path(&root, "job-1", batch, CLOUD_AUTHORING_CANDIDATE_FILE)
+                    .unwrap()
+                    .exists()
+            );
+        }
+        assert!(artifact_path(&root, "job-1", "old", REPAIR_RULINGS_FILE)
+            .unwrap()
+            .exists());
+        assert!(source.exists());
+        assert_eq!(
+            prune_completed_artifacts_for_item(&root, "item-1").unwrap(),
+            0
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

@@ -20,6 +20,7 @@
 //! 4. 原文没有提供的答案不得以"识别修复"的名义生成；
 //! 5. 模型 `finish` **不等于**产品完成：剩余问题一律由后端按当前 canonical 重算。
 
+mod decision;
 pub(crate) mod grab;
 pub(crate) mod packets;
 pub(crate) mod tools;
@@ -109,6 +110,7 @@ pub(crate) const REPAIR_STATUS_BUDGET_EXHAUSTED: &str = "budget_exhausted";
 pub(crate) const REPAIR_STATUS_UNAVAILABLE: &str = "unavailable";
 
 /// 一次修复运行的输入。
+#[derive(Clone, Copy)]
 pub(crate) struct RepairRunRequest<'a> {
     pub root: &'a Path,
     pub item_id: &'a str,
@@ -555,6 +557,7 @@ fn target_context_fingerprint(canonical: &Value, target_type: &str, target_id: &
         }
         // 听力 Part 的裁定前提就是这一段的身份与范围（不含音频事实）。
         "part" => canonical_json(&part_context(canonical, target_id)),
+        "passage" => canonical_json(canonical.get("passage").unwrap_or(&Value::Null)),
         // `task_group` 与其余：**整组内容**。刻意比 `group_index_entry` 宽——
         // 索引摘要是给模型看的概览，不是裁定的依据。
         _ => {
@@ -571,8 +574,12 @@ fn target_context_fingerprint(canonical: &Value, target_type: &str, target_id: &
 /// 一条差异的**完整**前提指纹 `(当前稿一侧, 候选一侧, 裁定依据)`。
 fn difference_digests(difference: &Value) -> (String, String, String) {
     (
-        canonical_json(difference.get("canonical").unwrap_or(&Value::Null)),
-        canonical_json(difference.get("candidate").unwrap_or(&Value::Null)),
+        crate::hash_bytes(
+            canonical_json(difference.get("canonical").unwrap_or(&Value::Null)).as_bytes(),
+        ),
+        crate::hash_bytes(
+            canonical_json(difference.get("candidate").unwrap_or(&Value::Null)).as_bytes(),
+        ),
         difference
             .get("contextDigest")
             .and_then(Value::as_str)
@@ -630,11 +637,17 @@ fn describe_difference(difference: &Value) -> String {
     let (target_type, target_id, field) = difference_key(difference);
     let label = match field.as_str() {
         "answer" => "答案",
+        "answer_page" => "答案页识别的答案",
         "prompt" => "题面",
         "instructions" => "作答说明",
         "stimulus" => "材料",
         "option_bank" => "选项库",
         "task_group" => "整组",
+        "taskType" => "题型",
+        "presentation" | "interaction" | "kind" => "呈现方式",
+        "displayRange" | "slotIds" => "题号范围",
+        "cardinality" | "instructionSignature" => "作答要求",
+        "passage" => "原文",
         "part_boundary" => "分段范围",
         "part_label" => "段落标签",
         "part_tasks" => "所属题组",
@@ -787,6 +800,172 @@ fn failure_report(request: &RepairRunRequest<'_>, error: String) -> RepairRunRep
 
 /// 机械比对：当前 canonical 与云端完整候选之间**还剩哪些实质差异**。///
 /// 这是给修复模型看的上下文，也是「剩余问题」重算的输入。只做确定性比较，不调用模型。
+/// Deterministic screening only: low similarity expands evidence, never rejects a candidate.
+fn verification_samples(local: &Value, cloud: &Value, seed: &str) -> Value {
+    fn pick(seed: &str, label: &str, len: usize) -> usize {
+        let hash = crate::hash_bytes(format!("{seed}:{label}").as_bytes());
+        usize::from_str_radix(&hash[..8], 16).unwrap_or(0) % len.max(1)
+    }
+    fn score(a: &str, b: &str) -> f64 {
+        let a = normalize_text(a);
+        let b = normalize_text(b);
+        if a == b {
+            return 1.0;
+        }
+        let grams = |s: &str| {
+            let c: Vec<char> = s.chars().collect();
+            c.windows(2)
+                .map(|w| w.iter().collect::<String>())
+                .collect::<BTreeSet<_>>()
+        };
+        let a = grams(&a);
+        let b = grams(&b);
+        if a.is_empty() || b.is_empty() {
+            return 0.0;
+        }
+        2.0 * a.intersection(&b).count() as f64 / (a.len() + b.len()) as f64
+    }
+    let mut pages: BTreeMap<u64, Vec<(usize, String)>> = BTreeMap::new();
+    for (i, node) in local
+        .pointer("/passage/content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        let text = nodes_text(&json!([node]));
+        if text.trim().is_empty() {
+            continue;
+        }
+        let page = node
+            .pointer("/sourceAnchors/0/pageIndex")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            + 1;
+        pages.entry(page).or_default().push((i, text));
+    }
+    let mut samples = Vec::new();
+    for (page, items) in pages {
+        let (i, text) = &items[pick(seed, &format!("page:{page}"), items.len())];
+        let other = cloud
+            .pointer("/passage/content")
+            .and_then(Value::as_array)
+            .and_then(|p| p.get(*i))
+            .map(|n| nodes_text(&json!([n])))
+            .unwrap_or_default();
+        let similarity = score(text, &other);
+        samples.push(json!({"kind":"passage","pageIndex":page,"index":i,"similarity":similarity,"expandVerification":similarity<0.8}));
+    }
+    let candidates = groups_by_id(cloud);
+    for (id, group) in groups_by_id(local) {
+        let prompts = |g: &Value| -> Vec<String> {
+            g.get("responseGroups")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .map(|r| nodes_text(r.get("prompt").unwrap_or(&Value::Null)))
+                .filter(|t| !t.trim().is_empty())
+                .collect()
+        };
+        let fields = prompts(group);
+        if fields.is_empty() {
+            continue;
+        }
+        let i = pick(seed, &id, fields.len());
+        let other = candidates.get(&id).map(|g| prompts(g)).unwrap_or_default();
+        let similarity = score(&fields[i], other.get(i).map(String::as_str).unwrap_or(""));
+        samples.push(json!({"kind":"question","taskId":id,"index":i,"similarity":similarity,"expandVerification":similarity<0.8}));
+    }
+    json!({"threshold":0.8,"seedHash":crate::hash_bytes(seed.as_bytes()),"samples":samples,"fullTextVerified":false})
+}
+
+/// Compare authored content without parser identity, geometry or diagnostics.
+fn comparison_content(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .filter(|(key, _)| {
+                    !matches!(
+                        key.as_str(),
+                        "id" | "nodeId" | "optionId"
+                            | "sourceAnchors"
+                            | "evidenceAnchors"
+                            | "quality"
+                            | "reviewState"
+                            | "recognitionWarnings"
+                            | "confidence"
+                            | "provenanceStatus"
+                            | "paragraphMap"
+                    ) && !map.get(*key).is_some_and(|v| {
+                        v.is_null() || (key.as_str() == "allowOptionReuse" && v == false)
+                    })
+                })
+                .map(|(key, value)| (key.clone(), comparison_content(value)))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(comparison_content).collect()),
+        Value::String(text) => json!(normalize_text(text)),
+        other => other.clone(),
+    }
+}
+
+/// Missing choice-label constraints mean the complete owning option bank, as in the runtime.
+fn comparison_constraints(document: &Value, slot_id: &str, slot: &Value) -> Value {
+    let mut constraints = slot
+        .get("constraints")
+        .cloned()
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}));
+    if constraints
+        .get("acceptedOptionLabels")
+        .is_none_or(Value::is_null)
+    {
+        let groups = groups_by_id(document);
+        for group in groups.values() {
+            if let Some(response) = group
+                .get("responseGroups")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .find(|r| {
+                    r.get("slotIds")
+                        .and_then(Value::as_array)
+                        .is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(slot_id)))
+                })
+            {
+                let options = response
+                    .get("options")
+                    .and_then(Value::as_array)
+                    .or_else(|| {
+                        group
+                            .pointer("/optionBank/options")
+                            .and_then(Value::as_array)
+                    });
+                if let Some(options) = options {
+                    let mut labels: Vec<_> = options
+                        .iter()
+                        .filter_map(|o| o.get("label"))
+                        .cloned()
+                        .collect();
+                    labels.sort_by_key(|label| {
+                        label.as_str().unwrap_or_default().to_ascii_uppercase()
+                    });
+                    if !labels.is_empty() {
+                        constraints["acceptedOptionLabels"] = json!(labels);
+                    }
+                }
+            }
+        }
+    }
+    if let Some(labels) = constraints
+        .get_mut("acceptedOptionLabels")
+        .and_then(Value::as_array_mut)
+    {
+        labels.sort_by_key(|label| label.as_str().unwrap_or_default().to_ascii_uppercase());
+    }
+    comparison_content(&constraints)
+}
+
 pub(crate) fn candidate_differences(canonical: &Value, candidate: &Value) -> Vec<Value> {
     let mut out = Vec::new();
     let current_groups = groups_by_id(canonical);
@@ -803,6 +982,25 @@ pub(crate) fn candidate_differences(canonical: &Value, candidate: &Value) -> Vec
             }));
             continue;
         };
+        for field in ["taskType", "displayRange", "instructionSignature"] {
+            let current = if field == "displayRange" {
+                json!(crate::reconcile::candidate::expand_question_numbers(
+                    current_group.get(field).unwrap_or(&Value::Null)
+                ))
+            } else {
+                comparison_content(current_group.get(field).unwrap_or(&Value::Null))
+            };
+            let proposed = if field == "displayRange" {
+                json!(crate::reconcile::candidate::expand_question_numbers(
+                    candidate_group.get(field).unwrap_or(&Value::Null)
+                ))
+            } else {
+                comparison_content(candidate_group.get(field).unwrap_or(&Value::Null))
+            };
+            if current != proposed {
+                push_difference(&mut out, "task_group", task_id, field, current, proposed);
+            }
+        }
         for (field, pointer) in [("instructions", "/instructions"), ("stimulus", "/stimulus")] {
             let current_text = nodes_text(
                 current_group
@@ -870,6 +1068,80 @@ pub(crate) fn candidate_differences(canonical: &Value, candidate: &Value) -> Vec
                 );
             }
         }
+        // Response structure is substantive even when the visible text matches.
+        for response_id in current_responses
+            .keys()
+            .chain(candidate_responses.keys())
+            .collect::<BTreeSet<_>>()
+        {
+            let current = current_responses
+                .get(response_id)
+                .copied()
+                .unwrap_or(&Value::Null);
+            let proposed = candidate_responses
+                .get(response_id)
+                .copied()
+                .unwrap_or(&Value::Null);
+            for field in [
+                "kind",
+                "slotIds",
+                "cardinality",
+                "assignment",
+                "options",
+                "optionBankRef",
+                "scoringPolicy",
+                "duplicatePolicy",
+                "allowOptionReuse",
+            ] {
+                let a = comparison_content(current.get(field).unwrap_or(&Value::Null));
+                let b = comparison_content(proposed.get(field).unwrap_or(&Value::Null));
+                if a != b {
+                    push_difference(&mut out, "response_group", response_id, field, a, b);
+                }
+            }
+        }
+        for field in ["instructions", "stimulus"] {
+            let a = current_group.get(field).unwrap_or(&Value::Null);
+            let b = candidate_group.get(field).unwrap_or(&Value::Null);
+            if normalize_text(&nodes_text(a)) == normalize_text(&nodes_text(b))
+                && comparison_content(a) != comparison_content(b)
+            {
+                push_difference(
+                    &mut out,
+                    "task_group",
+                    task_id,
+                    "presentation",
+                    comparison_content(a),
+                    comparison_content(b),
+                );
+            }
+        }
+        for response_id in current_responses
+            .keys()
+            .chain(candidate_responses.keys())
+            .collect::<BTreeSet<_>>()
+        {
+            let a = current_responses
+                .get(response_id)
+                .and_then(|r| r.get("prompt"))
+                .unwrap_or(&Value::Null);
+            let b = candidate_responses
+                .get(response_id)
+                .and_then(|r| r.get("prompt"))
+                .unwrap_or(&Value::Null);
+            if normalize_text(&nodes_text(a)) == normalize_text(&nodes_text(b))
+                && comparison_content(a) != comparison_content(b)
+            {
+                push_difference(
+                    &mut out,
+                    "response_group",
+                    response_id,
+                    "presentation",
+                    comparison_content(a),
+                    comparison_content(b),
+                );
+            }
+        }
         // 选项库。
         let current_options = option_bank_digest(current_group);
         let candidate_options = option_bank_digest(candidate_group);
@@ -888,9 +1160,17 @@ pub(crate) fn candidate_differences(canonical: &Value, candidate: &Value) -> Vec
         // 答案。
         let current_answers = group_answers(canonical, current_group);
         let candidate_answers = group_answers(candidate, candidate_group);
-        for (slot_id, candidate_answer) in &candidate_answers {
+        for slot_id in current_answers
+            .keys()
+            .chain(candidate_answers.keys())
+            .collect::<BTreeSet<_>>()
+        {
+            let candidate_answer = candidate_answers
+                .get(slot_id)
+                .cloned()
+                .unwrap_or(Value::Null);
             let current_answer = current_answers.get(slot_id).cloned().unwrap_or(Value::Null);
-            if current_answer != *candidate_answer {
+            if current_answer != candidate_answer {
                 push_difference(
                     &mut out,
                     "slot",
@@ -912,6 +1192,50 @@ pub(crate) fn candidate_differences(canonical: &Value, candidate: &Value) -> Vec
                 "canonical": group_index_entry(current_group),
                 "candidate": Value::Null,
             }));
+        }
+    }
+
+    // Passage and answer-slot rendering are independent of task text.
+    let a = comparison_content(canonical.get("passage").unwrap_or(&Value::Null));
+    let b = comparison_content(candidate.get("passage").unwrap_or(&Value::Null));
+    if a != b {
+        push_difference(&mut out, "passage", "passage", "passage", a, b);
+    }
+    let current_slots = canonical.get("answerSlots").and_then(Value::as_object);
+    let candidate_slots = candidate.get("answerSlots").and_then(Value::as_object);
+    let slot_ids: BTreeSet<&String> = current_slots
+        .into_iter()
+        .flat_map(|m| m.keys())
+        .chain(candidate_slots.into_iter().flat_map(|m| m.keys()))
+        .collect();
+    for slot_id in slot_ids {
+        let current = current_slots
+            .and_then(|m| m.get(slot_id))
+            .unwrap_or(&Value::Null);
+        let proposed = candidate_slots
+            .and_then(|m| m.get(slot_id))
+            .unwrap_or(&Value::Null);
+        for field in [
+            "questionNumber",
+            "displayLabel",
+            "hostType",
+            "interaction",
+            "participation",
+            "constraints",
+        ] {
+            let a = if field == "constraints" {
+                comparison_constraints(canonical, slot_id, current)
+            } else {
+                comparison_content(current.get(field).unwrap_or(&Value::Null))
+            };
+            let b = if field == "constraints" {
+                comparison_constraints(candidate, slot_id, proposed)
+            } else {
+                comparison_content(proposed.get(field).unwrap_or(&Value::Null))
+            };
+            if a != b {
+                push_difference(&mut out, "slot", slot_id, field, a, b);
+            }
         }
     }
 
@@ -987,6 +1311,84 @@ pub(crate) fn candidate_differences(canonical: &Value, candidate: &Value) -> Vec
     out
 }
 
+/// Independent answer-page evidence must remain visible even when local and cloud agree.
+fn answer_page_differences(
+    root: &Path,
+    job_id: &str,
+    canonical: &Value,
+) -> CommandResult<Vec<Value>> {
+    let dir = crate::util::job_dir(root, job_id);
+    let report = crate::util::read_json_opt(&dir.join("pipeline-report.json"))?;
+    if report
+        .as_ref()
+        .and_then(|r| r.pointer("/parser/visionAnswerExtraction/state"))
+        .and_then(Value::as_str)
+        .is_some_and(|state| state != "succeeded")
+    {
+        return Ok(Vec::new());
+    }
+    let Some(candidates) = crate::util::read_json_opt(&dir.join("vision-answer-candidates.json"))?
+    else {
+        return Ok(Vec::new());
+    };
+    if candidates.get("jobId").and_then(Value::as_str) != Some(job_id) {
+        return Ok(Vec::new());
+    }
+    let mut differences = Vec::new();
+    for entry in candidates
+        .get("candidates")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if entry.get("dismissedAt").is_some_and(|v| !v.is_null()) {
+            continue;
+        }
+        let number = entry.get("questionNumber").and_then(|n| {
+            n.as_u64().or_else(|| {
+                n.as_str()
+                    .and_then(|s| s.trim_start_matches(['q', 'Q']).parse().ok())
+            })
+        });
+        let Some(number) = number else {
+            continue;
+        };
+        let slot_id = canonical
+            .get("answerSlots")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flat_map(|m| m.iter())
+            .find(|(_, slot)| slot.get("questionNumber").and_then(Value::as_u64) == Some(number))
+            .map(|(id, _)| id.clone());
+        let Some(slot_id) = slot_id else {
+            continue;
+        };
+        let answer =
+            crate::auto_pipeline::answer_value_for_slot(canonical, &slot_id, &entry["answer"])
+                .unwrap_or_else(|| json!({"unrepresentableAnswerPageValue":entry["answer"]}));
+        let current = canonical
+            .get("answerKey")
+            .and_then(|keys| keys.get(&slot_id))
+            .cloned()
+            .unwrap_or(Value::Null);
+        if comparison_content(&current) == comparison_content(&answer) {
+            continue;
+        }
+        let mut evidence = entry.get("evidence").cloned().unwrap_or(Value::Null);
+        if evidence.is_object() && evidence.get("sourceFileId").is_none() {
+            evidence["sourceFileId"] = canonical
+                .pointer("/exam/sourceFiles/0/sourceFileId")
+                .cloned()
+                .unwrap_or(Value::Null);
+        }
+        differences.push(json!({"targetType":"slot","targetId":slot_id,"field":"answer_page",
+            "canonical":current,"candidate":answer,"questionNumber":number,"source":"answer_page_recognition",
+            "evidence":if evidence.is_object(){json!([evidence])}else{json!([])},
+            "contextDigest":target_context_fingerprint(canonical,"slot",&slot_id)}));
+    }
+    Ok(differences)
+}
+
 fn batch_uses_adopted_cloud_as_canonical(root: &Path, batch_id: &str) -> CommandResult<bool> {
     let conn = open_library_connection(root)?;
     let repair = store::read_batch_repair(&conn, batch_id)?;
@@ -1029,9 +1431,46 @@ fn comparison_challenger(
     adopted: bool,
 ) -> CommandResult<Option<Value>> {
     if adopted {
-        return store::read_local_authoring_snapshot(root, job_id, batch_id)?
-            .map(Some)
-            .ok_or_else(|| "adopted_cloud_local_snapshot_missing".to_string());
+        let local = store::read_local_authoring_snapshot(root, job_id, batch_id)?
+            .ok_or_else(|| "adopted_cloud_local_snapshot_missing".to_string())?;
+        let conn = open_library_connection(root)?;
+        let repair = store::read_batch_repair(&conn, batch_id)?.unwrap_or(Value::Null);
+        let selected = repair
+            .pointer("/candidateAdoption/adoptedTaskIds")
+            .and_then(Value::as_array);
+        if let Some(selected) = selected {
+            let cloud = store::read_cloud_authoring_candidate(root, job_id, batch_id)?
+                .map(|c| serde_json::to_value(c.authoring).map_err(|e| e.to_string()))
+                .transpose()?;
+            if let Some(cloud) = cloud {
+                let adopted_ids: BTreeSet<_> = selected.iter().filter_map(Value::as_str).collect();
+                let mut mixed = cloud.clone();
+                for unit in crate::cloud_adoption::comparison_units(&local, &cloud) {
+                    if unit
+                        .cloud_task_ids
+                        .iter()
+                        .any(|id| adopted_ids.contains(id.as_str()))
+                    {
+                        mixed = crate::cloud_adoption::replace_unit(
+                            &mixed,
+                            &local,
+                            &cloud,
+                            &unit.unit_id,
+                            false,
+                        )?;
+                    }
+                }
+                if repair
+                    .pointer("/candidateAdoption/passageAdopted")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+                {
+                    mixed["passage"] = local.get("passage").cloned().unwrap_or(Value::Null);
+                }
+                return Ok(Some(mixed));
+            }
+        }
+        return Ok(Some(local));
     }
     store::read_cloud_authoring_candidate(root, job_id, batch_id)?
         .map(|candidate| serde_json::to_value(candidate.authoring).map_err(|e| e.to_string()))
@@ -1060,11 +1499,12 @@ pub(crate) fn build_repair_context(
     let candidate = store::read_cloud_authoring_candidate(root, job_id, batch_id)?;
     let challenger = comparison_challenger(root, job_id, batch_id, adopted)?;
     let challenger_authoring = challenger.unwrap_or(Value::Null);
-    let differences = if challenger_authoring.is_null() {
+    let mut differences = if challenger_authoring.is_null() {
         Vec::new()
     } else {
         reviewed_comparison_differences(root, batch_id, &canonical, &challenger_authoring, adopted)?
     };
+    differences.extend(answer_page_differences(root, job_id, &canonical)?);
 
     let source_file_id = canonical
         .pointer("/exam/sourceFiles/0/sourceFileId")
@@ -1072,11 +1512,23 @@ pub(crate) fn build_repair_context(
         .unwrap_or(job_id)
         .to_string();
 
+    let seed = store::load_batch_by_id(&open_library_connection(root)?, batch_id)?
+        .map(|b| b.source_sha256)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| source_file_id.clone());
+    let screening_local = store::read_local_authoring_snapshot(root, job_id, batch_id)?
+        .unwrap_or_else(|| canonical.clone());
+    let screening_cloud = candidate
+        .as_ref()
+        .and_then(|c| serde_json::to_value(&c.authoring).ok())
+        .unwrap_or(Value::Null);
+    let samples = verification_samples(&screening_local, &screening_cloud, &seed);
     Ok(json!({
         "itemId": item_id,
         "jobId": job_id,
         "batchId": batch_id,
         "sourceFileId": source_file_id,
+        "verificationSampling": samples,
         "editVersion": edit_version,
         "comparisonMode": if adopted { "adopted_cloud_vs_local_snapshot" } else { "local_draft_vs_cloud_candidate" },
         "challengerLabel": if adopted { "frozen_local_snapshot" } else { "cloud_candidate" },
@@ -1686,6 +2138,21 @@ fn execute_tool(
     context: &Value,
     packet: Option<&mut PacketTools<'_>>,
 ) -> (CloudRepairToolResultV1, Option<usize>) {
+    if (request.cancelled)() {
+        return (
+            CloudRepairToolResultV1::rejected(&call.call_id, vec!["CLOUD_REPAIR_CANCELLED".into()]),
+            None,
+        );
+    }
+    if Instant::now() >= request.deadline {
+        return (
+            CloudRepairToolResultV1::rejected(
+                &call.call_id,
+                vec!["CLOUD_REPAIR_DEADLINE_EXCEEDED".into()],
+            ),
+            None,
+        );
+    }
     let mut packet = packet;
     match call.tool.as_str() {
         "read_draft" => {
@@ -2192,6 +2659,9 @@ fn execute_tool(
             let mut recorded = Vec::new();
             let mut errors = Vec::new();
             let mut evidence_unverifiable_total = 0usize;
+            let mut cloud_choices = Vec::new();
+            let adopted_cloud_mode = context.get("comparisonMode").and_then(Value::as_str)
+                == Some("adopted_cloud_vs_local_snapshot");
             // P9：裁定证据与 apply_edits 走**同一套**引文核验，对照同一份完整原文。
             let source_text = evidence_source_text(request, context, packet.as_deref());
             for (entry_index, entry) in entries.iter().enumerate() {
@@ -2213,23 +2683,66 @@ fn execute_tool(
                     .unwrap_or_default()
                     .trim()
                     .to_string();
+                let decision = entry
+                    .get("decision")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 let ruling = entry
                     .get("ruling")
                     .and_then(Value::as_str)
                     .unwrap_or_default()
                     .trim()
                     .to_string();
+                if decision == "use_cloud" && field == "answer_page" {
+                    errors.push("CLOUD_ANSWER_PAGE_DECISION_REQUIRES_SET_ANSWER: apply_edits setAnswer using the answer-page candidate, not the original cloud group".to_string());
+                    continue;
+                }
+                // 采纳云端后，非答案类差异原文无法裁定时静默保留云端，不产生用户任务；
+                // 只有答案类冲突才交给用户选择。
+                let non_answer = !matches!(field.as_str(), "answer" | "answer_page");
+                let ruling = match decision {
+                    "keep_current" => "current_is_correct".to_string(),
+                    "user_choice" if adopted_cloud_mode && non_answer => {
+                        crate::schema::cloud_repair_v1::CLOUD_RULING_KEPT_CLOUD_DEFAULT.to_string()
+                    }
+                    "user_choice" | "need_context" => "cannot_resolve".to_string(),
+                    "use_cloud" => "current_is_correct".to_string(),
+                    "" => ruling,
+                    other => {
+                        errors.push(format!("CLOUD_DECISION_UNKNOWN:{other}"));
+                        continue;
+                    }
+                };
+                // The old explicit "cannot_resolve" protocol gets the same silent default.
+                let ruling = if adopted_cloud_mode
+                    && non_answer
+                    && decision != "need_context"
+                    && ruling == crate::schema::cloud_repair_v1::CLOUD_RULING_CANNOT_RESOLVE
+                {
+                    crate::schema::cloud_repair_v1::CLOUD_RULING_KEPT_CLOUD_DEFAULT.to_string()
+                } else {
+                    ruling
+                };
                 if !matches!(
                     ruling.as_str(),
                     crate::schema::cloud_repair_v1::CLOUD_RULING_CURRENT_IS_CORRECT
                         | crate::schema::cloud_repair_v1::CLOUD_RULING_CANNOT_RESOLVE
-                        | crate::schema::cloud_repair_v1::CLOUD_RULING_KEPT_CLOUD_DEFAULT
-                ) {
+                ) && !(adopted_cloud_mode
+                    && ruling == crate::schema::cloud_repair_v1::CLOUD_RULING_KEPT_CLOUD_DEFAULT)
+                {
                     errors.push(format!(
                         "CLOUD_RULING_UNKNOWN_KIND:{ruling}: allowed are \
                          current_is_correct (the current draft is right and the candidate is wrong) \
                          cannot_resolve (the original file does not settle it), and \
                          kept_cloud_default (adopted-cloud mode, non-answer differences only)"
+                    ));
+                    continue;
+                }
+                if ruling == crate::schema::cloud_repair_v1::CLOUD_RULING_KEPT_CLOUD_DEFAULT
+                    && !non_answer
+                {
+                    errors.push(format!(
+                        "CLOUD_RULING_KEPT_CLOUD_DEFAULT_NOT_ALLOWED:{target_type}:{target_id}:{field}: only adopted-cloud non-answer differences may keep the cloud default"
                     ));
                     continue;
                 }
@@ -2243,25 +2756,6 @@ fn execute_tool(
                     ));
                     continue;
                 };
-                let adopted_cloud_mode = context.get("comparisonMode").and_then(Value::as_str)
-                    == Some("adopted_cloud_vs_local_snapshot");
-                if ruling == crate::schema::cloud_repair_v1::CLOUD_RULING_KEPT_CLOUD_DEFAULT
-                    && (!adopted_cloud_mode || field == "answer")
-                {
-                    errors.push(format!(
-                        "CLOUD_RULING_KEPT_CLOUD_DEFAULT_NOT_ALLOWED:{target_type}:{target_id}:{field}: only adopted-cloud non-answer differences may keep the cloud default"
-                    ));
-                    continue;
-                }
-                if adopted_cloud_mode
-                    && ruling == crate::schema::cloud_repair_v1::CLOUD_RULING_CANNOT_RESOLVE
-                    && field != "answer"
-                {
-                    errors.push(format!(
-                        "CLOUD_RULING_USE_KEPT_CLOUD_DEFAULT:{target_type}:{target_id}:{field}: undecidable non-answer differences in adopted-cloud mode default to the cloud draft without a user task"
-                    ));
-                    continue;
-                }
                 let (canonical_digest, candidate_digest, context_digest) =
                     difference_digests(difference);
                 // P9：裁定证据与 apply_edits 走**同一套**校验——先结构，再引文对照完整原文。
@@ -2272,6 +2766,12 @@ fn execute_tool(
                     .and_then(Value::as_array)
                     .cloned()
                     .unwrap_or_default();
+                if decision == "use_cloud" && evidence_entries.is_empty() {
+                    errors.push(format!(
+                        "CLOUD_DECISION_SOURCE_EVIDENCE_REQUIRED:{target_type}:{target_id}:{field}"
+                    ));
+                    continue;
+                }
                 let structural: Vec<String> = tools::validate_evidence(&evidence_entries)
                     .into_iter()
                     .map(|problem| format!("CLOUD_RULING_EVIDENCE_INVALID:{entry_index}:{problem}"))
@@ -2296,12 +2796,16 @@ fn execute_tool(
                 evidence_unverifiable_total += unverifiable.len();
                 let annotated_evidence =
                     annotate_evidence_verification(evidence_entries, &unverifiable);
+                if decision == "use_cloud" {
+                    cloud_choices.push(entry.clone());
+                }
                 recorded.push(json!({
                     "targetType": target_type,
                     "targetId": target_id,
                     "field": field.clone(),
                     "ruling": ruling,
-                    "reason": entry.get("reason").cloned().unwrap_or(Value::Null),
+                    "decision": if ruling == crate::schema::cloud_repair_v1::CLOUD_RULING_KEPT_CLOUD_DEFAULT { "keep_cloud_default" } else if decision.is_empty() { if ruling == "current_is_correct" { "keep_current" } else { "user_choice" } } else { decision },
+                    "reason": if decision == "need_context" { json!(crate::schema::cloud_repair_v1::CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT) } else { entry.get("reason").cloned().unwrap_or(Value::Null) },
                     "evidence": annotated_evidence,
                     // 绑定裁定当时看到的这一对内容；任一侧后来变了，这条裁定作废重评。
                     "canonicalDigest": canonical_digest,
@@ -2318,21 +2822,158 @@ fn execute_tool(
                     None,
                 );
             }
-            (
-                CloudRepairToolResultV1::ok(
-                    &call.call_id,
-                    json!({
-                        "status": "recorded",
-                        "recorded": recorded,
-                        "errors": errors,
-                        // 没有文本层时非 0：这些裁定**记了**，但它们的证据没有被核验过。
-                        "evidenceUnverifiable": evidence_unverifiable_total,
-                        "noteForModel": "Recorded rulings remove adjudicated differences from the user's list. \
-                                         They cannot remove structural problems found by the backend validator.",
-                    }),
-                ),
-                None,
-            )
+            let applied = if cloud_choices.is_empty() {
+                None
+            } else {
+                let base = call
+                    .arguments
+                    .get("baseVersion")
+                    .and_then(Value::as_i64)
+                    .or_else(|| {
+                        context
+                            .pointer("/draftSlice/editVersion")
+                            .and_then(Value::as_i64)
+                    })
+                    .or_else(|| context.get("editVersion").and_then(Value::as_i64));
+                match base
+                    .ok_or_else(|| "CLOUD_EDIT_BASE_VERSION_MISSING".to_string())
+                    .and_then(|base| {
+                        decision::apply_cloud_units(request, &cloud_choices, base, &call.call_id)
+                    }) {
+                    Ok(count) => Some(count),
+                    Err(error) => {
+                        return (
+                            CloudRepairToolResultV1::rejected(&call.call_id, vec![error]),
+                            None,
+                        )
+                    }
+                }
+            };
+            if applied.is_some() {
+                if let Ok(Some((current, _))) = current_canonical(request) {
+                    if let Ok(Some(challenger)) = comparison_challenger(
+                        request.root,
+                        request.job_id,
+                        request.batch_id,
+                        batch_uses_adopted_cloud_as_canonical(request.root, request.batch_id)
+                            .unwrap_or(false),
+                    ) {
+                        let fresh = candidate_differences(&current, &challenger);
+                        let local = store::read_local_authoring_snapshot(
+                            request.root,
+                            request.job_id,
+                            request.batch_id,
+                        )
+                        .ok()
+                        .flatten()
+                        .unwrap_or(Value::Null);
+                        let cloud = store::read_cloud_authoring_candidate(
+                            request.root,
+                            request.job_id,
+                            request.batch_id,
+                        )
+                        .ok()
+                        .flatten()
+                        .and_then(|c| serde_json::to_value(c.authoring).ok())
+                        .unwrap_or(Value::Null);
+                        let owns = |doc: &Value, ids: &[String], target: &str| {
+                            let slice = crate::cloud_adoption::unit_document(doc, ids);
+                            fn has(value: &Value, target: &str) -> bool {
+                                match value {
+                                    Value::String(s) => s == target,
+                                    Value::Array(a) => a.iter().any(|v| has(v, target)),
+                                    Value::Object(m) => {
+                                        m.iter().any(|(k, v)| k == target || has(v, target))
+                                    }
+                                    _ => false,
+                                }
+                            }
+                            has(&slice["taskGroups"], target) || has(&slice["answerSlots"], target)
+                        };
+                        let units = crate::cloud_adoption::comparison_units(&local, &cloud);
+                        let selected: Vec<_> = units
+                            .iter()
+                            .filter(|unit| {
+                                cloud_choices.iter().any(|e| {
+                                    let target = e["targetId"].as_str().unwrap_or_default();
+                                    owns(&local, &unit.local_task_ids, target)
+                                        || owns(&cloud, &unit.cloud_task_ids, target)
+                                        || e["comparisonUnitId"].as_str()
+                                            == Some(unit.unit_id.as_str())
+                                })
+                            })
+                            .collect();
+                        for delta in fresh {
+                            let (target_type, target_id, field) = difference_key(&delta);
+                            if selected.iter().any(|unit| {
+                                owns(&local, &unit.local_task_ids, &target_id)
+                                    || owns(&cloud, &unit.cloud_task_ids, &target_id)
+                            }) {
+                                let (a, b, c) = difference_digests(&delta);
+                                recorded.push(json!({"targetType":target_type,"targetId":target_id,"field":field,
+                                    "ruling":"current_is_correct","decision":"use_cloud","canonicalDigest":a,
+                                    "candidateDigest":b,"contextDigest":c,"recordedAtRound":round,
+                                    "evidence":cloud_choices[0]["evidence"],"reason":"Source-backed cloud comparison unit applied"}));
+                            }
+                        }
+                    }
+                }
+            }
+            let needs_context = recorded.iter().any(|r| r["decision"] == "need_context");
+            let mut extra = json!({});
+            if needs_context && packet.is_some() {
+                let mut needs: Vec<Value> = entries
+                    .iter()
+                    .filter(|e| e["decision"] == "need_context")
+                    .flat_map(|e| {
+                        e.get("needs")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .cloned()
+                    })
+                    .collect();
+                if needs.is_empty() {
+                    needs = call
+                        .arguments
+                        .get("needs")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                }
+                if needs.is_empty() {
+                    let page = context
+                        .pointer("/scope/pages/0")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(1);
+                    needs.push(json!({"kind":"pages","from":page,"to":page}));
+                }
+                let supplementary = CloudRepairToolCallV1 {
+                    call_id: call.call_id.clone(),
+                    tool: "report_insufficient_context".into(),
+                    arguments: json!({"packetId":context["packetId"],"reason":"Batch decisions require additional source evidence","needs":needs}),
+                };
+                let (fetched, _) = execute_tool(
+                    request,
+                    &supplementary,
+                    round,
+                    context,
+                    packet.as_deref_mut(),
+                );
+                extra = fetched.result;
+                if !fetched.errors.is_empty() {
+                    errors.extend(fetched.errors);
+                }
+            }
+            let mut payload = json!({"status":"recorded","recorded":recorded,"errors":errors,
+                "evidenceUnverifiable":evidence_unverifiable_total,"needsContext":needs_context,
+                "noteForModel":"Batch decisions recorded. Backend recomputes structural problems independently."});
+            if let Some(fields) = extra.as_object() {
+                for (key, value) in fields {
+                    payload[key] = value.clone();
+                }
+            }
+            (CloudRepairToolResultV1::ok(&call.call_id, payload), applied)
         }
         "finish_packet" => (
             CloudRepairToolResultV1::ok(
@@ -2597,6 +3238,7 @@ fn remaining_tasks(
                 {
                     continue;
                 }
+                // 采纳云端后非答案差异原文无法裁定：默认保留云端，不产生用户任务。
                 Some(ruling)
                     if ruling.get("ruling").and_then(Value::as_str)
                         == Some(
@@ -2613,15 +3255,6 @@ fn remaining_tasks(
                             == Some(crate::schema::cloud_repair_v1::CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT);
                     let message = if insufficient {
                         context_insufficient_message(&ruling)
-                    } else if adopted && field != "answer" {
-                        format!(
-                            "{}；原文无法裁定，已默认保留云端版本：{}",
-                            describe_comparison_difference(&difference, true),
-                            ruling
-                                .get("reason")
-                                .and_then(Value::as_str)
-                                .unwrap_or("未说明理由")
-                        )
                     } else if adopted {
                         format!(
                             "{}；云端与本地答案不一致，原文无法判定，请核对",
@@ -2643,6 +3276,8 @@ fn remaining_tasks(
                         "message": message,
                         "action": "review_difference",
                         "blocking": false,
+                        // 云端已查过原文件仍无法定论：只有这类项才值得让用户在蓝绿对比里选择。
+                        "rulingReviewed": true,
                         // 当前值与云端值一并给前端：任务里要能直接看到「现在是什么、云端读到的是什么」。
                         "field": field.clone(),
                         "currentValue": difference.get("canonical").cloned().unwrap_or(Value::Null),
@@ -2682,6 +3317,28 @@ fn remaining_tasks(
                 }
             }
         }
+    }
+
+    for difference in answer_page_differences(root, job_id, &canonical)? {
+        if fresh_ruling_for_difference(rulings, &difference)
+            .is_some_and(|r| r["ruling"] == "current_is_correct")
+        {
+            continue;
+        }
+        let (_, target_id, _) = difference_key(&difference);
+        let ruling = fresh_ruling_for_difference(rulings, &difference);
+        push_repair_task(
+            &mut tasks,
+            &mut by_key,
+            json!({
+                "userTaskId":format!("answer-page:{target_id}"),"targetIds":[target_id],"field":"answer_page",
+                "message":"答案页识别结果与当前答案不一致，请核对原答案页", "action":"review_source","blocking":true,
+                "currentValue":difference["canonical"],"answerPageValue":difference["candidate"],
+                "evidence":ruling.and_then(|r|r.get("evidence")).cloned().unwrap_or_else(||difference["evidence"].clone()),
+                "contextInsufficient":ruling.and_then(|r|r.get("reason")).and_then(Value::as_str)==Some(crate::schema::cloud_repair_v1::CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT),
+                "repairFamily":"fill_answer"
+            }),
+        );
     }
 
     // ── 3) 模型明确留下的未解疑问 ─────────────────────────────────────────
@@ -2777,7 +3434,7 @@ fn remaining_tasks(
         }
     }
 
-    Ok(tasks)
+    crate::cloud_selection::enrich_tasks(root, item_id, job_id, batch_id, tasks)
 }
 
 /// 网关错误里，哪些是「回复收到了、但被校验器拒绝」——值得带着原因再问一次。
@@ -3142,6 +3799,14 @@ where
                 break;
             }
         };
+        if (request.cancelled)() {
+            status = REPAIR_STATUS_CANCELLED;
+            break;
+        }
+        if Instant::now() >= request.deadline {
+            status = REPAIR_STATUS_BUDGET_EXHAUSTED;
+            break;
+        }
         let call = match parse_tool_call(&raw) {
             Ok(call) => call,
             Err(error) => {
@@ -3329,16 +3994,6 @@ where
         Err(error) => return Ok(failure_report(request, error)),
     };
     let source_index = load_packet_source_index(request, &context);
-    let mut queue: std::collections::VecDeque<Value> =
-        match plan_repair_packets(request, &context, &source_index) {
-            Ok(packets) => packets.into(),
-            Err(error) => return Ok(failure_report(request, error)),
-        };
-    // P11：总时限按包数线性放宽（封顶 3× 基础）。循环内所有截止判断都用这个值；
-    // `request.deadline` 保持调用方给的原始值，仅供这里换算。
-    let loop_started = now();
-    let deadline = scaled_packet_deadline(request.deadline, loop_started, queue.len());
-
     let mut rulings: Vec<Value> =
         match store::read_repair_rulings(request.root, request.job_id, request.batch_id) {
             Ok(rulings) => rulings
@@ -3351,6 +4006,20 @@ where
                 Vec::new()
             }
         };
+    let mut queue: std::collections::VecDeque<Value> =
+        match plan_repair_packets(request, &context, &source_index, &rulings) {
+            Ok(packets) => packets.into(),
+            Err(error) => return Ok(failure_report(request, error)),
+        };
+    // P11：总时限按包数线性放宽（封顶 3× 基础）。循环内所有截止判断都用这个值；
+    // `request.deadline` 保持调用方给的原始值，仅供这里换算。
+    let loop_started = now();
+    let deadline = scaled_packet_deadline(request.deadline, loop_started, queue.len());
+    let effective_request = RepairRunRequest {
+        deadline,
+        ..*request
+    };
+
     let mut model_questions: Vec<Value> = Vec::new();
     let mut observations: Vec<Value> = Vec::new();
     let mut applied_count = 0usize;
@@ -3510,6 +4179,18 @@ where
                     break;
                 }
             };
+            if (request.cancelled)() {
+                status = REPAIR_STATUS_CANCELLED;
+                packet_status = "cancelled";
+                stop_all = true;
+                break;
+            }
+            if now() >= deadline {
+                status = REPAIR_STATUS_BUDGET_EXHAUSTED;
+                packet_status = "deadline";
+                stop_all = true;
+                break;
+            }
             let call = match parse_tool_call(&raw) {
                 Ok(call) => call,
                 Err(error) => {
@@ -3558,7 +4239,7 @@ where
                     task_ids: task_ids.clone(),
                     question_numbers: question_numbers.clone(),
                 };
-                execute_tool(request, &call, rounds, &packet, Some(&mut tools))
+                execute_tool(&effective_request, &call, rounds, &packet, Some(&mut tools))
             };
             // A stale version was never applied; allow the same edit with a refreshed CAS token.
             if result.errors.iter().any(|error| error.contains("EDIT_VERSION_CONFLICT")) {
@@ -3569,7 +4250,7 @@ where
             unverified_evidence += evidence_unverifiable_count(&result.result);
             // 抓取工具的调用本身是 L1 尝试，即使来源不可用；上下文不足则只在调用真的
             // 被接受时计入 L1。被拒的旧 packetId / malformed need 不是一次有效报告。
-            let valid_insufficient = is_insufficient
+            let valid_insufficient = (is_insufficient || result.result["needsContext"] == true)
                 && result.status == crate::schema::cloud_repair_v1::CloudRepairToolStatusV1::Ok;
             if valid_insufficient
                 || matches!(
@@ -3593,8 +4274,37 @@ where
                     rulings.extend(recorded.iter().cloned());
                 }
             }
+            if !valid_insufficient
+                && applied.is_none()
+                && call.tool == "record_ruling"
+                && result.status == crate::schema::cloud_repair_v1::CloudRepairToolStatusV1::Ok
+            {
+                let all_ruled = packet
+                    .get("differences")
+                    .and_then(Value::as_array)
+                    .is_some_and(|diffs| {
+                        !diffs.is_empty()
+                            && diffs
+                                .iter()
+                                .all(|d| fresh_ruling_for_difference(&rulings, d).is_some())
+                    });
+                let has_blockers = packet
+                    .get("blockingIssues")
+                    .and_then(Value::as_array)
+                    .is_some_and(|issues| !issues.is_empty());
+                if all_ruled && !has_blockers {
+                    observations.push(serde_json::to_value(&result).unwrap_or(Value::Null));
+                    packet_status = "finished";
+                    done_packets.insert(packet_id.clone());
+                    break;
+                }
+            }
             if valid_insufficient {
                 packet_insufficient += 1;
+                if packet_insufficient > 1 {
+                    packet_status = "context_insufficient";
+                    break;
+                }
                 // 取到的证据**并入本包**，下一轮请求就带着它。
                 merge_fetched_evidence(&mut packet, &result);
                 let unsatisfied = result
@@ -3666,14 +4376,67 @@ where
                         break;
                     }
                 }
-                match plan_repair_packets(request, &context, &source_index) {
+                // A successful edit batch settles the packet's existing differences. Bind the
+                // rulings to refreshed contents; new structural issues still reopen their own packet.
+                let mut original_values: BTreeMap<_, _> = packet
+                    .get("differences")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .map(|d| {
+                        (
+                            difference_key(d),
+                            d.get("canonical").cloned().unwrap_or(Value::Null),
+                        )
+                    })
+                    .collect();
+                // A source-backed answer-page fix also settles its newly exposed conflict
+                // with the older cloud candidate; it must not force the stale cloud answer back.
+                for delta in packet
+                    .get("differences")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    if delta["field"] == "answer_page" {
+                        let (kind, id, _) = difference_key(delta);
+                        original_values
+                            .insert((kind, id, "answer".into()), delta["canonical"].clone());
+                    }
+                }
+                for delta in context
+                    .get("differences")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    if original_values
+                        .get(&difference_key(delta))
+                        .is_some_and(|old| Some(old) != delta.get("canonical"))
+                    {
+                        let (target_type, target_id, field) = difference_key(delta);
+                        let (a, b, c) = difference_digests(delta);
+                        rulings.push(json!({"targetType":target_type,"targetId":target_id,"field":field,
+                            "ruling":"current_is_correct","decision":"keep_current","canonicalDigest":a,
+                            "candidateDigest":b,"contextDigest":c,"recordedAtRound":rounds,"recordedBy":"successful_edit"}));
+                    }
+                }
+                match plan_repair_packets(request, &context, &source_index, &rulings) {
                     Ok(next) => {
                         // 重切：已收工的包（按稳定 id）不再排队；本包若仍有差异会以**新切片**
                         // 重新排队，`editVersion` 与目标 id 都刷新过。
                         queue = next
                             .into_iter()
                             .filter(|candidate| {
-                                candidate
+                                let work = candidate
+                                    .get("differences")
+                                    .and_then(Value::as_array)
+                                    .is_some_and(|d| !d.is_empty())
+                                    || candidate
+                                        .get("blockingIssues")
+                                        .and_then(Value::as_array)
+                                        .is_some_and(|d| !d.is_empty());
+                                work && candidate
                                     .get("packetId")
                                     .and_then(Value::as_str)
                                     .is_some_and(|id| !done_packets.contains(id))
@@ -3823,6 +4586,7 @@ fn plan_repair_packets(
     request: &RepairRunRequest<'_>,
     context: &Value,
     source_index: &packets::SourcePageIndex,
+    rulings: &[Value],
 ) -> CommandResult<Vec<Value>> {
     let canonical = current_canonical(request)?
         .map(|(document, _)| document)
@@ -3863,6 +4627,14 @@ fn plan_repair_packets(
             "candidate": Value::Null,
         }));
     }
+    let differences: Vec<Value> = differences
+        .into_iter()
+        .filter(|d| {
+            !fresh_ruling_for_difference(rulings, d).is_some_and(|r| {
+                r.get("ruling").and_then(Value::as_str) == Some("current_is_correct")
+            })
+        })
+        .collect();
     let blocking_issues = crate::authoring_v2_commands::unresolved_blocking_issues(&canonical);
     let protected: BTreeSet<String> = context
         .get("protectedTargets")
@@ -3893,6 +4665,30 @@ fn plan_repair_packets(
     Ok(planned
         .into_iter()
         .map(|mut packet| {
+            let samples = context
+                .get("verificationSampling")
+                .cloned()
+                .unwrap_or(Value::Null);
+            let expand = samples
+                .get("samples")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .any(|s| {
+                    s["expandVerification"] == true
+                        && (s["kind"] == "passage"
+                            || packet["taskIds"]
+                                .as_array()
+                                .is_some_and(|ids| ids.contains(&s["taskId"])))
+                });
+            packet["verificationSampling"] = samples;
+            if expand {
+                packet["draftSlice"]["passage"] =
+                    canonical.get("passage").cloned().unwrap_or(Value::Null);
+                packet["challengerPassage"] =
+                    candidate.get("passage").cloned().unwrap_or(Value::Null);
+                packet["expandedTextVerification"] = json!(true);
+            }
             let packet_id = packet
                 .get("packetId")
                 .and_then(Value::as_str)
@@ -4263,6 +5059,8 @@ fn force_context_insufficient_rulings(
         .cloned()
         .unwrap_or_default();
     let packet_id = packet.get("packetId").cloned().unwrap_or(Value::Null);
+    let adopted_cloud_mode = packet.get("comparisonMode").and_then(Value::as_str)
+        == Some("adopted_cloud_vs_local_snapshot");
     let mut forced = 0usize;
     for difference in packet
         .get("differences")
@@ -4275,11 +5073,18 @@ fn force_context_insufficient_rulings(
         }
         let (target_type, target_id, field) = difference_key(difference);
         let (canonical_digest, candidate_digest, context_digest) = difference_digests(difference);
+        // 采纳云端后，补证仍不足的非答案差异保留云端默认，只有答案类冲突留给用户。
+        let keeps_cloud_default =
+            adopted_cloud_mode && !matches!(field.as_str(), "answer" | "answer_page");
         rulings.push(json!({
             "targetType": target_type,
             "targetId": target_id,
             "field": field,
-            "ruling": crate::schema::cloud_repair_v1::CLOUD_RULING_CANNOT_RESOLVE,
+            "ruling": if keeps_cloud_default {
+                crate::schema::cloud_repair_v1::CLOUD_RULING_KEPT_CLOUD_DEFAULT
+            } else {
+                crate::schema::cloud_repair_v1::CLOUD_RULING_CANNOT_RESOLVE
+            },
             "reason": crate::schema::cloud_repair_v1::CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT,
             // 题号让用户清单能说清「第几题」，也让「上下文不足」这条记录可解释。
             "questionNumbers": numbers,
@@ -4294,6 +5099,26 @@ fn force_context_insufficient_rulings(
         forced += 1;
     }
     forced
+}
+
+/// Test helper: persisted "original file cannot settle it" rulings bound to the given differences.
+#[cfg(test)]
+pub(crate) fn cannot_resolve_rulings_for(differences: &[Value]) -> Value {
+    let rulings: Vec<Value> = differences
+        .iter()
+        .map(|difference| {
+            let (target_type, target_id, field) = difference_key(difference);
+            let (canonical_digest, candidate_digest, context_digest) = difference_digests(difference);
+            json!({
+                "targetType": target_type, "targetId": target_id, "field": field,
+                "ruling": crate::schema::cloud_repair_v1::CLOUD_RULING_CANNOT_RESOLVE,
+                "decision": "user_choice", "reason": "original cannot settle it", "evidence": [],
+                "canonicalDigest": canonical_digest, "candidateDigest": candidate_digest,
+                "contextDigest": context_digest,
+            })
+        })
+        .collect();
+    json!({"rulings": rulings, "modelQuestions": []})
 }
 
 #[cfg(test)]

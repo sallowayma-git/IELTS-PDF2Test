@@ -839,6 +839,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     // 修复摘要（`repair` 契约）。最终一份写进批次行；修复过程中的进度在循环里直接写库。
     let mut repair_summary: Option<serde_json::Value> = None;
     let mut adopted_cloud_candidate_for_answers: Option<serde_json::Value> = None;
+    let mut answer_page_ran = false;
 
     // 本地周期：把本地候选 / 原文核验 / 批次汇总落盘，并**建出批次行**。云端如实标
     // `not_run`（本地周期看不见云端），下面的 advance 会用真实修复状态覆盖它。
@@ -914,7 +915,8 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                 let candidate_value = serde_json::to_value(&candidate).unwrap_or_else(
                     |error| serde_json::json!({"serializationError":error.to_string()}),
                 );
-                // 采纳编排：有文本层走云端为主（对齐校验后整体覆盖本地），无文本层退回保守按题组。
+                // 云端候选一律先进入编辑器：对齐只产出复核清单与来源锚点，不决定采用与否。
+                // 仅灾难性失败（候选不可用 / 明显不是同一份卷子 / 无文本层且无法交叉核对）保留本地稿。
                 let authoring_value =
                     serde_json::to_value(&candidate.authoring).unwrap_or(serde_json::Value::Null);
                 let physical_shadow = crate::util::read_json_opt(
@@ -923,150 +925,151 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                 )
                 .ok()
                 .flatten();
+                // 原文抽样按原文件哈希取固定种子，同一份卷子每次抽到同样的句子。
+                let alignment_config = crate::reconcile::alignment::AlignmentConfig {
+                    sample_seed: candidate
+                        .source_sha256
+                        .get(..16)
+                        .and_then(|prefix| u64::from_str_radix(prefix, 16).ok())
+                        .unwrap_or(0),
+                    ..Default::default()
+                };
                 let alignment_outcome = match physical_shadow.as_ref() {
                     Some(shadow) => crate::reconcile::alignment::assess_alignment(
                         shadow,
                         &authoring_value,
-                        &crate::reconcile::alignment::AlignmentConfig::default(),
+                        &alignment_config,
                     ),
                     None => crate::reconcile::alignment::AlignmentOutcome::NoTextLayer,
                 };
+                let local_authoring_snapshot = crate::reconcile::store::read_local_authoring_snapshot(
+                    &root, &job_id, &batch_id,
+                )
+                .ok()
+                .flatten();
                 let plan = local_snapshot.as_ref().map(|local| {
                     crate::cloud_adoption::plan_adoption(
                         &candidate_value,
                         &serde_json::to_value(local).unwrap_or(serde_json::Value::Null),
                         &alignment_outcome,
+                        local_authoring_snapshot.as_ref(),
                     )
                 });
                 let mut document_reasons: Vec<String> = Vec::new();
-                let mut rejected_groups: Vec<(String, Vec<String>)> = Vec::new();
-                let mut qualified_task_ids: Vec<String> = Vec::new();
+                let mut flagged_groups: Vec<(String, Vec<String>)> = Vec::new();
+                let mut passage_flags: Vec<String> = Vec::new();
                 let mut adoption_result = None;
-                let mut passage_adopted = false;
                 let mut review_records: Vec<serde_json::Value> = Vec::new();
                 let mut needs_cloud_review: Vec<serde_json::Value> = Vec::new();
                 match plan {
                     None => {
                         document_reasons.push("缺少冻结的本地候选，无法核对覆盖范围".to_string());
                     }
-                    Some(crate::cloud_adoption::AdoptionPlan::Conservative(plan)) => {
-                        document_reasons = plan.document_reasons;
-                        rejected_groups = plan.unqualified;
-                        qualified_task_ids = plan.qualified_task_ids;
-                        if document_reasons.is_empty()
-                            && !qualified_task_ids.is_empty()
-                            && announced.is_some()
-                        {
-                            match crate::cloud_adoption::adopt_cloud_candidate(
+                    Some(plan) => {
+                        document_reasons = plan.document_reasons.clone();
+                        flagged_groups = plan.flagged_groups.clone();
+                        passage_flags = plan.passage_flags.clone();
+                        review_records = plan.review_records.clone();
+                        needs_cloud_review = plan.needs_cloud_review.clone();
+                        if document_reasons.is_empty() && announced.is_some() {
+                            let alignment = match &alignment_outcome {
+                                crate::reconcile::alignment::AlignmentOutcome::Assessed(report) => {
+                                    Some(report.as_ref())
+                                }
+                                crate::reconcile::alignment::AlignmentOutcome::NoTextLayer => None,
+                            };
+                            match crate::cloud_adoption::adopt_cloud_primary(
                                 &root,
                                 &job_id,
                                 &batch_id,
                                 candidate.base_edit_version,
                                 &authoring_value,
-                                &qualified_task_ids,
+                                alignment,
                             ) {
                                 Ok(result) => adoption_result = Some(result),
                                 Err(error) => document_reasons.push(format!(
                                     "云端候选未能通过并发版本与正式稿校验，已回退到本地稿校核：{error}"
                                 )),
                             }
-                        } else if document_reasons.is_empty()
-                            && !qualified_task_ids.is_empty()
-                            && announced.is_none()
-                        {
-                            document_reasons
-                                .push("云端校核租约已失效，未写入云端候选".to_string());
-                        }
-                    }
-                    Some(crate::cloud_adoption::AdoptionPlan::CloudPrimary(plan)) => {
-                        document_reasons = plan.document_reasons.clone();
-                        rejected_groups = plan.unqualified.clone();
-                        qualified_task_ids = plan.qualified_task_ids.clone();
-                        passage_adopted = plan.adopt_passage;
-                        review_records = plan.review_records.clone();
-                        needs_cloud_review = plan.needs_cloud_review.clone();
-                        let has_adoptable = plan.adopt_passage || !qualified_task_ids.is_empty();
-                        if document_reasons.is_empty() && has_adoptable && announced.is_some() {
-                            if let crate::reconcile::alignment::AlignmentOutcome::Assessed(report) =
-                                &alignment_outcome
-                            {
-                                match crate::cloud_adoption::adopt_cloud_primary(
-                                    &root,
-                                    &job_id,
-                                    &batch_id,
-                                    candidate.base_edit_version,
-                                    &authoring_value,
-                                    &plan,
-                                    report,
-                                ) {
-                                    Ok(result) => adoption_result = Some(result),
-                                    Err(error) => document_reasons.push(format!(
-                                        "云端候选未能通过并发版本与正式稿校验，已回退到本地稿校核：{error}"
-                                    )),
-                                }
-                            }
-                        } else if document_reasons.is_empty()
-                            && has_adoptable
-                            && announced.is_none()
-                        {
+                        } else if document_reasons.is_empty() {
                             document_reasons
                                 .push("云端校核租约已失效，未写入云端候选".to_string());
                         }
                     }
                 }
-                let adopted = adoption_result.is_some();
+                if let Some(result) = adoption_result.as_ref() {
+                    // 依赖单元里无法在编辑器渲染、或本地独有的单元保留本地稿，必须进复核清单。
+                    for task_id in result
+                        .deferred_task_ids
+                        .iter()
+                        .chain(result.local_only_task_ids.iter())
+                    {
+                        needs_cloud_review
+                            .push(serde_json::json!({"taskId": task_id, "reason": "unit_deferred"}));
+                    }
+                }
+                let adopted = adoption_result
+                    .as_ref()
+                    .is_some_and(|r| !r.adopted_task_ids.is_empty());
+                let saved_authoring = open_library_connection(&root)
+                    .ok()
+                    .and_then(|conn| {
+                        crate::library::repository::get_canonical_ds(&conn, &job_id)
+                            .ok()
+                            .flatten()
+                    })
+                    .map(|(doc, _)| doc);
                 if adopted {
-                    adopted_cloud_candidate_for_answers = Some(candidate_value.clone());
+                    let mut accepted = candidate_value.clone();
+                    if let Some(doc) = saved_authoring.as_ref() {
+                        accepted["authoring"] = doc.clone();
+                    }
+                    adopted_cloud_candidate_for_answers = Some(accepted);
                 }
-                let rejected_json = rejected_groups
+                let passage_adopted = adoption_result
+                    .as_ref()
+                    .is_some_and(|result| result.passage_adopted);
+                let flagged_json = flagged_groups
                     .iter()
                     .map(|(task_id, reasons)| {
                         serde_json::json!({ "taskId": task_id, "reasons": reasons })
                     })
                     .collect::<Vec<_>>();
-                let covered_question_numbers =
-                    crate::cloud_adoption::adopted_question_numbers(&authoring_value, &qualified_task_ids);
-                if adopted {
-                    // 云端内容已整体覆盖：把被覆盖的识别决策置为作废，用户不再本地/云端二选一。
-                    match crate::reconcile::commands::supersede_cloud_adopted_decisions(
-                        &root,
-                        &batch_id,
-                        &covered_question_numbers,
-                        &qualified_task_ids,
-                    ) {
-                        Ok(_) => {}
-                        Err(error) => eprintln!(
-                            "[processing] supersede cloud-adopted decisions failed for {job_id}: {error}"
-                        ),
-                    }
-                }
                 let adoption_info = if let Some(result) = adoption_result.as_ref() {
-                    let status = if rejected_groups.is_empty() {
-                        "adopted"
-                    } else {
-                        "partially_adopted"
-                    };
-                    let reason = if rejected_groups.is_empty() {
-                        "云端候选整份采纳；用户在基线之后保存的目标已保留。".to_string()
-                    } else {
-                        format!(
-                            "按题组采纳：{} 组采纳了云端内容，{} 组因阻断保留本地稿。",
-                            qualified_task_ids.len(),
-                            rejected_groups.len()
-                        )
-                    };
+                    let covered_question_numbers = crate::cloud_adoption::adopted_question_numbers(
+                        &authoring_value,
+                        &result.adopted_task_ids,
+                    );
+                    if adopted {
+                        // 云端内容已进入编辑器：把被覆盖的识别决策置为作废，用户不再本地/云端二选一。
+                        if let Err(error) =
+                            crate::reconcile::commands::supersede_cloud_adopted_decisions(
+                                &root,
+                                &batch_id,
+                                &covered_question_numbers,
+                                &result.adopted_task_ids,
+                            )
+                        {
+                            eprintln!(
+                                "[processing] supersede cloud-adopted decisions failed for {job_id}: {error}"
+                            );
+                        }
+                    }
                     serde_json::json!({
-                        "status": status,
-                        "adopted": true,
-                        "editVersion": result.edit_version,
+                        "status": if result.deferred_task_ids.is_empty() { "adopted" } else { "partial" },
+                        "adopted": !result.adopted_task_ids.is_empty(),
+                        "adoptedTaskIds": result.adopted_task_ids,
                         "passageAdopted": passage_adopted,
-                        "adoptedTaskIds": qualified_task_ids,
+                        "deferredTaskIds": result.deferred_task_ids,
+                        "localOnlyTaskIds": result.local_only_task_ids,
+                        "editVersion": result.edit_version,
                         "coveredQuestionNumbers": covered_question_numbers,
-                        "rejectedGroups": rejected_json,
+                        "flaggedGroups": flagged_json,
+                        "passageFlags": passage_flags,
                         "preservedGroupIds": result.preserved_group_ids,
                         "reviewRecords": review_records,
                         "needsCloudReview": needs_cloud_review,
-                        "reason": reason
+                        "reason": "云端候选已进入编辑器，对不上原卷或需补证的内容交云端校核；用户修改已保留。"
                     })
                 } else {
                     let reason = if !document_reasons.is_empty() {
@@ -1075,14 +1078,14 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                             document_reasons.join("；")
                         )
                     } else {
-                        "云端候选没有可采纳的合格题组，全部保留本地稿。".to_string()
+                        "云端候选没有可进入编辑器的题组，保留本地稿。".to_string()
                     };
                     serde_json::json!({
                         "status": "not_adopted",
                         "adopted": false,
-                        "passageAdopted": passage_adopted,
+                        "passageAdopted": false,
                         "documentReasons": document_reasons,
-                        "rejectedGroups": rejected_json,
+                        "flaggedGroups": flagged_json,
                         "reviewRecords": review_records,
                         "needsCloudReview": needs_cloud_review,
                         "reason": reason,
@@ -1125,6 +1128,20 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                                 let _ = notify_item_content_changed(&conn, &app, &job_id);
                             }
                         }
+                    }
+                }
+                if announced.is_some() && !state.cancelled.read().await.contains(&job_id) {
+                    if let Some(profile) = resolved_profile.as_deref() {
+                        run_cloud_answer_page(
+                            &root,
+                            &job_id,
+                            &batch_id,
+                            profile,
+                            &state,
+                            adopted_cloud_candidate_for_answers.clone(),
+                        )
+                        .await;
+                        answer_page_ran = true;
                     }
                 }
                 // 云端 permit 覆盖整段修复循环的模型调用（每个回合一次请求）。
@@ -1308,59 +1325,35 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         }
     }
 
-    // Answer-page recognition is a separate, final machine write: it uses the
-    // already-materialized scanned-page images, then commits through the same
-    // canonical editor transaction as every other answer write.  Running it
-    // after cloud repair means the answer-page candidate sees the final draft;
-    // the CAS/protection check inside the transaction still preserves edits
-    // made while the vision request was in flight.  It is intentionally gated
-    // to PDF + reading inside the product entrypoint, so DOCX and listening do
-    // not acquire this path.
     if launch_cloud
+        && !answer_page_ran
         && freeze_error.is_none()
-        && resolved_profile.is_some()
         && !state.cancelled.read().await.contains(&job_id)
     {
-        let answer_profile = resolved_profile.clone().unwrap_or_default();
-        let adopted_cloud_candidate = adopted_cloud_candidate_for_answers.clone();
-        let answer_permit = state.cloud_permits.clone().acquire_owned().await;
-        let answer_result = run_blocking({
-            let root = root.clone();
-            let job_id = job_id.clone();
-            let adopted_cloud_candidate = adopted_cloud_candidate.clone();
-            move || {
-                // 同一个答案页步骤：服务暂时不可用时自动再试一次，结果写回工作区读的
-                // `parser.visionAnswerExtraction`（此前这里只打日志，界面看不到这次识别）。
-                let result = super::answer_page::run_answer_page_step(
-                    &root,
-                    &job_id,
-                    &answer_profile,
-                    &mut |root, job_id, profile| {
-                        crate::auto_pipeline::recognize_and_apply_pdf_answers_with_adopted_candidate(
-                            root,
-                            job_id,
-                            profile,
-                            adopted_cloud_candidate.as_ref(),
-                        )
-                    },
-                );
-                drop(answer_permit);
-                result
-            }
-        })
-        .await;
-        match answer_result {
-            Ok(report) => {
-                if report.get("failure").is_some() {
-                    eprintln!("[processing] answer-page recognition kept unresolved answers for {job_id}: {report}");
-                }
-            }
-            Err(error) => {
-                // This is a conservative enrichment failure, not a reason to
-                // discard the valid draft or pretend that answers were found.
-                eprintln!("[processing] answer-page recognition failed for {job_id}: {error}");
-            }
+        if let Some(profile) = resolved_profile.as_deref() {
+            run_cloud_answer_page(
+                &root,
+                &job_id,
+                &batch_id,
+                profile,
+                &state,
+                adopted_cloud_candidate_for_answers.clone(),
+            )
+            .await;
         }
+    }
+    // Retention runs only after all machine writes are terminal; empty runs keep previous undo.
+    if let Ok(conn) = open_library_connection(&root) {
+        let run_id = crate::cloud_repair::repair_run_id_for(&batch_id);
+        if let Err(error) =
+            crate::library::repository::finalize_cloud_run_retention(&conn, &job_id, &run_id)
+        {
+            eprintln!("[processing] cloud retention failed: {error}");
+        }
+    }
+    if let Err(error) = crate::reconcile::store::prune_completed_artifacts_for_item(&root, &job_id)
+    {
+        eprintln!("[processing] cloud artifact retention failed: {error}");
     }
     // 云端**真的跑过**就以修复状态为准：本地周期看不见云端，会把 cloud_status 标成
     // `not_run`（= 本次没有云端参与），拿它描述一次真实的云端修复（成功或失败）都是谎报。
@@ -1628,6 +1621,68 @@ pub(crate) struct RecognitionCycleReport {
 /// **`not_run` 必须原样透传**：它表示「本次没有云端参与」（未启用 / 未配置），
 /// 与「云端跑了但失败」是两件不同的事。此前一律折叠成 `failed`，于是无云导入会在
 /// 任务行里谎报云端失败，用户会去排查一个根本不存在的云端故障。
+
+/// Answer extraction belongs to the same cloud run and precedes its final review.
+async fn run_cloud_answer_page(
+    root: &Path,
+    job_id: &str,
+    batch_id: &str,
+    profile_id: &str,
+    state: &ProcessingState,
+    adopted_candidate: Option<serde_json::Value>,
+) {
+    let answer_profile = profile_id.to_string();
+    let repair_run_id = crate::cloud_repair::repair_run_id_for(batch_id);
+    let adopted_cloud_candidate = adopted_candidate;
+    let answer_permit = state.cloud_permits.clone().acquire_owned().await;
+    let answer_result = run_blocking({
+        let root = root.to_path_buf();
+        let job_id = job_id.to_string();
+        let adopted_cloud_candidate = adopted_cloud_candidate.clone();
+        let answer_cancelled = state.cancelled.clone();
+        move || {
+            let cancelled = || {
+                answer_cancelled
+                    .try_read()
+                    .map(|guard| guard.contains(&job_id))
+                    .unwrap_or(true)
+            };
+            // 同一个答案页步骤：服务暂时不可用时自动再试一次，结果写回工作区读的
+            // `parser.visionAnswerExtraction`（此前这里只打日志，界面看不到这次识别）。
+            let result = super::answer_page::run_answer_page_step(
+                &root,
+                &job_id,
+                &answer_profile,
+                &mut |root, job_id, profile| {
+                    crate::auto_pipeline::recognize_and_apply_pdf_answers_for_run(
+                        root,
+                        job_id,
+                        profile,
+                        adopted_cloud_candidate.as_ref(),
+                        Some(&repair_run_id),
+                        Some(&cancelled),
+                    )
+                },
+            );
+            drop(answer_permit);
+            result
+        }
+    })
+    .await;
+    match answer_result {
+        Ok(report) => {
+            if report.get("failure").is_some() {
+                eprintln!("[processing] answer-page recognition kept unresolved answers for {job_id}: {report}");
+            }
+        }
+        Err(error) => {
+            // This is a conservative enrichment failure, not a reason to
+            // discard the valid draft or pretend that answers were found.
+            eprintln!("[processing] answer-page recognition failed for {job_id}: {error}");
+        }
+    }
+}
+
 fn chain_status_to_job_status(raw: &str) -> String {
     match raw {
         "succeeded" => "succeeded",
@@ -2649,10 +2704,8 @@ mod tests {
         use crate::util::{ensure_app_dirs, ensure_job_dirs, job_dir};
         use uuid::Uuid;
 
-        let root = std::env::temp_dir().join(format!(
-            "pdf2test-freeze-race-{}",
-            Uuid::new_v4().simple()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("pdf2test-freeze-race-{}", Uuid::new_v4().simple()));
         ensure_app_dirs(&root).unwrap();
         let job_id = "freeze-race-job";
         ensure_job_dirs(&job_dir(&root, job_id)).unwrap();
@@ -2699,24 +2752,15 @@ mod tests {
         .unwrap();
         drop(conn);
 
-        let baseline = freeze_local_candidate_snapshot_for_attempt_with_baseline(
-            &root,
-            job_id,
-            0,
-            Some(1),
-        )
-        .expect("保存发生在基线之后时仍应按任务起始版本冻结本地挑战稿");
+        let baseline =
+            freeze_local_candidate_snapshot_for_attempt_with_baseline(&root, job_id, 0, Some(1))
+                .expect("保存发生在基线之后时仍应按任务起始版本冻结本地挑战稿");
         assert_eq!(baseline, 1);
 
         let source_sha256 = commands::source_sha256_for_job(&root, job_id);
         let batch_id = commands::recognition_batch_id_for_attempt(job_id, &source_sha256, 1, 0);
-        let snapshot = store::read_candidate(
-            &root,
-            job_id,
-            &batch_id,
-            store::LOCAL_CANDIDATE_FILE,
-        )
-        .expect("冻结快照必须按任务起始版本落盘");
+        let snapshot = store::read_candidate(&root, job_id, &batch_id, store::LOCAL_CANDIDATE_FILE)
+            .expect("冻结快照必须按任务起始版本落盘");
         assert_eq!(snapshot.base_edit_version, 1);
         assert_eq!(snapshot.batch_id, batch_id);
         assert_eq!(

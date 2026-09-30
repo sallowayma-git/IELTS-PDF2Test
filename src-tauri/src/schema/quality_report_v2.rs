@@ -121,6 +121,8 @@ pub struct QuestionCoverageReportV2 {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum CompilerProbeStatusV2 {
+    /// Legacy compatibility is readable but no longer compiled or gated.
+    Skipped,
     Passed,
     Failed,
 }
