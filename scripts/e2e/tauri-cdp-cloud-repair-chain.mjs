@@ -421,6 +421,64 @@ function originalPdfPageTexts(pdfPath) {
   return new Map(pages.map((text, index) => [index + 1, String(text ?? "")]));
 }
 
+function sanitizeDerivedCandidate(seed, localDraft, golden, pdfPages) {
+  const candidate = JSON.parse(JSON.stringify(seed));
+  const group2 = candidate.taskGroups.find((group) => group.taskId === "group-2");
+  const instructionNode = collectTextNodes(group2?.instructions ?? [])[0];
+  if (!instructionNode) throw new Error("clean candidate 找不到 group-2 的说明文本");
+  const overlapPhrase = "NOT GIVEN if it is impossible to say what the writer thinks about this";
+  const cleanPhrase = "NOT GIVEN if the passage does not disclose the writer's view";
+  const instructionBefore = instructionNode.text;
+  // Preserve the response rule while avoiding the coarse shared-region hit.
+  instructionNode.text = instructionBefore.replace(overlapPhrase, cleanPhrase);
+  if (instructionNode.text === instructionBefore) throw new Error("clean candidate 找不到 group-2 overlap 说明片段");
+
+  const pageOne = String(pdfPages.get(1) ?? "").normalize("NFKC").replace(/\s+/gu, " ").trim();
+  const paragraphStart = pageOne.indexOf("Ever since its elevation");
+  const paragraphEndToken = "intrinsic interest of the topic.";
+  const paragraphEnd = pageOne.indexOf(paragraphEndToken, paragraphStart);
+  if (paragraphStart < 0 || paragraphEnd < 0) throw new Error("原 PDF 第 1 页未能定位 passage 对齐段落");
+  const originalParagraph = pageOne.slice(paragraphStart, paragraphEnd + paragraphEndToken.length);
+  const passageNode = collectTextNodes(candidate.passage?.content ?? [])
+    .find((node) => node.id === "passage-paragraph-2-text");
+  if (!passageNode) throw new Error("clean candidate 找不到 passage-paragraph-2-text");
+  const passageBefore = passageNode.text;
+  passageNode.text = originalParagraph;
+
+  const missingAnswerTruth = [];
+  const answerTruthUsed = [];
+  const answerTruth = golden.passageAnswerTruth ?? {};
+  for (const slotId of ["q27", "q28"]) {
+    const entry = answerTruth[slotId];
+    const label = typeof entry?.answer === "string" ? entry.answer.trim() : "";
+    const evidencePage = Number(entry?.evidencePageOneBased);
+    const evidenceQuote = String(entry?.evidenceQuote ?? "");
+    if (label && Number.isInteger(evidencePage) && evidencePage > 0 && evidenceQuote) {
+      if (!sourceTextContains(pdfPages.get(evidencePage), evidenceQuote)) {
+        throw new Error(`${slotId} 夹具答案引文在原 PDF 第 ${evidencePage} 页找不到`);
+      }
+      const group = candidate.taskGroups.find((taskGroup) => (taskGroup.responseGroups ?? [])
+        .some((response) => (response.slotIds ?? []).includes(slotId)));
+      const optionExists = (group?.optionBank?.options ?? []).some((option) => option?.label === label);
+      if (!optionExists) throw new Error(`${slotId} 夹具答案 ${label} 不在题组的原卷选项库中`);
+      candidate.answerKey[slotId] = { kind: "option", labels: [label], assignment: "per_slot" };
+      answerTruthUsed.push({ slotId, answer: label, evidencePageOneBased: evidencePage, evidenceQuote });
+    } else {
+      candidate.answerKey[slotId] = JSON.parse(JSON.stringify(localDraft.answerKey?.[slotId] ?? { kind: "unresolved" }));
+      missingAnswerTruth.push(slotId);
+    }
+  }
+
+  return {
+    candidate,
+    group2InstructionChanged: instructionNode.text !== instructionBefore,
+    passageTextChanged: passageNode.text !== passageBefore,
+    answerTruthUsed,
+    missingAnswerTruth,
+    answerTruthSource: "golden.passageAnswerTruth",
+  };
+}
+
 function llmTraces(jobId, sourceTextChecks = []) {
   const jobDir = path.join(appDataDir, "jobs", String(jobId ?? ""));
   const dir = path.join(jobDir, "cache", "llm");
@@ -1098,6 +1156,7 @@ async function main() {
     writeFinalReport();
     return;
   }
+  const cleanCandidateSeed = JSON.parse(JSON.stringify(derived.candidate));
   const correctionGroup = derived.candidate.taskGroups.find((group) => group.taskId === derived.fix.taskId);
   const correctionResponse = (correctionGroup?.responseGroups ?? []).find(
     (response) => response.responseGroupId === derived.fix.responseGroupId,
@@ -2558,6 +2617,117 @@ async function main() {
       : "本次未复现 `editable_draft_exists`，重试路径的实际行为需重新判定。",
   });
   console.log(`[cloud-repair-chain] finding defect-retry-cannot-rerun: ${report.findings.at(-1).kind}`);
+
+  const primaryItemId = itemId;
+  const cleanCandidatePath = path.join(scenarioDir, "authoring-candidate-clean.json");
+  const cleanPlanPath = path.join(scenarioDir, "repair-plan-clean.json");
+  const cleanSanitization = sanitizeDerivedCandidate(cleanCandidateSeed, prepassDraft.ds, golden, pdfPageTexts);
+  fs.writeFileSync(cleanCandidatePath, JSON.stringify(cleanSanitization.candidate, null, 2));
+  fs.writeFileSync(cleanPlanPath, JSON.stringify(derived.plan, null, 2));
+
+  await session.clickSelector('[data-testid="workspace-back"]');
+  await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, {
+    timeoutMs: 30000,
+    label: "library-before-clean-candidate-import",
+  });
+  const primaryServiceHealth = report.service.health;
+  const cleanServiceHealth = await restartService({ candidate: cleanCandidatePath, plan: cleanPlanPath });
+  report.service.primaryHealth = primaryServiceHealth;
+  report.service.cleanHealth = cleanServiceHealth;
+  record("controlled-service-restarted-with-clean-candidate", SCENARIO_STATUS.PASSED, {
+    candidate: cleanServiceHealth.candidate,
+    plan: cleanServiceHealth.plan,
+  });
+
+  const cleanItemId = await importThroughUi();
+  report.identity.cleanCandidateItemId = cleanItemId;
+  itemId = cleanItemId;
+  await session.clickSelector(`[data-item-id="${cleanItemId}"] .library-row-main`);
+  await session.waitFor(`!!document.querySelector('[data-testid="exam-workspace"]')`, {
+    timeoutMs: 40000,
+    label: "clean-candidate-workspace",
+  });
+  const cleanLocalDraft = await waitForLocalDraft(cleanItemId, 180000);
+  const cleanProblems = [];
+  if (!cleanLocalDraft) cleanProblems.push("clean candidate 条目的本地稿没有落盘");
+
+  let cleanDecision = null;
+  let cleanRepair = null;
+  let cleanCloudState = null;
+  const cleanDeadline = Date.now() + 900000;
+  while (Date.now() < cleanDeadline) {
+    cleanDecision = await readDecision();
+    cleanRepair = cleanDecision?.repair ?? null;
+    cleanCloudState = cleanDecision?.chains?.cloud?.state ?? null;
+    const adoption = cleanRepair?.candidateAdoption ?? cleanDecision?.candidateAdoption ?? null;
+    const cloudSettled = cleanCloudState && !["queued", "running"].includes(cleanCloudState);
+    if (adoption && cloudSettled && cleanRepair?.status !== "running") break;
+    await sleep(600);
+  }
+
+  const cleanAdoption = cleanRepair?.candidateAdoption ?? cleanDecision?.candidateAdoption ?? null;
+  const cleanNeedsReview = cleanAdoption?.needsCloudReview ?? [];
+  const cleanTrace = llmTraces(cleanItemId);
+  const candidateRequests = cleanTrace.callRecords.filter((entry) => entry.commandName === "generate_authoring_candidate").length;
+  const repairRequests = cleanTrace.callRecords.filter((entry) => entry.commandName === "repair_authoring_step").length;
+  const candidateInputCacheCount = cleanTrace.byCommand.generate_authoring_candidate?.input ?? 0;
+  const repairInputCacheCount = cleanTrace.byCommand.repair_authoring_step?.input ?? 0;
+  const cleanRemainingTasks = cleanRepair?.remainingTasks ?? [];
+  const conflictTodos = cleanRemainingTasks.filter((task) =>
+    String(task?.userTaskId ?? "").startsWith("cloud-diff:")
+      || String(task?.userTaskId ?? "").startsWith("cloud-question:")
+      || task?.action === "review_difference",
+  );
+  if (!cleanAdoption) cleanProblems.push("clean candidate 等待结束前没有得到采纳结果");
+  if (!cleanCloudState || ["queued", "running"].includes(cleanCloudState)) {
+    cleanProblems.push(`clean candidate 云端链尚未终止，状态=${cleanCloudState ?? "missing"}`);
+  }
+  if (!cleanRepair || cleanRepair.status === "running") {
+    cleanProblems.push(`clean candidate 修复链尚未终止，状态=${cleanRepair?.status ?? "missing"}`);
+  }
+  if (!cleanTrace.exists || candidateRequests < 1) {
+    cleanProblems.push("clean candidate 的受控候选请求不可观测，无法证明修复调用次数为零");
+  }
+  if (cleanAdoption?.adopted !== true) cleanProblems.push("clean candidate 没有整体采纳");
+  if (cleanNeedsReview.length > 0) {
+    cleanProblems.push(`clean candidate 的 needsCloudReview 仍有 ${cleanNeedsReview.length} 项`);
+  }
+  if (repairRequests !== 0) {
+    cleanProblems.push(`受控服务 repair_authoring_step 次数应为 0，实际请求=${repairRequests}`);
+  }
+  if (conflictTodos.length > 0) cleanProblems.push(`clean candidate 仍有 ${conflictTodos.length} 条冲突类待办`);
+  if (cleanSanitization.missingAnswerTruth.length > 0) {
+    cleanProblems.push(`golden 没有 q27/q28 答案真值：${cleanSanitization.missingAnswerTruth.join("、")}`);
+  }
+  report.observed.cleanCandidatePhase = {
+    itemId: cleanItemId,
+    candidate: cleanCandidatePath,
+    plan: cleanPlanPath,
+    sanitization: {
+      group2InstructionChanged: cleanSanitization.group2InstructionChanged,
+      passageTextChanged: cleanSanitization.passageTextChanged,
+      answerTruthSource: cleanSanitization.answerTruthSource,
+      answerTruthUsed: cleanSanitization.answerTruthUsed,
+      missingAnswerTruth: cleanSanitization.missingAnswerTruth,
+    },
+    cloudState: cleanCloudState,
+    repairStatus: cleanRepair?.status ?? null,
+    adoption: cleanAdoption,
+    needsCloudReview: cleanNeedsReview,
+    candidateRequestCount: candidateRequests,
+    candidateInputCacheCount,
+    repairAuthoringStepCount: repairRequests,
+    repairInputCacheCount,
+    repairRequests,
+    conflictTodos,
+    problems: cleanProblems,
+  };
+  if (cleanProblems.length === 0) {
+    record("clean-candidate-second-phase", SCENARIO_STATUS.PASSED, report.observed.cleanCandidatePhase);
+  } else {
+    record("clean-candidate-second-phase", SCENARIO_STATUS.FAILED, report.observed.cleanCandidatePhase);
+  }
+  itemId = primaryItemId;
 
   // ---- 18. 报告 ----
   report.modelTracesAfter = { toolCalls: repairToolCalls(itemId), llm: llmTraces(itemId) };
