@@ -884,6 +884,58 @@ fn a_reported_doubt_survives_even_when_nothing_else_is_wrong() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// 包模式下模型在 apply_edits 同一步里带出的未解疑问：这一步让包以 edited 收工、不再单独
+/// 发 finish_packet，疑问也必须进入剩余任务（回归：只在 finish 分支收集会把它丢掉）。
+#[test]
+fn a_doubt_raised_on_the_applying_step_survives_packet_edited_finish() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    // 候选把 q14 改成 A，与当前稿 B 有差异 → 有一个可处理的包。
+    store_candidate(&root, "A");
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 4);
+    let report = run_packets(&request, |context: &Value, _observations: &[Value]| {
+        let version = context.get("editVersion").and_then(Value::as_i64).unwrap_or(0);
+        // 同一步既落地编辑、又声明一处无法确认项：包会因此以 edited 收工。
+        Ok(json!({"callId": "c1", "tool": "apply_edits", "arguments": {
+            "baseVersion": version,
+            "commands": [set_answer("q14", "A")],
+            "unresolved": [{
+                "targetId": "q14",
+                "message": "第 1 页第 14 题答案栏字形模糊，B 与 8 难以区分",
+                "evidence": [{"sourceFileId": "early-approaches-pdf", "pageIndex": 1, "quote": "14 A"}]
+            }]
+        }}))
+    })
+    .expect("包模式循环必须跑完");
+
+    let question = report
+        .remaining_tasks
+        .iter()
+        .find(|task| {
+            task["userTaskId"]
+                .as_str()
+                .unwrap_or("")
+                .starts_with("cloud-question:")
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "apply 步骤带出的疑问必须进剩余任务（edited 收尾不得丢弃）：{:?}",
+                report.remaining_tasks
+            )
+        });
+    assert!(
+        question["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("字形模糊"),
+        "疑问必须带着模型的原话给用户：{question:?}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// 裁定绑定的是**当时看到的那一对内容**：内容再变，旧裁定作废重评。
 #[test]
 fn a_ruling_is_re_evaluated_once_the_content_changes_again() {

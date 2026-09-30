@@ -3577,14 +3577,16 @@ where
             }
             packet_observations.push(serde_json::to_value(&result).unwrap_or(Value::Null));
             observations.push(serde_json::to_value(&result).unwrap_or(Value::Null));
+            // 模型在**任何一步**（apply_edits / finish_packet / finish / …）明确提出的
+            // unresolved 都必须持久化进剩余任务：一旦本包落地编辑就以 edited 收工、不再单独
+            // 给 finish_packet 机会，只在 finish 分支收集会把这些疑问丢掉。
+            if let Some(unresolved) = call.arguments.get("unresolved").and_then(Value::as_array) {
+                model_questions.extend(unresolved.iter().map(|entry| match entry {
+                    Value::String(text) => json!({ "message": text }),
+                    other => other.clone(),
+                }));
+            }
             if is_finish_packet || is_finish {
-                let unresolved = call.arguments.get("unresolved").and_then(Value::as_array);
-                if let Some(unresolved) = unresolved {
-                    model_questions.extend(unresolved.iter().map(|entry| match entry {
-                        Value::String(text) => json!({ "message": text }),
-                        other => other.clone(),
-                    }));
-                }
                 if is_finish {
                     finished = true;
                     finish_note = call
