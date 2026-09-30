@@ -662,7 +662,7 @@ pub(crate) fn plan_cloud_primary_adoption(
         }
     }
 
-    let qualified_task_ids = authoring
+    let qualified_task_ids: Vec<String> = authoring
         .get("taskGroups")
         .and_then(Value::as_array)
         .into_iter()
@@ -671,6 +671,73 @@ pub(crate) fn plan_cloud_primary_adoption(
         .filter(|task_id| !group_failures.contains_key(*task_id))
         .map(str::to_string)
         .collect();
+
+    // 采纳后仍未解析的计分答案，以及「候选带答案页证据却与答案键冲突」——都是大差异，
+    // 进云端校核清单（否则会留下一份看似已采纳、答案却缺失或自相矛盾的稿）。
+    let qualified_set: BTreeSet<&str> = qualified_task_ids.iter().map(String::as_str).collect();
+    let answer_key = authoring.get("answerKey").and_then(Value::as_object);
+    let answer_slots = authoring.get("answerSlots").and_then(Value::as_object);
+    let slot_in_qualified = |slot_id: &str| -> bool {
+        group_ids_owning_slot(authoring, slot_id)
+            .iter()
+            .any(|owner| qualified_set.contains(owner.as_str()))
+    };
+    let answer_resolved = |slot_id: &str| -> bool {
+        answer_key
+            .and_then(|map| map.get(slot_id))
+            .is_some_and(|answer| answer.get("kind").and_then(Value::as_str) != Some("unresolved"))
+    };
+    for (slot_id, slot) in answer_slots.into_iter().flatten() {
+        if slot.get("participation").and_then(Value::as_str) != Some("scoring") {
+            continue;
+        }
+        if slot_in_qualified(slot_id) && !answer_resolved(slot_id) {
+            needs_cloud_review
+                .push(serde_json::json!({"slotId": slot_id, "reason": "answer_unresolved"}));
+        }
+    }
+    let slot_by_number: BTreeMap<u64, String> = answer_slots
+        .into_iter()
+        .flatten()
+        .filter_map(|(slot_id, slot)| {
+            slot.get("questionNumber")
+                .and_then(Value::as_u64)
+                .map(|number| (number, slot_id.clone()))
+        })
+        .collect();
+    for evidence in authoring
+        .get("answerPageEvidence")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let slot_id = evidence
+            .get("slotId")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| {
+                evidence
+                    .get("questionNumber")
+                    .and_then(Value::as_u64)
+                    .and_then(|number| slot_by_number.get(&number).cloned())
+            });
+        let Some(slot_id) = slot_id else {
+            continue;
+        };
+        // 只有答案页证据带了**结构化答案**、答案键已解析、两者不一致，才算冲突；
+        // 答案未解析走上面的 answer_unresolved，不在这里重复。
+        let Some(evidence_answer) = evidence.get("answer") else {
+            continue;
+        };
+        if slot_in_qualified(&slot_id)
+            && answer_resolved(&slot_id)
+            && answer_key.and_then(|map| map.get(&slot_id)) != Some(evidence_answer)
+        {
+            needs_cloud_review.push(
+                serde_json::json!({"slotId": slot_id, "reason": "answer_conflicts_answer_page"}),
+            );
+        }
+    }
 
     CloudPrimaryPlan {
         adopt_passage,
@@ -2058,6 +2125,39 @@ mod tests {
         assert!(!plan.adopt_passage, "原文不达标应保留本地原文");
         assert!(!plan.passage_reasons.is_empty(), "应给出原文不采纳原因");
         assert_eq!(plan.qualified_task_ids, vec!["g1".to_string()], "题目仍应独立采纳");
+    }
+
+    #[test]
+    fn cloud_primary_flags_unresolved_answer_in_adopted_group() {
+        // 题组内容对齐、被整体采纳，但计分槽位答案仍未解析 → 单列进云端校核（大差异）。
+        let groups = json!([{
+            "taskId": "g1", "taskType": "true_false_not_given",
+            "instructions": [{"id": "i1", "type": "text", "text": TFNG_INSTRUCTION}],
+            "responseGroups": [{"responseGroupId": "rg1", "slotIds": ["q1"]}]
+        }]);
+        let candidate = cp_candidate(
+            groups,
+            json!({"q1": {"slotId": "q1", "questionNumber": 1, "participation": "scoring"}}),
+        );
+        let report = cp_report(
+            true,
+            &[("g1", true)],
+            vec![
+                cp_node("i1", "instruction", Some("g1"), &["r1"], true),
+                cp_node("p1", "prompt", Some("g1"), &["r2"], true),
+            ],
+        );
+        let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1]), &report);
+        assert_eq!(plan.qualified_task_ids, vec!["g1".to_string()], "题组仍应被采纳");
+        assert!(
+            plan.needs_cloud_review.iter().any(|entry| entry
+                .get("slotId")
+                .and_then(Value::as_str)
+                == Some("q1")
+                && entry.get("reason").and_then(Value::as_str) == Some("answer_unresolved")),
+            "采纳后仍未解析的计分答案必须进云端校核：{:?}",
+            plan.needs_cloud_review
+        );
     }
 
     #[test]
