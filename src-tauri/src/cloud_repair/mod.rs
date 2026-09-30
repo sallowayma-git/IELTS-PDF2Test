@@ -887,7 +887,7 @@ fn comparison_content(value: &Value) -> Value {
                 .filter(|(key, _)| {
                     !matches!(
                         key.as_str(),
-                        "id" | "nodeId"
+                        "id" | "nodeId" | "optionId"
                             | "sourceAnchors"
                             | "evidenceAnchors"
                             | "quality"
@@ -2712,6 +2712,16 @@ fn execute_tool(
                         errors.push(format!("CLOUD_DECISION_UNKNOWN:{other}"));
                         continue;
                     }
+                };
+                // The old explicit "cannot_resolve" protocol gets the same silent default.
+                let ruling = if adopted_cloud_mode
+                    && non_answer
+                    && decision != "need_context"
+                    && ruling == crate::schema::cloud_repair_v1::CLOUD_RULING_CANNOT_RESOLVE
+                {
+                    crate::schema::cloud_repair_v1::CLOUD_RULING_KEPT_CLOUD_DEFAULT.to_string()
+                } else {
+                    ruling
                 };
                 if !matches!(
                     ruling.as_str(),
