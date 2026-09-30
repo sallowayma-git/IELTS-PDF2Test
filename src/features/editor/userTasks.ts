@@ -596,6 +596,14 @@ export function headlineFor(count: number): string {
 
 /** 云端修复后剩下的一条（后端 `remainingTasks` 的单项，按读取时的当前稿重算过）。 */
 export interface RepairAidInputV1 {
+  comparisonUnitId?: string;
+  localSelectable?: boolean;
+  cloudSelectable?: boolean;
+  taskIds?: string[];
+  localCandidate?: IeltsAuthoringIRV2;
+  cloudCandidate?: IeltsAuthoringIRV2;
+  decisionStatus?: "user_choice" | "need_context";
+  sourcePages?: number[];
   userTaskId: string;
   targetIds?: string[];
   message?: string | null;

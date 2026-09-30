@@ -580,6 +580,7 @@ async function main() {
     appEnv: {
       // 明文密钥回退：profile 的密钥写在 config/secrets/<id>.key 里。
       EPIC8_ALLOW_PLAINTEXT_SECRET_FALLBACK: "1",
+      IELTS_LLM_DIAGNOSTICS: "1",
       ...(isPdf ? {} : { PDF2TEST_AUTOMATION_SOURCE_FILES: staged }),
     },
   });

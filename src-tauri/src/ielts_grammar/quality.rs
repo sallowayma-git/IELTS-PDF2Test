@@ -4,6 +4,7 @@ use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::environment::recognition_blockers_gate_enabled;
+#[cfg(test)]
 use crate::reading_source::ReadingExamSourceV1;
 use crate::reading_source_v2::CompilerIssueV2;
 use crate::schema::ielts_authoring_v2::{QuestionNumberExpressionV2, TaskTypeV2};
@@ -12,6 +13,7 @@ use crate::schema::task_presentation::{
     TaskPresentationRule,
 };
 use crate::schema::IeltsAuthoringIRV2;
+#[cfg(test)]
 use crate::validator::validate_reading_source_contract;
 
 use super::instruction_signature::infer_instruction_signature;
@@ -587,14 +589,6 @@ fn evaluate_quality_inner(
         "v2Runtime",
         RUNTIME_COMPILER_FAILED,
         "ReadingExamSourceV2 runtime compiler 或其 schema validation 失败。",
-        &mut issues,
-        &mut hard_failures,
-    );
-    append_compiler_probe_issue(
-        &compiler_probes,
-        "v1Compatibility",
-        V1_COMPATIBILITY_COMPILER_FAILED,
-        "V1 compatibility compiler 或 ReadingExamSourceV1 validation 失败。",
         &mut issues,
         &mut hard_failures,
     );
@@ -1404,7 +1398,7 @@ fn anchors_from(value: &Value) -> Vec<Value> {
 
 fn evaluate_compiler_probes(authoring: &Value) -> Value {
     let typed = typed_authoring_for_probe(authoring);
-    let (v2_probe, v1_probe) = match typed {
+    let v2_probe = match typed {
         Ok(typed) => {
             let schema_version =
                 crate::listening_source_v1::runtime_schema_version(&typed.modality);
@@ -1447,8 +1441,7 @@ fn evaluate_compiler_probes(authoring: &Value) -> Value {
                     compiler_probe_from_v2_issues(compiler_issues, schema_version)
                 }
             };
-            let v1 = probe_v1_compatibility(authoring);
-            (v2, v1)
+            v2
         }
         Err(error) => {
             let failed = compiler_probe(
@@ -1457,10 +1450,10 @@ fn evaluate_compiler_probes(authoring: &Value) -> Value {
                 vec![AUTHORING_SCHEMA_INVALID.to_string()],
                 vec![error],
             );
-            (failed.clone(), failed)
+            failed
         }
     };
-    json!({"v2Runtime": v2_probe, "v1Compatibility": v1_probe})
+    json!({"v2Runtime": v2_probe, "v1Compatibility": compiler_probe("skipped", "ReadingExamSourceV1", Vec::new(), Vec::new())})
 }
 
 fn typed_authoring_for_probe(authoring: &Value) -> Result<IeltsAuthoringIRV2, String> {
@@ -1592,6 +1585,7 @@ fn append_compiler_probe_issue(
     }
 }
 
+#[cfg(test)]
 fn probe_v1_compatibility(authoring: &Value) -> Value {
     let source = compile_v1_compatibility_shadow(authoring);
     let typed_result = serde_json::from_value::<ReadingExamSourceV1>(source.clone());
@@ -1630,6 +1624,7 @@ fn probe_v1_compatibility(authoring: &Value) -> Value {
     }
 }
 
+#[cfg(test)]
 fn compile_v1_compatibility_shadow(authoring: &Value) -> Value {
     let slots = authoring
         .get("answerSlots")
@@ -7130,7 +7125,7 @@ mod tests {
     }
 
     #[test]
-    fn ready_fixture_proves_coverage_compilers_and_shared_v1_semantics() {
+    fn ready_fixture_requires_only_active_runtime_and_reads_legacy_v1() {
         let authoring = early_approaches();
         let physical = valid_physical_shadow(&authoring);
         let report = evaluate_quality(&authoring, Some(&physical));
@@ -7139,7 +7134,7 @@ mod tests {
         assert_eq!(report["compilerProbes"]["v2Runtime"]["status"], "passed");
         assert_eq!(
             report["compilerProbes"]["v1Compatibility"]["status"],
-            "passed"
+            "skipped"
         );
         serde_json::from_value::<crate::schema::QualityReportV2>(report.clone())
             .expect("ready report must deserialize as QualityReportV2");

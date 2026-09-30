@@ -1119,29 +1119,27 @@ fn build_responses_and_slots(
             .and_then(|next| question_anchor(question_anchors, *next));
         let option_values = match rule.option_source {
             OptionSource::FixedTruthLabels => fixed_truth_options(task_id, rule, task_anchors),
-            OptionSource::PerSlotOptions | OptionSource::GroupOptions => {
-                option_run_for_question(
-                    option_runs,
-                    lines,
-                    current_anchor,
-                    next_anchor,
-                    index,
-                    signature.option_alphabet.as_deref(),
+            OptionSource::PerSlotOptions | OptionSource::GroupOptions => option_run_for_question(
+                option_runs,
+                lines,
+                current_anchor,
+                next_anchor,
+                index,
+                signature.option_alphabet.as_deref(),
+            )
+            .map(|run| option_run_value(run, &format!("{task_id}-option-{number}")))
+            .unwrap_or_else(|| {
+                fixed_options_from_v1(
+                    &format!("{task_id}-{number}"),
+                    candidate,
+                    v1_group,
+                    v1_question,
+                    task_anchors,
                 )
-                .map(|run| option_run_value(run, &format!("{task_id}-option-{number}")))
-                .unwrap_or_else(|| {
-                    fixed_options_from_v1(
-                        &format!("{task_id}-{number}"),
-                        candidate,
-                        v1_group,
-                        v1_question,
-                        task_anchors,
-                    )
-                })
+            }),
+            OptionSource::None | OptionSource::OptionBank | OptionSource::ParagraphMap => {
+                Vec::new()
             }
-            OptionSource::None
-            | OptionSource::OptionBank
-            | OptionSource::ParagraphMap => Vec::new(),
         };
         let prompt_result = assemble_prompt(
             candidate_prompt,
@@ -1308,9 +1306,9 @@ fn build_responses_and_slots(
                     OptionSource::PerSlotOptions
                     | OptionSource::GroupOptions
                     | OptionSource::FixedTruthLabels => Some(option_values),
-                    OptionSource::None
-                    | OptionSource::OptionBank
-                    | OptionSource::ParagraphMap => None,
+                    OptionSource::None | OptionSource::OptionBank | OptionSource::ParagraphMap => {
+                        None
+                    }
                 },
                 option_bank_ref.clone(),
                 allow_option_reuse,
@@ -2226,12 +2224,14 @@ fn fixed_truth_options(
     rule.fixed_option_labels
         .iter()
         .enumerate()
-        .map(|(index, label)| json!({
-            "optionId": format!("{task_id}-fixed-option-{}", index + 1),
-            "label": label,
-            "content": [],
-            "sourceAnchors": [anchor.clone()]
-        }))
+        .map(|(index, label)| {
+            json!({
+                "optionId": format!("{task_id}-fixed-option-{}", index + 1),
+                "label": label,
+                "content": [],
+                "sourceAnchors": [anchor.clone()]
+            })
+        })
         .collect()
 }
 
@@ -2243,9 +2243,8 @@ fn paragraph_label_in_question(text: &str) -> Option<String> {
     let label = chars.next()?;
     let after = chars.next();
     (label.is_ascii_alphabetic()
-        && after.is_none_or(|ch| {
-            ch.is_ascii_whitespace() || matches!(ch, ')' | ']' | ':' | '.' | ',')
-        }))
+        && after
+            .is_none_or(|ch| ch.is_ascii_whitespace() || matches!(ch, ')' | ']' | ':' | '.' | ',')))
     .then(|| label.to_ascii_uppercase().to_string())
 }
 
@@ -2781,7 +2780,10 @@ mod tests {
             ["TRUE", "FALSE", "NOT GIVEN"],
         );
         let group = &value["taskGroups"][0];
-        assert!(group.get("optionBank").is_none(), "固定判断标签不是共享 option bank");
+        assert!(
+            group.get("optionBank").is_none(),
+            "固定判断标签不是共享 option bank"
+        );
         let responses = group["responseGroups"].as_array().unwrap();
         assert_eq!(responses.len(), 3, "每道判断题应有独立 response group");
         for response in responses {
@@ -2816,7 +2818,10 @@ mod tests {
             ["YES", "NO", "NOT GIVEN"],
         );
         let group = &value["taskGroups"][0];
-        assert!(group.get("optionBank").is_none(), "固定判断标签不是共享 option bank");
+        assert!(
+            group.get("optionBank").is_none(),
+            "固定判断标签不是共享 option bank"
+        );
         let responses = group["responseGroups"].as_array().unwrap();
         assert_eq!(responses.len(), 3, "每道判断题应有独立 response group");
         for response in responses {
@@ -2846,12 +2851,14 @@ mod tests {
     #[test]
     fn matching_information_uses_each_slot_and_real_paragraph_map() {
         let questions = (1..=2)
-            .map(|number| json!({
-                "id":format!("q{number}"),
-                "displayNumber":number.to_string(),
-                "prompt":format!("Statement {number}"),
-                "interaction":{"options":["A","B","C"]}
-            }))
+            .map(|number| {
+                json!({
+                    "id":format!("q{number}"),
+                    "displayNumber":number.to_string(),
+                    "prompt":format!("Statement {number}"),
+                    "interaction":{"options":["A","B","C"]}
+                })
+            })
             .collect::<Vec<_>>();
         let v1 = json!({
             "schemaVersion":"ReadingAuthoringIRV1",
@@ -2893,9 +2900,18 @@ mod tests {
         }
         assert_eq!(value["answerSlots"]["q1"]["interaction"], json!("radio"));
         assert_eq!(value["answerSlots"]["q2"]["interaction"], json!("radio"));
-        assert_eq!(value.pointer("/passage/paragraphMap/A"), Some(&json!("passage-paragraph-A")));
-        assert_eq!(value.pointer("/passage/paragraphMap/B"), Some(&json!("passage-paragraph-B")));
-        assert_eq!(value.pointer("/passage/paragraphMap/C"), Some(&json!("passage-paragraph-C")));
+        assert_eq!(
+            value.pointer("/passage/paragraphMap/A"),
+            Some(&json!("passage-paragraph-A"))
+        );
+        assert_eq!(
+            value.pointer("/passage/paragraphMap/B"),
+            Some(&json!("passage-paragraph-B"))
+        );
+        assert_eq!(
+            value.pointer("/passage/paragraphMap/C"),
+            Some(&json!("passage-paragraph-C"))
+        );
     }
 
     #[test]
@@ -2932,14 +2948,23 @@ mod tests {
         let value = build_authoring_v2_shadow(&job(), &v1, &split, None, None).unwrap();
         let group = &value["taskGroups"][0];
         assert_eq!(group["responseGroups"].as_array().unwrap().len(), 1);
-        assert_eq!(group.pointer("/responseGroups/0/slotIds"), Some(&json!(["q14", "q15"])));
+        assert_eq!(
+            group.pointer("/responseGroups/0/slotIds"),
+            Some(&json!(["q14", "q15"]))
+        );
         for (slot, node_id, label) in [
             ("q14", "passage-paragraph-A", "A"),
             ("q15", "passage-paragraph-B", "B"),
         ] {
-            assert_eq!(value["answerSlots"][slot]["hostType"], json!("passage_paragraph"));
+            assert_eq!(
+                value["answerSlots"][slot]["hostType"],
+                json!("passage_paragraph")
+            );
             assert_eq!(value["answerSlots"][slot]["hostNodeId"], json!(node_id));
-            assert_eq!(value.pointer(&format!("/passage/paragraphMap/{label}")), Some(&json!(node_id)));
+            assert_eq!(
+                value.pointer(&format!("/passage/paragraphMap/{label}")),
+                Some(&json!(node_id))
+            );
         }
     }
 
@@ -3150,7 +3175,10 @@ mod tests {
         );
         assert_eq!(group["responseGroups"][0]["kind"], json!("matching"));
         assert_eq!(group["responseGroups"][0]["allowOptionReuse"], json!(false));
-        assert_eq!(value["answerSlots"]["q36"]["interaction"], json!("dragdrop"));
+        assert_eq!(
+            value["answerSlots"]["q36"]["interaction"],
+            json!("dragdrop")
+        );
         let stimulus_json = serde_json::to_string(&group["stimulus"]).unwrap();
         assert!(!stimulus_json.contains("cover"));
         assert!(!stimulus_json.contains("shoot"));
@@ -3277,7 +3305,7 @@ mod tests {
         );
         assert_eq!(
             value.pointer("/quality/compilerProbes/v1Compatibility/status"),
-            Some(&json!("passed"))
+            Some(&json!("skipped"))
         );
     }
 

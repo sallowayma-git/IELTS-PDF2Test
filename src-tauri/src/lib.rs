@@ -52,6 +52,7 @@ mod auto_pipeline;
 mod cleanup;
 mod cloud_adoption;
 mod cloud_repair;
+mod cloud_selection;
 #[cfg(test)]
 mod cross_repo_contract_fixture;
 mod db;
@@ -1032,6 +1033,31 @@ async fn undo_cloud_repair(
     Ok(result)
 }
 
+#[tauri::command]
+async fn choose_cloud_comparison(
+    item_id: String,
+    unit_id: String,
+    choice: String,
+    base_version: i64,
+    app: AppHandle,
+) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    let result = tauri::async_runtime::spawn_blocking({
+        let root = root.clone();
+        let item_id = item_id.clone();
+        move || cloud_selection::choose(&root, &item_id, &unit_id, &choice, base_version)
+    })
+    .await
+    .map_err(|e| format!("comparison_join:{e}"))??;
+    let notify_app = app.clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        let conn = library::repository::open_library_connection(&root)?;
+        processing::scheduler::notify_item_content_changed(&conn, &notify_app, &item_id)
+    })
+    .await;
+    Ok(result)
+}
+
 /// 读取条目最新批次的识别建议（各阶段状态 + 待处理项 + 已自动修正记录）。
 #[tauri::command]
 async fn get_recognition_decision(item_id: String, app: AppHandle) -> CommandResult<Value> {
@@ -1774,6 +1800,7 @@ pub fn run() {
             get_recognition_decision,
             apply_recognition_decisions,
             undo_cloud_repair,
+            choose_cloud_comparison,
             import_files,
             listening_audio::commands::detect_import_modality,
             listening_audio::commands::bind_listening_audio,
@@ -2022,21 +2049,25 @@ mod tests {
     }
 
     fn demanding_v2_group_for_slot<'a>(authoring: &'a Value, slot_id: &str) -> Option<&'a Value> {
-        authoring.get("taskGroups")?.as_array()?.iter().find(|group| {
-            group
-                .get("responseGroups")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .any(|response| {
-                    response
-                        .get("slotIds")
-                        .and_then(Value::as_array)
-                        .into_iter()
-                        .flatten()
-                        .any(|slot| slot.as_str() == Some(slot_id))
-                })
-        })
+        authoring
+            .get("taskGroups")?
+            .as_array()?
+            .iter()
+            .find(|group| {
+                group
+                    .get("responseGroups")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .any(|response| {
+                        response
+                            .get("slotIds")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .any(|slot| slot.as_str() == Some(slot_id))
+                    })
+            })
     }
 
     fn demanding_v2_options_for_slot<'a>(
@@ -2792,8 +2823,15 @@ mod tests {
         );
 
         let cached_inputs = cached_llm_inputs(&root, "job-mock-llm");
-        assert!(!cached_inputs.is_empty());
+        assert_eq!(
+            !cached_inputs.is_empty(),
+            std::env::var("IELTS_LLM_DIAGNOSTICS").as_deref() == Ok("1")
+        );
         assert!(!cached_inputs.join("\n").contains("sk-mock-secret"));
+        let summary =
+            fs::read_to_string(job_dir(&root, "job-mock-llm").join("llm-calls.jsonl")).unwrap();
+        assert!(summary.contains("extract_group"));
+        assert!(!summary.contains("sk-mock-secret"));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -3738,8 +3776,15 @@ Answers
         );
 
         let cached_inputs = cached_llm_inputs(&root, "job-mock-vision");
-        assert!(!cached_inputs.is_empty());
+        assert_eq!(
+            !cached_inputs.is_empty(),
+            std::env::var("IELTS_LLM_DIAGNOSTICS").as_deref() == Ok("1")
+        );
         assert!(!cached_inputs.join("\n").contains("sk-vision-secret"));
+        let summary =
+            fs::read_to_string(job_dir(&root, "job-mock-vision").join("llm-calls.jsonl")).unwrap();
+        assert!(summary.contains("transcribe_pdf_images"));
+        assert!(!summary.contains("sk-vision-secret"));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -9202,8 +9247,14 @@ Answers
                     .pointer("/questionRange")
                     .and_then(Value::as_array)
                     .is_some_and(|range| {
-                        range.first().and_then(Value::as_u64).is_some_and(|start| start <= 27)
-                            && range.get(1).and_then(Value::as_u64).is_some_and(|end| end >= 27)
+                        range
+                            .first()
+                            .and_then(Value::as_u64)
+                            .is_some_and(|start| start <= 27)
+                            && range
+                                .get(1)
+                                .and_then(Value::as_u64)
+                                .is_some_and(|end| end >= 27)
                     })
             });
         let Some(group) = group else {
@@ -9256,8 +9307,14 @@ Answers
                     .pointer("/questionRange")
                     .and_then(Value::as_array)
                     .is_some_and(|range| {
-                        range.first().and_then(Value::as_u64).is_some_and(|start| start <= 35)
-                            && range.get(1).and_then(Value::as_u64).is_some_and(|end| end >= 35)
+                        range
+                            .first()
+                            .and_then(Value::as_u64)
+                            .is_some_and(|start| start <= 35)
+                            && range
+                                .get(1)
+                                .and_then(Value::as_u64)
+                                .is_some_and(|end| end >= 35)
                     })
             });
         let q35_ids = q35_candidate
@@ -9309,7 +9366,10 @@ Answers
         .into_iter()
         .filter(|fragment| passage_json.contains(fragment))
         .collect::<Vec<_>>();
-        assert!(leaked.is_empty(), "instruction-zone fragments leaked into passage: {leaked:?}");
+        assert!(
+            leaked.is_empty(),
+            "instruction-zone fragments leaked into passage: {leaked:?}"
+        );
     }
 
     #[test]

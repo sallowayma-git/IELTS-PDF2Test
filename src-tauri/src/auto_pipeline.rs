@@ -1545,7 +1545,11 @@ fn validate_answer_page_candidate(canonical: &Value, candidate: &Value) -> Value
     })
 }
 
-fn answer_value_for_slot(canonical: &Value, slot_id: &str, raw: &Value) -> Option<Value> {
+pub(crate) fn answer_value_for_slot(
+    canonical: &Value,
+    slot_id: &str,
+    raw: &Value,
+) -> Option<Value> {
     let values = answer_values_from_candidate(raw)
         .into_iter()
         .map(|value| answer_page_text_normalize(&value))
@@ -1973,6 +1977,16 @@ pub(crate) fn apply_vision_answer_candidate(
     job_id: &str,
     candidate: &Value,
 ) -> CommandResult<Value> {
+    apply_vision_answer_candidate_for_run(root, job_id, candidate, None, None)
+}
+
+fn apply_vision_answer_candidate_for_run(
+    root: &Path,
+    job_id: &str,
+    candidate: &Value,
+    repair_run_id: Option<&str>,
+    cancelled: Option<&dyn Fn() -> bool>,
+) -> CommandResult<Value> {
     let mut conn = crate::library::repository::open_library_connection(root)?;
     let Some((canonical, base_version)) =
         crate::library::repository::get_canonical_ds(&conn, job_id)?
@@ -2026,6 +2040,9 @@ pub(crate) fn apply_vision_answer_candidate(
             "protectedCount": protected.len()
         }));
     }
+    if cancelled.is_some_and(|probe| probe()) {
+        return Err("PROCESSING_CANCELLED".into());
+    }
     let commands = build_answer_page_commands(&canonical, candidate, &previous, &protected);
     if commands.is_empty() {
         return Ok(json!({
@@ -2056,13 +2073,18 @@ pub(crate) fn apply_vision_answer_candidate(
             title: None,
         },
         crate::library::repository::EditOrigin::AnswerPageRecognition,
-        None,
+        repair_run_id,
         &|document, patch| crate::authoring_v2_commands::apply_patch(document, patch),
         &|document| {
             crate::authoring_v2_commands::refresh_quality_report(root, job_id, document)?;
             crate::authoring_v2_commands::validate_authoring(document)
         },
-        &|_, _| Ok(()),
+        &|_, _| {
+            if cancelled.is_some_and(|probe| probe()) {
+                return Err("PROCESSING_CANCELLED".into());
+            }
+            Ok(())
+        },
     )?;
     Ok(json!({
         "source": "answer_page_recognition",
@@ -2117,6 +2139,17 @@ pub(crate) fn recognize_and_apply_pdf_answers_with_adopted_candidate(
     job_id: &str,
     profile_id: &str,
     adopted_candidate: Option<&Value>,
+) -> CommandResult<Value> {
+    recognize_and_apply_pdf_answers_for_run(root, job_id, profile_id, adopted_candidate, None, None)
+}
+
+pub(crate) fn recognize_and_apply_pdf_answers_for_run(
+    root: &Path,
+    job_id: &str,
+    profile_id: &str,
+    adopted_candidate: Option<&Value>,
+    repair_run_id: Option<&str>,
+    cancelled: Option<&dyn Fn() -> bool>,
 ) -> CommandResult<Value> {
     let job = load_job(root, job_id)?;
     if !main_source_is_pdf(&job) {
@@ -2176,9 +2209,12 @@ pub(crate) fn recognize_and_apply_pdf_answers_with_adopted_candidate(
     if let Some(cloud) = adopted_candidate {
         attach_adopted_cloud_answer_claim(&mut candidate, cloud);
     }
-    let _ = write_json(&dir.join("vision-answer-output.json"), &output);
+    if std::env::var("IELTS_LLM_DIAGNOSTICS").as_deref() == Ok("1") {
+        let _ = write_json(&dir.join("vision-answer-output.json"), &output);
+    }
     let _ = write_vision_answer_candidates_file(&dir, job_id, &candidate);
-    let mut report = apply_vision_answer_candidate(root, job_id, &candidate)?;
+    let mut report =
+        apply_vision_answer_candidate_for_run(root, job_id, &candidate, repair_run_id, cancelled)?;
     if let Some(object) = report.as_object_mut() {
         object.insert(
             "candidateAnswerCount".to_string(),
@@ -4752,7 +4788,9 @@ where
                                 &answer_constraint_document,
                                 &candidate,
                             );
-                            let _ = write_json(&dir.join("vision-answer-output.json"), &output);
+                            if std::env::var("IELTS_LLM_DIAGNOSTICS").as_deref() == Ok("1") {
+                                let _ = write_json(&dir.join("vision-answer-output.json"), &output);
+                            }
                             let candidates_written =
                                 write_vision_answer_candidates_file(&dir, job_id, &candidate);
                             let application =
@@ -5712,7 +5750,7 @@ mod tests {
             &BTreeSet::new(),
             &BTreeSet::new()
         )
-            .is_empty());
+        .is_empty());
     }
 
     #[test]
@@ -5852,6 +5890,34 @@ mod tests {
             "evidence": [{"questionNumber": question_number.to_string(), "pageIndex": 1, "quote": "answer-page-value"}],
             "answerPageIndexes": [1]
         });
+        let before_cancel = {
+            let conn = crate::library::repository::open_library_connection(&root).unwrap();
+            crate::library::repository::get_canonical_ds(&conn, &job.job_id)
+                .unwrap()
+                .unwrap()
+        };
+        let cancelled = || true;
+        assert_eq!(
+            apply_vision_answer_candidate_for_run(
+                &root,
+                &job.job_id,
+                &candidate,
+                Some("cancelled-run"),
+                Some(&cancelled)
+            )
+            .unwrap_err(),
+            "PROCESSING_CANCELLED"
+        );
+        let after_cancel = {
+            let conn = crate::library::repository::open_library_connection(&root).unwrap();
+            crate::library::repository::get_canonical_ds(&conn, &job.job_id)
+                .unwrap()
+                .unwrap()
+        };
+        assert_eq!(
+            before_cancel, after_cancel,
+            "A late answer-page response must not write after cancellation"
+        );
         let applied = apply_vision_answer_candidate(&root, &job.job_id, &candidate).unwrap();
         assert_eq!(applied["source"], "answer_page_recognition");
         assert_eq!(

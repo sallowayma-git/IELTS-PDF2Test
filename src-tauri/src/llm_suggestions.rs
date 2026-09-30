@@ -717,13 +717,14 @@ pub(crate) fn repair_tools_table(main_source_file_id: &str) -> Value {
         },
         "record_ruling": {
             "purpose": "Adjudicate a difference that is listed in the context, WITHOUT editing anything. \
-    Use it when you have checked the original file and the difference does not need the user.",
+    Return all packet decisions in one rulings array. use_cloud applies the complete backend-built cloud unit with version and human-edit guards. need_context requests more evidence; user_choice leaves a real author decision.",
             "arguments": {
                 "rulings": [{
-                    "targetType": "slot | task_group | response_group | part",
+                    "targetType": "slot | task_group | response_group | part | passage",
                     "targetId": "the targetId exactly as listed in differences",
                     "field": "the field exactly as listed in differences",
-                    "ruling": "current_is_correct | cannot_resolve",
+                    "decision": "use_cloud | keep_current | need_context | user_choice",
+                    "ruling": "optional legacy current_is_correct | cannot_resolve",
                     "reason": "why, in one sentence",
                     "evidence": [{"sourceFileId": main_source_file_id, "pageIndex": 1, "quote": "the exact text you relied on"}]
                 }]
@@ -805,6 +806,7 @@ pub(crate) fn repair_tool_rules(context: &Value) -> Value {
         "A difference is NOT automatically the user's problem. The first-pass candidate can be wrong. If the file shows the current draft is right, record_ruling \"current_is_correct\" instead of leaving the difference for the user.".to_string(),
         "record_ruling only accepts differences that are actually listed in the context, and only for a pair of contents you have checked. It cannot remove structural problems found by the backend validator.".to_string(),
         "If neither side is right, apply_edits to the correct content and then rule the difference \"current_is_correct\" (the candidate stays wrong).".to_string(),
+        "Batch decisions for related groups. Request additional evidence at most once with report_insufficient_context; never repeatedly confirm successful edits. For record_ruling use keep_current when the current draft is correct, use_cloud when the original proves the cloud unit is correct, user_choice when the original cannot settle the conflict, and need_context when evidence is still missing.".to_string(),
         "Put every doubt you could NOT settle into finish.unresolved. Those become user-visible items, so omitting them hides real uncertainty.".to_string(),
     ]);
     rules.push(if packet_mode {

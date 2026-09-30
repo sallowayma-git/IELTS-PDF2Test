@@ -324,6 +324,12 @@ fn refine_view_for_reader(
             repair,
         ));
     }
+    let mut repair = view.repair.clone().unwrap_or(Value::Null);
+    if store::attach_latest_cloud_undo(conn, &batch.library_item_id, &mut repair).is_ok()
+        && repair.is_object()
+    {
+        view.repair = Some(repair);
+    }
 }
 
 // ── 完整识别周期（本地已有稿 → 云端 → 核验 → 裁决 → 自动应用）──────────
@@ -784,8 +790,7 @@ pub(crate) fn apply_recognition_decisions_core(
     // 驳回虽不写权威稿，但它同样是人对识别结果的处理决定，与接受/撤销同受
     // 「云端校核进行中」锁约束（前端锁定的是同一组入口）；云端校核可能正要
     // 依据这些待办状态继续修复，此刻改写状态会与机器写入交错。
-    let cloud_review_locked =
-        crate::processing::queue::cloud_review_in_progress(&conn, &item_id)?;
+    let cloud_review_locked = crate::processing::queue::cloud_review_in_progress(&conn, &item_id)?;
     for decision_id in &request.reject {
         let Some(index) = items
             .iter()

@@ -618,6 +618,55 @@ pub(crate) fn publish_verdict(
         }
     }
 
+    // Candidate differences are editor work, but must be settled before publication.
+    // Both preflight and actual export read this same current-canonical decision list.
+    if v2 {
+        let choices = (|| -> crate::CommandResult<Vec<Value>> {
+            let conn = crate::library::repository::open_library_connection(root)?;
+            let Some(batch) = crate::reconcile::store::load_latest_batch(&conn, job_id)? else {
+                return Ok(Vec::new());
+            };
+            crate::cloud_repair::current_remaining_tasks(
+                root,
+                &batch.library_item_id,
+                &batch.job_id,
+                &batch.batch_id,
+            )
+        })();
+        match choices {
+            Ok(tasks) => {
+                for task in tasks.iter().filter(|task| {
+                    task["action"] == "review_difference"
+                        || task["userTaskId"]
+                            .as_str()
+                            .is_some_and(|id| id.starts_with("answer-page:"))
+                }) {
+                    let message = if task["action"] == "review_difference" {
+                        "请先在题目区域选择本地或云端结果"
+                    } else {
+                        "请先在题目区域确认答案页冲突"
+                    };
+                    builder.block(
+                        "RECOGNITION_CHOICE_UNRESOLVED",
+                        "CloudReview",
+                        task["targetIds"]
+                            .as_array()
+                            .and_then(|ids| ids.first())
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                        message,
+                    );
+                }
+            }
+            Err(error) => builder.undetermined(
+                "RECOGNITION_CHOICES_UNAVAILABLE",
+                "CloudReview",
+                None,
+                error,
+            ),
+        }
+    }
+
     // 来源复核状态：两个范围都要（它是当前稿的事实，不是历史痕迹）。
     match crate::source_review::source_review_status_for_job(root, job_id) {
         Err(error) => {

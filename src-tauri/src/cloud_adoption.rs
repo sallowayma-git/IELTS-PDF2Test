@@ -1,62 +1,9 @@
-//! Deterministic qualification for promoting the complete cloud authoring candidate.
-//!
-//! This module deliberately does not trust model confidence or the report's aggregate score.
-//! Eligibility is a backend decision over the normalized candidate, compiler probe, stable
-//! question identities, and the hard-failure codes emitted by `ielts_grammar::quality`.
+//! Reception and dependency-unit adoption for editable cloud candidates.
+//! Publication completeness is checked later; admission preserves references and human edits.
 
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::path::Path;
-
-/// The only hard failures that do not make an otherwise complete candidate unsafe to promote.
-///
-/// `quality.rs` also elevates recognition blockers dynamically, including unknown future codes.
-/// Therefore this is intentionally an exemption list: every code not named here is blocking.
-/// Answer-value findings can be resolved by later stages. Runtime compilation is exempted only
-/// when its complete failure set consists of unresolved-answer findings; structural/compiler
-/// errors remain blocking.
-fn is_adoption_exempt_hard_failure(code: &str) -> bool {
-    use crate::ielts_grammar::issue_codes::*;
-
-    matches!(
-        code,
-        ANSWER_KEY_MISSING_SLOT
-            | ANSWER_WORD_LIMIT_VIOLATION
-            | ANSWER_OPTION_NOT_IN_BANK
-            | V1_COMPATIBILITY_COMPILER_FAILED
-    )
-}
-
-fn runtime_failed_only_for_unresolved_answers(authoring: &Value) -> bool {
-    let Some(probe) = authoring.pointer("/quality/compilerProbes/v2Runtime") else {
-        return false;
-    };
-    if probe.get("status").and_then(Value::as_str) != Some("failed") {
-        return false;
-    }
-    let codes = probe
-        .get("issueCodes")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .collect::<Vec<_>>();
-    let details = probe
-        .get("details")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .collect::<Vec<_>>();
-    !codes.is_empty()
-        && codes
-            .iter()
-            .all(|code| *code == "RUNTIME_ANSWER_UNRESOLVED")
-        && !details.is_empty()
-        && details
-            .iter()
-            .all(|detail| detail.starts_with("RUNTIME_ANSWER_UNRESOLVED:"))
-}
 
 fn question_numbers(value: &Value) -> BTreeSet<u32> {
     value
@@ -68,133 +15,16 @@ fn question_numbers(value: &Value) -> BTreeSet<u32> {
         .collect()
 }
 
-fn candidate_question_numbers(authoring: &Value) -> (BTreeSet<u32>, bool) {
-    let mut numbers = BTreeSet::new();
-    let mut duplicate = false;
-    for slot in authoring
-        .get("answerSlots")
-        .and_then(Value::as_object)
-        .into_iter()
-        .flat_map(|slots| slots.values())
-    {
-        let Some(number) = slot
-            .get("questionNumber")
-            .and_then(Value::as_u64)
-            .and_then(|number| u32::try_from(number).ok())
-        else {
-            continue;
-        };
-        duplicate |= !numbers.insert(number);
-    }
-    (numbers, duplicate)
-}
-
-fn instruction_question_numbers(authoring: &Value) -> BTreeSet<u32> {
-    authoring
-        .get("taskGroups")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .flat_map(|group| {
-            question_numbers(
-                group
-                    .pointer("/instructionSignature/expectedQuestionNumbers")
-                    .unwrap_or(&Value::Null),
-            )
-        })
-        .collect()
-}
-
 /// Return stable, user-readable reasons when the candidate must not be adopted.
 pub(crate) fn adoption_rejection_reasons(candidate: &Value, local: &Value) -> Vec<String> {
-    let mut reasons = Vec::new();
+    // Reception is not publication: partial results, missing answers and local disagreement
+    // must reach repair. Only a missing normalized document makes adoption impossible.
+    let _ = local;
     let authoring = candidate.get("authoring").unwrap_or(&Value::Null);
-
-    if candidate.get("status").and_then(Value::as_str) != Some("succeeded") {
-        reasons.push("云端候选未完整归一化成功".to_string());
+    if !authoring.is_object() || !authoring.get("taskGroups").is_some_and(Value::is_array) {
+        return vec!["云端候选没有可供校核的题组结构".to_string()];
     }
-    if candidate
-        .get("unresolvedReferences")
-        .and_then(Value::as_array)
-        .is_some_and(|references| !references.is_empty())
-    {
-        reasons.push("云端候选仍有未解析的结构引用".to_string());
-    }
-    let answer_only_runtime_failure = runtime_failed_only_for_unresolved_answers(authoring);
-    let runtime_passed = authoring
-        .pointer("/quality/compilerProbes/v2Runtime/status")
-        .and_then(Value::as_str)
-        == Some("passed");
-    if !runtime_passed && !answer_only_runtime_failure {
-        reasons.push("云端候选未通过学生端 V2 运行时编译".to_string());
-    }
-
-    let blocking_hard_failures = authoring
-        .pointer("/quality/hardFailures")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .filter(|code| {
-            !is_adoption_exempt_hard_failure(code)
-                && !(*code == "RUNTIME_COMPILER_FAILED" && answer_only_runtime_failure)
-        })
-        .collect::<BTreeSet<_>>();
-    if !blocking_hard_failures.is_empty() {
-        reasons.push(format!(
-            "云端候选存在不可豁免的质量硬阻断：{}",
-            blocking_hard_failures
-                .into_iter()
-                .collect::<Vec<_>>()
-                .join("、")
-        ));
-    }
-
-    let local_numbers = local
-        .get("slots")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|slot| slot.get("questionNumber").and_then(Value::as_u64))
-        .filter_map(|number| u32::try_from(number).ok())
-        .collect::<BTreeSet<_>>();
-    let (candidate_numbers, duplicate_candidate_numbers) = candidate_question_numbers(authoring);
-    if local_numbers.is_empty() {
-        reasons.push("冻结的本地候选没有可核对的题号".to_string());
-    }
-    if duplicate_candidate_numbers {
-        reasons.push("云端候选的答案位重复声明了题号".to_string());
-    }
-    let missing = local_numbers
-        .difference(&candidate_numbers)
-        .copied()
-        .collect::<Vec<_>>();
-    if !missing.is_empty() {
-        reasons.push(format!(
-            "云端候选未覆盖本地题号：{}",
-            format_question_numbers(&missing)
-        ));
-    }
-    let extra = candidate_numbers
-        .difference(&local_numbers)
-        .copied()
-        .collect::<Vec<_>>();
-    if !extra.is_empty() {
-        let declared = instruction_question_numbers(authoring);
-        let undeclared = extra
-            .iter()
-            .copied()
-            .filter(|number| !declared.contains(number))
-            .collect::<Vec<_>>();
-        if !undeclared.is_empty() {
-            reasons.push(format!(
-                "云端新增题号不在候选自身的说明区范围内：{}",
-                format_question_numbers(&undeclared)
-            ));
-        }
-    }
-
-    reasons
+    Vec::new()
 }
 
 #[derive(Debug)]
@@ -202,6 +32,8 @@ pub(crate) struct AdoptionCommit {
     pub edit_version: i64,
     pub preserved_group_ids: Vec<String>,
     pub applied_targets: Vec<String>,
+    pub adopted_task_ids: Vec<String>,
+    pub deferred_task_ids: Vec<String>,
 }
 
 fn group_question_numbers(document: &Value, group: &Value) -> BTreeSet<u32> {
@@ -266,6 +98,391 @@ fn group_question_numbers(document: &Value, group: &Value) -> BTreeSet<u32> {
         _ => {}
     }
     numbers
+}
+
+/// Stable dependency unit shared by automatic adoption and explicit author selection.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ComparisonUnit {
+    pub unit_id: String,
+    pub local_task_ids: Vec<String>,
+    pub cloud_task_ids: Vec<String>,
+}
+
+fn groups(document: &Value) -> Vec<&Value> {
+    document
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .map(|groups| groups.iter().collect())
+        .unwrap_or_default()
+}
+
+fn slot_ids(group: &Value) -> BTreeSet<String> {
+    group
+        .get("responseGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|response| {
+            response
+                .get("slotIds")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect()
+}
+
+fn dependency_refs(value: &Value, refs: &mut BTreeSet<String>) {
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                if matches!(
+                    key.as_str(),
+                    "optionBankId"
+                        | "nodeId"
+                        | "sourceNodeId"
+                        | "regionId"
+                        | "responseGroupId"
+                        | "hostNodeId"
+                        | "stimulusId"
+                ) {
+                    if let Some(id) = child.as_str() {
+                        refs.insert(format!("{key}:{id}"));
+                    }
+                }
+                dependency_refs(child, refs);
+            }
+        }
+        Value::Array(items) => {
+            for child in items {
+                dependency_refs(child, refs);
+            }
+        }
+        _ => {}
+    }
+}
+
+pub(crate) fn comparison_units(local: &Value, cloud: &Value) -> Vec<ComparisonUnit> {
+    let entries: Vec<(bool, &Value, &Value)> = groups(local)
+        .into_iter()
+        .map(|g| (false, local, g))
+        .chain(groups(cloud).into_iter().map(|g| (true, cloud, g)))
+        .collect();
+    let mut parent: Vec<usize> = (0..entries.len()).collect();
+    fn root(parent: &[usize], mut i: usize) -> usize {
+        while parent[i] != i {
+            i = parent[i];
+        }
+        i
+    }
+    let numbers: Vec<_> = entries
+        .iter()
+        .map(|(_, doc, group)| group_question_numbers(doc, group))
+        .collect();
+    let refs: Vec<_> = entries
+        .iter()
+        .map(|(_, _, group)| {
+            let mut refs = BTreeSet::new();
+            dependency_refs(group, &mut refs);
+            refs
+        })
+        .collect();
+    for i in 0..entries.len() {
+        for j in 0..i {
+            let same_id = entries[i].2.get("taskId") == entries[j].2.get("taskId");
+            let left = crate::reconcile::candidate::normalize_text(
+                &crate::reconcile::candidate::nodes_text(
+                    entries[i].2.get("stimulus").unwrap_or(&Value::Null),
+                ),
+            );
+            let right = crate::reconcile::candidate::normalize_text(
+                &crate::reconcile::candidate::nodes_text(
+                    entries[j].2.get("stimulus").unwrap_or(&Value::Null),
+                ),
+            );
+            if same_id
+                || !numbers[i].is_disjoint(&numbers[j])
+                || !refs[i].is_disjoint(&refs[j])
+                || (!left.is_empty() && left == right)
+            {
+                let a = root(&parent, i);
+                let b = root(&parent, j);
+                parent[a] = b;
+            }
+        }
+    }
+    let mut components =
+        std::collections::BTreeMap::<usize, (BTreeSet<String>, BTreeSet<String>)>::new();
+    for (i, (is_cloud, _, group)) in entries.iter().enumerate() {
+        if let Some(id) = group.get("taskId").and_then(Value::as_str) {
+            let pair = components.entry(root(&parent, i)).or_default();
+            if *is_cloud {
+                pair.1.insert(id.to_string());
+            } else {
+                pair.0.insert(id.to_string());
+            }
+        }
+    }
+    components
+        .into_values()
+        .map(|(local_ids, cloud_ids)| {
+            let bytes = serde_json::to_vec(&(&local_ids, &cloud_ids)).unwrap_or_default();
+            ComparisonUnit {
+                unit_id: format!("unit-{}", &crate::hash_bytes(&bytes)[..16]),
+                local_task_ids: local_ids.into_iter().collect(),
+                cloud_task_ids: cloud_ids.into_iter().collect(),
+            }
+        })
+        .collect()
+}
+
+/// Full renderable document projection, not a lossy comparison digest.
+pub(crate) fn unit_document(document: &Value, task_ids: &[String]) -> Value {
+    let mut selected = document.clone();
+    let selected_groups: Vec<Value> = groups(document)
+        .into_iter()
+        .filter(|g| {
+            g.get("taskId")
+                .and_then(Value::as_str)
+                .is_some_and(|id| task_ids.iter().any(|x| x == id))
+        })
+        .cloned()
+        .collect();
+    let ids: BTreeSet<String> = selected_groups.iter().flat_map(slot_ids).collect();
+    selected["taskGroups"] = serde_json::json!(selected_groups);
+    for key in ["answerSlots", "answerKey"] {
+        if let Some(map) = selected.get_mut(key).and_then(Value::as_object_mut) {
+            map.retain(|id, _| ids.contains(id));
+        }
+    }
+    if let Some(parts) = selected
+        .pointer_mut("/listening/parts")
+        .and_then(Value::as_array_mut)
+    {
+        for part in parts.iter_mut() {
+            if let Some(ids) = part.get_mut("taskIds").and_then(Value::as_array_mut) {
+                ids.retain(|id| {
+                    id.as_str()
+                        .is_some_and(|id| task_ids.iter().any(|x| x == id))
+                });
+            }
+        }
+        parts.retain(|p| {
+            p.get("taskIds")
+                .and_then(Value::as_array)
+                .is_some_and(|ids| !ids.is_empty())
+        });
+    }
+    selected
+}
+
+pub(crate) fn replace_unit(
+    current: &Value,
+    local: &Value,
+    cloud: &Value,
+    unit_id: &str,
+    use_cloud: bool,
+) -> Result<Value, String> {
+    let unit = comparison_units(local, cloud)
+        .into_iter()
+        .find(|unit| unit.unit_id == unit_id)
+        .ok_or_else(|| "CLOUD_COMPARISON_UNIT_STALE".to_string())?;
+    let selected = if use_cloud { cloud } else { local };
+    let ids = if use_cloud {
+        &unit.cloud_task_ids
+    } else {
+        &unit.local_task_ids
+    };
+    let mut all_ids: BTreeSet<String> = unit
+        .local_task_ids
+        .iter()
+        .chain(unit.cloud_task_ids.iter())
+        .cloned()
+        .collect();
+    let mut numbers = BTreeSet::new();
+    for document in [local, cloud] {
+        for group in groups(document) {
+            if group
+                .get("taskId")
+                .and_then(Value::as_str)
+                .is_some_and(|id| all_ids.contains(id))
+            {
+                numbers.extend(group_question_numbers(document, group));
+            }
+        }
+    }
+    let mut removed_slots = BTreeSet::new();
+    let mut insertion = None;
+    let mut retained = Vec::new();
+    for group in groups(current) {
+        let matching = group
+            .get("taskId")
+            .and_then(Value::as_str)
+            .is_some_and(|id| all_ids.contains(id))
+            || !group_question_numbers(current, group).is_disjoint(&numbers);
+        if matching {
+            insertion.get_or_insert(retained.len());
+            removed_slots.extend(slot_ids(group));
+            if let Some(id) = group.get("taskId").and_then(Value::as_str) {
+                all_ids.insert(id.to_string());
+            }
+        } else {
+            retained.push(group.clone());
+        }
+    }
+    let bundle = unit_document(selected, ids);
+    let replacement = bundle
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let at = insertion.unwrap_or(retained.len());
+    retained.splice(at..at, replacement);
+    let mut merged = current.clone();
+    merged["taskGroups"] = serde_json::json!(retained);
+    for key in ["answerSlots", "answerKey"] {
+        let map = merged
+            .get_mut(key)
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| format!("cloud_unit_missing:{key}"))?;
+        map.retain(|id, _| !removed_slots.contains(id));
+        if let Some(new) = bundle.get(key).and_then(Value::as_object) {
+            map.extend(new.clone());
+        }
+    }
+    // Restore listening membership together with groups; remove stale memberships first.
+    if let Some(parts) = merged
+        .pointer_mut("/listening/parts")
+        .and_then(Value::as_array_mut)
+    {
+        for part in parts.iter_mut() {
+            if let Some(tasks) = part.get_mut("taskIds").and_then(Value::as_array_mut) {
+                tasks.retain(|id| !id.as_str().is_some_and(|id| all_ids.contains(id)));
+            }
+        }
+        for selected_part in bundle
+            .pointer("/listening/parts")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(existing) = parts
+                .iter_mut()
+                .find(|p| p.get("partId") == selected_part.get("partId"))
+            {
+                if let (Some(tasks), Some(new)) = (
+                    existing.get_mut("taskIds").and_then(Value::as_array_mut),
+                    selected_part.get("taskIds").and_then(Value::as_array),
+                ) {
+                    tasks.extend(new.clone());
+                }
+            } else {
+                parts.push(selected_part.clone());
+            }
+        }
+        parts.retain(|p| {
+            p.get("taskIds")
+                .and_then(Value::as_array)
+                .is_some_and(|ids| !ids.is_empty())
+        });
+    }
+    Ok(merged)
+}
+
+/// Publication completeness is intentionally excluded from the editor admission check.
+pub(crate) fn editor_runtime_errors(
+    document: &Value,
+) -> Vec<crate::reading_source_v2::CompilerIssueV2> {
+    let typed = match serde_json::from_value::<crate::schema::IeltsAuthoringIRV2>(document.clone())
+    {
+        Ok(typed) => typed,
+        Err(error) => {
+            return vec![crate::reading_source_v2::CompilerIssueV2 {
+                code: "AUTHORING_SCHEMA_INVALID".to_string(),
+                message: error.to_string(),
+                target_id: "document".to_string(),
+            }]
+        }
+    };
+    match crate::listening_source_v1::compile_exam_source_v2(&typed) {
+        Ok(_) => Vec::new(),
+        Err(issues) => issues
+            .into_iter()
+            .filter(|issue| {
+                !matches!(
+                    issue.code.as_str(),
+                    "RUNTIME_ANSWER_UNRESOLVED"
+                        | "RUNTIME_ANSWER_KEY_MISSING"
+                        | "RUNTIME_ANSWER_KEY_MISMATCH"
+                        | "RUNTIME_ANSWER_OPTION_INVALID"
+                        | "RUNTIME_ANSWER_WORD_LIMIT_VIOLATION"
+                        | "RUNTIME_ANSWER_KEY_POLICY_INVALID"
+                        | "RUNTIME_TEXT_SLOT_ANSWER_NOT_TEXT"
+                        | "RUNTIME_CHOICE_SLOT_ANSWER_NOT_OPTION"
+                        | "RUNTIME_RESPONSE_ANSWER_KIND_MISMATCH"
+                        | "RUNTIME_HOTSPOT_ANSWER_NOT_OPTION"
+                        | "LISTENING_MEDIA_MISSING"
+                        | "AUDIO_DECODE_FAILED"
+                        | "AUDIO_CODEC_UNSUPPORTED"
+                        | "AUDIO_HASH_MISMATCH"
+                        | "AUDIO_CUE_INVALID"
+                        | "AUDIO_POLICY_MISSING"
+                        | "LISTENING_COMPLETE_PART_COUNT"
+                        | "LISTENING_COMPLETE_QUESTION_COUNT"
+                )
+            })
+            .collect(),
+    }
+}
+
+fn prepare_partial_adoption(current: &Value, cloud: &Value) -> (Value, Vec<String>, Vec<String>) {
+    let units = comparison_units(current, cloud);
+    let mut merged = current.clone();
+    // Passage remains independently editable; use a normalized cloud passage when renderable.
+    if let Some(passage) = cloud.get("passage") {
+        merged["passage"] = passage.clone();
+    }
+    let baseline_errors: BTreeSet<_> = editor_runtime_errors(current)
+        .into_iter()
+        .map(|i| (i.code, i.target_id))
+        .collect();
+    if editor_runtime_errors(&merged)
+        .iter()
+        .any(|i| !baseline_errors.contains(&(i.code.clone(), i.target_id.clone())))
+    {
+        merged = current.clone();
+    }
+    let mut adopted = Vec::new();
+    let mut deferred = Vec::new();
+    for unit in units {
+        if unit.cloud_task_ids.is_empty() {
+            continue;
+        } // deletions need source review
+        let mut projected = unit_document(cloud, &unit.cloud_task_ids);
+        projected["modality"] = serde_json::json!("reading");
+        if projected["passage"].is_null() {
+            projected["passage"] = serde_json::json!({"title":"","content":[],"sourceAnchors":[]});
+        }
+        if !editor_runtime_errors(&projected).is_empty() {
+            deferred.extend(unit.cloud_task_ids);
+            continue;
+        }
+        match replace_unit(&merged, current, cloud, &unit.unit_id, true) {
+            Ok(trial)
+                if editor_runtime_errors(&trial)
+                    .iter()
+                    .all(|i| baseline_errors.contains(&(i.code.clone(), i.target_id.clone()))) =>
+            {
+                merged = trial;
+                adopted.extend(unit.cloud_task_ids);
+            }
+            _ => deferred.extend(unit.cloud_task_ids),
+        }
+    }
+    (merged, adopted, deferred)
 }
 
 fn object_contains_identity(value: &Value, id: &str) -> bool {
@@ -734,11 +951,42 @@ pub(crate) fn adopt_cloud_candidate(
             item_id,
             candidate_base_version,
         )?;
-        let mut merged = cloud_authoring.clone();
+        let (mut merged, mut adopted_task_ids, mut deferred_task_ids) =
+            prepare_partial_adoption(&current, cloud_authoring);
+        if adopted_task_ids.is_empty() {
+            return Err(
+                "CLOUD_CANDIDATE_NO_RENDERABLE_UNITS:候选已接收，题组需要先经校核修复".to_string(),
+            );
+        }
         if let Some(assets) = current.get("assets") {
             merged["assets"] = assets.clone();
         }
         let preserved_group_ids = merge_human_edits(&current, &mut merged, &journal)?;
+        // A preserved human group remains on the current side of comparison, not the adopted side.
+        let preserved: BTreeSet<_> = preserved_group_ids.iter().collect();
+        adopted_task_ids.retain(|id| {
+            if preserved.contains(id) {
+                deferred_task_ids.push(id.clone());
+                false
+            } else {
+                true
+            }
+        });
+        let baseline: BTreeSet<_> = editor_runtime_errors(&current)
+            .into_iter()
+            .map(|i| (i.code, i.target_id))
+            .collect();
+        let introduced: Vec<_> = editor_runtime_errors(&merged)
+            .into_iter()
+            .filter(|i| !baseline.contains(&(i.code.clone(), i.target_id.clone())))
+            .map(|i| format!("{}:{}", i.code, i.target_id))
+            .collect();
+        if !introduced.is_empty() {
+            return Err(format!(
+                "CLOUD_CANDIDATE_REBASE_STRUCTURE_INVALID:{}",
+                introduced.join(",")
+            ));
+        }
         if let (Some(current_audit), Some(audit)) = (
             current.get("audit").and_then(Value::as_object),
             merged.get_mut("audit").and_then(Value::as_object_mut),
@@ -806,6 +1054,8 @@ pub(crate) fn adopt_cloud_candidate(
                     edit_version: result.edit_version,
                     preserved_group_ids,
                     applied_targets: result.applied_targets,
+                    adopted_task_ids,
+                    deferred_task_ids,
                 });
             }
             Err(error) if error.starts_with("EDIT_VERSION_CONFLICT") => {
@@ -815,14 +1065,6 @@ pub(crate) fn adopt_cloud_candidate(
         }
     }
     Err(last_conflict.unwrap_or_else(|| "cloud_candidate_adoption_conflict".to_string()))
-}
-
-fn format_question_numbers(numbers: &[u32]) -> String {
-    numbers
-        .iter()
-        .map(u32::to_string)
-        .collect::<Vec<_>>()
-        .join("、")
 }
 
 #[cfg(test)]
@@ -852,6 +1094,26 @@ mod tests {
     }
 
     #[test]
+    fn listening_candidate_without_audio_is_editable_and_keeps_active_runtime_contract() {
+        let typed = crate::test_support::complete_listening_exam();
+        let mut current = serde_json::to_value(typed).unwrap();
+        for part in current["listening"]["parts"].as_array_mut().unwrap() {
+            part.as_object_mut().unwrap().remove("media");
+        }
+        let cloud = current.clone();
+        let (_, adopted, deferred) = prepare_partial_adoption(&current, &cloud);
+        assert!(deferred.is_empty(), "{deferred:?}");
+        assert_eq!(adopted.len(), cloud["taskGroups"].as_array().unwrap().len());
+        let typed = serde_json::from_value::<crate::schema::IeltsAuthoringIRV2>(cloud).unwrap();
+        assert!(
+            crate::listening_source_v1::compile_exam_source_v2(&typed)
+                .unwrap_err()
+                .iter()
+                .any(|i| i.code == "LISTENING_MEDIA_MISSING"),
+            "Publication still requires usable audio"
+        );
+    }
+    #[test]
     fn complete_runtime_valid_candidate_covers_local_numbers_and_keeps_q_ids() {
         let cloud = candidate();
         assert!(adoption_rejection_reasons(&cloud, &local()).is_empty());
@@ -866,112 +1128,132 @@ mod tests {
     }
 
     #[test]
-    fn answer_value_and_v1_compatibility_failures_are_exempt_but_other_hard_failures_reject() {
-        let mut cloud = candidate();
-        for code in [
-            "ANSWER_KEY_MISSING_SLOT",
-            "ANSWER_WORD_LIMIT_VIOLATION",
-            "ANSWER_OPTION_NOT_IN_BANK",
-            "V1_COMPATIBILITY_COMPILER_FAILED",
-        ] {
-            cloud["authoring"]["quality"]["hardFailures"] = json!([code]);
-            assert!(
-                adoption_rejection_reasons(&cloud, &local()).is_empty(),
-                "expected {code} to be exempt"
-            );
-        }
-
-        for code in [
-            "PROVENANCE_MISSING",
-            "QUESTION_BLOCK_MISSING",
-            "MULTIPLE_CHOICE_CARDINALITY_UNRESOLVED",
-            "VISUAL_FALLBACK_ASSET_NOT_MATERIALIZED",
-            "SOME_NEW_BLOCKER",
-        ] {
-            cloud["authoring"]["quality"]["hardFailures"] = json!([code]);
-            let reasons = adoption_rejection_reasons(&cloud, &local());
-            assert!(
-                reasons.iter().any(|reason| reason.contains(code)),
-                "expected {code} to reject adoption"
-            );
-        }
-    }
-
-    #[test]
-    fn candidate_must_cover_local_questions_and_extras_must_be_in_its_own_instructions() {
-        let mut cloud = candidate();
-        cloud["authoring"]["answerSlots"]
-            .as_object_mut()
-            .unwrap()
-            .remove("q15");
-        let reasons = adoption_rejection_reasons(&cloud, &local());
-        assert!(reasons
-            .iter()
-            .any(|reason| reason.contains("未覆盖本地题号：15")));
-
-        let mut cloud = candidate();
-        let mut slot = cloud["authoring"]["answerSlots"]["q15"].clone();
-        slot["slotId"] = json!("q16");
-        slot["questionNumber"] = json!(16);
-        cloud["authoring"]["answerSlots"]
-            .as_object_mut()
-            .unwrap()
-            .insert("q16".into(), slot);
-        let reasons = adoption_rejection_reasons(&cloud, &local());
-        assert!(reasons
-            .iter()
-            .any(|reason| reason.contains("新增题号不在候选自身的说明区范围内：16")));
-
-        cloud["authoring"]["taskGroups"][0]["instructionSignature"]["expectedQuestionNumbers"] =
-            json!([14, 15, 16]);
-        assert!(adoption_rejection_reasons(&cloud, &local()).is_empty());
-    }
-
-    #[test]
-    fn partial_or_uncompiled_candidate_is_never_adopted() {
+    fn reception_accepts_partial_candidates_and_defers_all_publication_findings() {
         let mut cloud = candidate();
         cloud["status"] = json!("partial");
+        cloud["unresolvedReferences"] = json!(["bad-group"]);
+        cloud["authoring"]["quality"]["hardFailures"] =
+            json!(["PROVENANCE_MISSING", "RUNTIME_COMPILER_FAILED"]);
         cloud["authoring"]["quality"]["compilerProbes"]["v2Runtime"]["status"] = json!("failed");
-        let reasons = adoption_rejection_reasons(&cloud, &local());
-        assert!(reasons.iter().any(|reason| reason.contains("未完整归一化")));
-        assert!(reasons.iter().any(|reason| reason.contains("运行时编译")));
+        assert!(adoption_rejection_reasons(&cloud, &json!({"slots":[]})).is_empty());
     }
 
     #[test]
-    fn only_unresolved_answer_failures_do_not_block_cloud_adoption() {
-        let mut cloud = candidate();
-        cloud["authoring"]["answerKey"]["q14"] = json!({"kind":"unresolved"});
-        cloud["authoring"]["quality"]["compilerProbes"]["v2Runtime"] = json!({
-            "status": "failed",
-            "issueCodes": ["RUNTIME_ANSWER_UNRESOLVED"],
-            "details": ["RUNTIME_ANSWER_UNRESOLVED:q14:No printed answer is available."]
-        });
-        cloud["authoring"]["quality"]["hardFailures"] = json!(["RUNTIME_COMPILER_FAILED"]);
+    fn local_false_question_cannot_reject_a_received_cloud_candidate() {
+        let cloud = candidate();
+        let local = json!({"slots":[{"questionNumber":999}]});
+        assert!(adoption_rejection_reasons(&cloud, &local).is_empty());
+        assert!(!adoption_rejection_reasons(&json!({"authoring":null}), &local).is_empty());
+    }
 
+    #[test]
+    fn missing_answers_are_editor_admissible_but_broken_slot_references_are_not() {
+        let mut document = candidate()["authoring"].clone();
+        document["answerKey"]["q14"] = json!({"kind":"unresolved"});
         assert!(
-            adoption_rejection_reasons(&cloud, &local()).is_empty(),
-            "答案未解析应交给后续答案页步骤，不得阻止结构合格候选整体采纳"
+            editor_runtime_errors(&document).is_empty(),
+            "{:?}",
+            editor_runtime_errors(&document)
+        );
+        document["taskGroups"][0]["responseGroups"][0]["slotIds"] = json!(["missing-slot"]);
+        assert!(!editor_runtime_errors(&document).is_empty());
+    }
+
+    #[test]
+    fn dependency_unit_groups_local_split_against_cloud_merge_and_choice_is_complete() {
+        let local = json!({"taskGroups":[
+            {"taskId":"a","displayRange":{"kind":"set","values":[1]},"responseGroups":[{"slotIds":["q1"]}]},
+            {"taskId":"b","displayRange":{"kind":"set","values":[2]},"responseGroups":[{"slotIds":["q2"]}]}
+        ], "answerSlots":{"q1":{"questionNumber":1},"q2":{"questionNumber":2}}, "answerKey":{"q1":{},"q2":{}}});
+        let cloud = json!({"taskGroups":[{"taskId":"c","displayRange":{"kind":"set","values":[1,2]},"responseGroups":[{"slotIds":["q1","q2"]}]}],"answerSlots":{"q1":{"questionNumber":1},"q2":{"questionNumber":2}},"answerKey":{"q1":{},"q2":{}}});
+        let units = comparison_units(&local, &cloud);
+        assert_eq!(units.len(), 1);
+        assert_eq!(units[0].local_task_ids, vec!["a", "b"]);
+        let selected = replace_unit(&local, &local, &cloud, &units[0].unit_id, true).unwrap();
+        assert_eq!(selected["taskGroups"], cloud["taskGroups"]);
+        assert_eq!(selected["answerSlots"], cloud["answerSlots"]);
+        assert_eq!(
+            replace_unit(&selected, &local, &cloud, &units[0].unit_id, false).unwrap(),
+            local
         );
     }
 
     #[test]
-    fn runtime_failure_with_any_non_answer_error_still_rejects_cloud_adoption() {
-        let mut cloud = candidate();
-        cloud["authoring"]["quality"]["compilerProbes"]["v2Runtime"] = json!({
-            "status": "failed",
-            "issueCodes": ["RUNTIME_ANSWER_UNRESOLVED", "RUNTIME_OPTION_CONTENT_INVALID"],
-            "details": [
-                "RUNTIME_ANSWER_UNRESOLVED:q14:No printed answer is available.",
-                "RUNTIME_OPTION_CONTENT_INVALID:option-a:Option content is not renderable."
-            ]
-        });
-        cloud["authoring"]["quality"]["hardFailures"] = json!(["RUNTIME_COMPILER_FAILED"]);
-
-        let reasons = adoption_rejection_reasons(&cloud, &local());
-        assert!(reasons.iter().any(|reason| reason.contains("运行时编译")));
-        assert!(reasons
-            .iter()
-            .any(|reason| reason.contains("RUNTIME_COMPILER_FAILED")));
+    fn one_invalid_group_does_not_prevent_nine_renderable_groups_adopting() {
+        let base = candidate()["authoring"].clone();
+        let mut local = base.clone();
+        let mut cloud = base.clone();
+        let mut local_groups = Vec::new();
+        let mut cloud_groups = Vec::new();
+        let mut slots = serde_json::Map::new();
+        let mut answers = serde_json::Map::new();
+        for i in 0..10 {
+            let offset = i * 2;
+            let mut group = base["taskGroups"][0].clone();
+            let serialized = serde_json::to_string(&group)
+                .unwrap()
+                .replace("q14", &format!("q{}", 14 + offset))
+                .replace("q15", &format!("q{}", 15 + offset))
+                .replace("early-approaches-q14-15", &format!("group-{i}"));
+            group = serde_json::from_str(&serialized).unwrap();
+            group["taskId"] = json!(format!("group-{i}"));
+            group["displayRange"] = json!({"kind":"set","values":[14+offset,15+offset]});
+            // Each unit has its own response/option identities.
+            let serialized = serde_json::to_string(&group)
+                .unwrap()
+                .replace("early-approaches-", &format!("g{i}-"));
+            group = serde_json::from_str(&serialized).unwrap();
+            let mut cloud_group = group.clone();
+            cloud_group["instructions"][0]["children"][0]["text"] =
+                json!(format!("Cloud instructions {i}"));
+            if i == 9 {
+                cloud_group["responseGroups"][0]["slotIds"] = json!(["missing-slot"]);
+            }
+            local_groups.push(group);
+            cloud_groups.push(cloud_group);
+            for number in [14 + offset, 15 + offset] {
+                let original = if number % 2 == 0 { "q14" } else { "q15" };
+                let id = format!("q{number}");
+                let mut slot = base["answerSlots"][original].clone();
+                slot["slotId"] = json!(id);
+                slot["questionNumber"] = json!(number);
+                slot["displayLabel"] = json!(number.to_string());
+                // use generated response/node identities for runtime closure
+                if let Some(rg) = slot.get_mut("responseGroupId") {
+                    *rg = json!(rg
+                        .as_str()
+                        .unwrap()
+                        .replace("early-approaches-", &format!("g{i}-"))
+                        .replace("q14", &format!("q{}", 14 + offset))
+                        .replace("q15", &format!("q{}", 15 + offset)));
+                }
+                if let Some(host) = slot.get_mut("hostNodeId") {
+                    *host = json!(host
+                        .as_str()
+                        .unwrap()
+                        .replace("early-approaches-", &format!("g{i}-"))
+                        .replace("q14", &format!("q{}", 14 + offset))
+                        .replace("q15", &format!("q{}", 15 + offset)));
+                }
+                slots.insert(id.clone(), slot);
+                answers.insert(id, base["answerKey"][original].clone());
+            }
+        }
+        for doc in [&mut local, &mut cloud] {
+            doc["answerSlots"] = json!(slots);
+            doc["answerKey"] = json!(answers);
+        }
+        local["taskGroups"] = json!(local_groups);
+        cloud["taskGroups"] = json!(cloud_groups);
+        let (merged, adopted, deferred) = prepare_partial_adoption(&local, &cloud);
+        assert_eq!(
+            adopted.len(),
+            9,
+            "deferred={deferred:?}, local errors={:?}",
+            editor_runtime_errors(&local)
+        );
+        assert_eq!(deferred.len(), 1);
+        assert_eq!(merged["taskGroups"][9], local["taskGroups"][9]);
     }
 
     #[test]

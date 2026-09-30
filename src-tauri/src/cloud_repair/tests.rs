@@ -3848,139 +3848,53 @@ fn seed_adopted_local_snapshot(root: &Path, local_authoring: &Value) {
 }
 
 #[test]
-fn adopted_cloud_keeps_undecidable_non_answer_but_leaves_answer_for_the_user() {
+fn adopted_cloud_keeps_undecidable_content_and_answers_visible() {
     let root = temp_root();
     let mut cloud = golden_authoring();
     cloud["taskGroups"][0]["responseGroups"][0]["prompt"][0]["children"][0]["text"] =
         json!("Cloud-recognized prompt");
     cloud["answerKey"]["q14"] =
-        json!({"kind": "option", "labels": ["B"], "assignment": "unordered_set"});
-    let mut local = golden_authoring();
+        json!({"kind":"option","labels":["B"],"assignment":"unordered_set"});
+    let mut local = cloud.clone();
     local["taskGroups"][0]["responseGroups"][0]["prompt"][0]["children"][0]["text"] =
-        json!("Locally recognized prompt");
+        json!("Local-recognized prompt");
     local["answerKey"]["q14"] =
-        json!({"kind": "option", "labels": ["A"], "assignment": "unordered_set"});
+        json!({"kind":"option","labels":["A"],"assignment":"unordered_set"});
     seed_item(&root, &cloud);
     seed_packet_job(&root);
     seed_adopted_local_snapshot(&root, &local);
-
     let not_cancelled = || false;
     let request = request(&root, &not_cancelled, 4);
     let mut calls = 0;
-    let mut prompt_target_id = None;
-    let report = run_packets(&request, |context: &Value, _observations: &[Value]| {
+    let report = run_packets(&request, |context: &Value, _: &[Value]| {
         calls += 1;
-        if calls > 2 {
-            return Ok(json!({
-                "callId": "finish-adopted-packet",
-                "tool": "finish_packet",
-                "arguments": {}
-            }));
-        }
-        let differences = context["differences"]
+        let rulings: Vec<_> = context["differences"]
             .as_array()
-            .expect("comparison deltas");
-        if calls == 2 {
-            let answer = differences
-                .iter()
-                .find(|difference| {
-                    difference["field"] == "answer" && difference["targetId"] == "q14"
+            .unwrap()
+            .iter()
+            .map(|d| {
+                json!({
+                    "targetType":d["targetType"],"targetId":d["targetId"],"field":d["field"],
+                    "decision":"user_choice","reason":"原文无法判定","evidence":[]
                 })
-                .expect("q14 answer delta remains after its unresolved ruling");
-            return Ok(json!({
-                "callId": "reject-answer-cloud-default",
-                "tool": "record_ruling",
-                "arguments": {"rulings": [{
-                    "targetType": answer["targetType"],
-                    "targetId": answer["targetId"],
-                    "field": answer["field"],
-                    "ruling": crate::schema::cloud_repair_v1::CLOUD_RULING_KEPT_CLOUD_DEFAULT,
-                    "reason": "answer defaults are not permitted",
-                    "evidence": []
-                }]}
-            }));
-        }
-        let prompt = differences
-            .iter()
-            .find(|difference| difference["field"] == "prompt")
-            .expect("prompt challenger delta");
-        let answer = differences
-            .iter()
-            .find(|difference| difference["field"] == "answer" && difference["targetId"] == "q14")
-            .expect("q14 answer challenger delta");
-        prompt_target_id = prompt["targetId"].as_str().map(str::to_string);
-        let ruling = |difference: &Value, kind: &str, reason: &str| {
-            json!({
-                "targetType": difference["targetType"],
-                "targetId": difference["targetId"],
-                "field": difference["field"],
-                "ruling": kind,
-                "reason": reason,
-                "evidence": []
             })
-        };
-        Ok(json!({
-            "callId": "adopted-rulings",
-            "tool": "record_ruling",
-            "arguments": {"rulings": [
-                ruling(
-                    prompt,
-                    crate::schema::cloud_repair_v1::CLOUD_RULING_KEPT_CLOUD_DEFAULT,
-                    "原文不足以判定此非答案差异，按规则保留云端版本",
-                ),
-                ruling(
-                    answer,
-                    crate::schema::cloud_repair_v1::CLOUD_RULING_CANNOT_RESOLVE,
-                    "原文无法判定答案差异",
-                )
-            ]}
-        }))
+            .collect();
+        Ok(json!({"callId":"batch-choice","tool":"record_ruling","arguments":{"rulings":rulings}}))
     })
-    .expect("adopted-cloud repair cycle");
-
-    let observation = report
-        .observations
-        .iter()
-        .find(|observation| observation["callId"] == "adopted-rulings")
-        .expect("ruling tool observation");
-    assert_eq!(observation["status"], "ok", "{observation:#?}");
-    assert_eq!(report.adjudicated_count, 2);
-    let rejected_answer_default = report
-        .observations
-        .iter()
-        .find(|observation| observation["callId"] == "reject-answer-cloud-default")
-        .expect("answer cannot use the cloud-default ruling");
-    assert_eq!(rejected_answer_default["status"], "rejected");
-    assert!(rejected_answer_default["errors"]
-        .as_array()
-        .is_some_and(|errors| {
-            errors.iter().any(|error| {
-                error.as_str().is_some_and(|error| {
-                    error.starts_with("CLOUD_RULING_KEPT_CLOUD_DEFAULT_NOT_ALLOWED")
-                })
-            })
-        }));
-    let prompt_target_id = prompt_target_id.expect("prompt difference target id");
-    assert!(
-        !report.remaining_tasks.iter().any(|task| {
-            task["field"] == "prompt"
-                && task["targetIds"]
-                    .as_array()
-                    .is_some_and(|ids| ids.iter().any(|id| id == &prompt_target_id))
-        }),
-        "undecidable non-answer delta must keep the cloud draft without a user task: {:#?}",
-        report.remaining_tasks
+    .unwrap();
+    assert_eq!(
+        calls, 1,
+        "batch rulings require no finish confirmation call"
     );
-    assert!(
-        report.remaining_tasks.iter().any(|task| {
-            task["field"] == "answer"
-                && task["targetIds"]
-                    .as_array()
-                    .is_some_and(|ids| ids.iter().any(|id| id == "q14"))
-        }),
-        "undecidable answer conflict must remain user-visible: {:#?}",
-        report.remaining_tasks
-    );
+    assert_eq!(report.status, REPAIR_STATUS_NEEDS_ATTENTION);
+    assert!(report
+        .remaining_tasks
+        .iter()
+        .any(|t| t["field"] == "prompt"));
+    assert!(report
+        .remaining_tasks
+        .iter()
+        .any(|t| t["field"] == "answer"));
     assert_eq!(read_answer(&root, "q14")["labels"], json!(["B"]));
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -4037,9 +3951,9 @@ fn cloud_default_ruling_is_rejected_when_the_candidate_was_not_adopted() {
     assert_eq!(rejected["status"], "rejected", "{rejected:#?}");
     assert!(rejected["errors"].as_array().is_some_and(|errors| {
         errors.iter().any(|error| {
-            error.as_str().is_some_and(|error| {
-                error.starts_with("CLOUD_RULING_KEPT_CLOUD_DEFAULT_NOT_ALLOWED")
-            })
+            error
+                .as_str()
+                .is_some_and(|error| error.starts_with("CLOUD_RULING_UNKNOWN_KIND"))
         })
     }));
     assert!(
@@ -4237,12 +4151,12 @@ fn a_packet_that_lacks_the_answer_page_says_so_and_gets_it_next_round() {
                 saw_answer_before_fetching = answer_visible;
                 Ok(json!({
                     "callId": "c1",
-                    "tool": "report_insufficient_context",
-                    "arguments": {
-                        "packetId": context["packetId"],
-                        "reason": "the answer page is not in scope",
-                        "needs": [{"kind": "pages", "from": 3, "to": 3}]
-                    }
+                    "tool": "record_ruling",
+                    "arguments": {"rulings":[{
+                        "targetType":"slot","targetId":"q14","field":"answer",
+                        "decision":"need_context","reason":"the answer page is not in scope",
+                        "needs":[{"kind":"pages","from":3,"to":3}],"evidence":[]
+                    }]}
                 }))
             }
             2 => {
@@ -4321,11 +4235,11 @@ fn a_packet_that_lacks_the_answer_page_says_so_and_gets_it_next_round() {
     );
     assert_eq!(
         report.packets.len(),
-        2,
-        "差异修完之后的收尾包也要出现在诊断里：{:#?}",
+        1,
+        "成功编辑后不再生成无意义收尾包：{:#?}",
         report.packets
     );
-    assert_eq!(report.packets[1]["status"], json!("finished"));
+    assert_eq!(report.rounds, 2, "一次补证加一次有效编辑，无需再确认");
     assert_eq!(
         report.status, REPAIR_STATUS_COMPLETED,
         "每包都收工、队列自然跑空 ⇒ 这是一次**完成**，不是预算耗尽"
@@ -4427,11 +4341,12 @@ fn a_packet_that_never_gets_enough_context_hands_the_difference_to_the_user_hone
     assert_eq!(report.status, REPAIR_STATUS_NEEDS_ATTENTION);
     assert_eq!(
         report.packets[0]["escalationLevel"],
-        json!(4),
-        "必须走完 L1→L4：{:#?}",
+        json!(2),
+        "一次补证后仍不足应转人工，不能连续升级调用：{:#?}",
         report.packets[0]
     );
 
+    assert_eq!(report.packets[0]["rounds"], json!(2));
     let task = report
         .remaining_tasks
         .iter()
@@ -5159,8 +5074,8 @@ fn the_real_controlled_service_drives_the_packet_loop_through_l0_l1_and_finish()
         .expect("真实受控服务必须记录它实际收到的 HTTP 请求体");
     let request_bodies: Vec<&str> = captured_requests.lines().collect();
     assert!(
-        request_bodies.len() >= 3,
-        "应记录 L0 / L1 / finish_packet 请求：{request_bodies:#?}"
+        request_bodies.len() == 2,
+        "只需要 L0 补证 / L1 编辑两次请求：{request_bodies:#?}"
     );
     assert!(
         request_bodies
@@ -5176,29 +5091,9 @@ fn the_real_controlled_service_drives_the_packet_loop_through_l0_l1_and_finish()
         "编辑必须真的落库"
     );
     assert_eq!(report.applied_count, 1);
-    assert!(
-        report
-            .packets
-            .iter()
-            .any(|packet| packet["status"] == json!("finished")),
-        "真实受控服务必须在编辑后调用 finish_packet 并结束一个包：{:#?}",
-        report.packets
-    );
-    let edited_packet = report
-        .packets
-        .iter()
-        .position(|packet| packet["edits"].as_u64().unwrap_or(0) > 0)
-        .expect("逐包诊断必须记录实际编辑的包");
-    let finished_packet = report
-        .packets
-        .iter()
-        .position(|packet| packet["status"] == json!("finished"))
-        .expect("逐包诊断必须记录 finish_packet");
-    assert!(
-        finished_packet > edited_packet,
-        "finish_packet 必须发生在编辑包之后：{:#?}",
-        report.packets
-    );
+    assert_eq!(report.packets.len(), 1);
+    assert_eq!(report.packets[0]["status"], json!("edited"));
+    assert_eq!(report.status, REPAIR_STATUS_COMPLETED);
     // ② 「不够就说」这条出口真的被走过：L1 在逐包诊断里看得见。
     assert_eq!(
         report.packets[0]["insufficientContext"],
@@ -6730,8 +6625,8 @@ fn ten_packets_with_fixed_round_delay_finish_within_a_deadline_scaled_to_the_pac
     // 全部差异都改对 ⇒ 剩余任务为空 ⇒ completed，而不是 budget_exhausted。
     // 11 轮 = 10 个 apply + 1 个收尾包（收尾包是整卷一个，不是每包一个）。
     assert_eq!(
-        report.rounds, 11,
-        "10 个 apply + 1 个收尾包：{:#?}",
+        report.rounds, 10,
+        "10 个 apply，无需额外收尾调用：{:#?}",
         report.packets
     );
     assert_eq!(report.applied_count, 10);
@@ -7378,4 +7273,242 @@ fn a_service_that_copies_the_example_source_file_id_verifies_and_lands() {
         "复制的 id 是真实主试卷 id：引文必须通过完整核验，而不是被标 unverifiable：{applied:#?}"
     );
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn recognition_metadata_and_equivalent_runtime_defaults_do_not_create_differences() {
+    let local = golden_authoring();
+    let mut cloud = local.clone();
+    cloud["taskGroups"][0]["instructionSignature"]
+        .as_object_mut()
+        .unwrap()
+        .remove("allowOptionReuse");
+    cloud["taskGroups"][0]["instructionSignature"]["evidenceAnchors"] = json!([]);
+    for slot in cloud["answerSlots"].as_object_mut().unwrap().values_mut() {
+        slot.as_object_mut().unwrap().remove("constraints");
+    }
+    assert!(candidate_differences(&local, &cloud).is_empty());
+    cloud["taskGroups"][0]["taskType"] = json!("sentence_completion");
+    cloud["taskGroups"][0]["responseGroups"][0]["cardinality"]["exact"] = json!(1);
+    cloud["answerSlots"]["q14"]["interaction"] = json!("text");
+    let differences = candidate_differences(&local, &cloud);
+    for field in ["taskType", "cardinality", "interaction"] {
+        assert!(
+            differences.iter().any(|d| d["field"] == field),
+            "missing {field}: {differences:#?}"
+        );
+    }
+}
+
+#[test]
+fn verification_sampling_is_source_seeded_repeatable_and_never_claims_full_verification() {
+    let local = golden_authoring();
+    let mut cloud = local.clone();
+    cloud["taskGroups"][0]["responseGroups"][0]["prompt"][0]["children"][0]["text"] =
+        json!("Completely unrelated hallucinated sentence");
+    let samples = verification_samples(&local, &cloud, "source-sha");
+    assert_eq!(samples, verification_samples(&local, &cloud, "source-sha"));
+    assert_eq!(samples["threshold"], json!(0.8));
+    assert_eq!(samples["fullTextVerified"], json!(false));
+    // Every group contributes one field and all samples are routing metadata, never an adoption gate.
+    assert!(samples["samples"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|s| s["kind"] == "question"));
+}
+
+#[test]
+fn source_backed_cloud_unit_choice_writes_once_and_requires_evidence() {
+    let root = temp_root();
+    let local = golden_authoring();
+    seed_item(&root, &local);
+    store_candidate(&root, "A");
+    // Preserve real source anchors in this complete candidate. Missing-source diagnostics
+    // are a separate unresolved workflow and legitimately require further repair.
+    let mut cloud = local.clone();
+    cloud["answerKey"]["q14"] =
+        json!({"kind":"option","labels":["A"],"assignment":"unordered_set"});
+    let mut candidate = store::read_cloud_authoring_candidate(&root, ITEM_ID, BATCH_ID)
+        .unwrap()
+        .unwrap();
+    candidate.authoring = serde_json::from_value(cloud).unwrap();
+    store::write_cloud_authoring_candidate(&root, BATCH_ID, &candidate).unwrap();
+    seed_packet_job(&root);
+    seed_batch_row(&root, 1);
+    store::write_local_authoring_snapshot(&root, BATCH_ID, ITEM_ID, 1, &"a".repeat(64), &local)
+        .unwrap();
+    let not_cancelled = || false;
+    let req = request(&root, &not_cancelled, 6);
+    let mut calls = 0;
+    let report = run_packets(&req, |context:&Value,observations:&[Value]| {
+        calls+=1;
+        if calls == 2 {
+            assert!(observations.last().unwrap()["errors"].as_array().unwrap().iter().any(|e|e.as_str().unwrap_or_default().starts_with("CLOUD_DECISION_SOURCE_EVIDENCE_REQUIRED")));
+        }
+        assert!(calls<=2,"success must not require another model confirmation: observations={observations:#?} diff={:#?} blockers={:#?}",context["differences"],context["blockingIssues"]);
+        Ok(json!({"callId":format!("choose-{calls}"),"tool":"record_ruling","arguments":{
+            "baseVersion":context["draftSlice"]["editVersion"],"rulings":[{
+                "targetType":"slot","targetId":"q14","field":"answer","decision":"use_cloud",
+                "reason":"the source answer sheet gives A",
+                "evidence":if calls==1 { json!([]) } else { json!([{"sourceFileId":"early-approaches-pdf","pageIndex":3,"quote":"14 A"}]) }
+            }]
+        }}))
+    }).unwrap();
+    assert_eq!(calls, 2);
+    assert_eq!(report.applied_count, 1);
+    assert_eq!(report.status, REPAIR_STATUS_COMPLETED, "{report:#?}");
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["A"]));
+    assert!(report.remaining_tasks.is_empty());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_late_model_reply_cannot_write_after_cancel_or_deadline() {
+    for cancel in [true, false] {
+        let root = temp_root();
+        let local = golden_authoring();
+        seed_item(&root, &local);
+        store_candidate(&root, "A");
+        seed_packet_job(&root);
+        let stopped = std::cell::Cell::new(false);
+        let cancelled = || stopped.get();
+        let base = Instant::now();
+        let clock = std::cell::Cell::new(base);
+        let now = || clock.get();
+        let mut req = request(&root, &cancelled, 6);
+        req.deadline = base + std::time::Duration::from_secs(1);
+        let report=run_packet_repair_loop_with_clock(&req,|context:&Value,_:&[Value]| {
+            if cancel { stopped.set(true); } else { clock.set(base+std::time::Duration::from_secs(10)); }
+            Ok(json!({"callId":"late-edit","tool":"apply_edits","arguments":{"baseVersion":context["draftSlice"]["editVersion"],"commands":[set_answer("q14","A")]}}))
+        },&now).unwrap();
+        assert_eq!(
+            report.status,
+            if cancel {
+                REPAIR_STATUS_CANCELLED
+            } else {
+                REPAIR_STATUS_BUDGET_EXHAUSTED
+            }
+        );
+        assert_eq!(read_answer(&root, "q14")["labels"], json!(["B"]));
+        assert_eq!(report.applied_count, 0);
+        let _ = std::fs::remove_dir_all(root);
+    }
+}
+
+#[test]
+fn cloud_unit_choice_can_remove_a_local_false_question_without_rejecting_the_document() {
+    let root = temp_root();
+    let cloud = golden_authoring();
+    let mut local = cloud.clone();
+    let mut false_group = local["taskGroups"][0].clone();
+    false_group["taskId"] = json!("false-directions");
+    false_group["displayRange"] = json!({"kind":"set","values":[99]});
+    false_group["responseGroups"] = json!([]);
+    false_group.as_object_mut().unwrap().remove("optionBank");
+    false_group.as_object_mut().unwrap().remove("stimulus");
+    false_group["instructionSignature"]["expectedQuestionNumbers"] = json!([99]);
+    false_group["instructionSignature"]["expectedSlotCount"] = json!(0);
+    fn rename(value: &mut Value) {
+        match value {
+            Value::Object(map) => {
+                if let Some(id) = map.get_mut("id") {
+                    *id = json!(format!("false-{}", id.as_str().unwrap_or("node")));
+                }
+                for child in map.values_mut() {
+                    rename(child)
+                }
+            }
+            Value::Array(items) => {
+                for child in items {
+                    rename(child)
+                }
+            }
+            _ => {}
+        }
+    }
+    rename(&mut false_group["instructions"]);
+    local["taskGroups"]
+        .as_array_mut()
+        .unwrap()
+        .push(false_group);
+    seed_item(&root, &local);
+    store_candidate_draft(&root, cloud.clone());
+    seed_packet_job(&root);
+    seed_batch_row(&root, 1);
+    store::write_local_authoring_snapshot(&root, BATCH_ID, ITEM_ID, 1, &"a".repeat(64), &local)
+        .unwrap();
+    let mut candidate = store::read_cloud_authoring_candidate(&root, ITEM_ID, BATCH_ID)
+        .unwrap()
+        .unwrap();
+    candidate.authoring = serde_json::from_value(cloud).unwrap();
+    store::write_cloud_authoring_candidate(&root, BATCH_ID, &candidate).unwrap();
+    let not_cancelled = || false;
+    let req = request(&root, &not_cancelled, 6);
+    let mut calls = 0;
+    let report=run_packets(&req,|context:&Value,_:&[Value]| {
+        calls+=1;assert_eq!(calls,1,"deletion must not need another confirmation");
+        let delta=context["differences"].as_array().unwrap().iter().find(|d|d["targetId"]=="false-directions").unwrap();
+        Ok(json!({"callId":"remove-false-question","tool":"record_ruling","arguments":{"baseVersion":context["draftSlice"]["editVersion"],"rulings":[{
+            "targetType":delta["targetType"],"targetId":delta["targetId"],"field":delta["field"],"decision":"use_cloud","reason":"This source region is directions, not a question",
+            "evidence":[{"sourceFileId":"early-approaches-pdf","pageIndex":2,"quote":"Notes on the reading passage"}]
+        }]}}))
+    }).unwrap();
+    assert_eq!(report.status, REPAIR_STATUS_COMPLETED, "{report:#?}");
+    let conn = open_library_connection(&root).unwrap();
+    let (saved, _) = get_canonical_ds(&conn, ITEM_ID).unwrap().unwrap();
+    assert!(!saved["taskGroups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|g| g["taskId"] == "false-directions"));
+    assert_eq!(report.applied_count, 1);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn independent_answer_page_conflict_is_repaired_or_kept_visible_when_local_and_cloud_agree() {
+    for resolve in [true, false] {
+        let root = temp_root();
+        let local = golden_authoring();
+        seed_item(&root, &local);
+        store_candidate(&root, "B");
+        seed_packet_job(&root);
+        crate::util::write_json(&crate::util::job_dir(&root,ITEM_ID).join("vision-answer-candidates.json"),&json!({
+            "schemaVersion":"VisionAnswerCandidatesV1","jobId":ITEM_ID,"candidates":[{
+                "questionNumber":"14","answer":"A","evidence":{"sourceFileId":"early-approaches-pdf","pageIndex":3,"quote":"14 A"}
+            }]
+        })).unwrap();
+        let context = build_repair_context(&root, ITEM_ID, ITEM_ID, BATCH_ID).unwrap();
+        assert!(context["differences"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["field"] == "answer_page"));
+        let not_cancelled = || false;
+        let req = request(&root, &not_cancelled, 6);
+        let mut calls = 0;
+        let report=run_packets(&req,|context:&Value,_:&[Value]| {
+            calls+=1;assert_eq!(calls,1,"answer-page correction must not reintroduce the old cloud answer");
+            if resolve {
+                Ok(json!({"callId":"source-answer-fix","tool":"apply_edits","arguments":{"baseVersion":context["draftSlice"]["editVersion"],"commands":[set_answer("q14","A")],"evidence":[{"sourceFileId":"early-approaches-pdf","pageIndex":3,"quote":"14 A"}]}}))
+            } else {
+                Ok(json!({"callId":"source-answer-choice","tool":"record_ruling","arguments":{"rulings":[{"targetType":"slot","targetId":"q14","field":"answer_page","decision":"user_choice","reason":"source is ambiguous","evidence":[]}]}}))
+            }
+        }).unwrap();
+        if resolve {
+            assert_eq!(report.status, REPAIR_STATUS_COMPLETED, "{report:#?}");
+            assert_eq!(read_answer(&root, "q14")["labels"], json!(["A"]));
+        } else {
+            assert_eq!(report.status, REPAIR_STATUS_NEEDS_ATTENTION);
+            assert!(report
+                .remaining_tasks
+                .iter()
+                .any(|t| t["field"] == "answer_page"
+                    && t["action"] == "review_source"
+                    && t["blocking"] == true));
+            assert_eq!(read_answer(&root, "q14")["labels"], json!(["B"]));
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

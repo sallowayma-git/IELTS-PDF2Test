@@ -84,6 +84,17 @@ fn truncate_for_record(text: &str) -> String {
     }
 }
 
+fn error_for_call_record(error: &str, raw_reply: Option<&str>, diagnostics: bool) -> String {
+    if diagnostics {
+        return truncate_for_record(error);
+    }
+    let summary = match raw_reply.filter(|raw| !raw.is_empty()) {
+        Some(raw) => error.replace(raw, "[reply omitted]"),
+        None => error.to_string(),
+    };
+    summary.chars().take(1000).collect()
+}
+
 pub(crate) fn run_llm_gateway(
     root: &Path,
     job_id: &str,
@@ -91,11 +102,31 @@ pub(crate) fn run_llm_gateway(
     input: &Value,
     api_key: Option<&str>,
 ) -> CommandResult<Value> {
+    run_llm_gateway_with_diagnostics(
+        root,
+        job_id,
+        command_name,
+        input,
+        api_key,
+        std::env::var("IELTS_LLM_DIAGNOSTICS").as_deref() == Ok("1"),
+    )
+}
+
+fn run_llm_gateway_with_diagnostics(
+    root: &Path,
+    job_id: &str,
+    command_name: &str,
+    input: &Value,
+    api_key: Option<&str>,
+    diagnostics: bool,
+) -> CommandResult<Value> {
     let cache_dir = job_dir(root, job_id).join("cache").join("llm");
     let stamp = Utc::now().timestamp_millis();
     let input_path = cache_dir.join(format!("{}-input-{}.json", command_name, stamp));
     let output_path = cache_dir.join(format!("{}-output-{}.json", command_name, stamp));
-    write_json(&input_path, &redact_llm_input_for_cache(input))?;
+    if diagnostics {
+        write_json(&input_path, &redact_llm_input_for_cache(input))?;
+    }
     let _stale = take_trace();
     let started = std::time::Instant::now();
     let output = match command_name {
@@ -133,14 +164,11 @@ pub(crate) fn run_llm_gateway(
         _ => Err(format!("unsupported_llm_gateway_command:{}", command_name)),
     };
     // Per-call observability record: every gateway invocation (success or
-    // failure) lands in llm-calls.jsonl with its latency, transport attempts,
-    // request size, usage, finish reason and the FULL error string, so a
-    // failure stays diagnosable after the fact. A reply that was received but
-    // rejected (unparseable, truncated, or refused by a validator) is also
-    // persisted verbatim as `<command>-rejected-<stamp>.json`.
+    // failure) lands in llm-calls.jsonl with latency, attempt metadata, sizes,
+    // usage and errors. Full request/reply artifacts are opt-in diagnostics.
     let trace = take_trace();
     let rejected_path = match (&output, &trace.raw_content) {
-        (Err(error), Some(raw)) => {
+        (Err(error), Some(raw)) if diagnostics => {
             let path = cache_dir.join(format!("{}-rejected-{}.json", command_name, stamp));
             let saved = json!({
                 "commandName": command_name,
@@ -170,7 +198,7 @@ pub(crate) fn run_llm_gateway(
         },
         "error": match &output {
             Ok(_) => Value::Null,
-            Err(error) => json!(truncate_for_record(error)),
+            Err(error) => json!(error_for_call_record(error, trace.raw_content.as_deref(), diagnostics)),
         },
         "attempts": trace.attempts,
         "requestBytes": trace.request_bytes,
@@ -192,7 +220,9 @@ pub(crate) fn run_llm_gateway(
     });
     let _ = append_llm_call_record(root, job_id, &call_record);
     let output = output?;
-    write_json(&output_path, &output)?;
+    if diagnostics {
+        write_json(&output_path, &output)?;
+    }
     Ok(output)
 }
 
@@ -1982,7 +2012,7 @@ fn repair_step_prompt(input: &Value) -> String {
 The current `draftSlice` is the official cloud-recognized draft; `localSnapshotSlice` is only the frozen local challenger. The ORIGINAL FILE remains the final authority.
 - If the original proves the local challenger is right and the cloud draft is wrong: use apply_edits to change the official draft to exactly what the source supports, with a verbatim source quote.
 - If the original proves the cloud draft is right: call record_ruling with ruling "current_is_correct" and the evidence. Do NOT edit.
-- If the original cannot settle a NON-ANSWER difference: call record_ruling with ruling "kept_cloud_default" and explain why. Keep the official cloud value; do NOT put this difference in finish.unresolved or create a user task.
+- If the original cannot settle a difference of any kind, including task type or presentation: record decision "user_choice" and explain why. Never silently keep the cloud default.
 - If a conflicting ANSWER cannot be settled from the original: call record_ruling with ruling "cannot_resolve" and explain why; that answer conflict remains a user task. Never guess or copy the local answer without source evidence.
 - If neither side is right, apply_edits to the exact content supported by the source, then record_ruling "current_is_correct" for the now-correct official draft.
 - A ruling cannot remove structural problems found by the backend validator. Fix them with apply_edits or leave them for the backend's remaining-task calculation.
@@ -1999,7 +2029,7 @@ The first-pass cloud candidate is only an input and it can be wrong. For every d
 "#
     };
     let finish_unresolved_rule = if adopted_cloud_mode {
-        "When you are done, call finish. Do not list an undecidable NON-ANSWER difference in `unresolved`; record it as `kept_cloud_default`. An undecidable answer must be recorded as `cannot_resolve` and remains user-visible. Backend structural problems are recomputed independently."
+        "Batch related rulings using decision use_cloud, keep_current, need_context or user_choice. use_cloud applies the backend dependency-closed cloud unit with version and human-edit guards. Request extra evidence at most once. Successful edits need no confirmation call. Any undecidable content or presentation conflict remains user-visible. Backend structural problems are recomputed independently."
     } else {
         "When you are done, call finish. Put every question you could NOT settle in \"unresolved\": those become user-visible items, so leaving them out hides real uncertainty."
     };
@@ -3822,7 +3852,7 @@ mod tests {
     }
 
     #[test]
-    fn adopted_cloud_repair_prompt_defaults_undecidable_non_answers_to_cloud() {
+    fn adopted_cloud_repair_prompt_preserves_undecidable_choices() {
         let prompt = repair_step_prompt(&json!({
             "context": {
                 "comparisonMode": "adopted_cloud_vs_local_snapshot",
@@ -3834,7 +3864,8 @@ mod tests {
         }));
         assert!(prompt.contains("`draftSlice` is the official cloud-recognized draft"));
         assert!(prompt.contains("`localSnapshotSlice` is only the frozen local challenger"));
-        assert!(prompt.contains("kept_cloud_default"));
+        assert!(!prompt.contains("kept_cloud_default"));
+        assert!(prompt.contains("user_choice"));
         assert!(prompt.contains("conflicting ANSWER cannot be settled"));
         assert!(!prompt.contains("The first-pass cloud candidate is only an input"));
         assert!(prompt.contains("the frozen local-snapshot challenger slice"));
@@ -4092,6 +4123,39 @@ mod tests {
             .collect()
     }
 
+    #[test]
+    fn default_call_records_error_without_saving_full_request_or_reply() {
+        let (base_url, _requests) = fake_llm_server(vec![FakeReply::Respond(
+            200,
+            chat_body("PRIVATE malformed reply {", "stop"),
+        )]);
+        let job = fake_candidate_job(&base_url, "job-compact-logs");
+        assert!(run_llm_gateway_with_diagnostics(
+            &job.root,
+            job.job_id,
+            "generate_authoring_candidate",
+            &job.input,
+            None,
+            false
+        )
+        .is_err());
+        let cache = job_dir(&job.root, job.job_id).join("cache").join("llm");
+        assert!(!cache.exists() || fs::read_dir(cache).unwrap().next().is_none());
+        let record = call_records(&job).pop().unwrap();
+        assert_eq!(record["ok"], false);
+        assert_eq!(record["rejectedPath"], Value::Null);
+        assert!(record["requestBytes"].as_u64().unwrap() > 0);
+        assert!(!record.to_string().contains("PRIVATE malformed reply"));
+        assert_eq!(
+            error_for_call_record(
+                "llm_http_json_failed:syntax:PRIVATE BODY",
+                Some("PRIVATE BODY"),
+                false
+            ),
+            "llm_http_json_failed:syntax:[reply omitted]"
+        );
+    }
+
     /// 真实事故：212 KB PDF 的整卷候选在 134 s / 144 s 以 `llm_timeout_budget_exhausted`
     /// 失败，而 profile 超时是 120 s。唯一能超出一个预算的路径是「直传 PDF 失败 →
     /// 页图回退拿一个全新预算」。超时说明服务端在算，换成页图只会再算一遍、再超一次。
@@ -4162,12 +4226,13 @@ mod tests {
             chat_body("Sure! Here is the draft: {not json", "stop"),
         )]);
         let job = fake_candidate_job(&base_url, "job-s1-garbage");
-        let error = run_llm_gateway(
+        let error = run_llm_gateway_with_diagnostics(
             &job.root,
             job.job_id,
             "generate_authoring_candidate",
             &job.input,
             None,
+            true,
         )
         .expect_err("无法解析的回复必须失败");
         assert!(error.starts_with("llm_json_parse_failed"), "{error}");

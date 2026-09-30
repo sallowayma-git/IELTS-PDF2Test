@@ -65,7 +65,7 @@ export interface QuestionCoverageReportV2 {
 }
 
 export interface CompilerProbeV2 {
-  status: "passed" | "failed";
+  status: "passed" | "failed" | "skipped";
   schemaVersion: string;
   issueCodes: string[];
   details: string[];

@@ -839,6 +839,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     // 修复摘要（`repair` 契约）。最终一份写进批次行；修复过程中的进度在循环里直接写库。
     let mut repair_summary: Option<serde_json::Value> = None;
     let mut adopted_cloud_candidate_for_answers: Option<serde_json::Value> = None;
+    let mut answer_page_ran = false;
 
     // 本地周期：把本地候选 / 原文核验 / 批次汇总落盘，并**建出批次行**。云端如实标
     // `not_run`（本地周期看不见云端），下面的 advance 会用真实修复状态覆盖它。
@@ -939,17 +940,42 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                 } else if adoption_reasons.is_empty() {
                     adoption_reasons.push("云端校核租约已失效，未写入云端候选".to_string());
                 }
-                let adopted = adoption_result.is_some();
+                let adopted = adoption_result
+                    .as_ref()
+                    .is_some_and(|r| !r.adopted_task_ids.is_empty());
+                let saved_authoring = open_library_connection(&root)
+                    .ok()
+                    .and_then(|conn| {
+                        crate::library::repository::get_canonical_ds(&conn, &job_id)
+                            .ok()
+                            .flatten()
+                    })
+                    .map(|(doc, _)| doc);
                 if adopted {
-                    adopted_cloud_candidate_for_answers = Some(candidate_value.clone());
+                    let mut accepted = candidate_value.clone();
+                    if let Some(doc) = saved_authoring.as_ref() {
+                        accepted["authoring"] = doc.clone();
+                    }
+                    adopted_cloud_candidate_for_answers = Some(accepted);
                 }
+                let passage_adopted = adopted
+                    && saved_authoring.as_ref().is_some_and(|doc| {
+                        doc.get("passage")
+                            == serde_json::to_value(&candidate.authoring)
+                                .ok()
+                                .as_ref()
+                                .and_then(|cloud| cloud.get("passage"))
+                    });
                 let adoption_info = if let Some(result) = adoption_result.as_ref() {
                     serde_json::json!({
-                        "status": "adopted",
-                        "adopted": true,
+                        "status": if result.deferred_task_ids.is_empty() { "adopted" } else { "partial" },
+                        "adopted": !result.adopted_task_ids.is_empty(),
+                        "adoptedTaskIds": result.adopted_task_ids,
+                        "passageAdopted": passage_adopted,
+                        "deferredTaskIds": result.deferred_task_ids,
                         "editVersion": result.edit_version,
                         "preservedGroupIds": result.preserved_group_ids,
-                        "reason": "云端候选通过确定性结构与题号门槛；用户在基线之后保存的目标已保留。"
+                        "reason": "可渲染题组已采用，异常题组交由云端校核；用户修改已保留。"
                     })
                 } else {
                     serde_json::json!({
@@ -995,6 +1021,20 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                                 let _ = notify_item_content_changed(&conn, &app, &job_id);
                             }
                         }
+                    }
+                }
+                if announced.is_some() && !state.cancelled.read().await.contains(&job_id) {
+                    if let Some(profile) = resolved_profile.as_deref() {
+                        run_cloud_answer_page(
+                            &root,
+                            &job_id,
+                            &batch_id,
+                            profile,
+                            &state,
+                            adopted_cloud_candidate_for_answers.clone(),
+                        )
+                        .await;
+                        answer_page_ran = true;
                     }
                 }
                 // 云端 permit 覆盖整段修复循环的模型调用（每个回合一次请求）。
@@ -1176,59 +1216,35 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         }
     }
 
-    // Answer-page recognition is a separate, final machine write: it uses the
-    // already-materialized scanned-page images, then commits through the same
-    // canonical editor transaction as every other answer write.  Running it
-    // after cloud repair means the answer-page candidate sees the final draft;
-    // the CAS/protection check inside the transaction still preserves edits
-    // made while the vision request was in flight.  It is intentionally gated
-    // to PDF + reading inside the product entrypoint, so DOCX and listening do
-    // not acquire this path.
     if launch_cloud
+        && !answer_page_ran
         && freeze_error.is_none()
-        && resolved_profile.is_some()
         && !state.cancelled.read().await.contains(&job_id)
     {
-        let answer_profile = resolved_profile.clone().unwrap_or_default();
-        let adopted_cloud_candidate = adopted_cloud_candidate_for_answers.clone();
-        let answer_permit = state.cloud_permits.clone().acquire_owned().await;
-        let answer_result = run_blocking({
-            let root = root.clone();
-            let job_id = job_id.clone();
-            let adopted_cloud_candidate = adopted_cloud_candidate.clone();
-            move || {
-                // 同一个答案页步骤：服务暂时不可用时自动再试一次，结果写回工作区读的
-                // `parser.visionAnswerExtraction`（此前这里只打日志，界面看不到这次识别）。
-                let result = super::answer_page::run_answer_page_step(
-                    &root,
-                    &job_id,
-                    &answer_profile,
-                    &mut |root, job_id, profile| {
-                        crate::auto_pipeline::recognize_and_apply_pdf_answers_with_adopted_candidate(
-                            root,
-                            job_id,
-                            profile,
-                            adopted_cloud_candidate.as_ref(),
-                        )
-                    },
-                );
-                drop(answer_permit);
-                result
-            }
-        })
-        .await;
-        match answer_result {
-            Ok(report) => {
-                if report.get("failure").is_some() {
-                    eprintln!("[processing] answer-page recognition kept unresolved answers for {job_id}: {report}");
-                }
-            }
-            Err(error) => {
-                // This is a conservative enrichment failure, not a reason to
-                // discard the valid draft or pretend that answers were found.
-                eprintln!("[processing] answer-page recognition failed for {job_id}: {error}");
-            }
+        if let Some(profile) = resolved_profile.as_deref() {
+            run_cloud_answer_page(
+                &root,
+                &job_id,
+                &batch_id,
+                profile,
+                &state,
+                adopted_cloud_candidate_for_answers.clone(),
+            )
+            .await;
         }
+    }
+    // Retention runs only after all machine writes are terminal; empty runs keep previous undo.
+    if let Ok(conn) = open_library_connection(&root) {
+        let run_id = crate::cloud_repair::repair_run_id_for(&batch_id);
+        if let Err(error) =
+            crate::library::repository::finalize_cloud_run_retention(&conn, &job_id, &run_id)
+        {
+            eprintln!("[processing] cloud retention failed: {error}");
+        }
+    }
+    if let Err(error) = crate::reconcile::store::prune_completed_artifacts_for_item(&root, &job_id)
+    {
+        eprintln!("[processing] cloud artifact retention failed: {error}");
     }
     // 云端**真的跑过**就以修复状态为准：本地周期看不见云端，会把 cloud_status 标成
     // `not_run`（= 本次没有云端参与），拿它描述一次真实的云端修复（成功或失败）都是谎报。
@@ -1486,6 +1502,68 @@ pub(crate) struct RecognitionCycleReport {
 /// **`not_run` 必须原样透传**：它表示「本次没有云端参与」（未启用 / 未配置），
 /// 与「云端跑了但失败」是两件不同的事。此前一律折叠成 `failed`，于是无云导入会在
 /// 任务行里谎报云端失败，用户会去排查一个根本不存在的云端故障。
+
+/// Answer extraction belongs to the same cloud run and precedes its final review.
+async fn run_cloud_answer_page(
+    root: &Path,
+    job_id: &str,
+    batch_id: &str,
+    profile_id: &str,
+    state: &ProcessingState,
+    adopted_candidate: Option<serde_json::Value>,
+) {
+    let answer_profile = profile_id.to_string();
+    let repair_run_id = crate::cloud_repair::repair_run_id_for(batch_id);
+    let adopted_cloud_candidate = adopted_candidate;
+    let answer_permit = state.cloud_permits.clone().acquire_owned().await;
+    let answer_result = run_blocking({
+        let root = root.to_path_buf();
+        let job_id = job_id.to_string();
+        let adopted_cloud_candidate = adopted_cloud_candidate.clone();
+        let answer_cancelled = state.cancelled.clone();
+        move || {
+            let cancelled = || {
+                answer_cancelled
+                    .try_read()
+                    .map(|guard| guard.contains(&job_id))
+                    .unwrap_or(true)
+            };
+            // 同一个答案页步骤：服务暂时不可用时自动再试一次，结果写回工作区读的
+            // `parser.visionAnswerExtraction`（此前这里只打日志，界面看不到这次识别）。
+            let result = super::answer_page::run_answer_page_step(
+                &root,
+                &job_id,
+                &answer_profile,
+                &mut |root, job_id, profile| {
+                    crate::auto_pipeline::recognize_and_apply_pdf_answers_for_run(
+                        root,
+                        job_id,
+                        profile,
+                        adopted_cloud_candidate.as_ref(),
+                        Some(&repair_run_id),
+                        Some(&cancelled),
+                    )
+                },
+            );
+            drop(answer_permit);
+            result
+        }
+    })
+    .await;
+    match answer_result {
+        Ok(report) => {
+            if report.get("failure").is_some() {
+                eprintln!("[processing] answer-page recognition kept unresolved answers for {job_id}: {report}");
+            }
+        }
+        Err(error) => {
+            // This is a conservative enrichment failure, not a reason to
+            // discard the valid draft or pretend that answers were found.
+            eprintln!("[processing] answer-page recognition failed for {job_id}: {error}");
+        }
+    }
+}
+
 fn chain_status_to_job_status(raw: &str) -> String {
     match raw {
         "succeeded" => "succeeded",
@@ -2507,10 +2585,8 @@ mod tests {
         use crate::util::{ensure_app_dirs, ensure_job_dirs, job_dir};
         use uuid::Uuid;
 
-        let root = std::env::temp_dir().join(format!(
-            "pdf2test-freeze-race-{}",
-            Uuid::new_v4().simple()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("pdf2test-freeze-race-{}", Uuid::new_v4().simple()));
         ensure_app_dirs(&root).unwrap();
         let job_id = "freeze-race-job";
         ensure_job_dirs(&job_dir(&root, job_id)).unwrap();
@@ -2557,24 +2633,15 @@ mod tests {
         .unwrap();
         drop(conn);
 
-        let baseline = freeze_local_candidate_snapshot_for_attempt_with_baseline(
-            &root,
-            job_id,
-            0,
-            Some(1),
-        )
-        .expect("保存发生在基线之后时仍应按任务起始版本冻结本地挑战稿");
+        let baseline =
+            freeze_local_candidate_snapshot_for_attempt_with_baseline(&root, job_id, 0, Some(1))
+                .expect("保存发生在基线之后时仍应按任务起始版本冻结本地挑战稿");
         assert_eq!(baseline, 1);
 
         let source_sha256 = commands::source_sha256_for_job(&root, job_id);
         let batch_id = commands::recognition_batch_id_for_attempt(job_id, &source_sha256, 1, 0);
-        let snapshot = store::read_candidate(
-            &root,
-            job_id,
-            &batch_id,
-            store::LOCAL_CANDIDATE_FILE,
-        )
-        .expect("冻结快照必须按任务起始版本落盘");
+        let snapshot = store::read_candidate(&root, job_id, &batch_id, store::LOCAL_CANDIDATE_FILE)
+            .expect("冻结快照必须按任务起始版本落盘");
         assert_eq!(snapshot.base_edit_version, 1);
         assert_eq!(snapshot.batch_id, batch_id);
         assert_eq!(

@@ -1,3 +1,19 @@
+# Active Implementation: 2026-09-30 云端主链收敛
+
+## Goal
+Implement user-approved plan: accept candidates before final gates, partial dependency-unit adoption, batch source review, inline blue/green selection, reading V1 exit, one full-run undo, concise diagnostics.
+
+- [complete] Backend partial adoption and scheduler integration (root).
+- [complete] Comparison UI and versioned selection (comparison_ui).
+- [complete] Difference coverage, batch verdicts, sampling (repair_protocol).
+- [complete] Reading V1 exit, retention and diagnostics (retention_v1).
+- [partially_verified] Integration complete: Rust 1,313 pass / 14 ignored; UI 518 pass; build and local contracts pass. Native Tauri UI and independent student runtime unavailable; same-corpus before/after recognition benchmark pending. See docs/qa/cloud-convergence-2026-09-30.md.
+
+## Decisions
+Do not reject entire cloud candidate for local disagreement, missing answers or final quality state. Preserve CAS, human edits and structural closure. Latest effective cloud run undo includes adoption, repair and answers. Per-point undo deferred.
+
+## Historical plan
+
 # Current Active Goal: 2026-09-15 三个缺口闭环（真实 Tauri 通道 / 学生预览 / 单一题稿与合并问题）
 
 ## Goal

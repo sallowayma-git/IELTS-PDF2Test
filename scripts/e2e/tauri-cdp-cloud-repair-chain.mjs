@@ -931,6 +931,7 @@ async function main() {
     extraBrowserArgs: extraArgs,
     appEnv: {
       EPIC8_ALLOW_PLAINTEXT_SECRET_FALLBACK: "1",
+      IELTS_LLM_DIAGNOSTICS: "1",
       ...(isPdf ? {} : { PDF2TEST_AUTOMATION_SOURCE_FILES: staged }),
     },
   });

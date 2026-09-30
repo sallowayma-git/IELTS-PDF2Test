@@ -2614,3 +2614,13 @@ PDF2Test（本小节所在提交，含下面三处产品改动 + 文档更正）
   `dynamic_question_block_count_for_group(...) == blocks.len()`，
   `a_lettered_passage_without_a_declared_bank_is_still_a_tail` 断言真阅读段仍被裁）。
 - **F-Q2-9 是 `published` 的唯一剩余障碍**，也是唯一「本轮没有推进」的判据。
+
+
+## 2026-09-30 implementation
+User approved plan and parallel agents. Clean baseline 4217459. Owners: root cloud_adoption + scheduler + answer pipeline; comparison_ui frontend + selection module; repair_protocol cloud repair + prompts; retention_v1 quality + repository + gateway.
+
+## 2026-09-30 云端主链交付
+
+并发三个子代理开发后完成根代理集成。门槛后置、依赖单元部分采用、批量校核、蓝绿题组选择、旧阅读V1门槛退出、整轮撤销及日志保留已落地。独立答案页冲突进入同轮校核，来源缺失不默认为云端正确。
+
+最终 Rust 1,313 pass / 14 ignored；前端518 pass；前端和原生构建、本地schema契约检查、diff检查通过。当前源码NAS产物镜像22/22通过。真实原生验收因macOS缺WebView2驱动且Sky原生服务启动失败不能执行，真实学生provider缺编译产物。没有真实文档前后识别效果/费用对照数据。详细分层记录 docs/qa/cloud-convergence-2026-09-30.md。
