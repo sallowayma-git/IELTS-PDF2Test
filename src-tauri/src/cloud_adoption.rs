@@ -538,7 +538,8 @@ pub(crate) fn plan_cloud_primary_adoption(
     let adopt_passage = alignment.passage_pass
         && alignment.monotonic
         && alignment.coverage_ok
-        && alignment.length_ratio_ok;
+        && alignment.length_ratio_ok
+        && alignment.passage_invented_ok;
     let mut passage_reasons = Vec::new();
     if !adopt_passage {
         if !alignment.passage_pass {
@@ -555,6 +556,12 @@ pub(crate) fn plan_cloud_primary_adoption(
         }
         if !alignment.length_ratio_ok {
             passage_reasons.push(format!("云端原文长度比异常：{:.2}", alignment.length_ratio));
+        }
+        if !alignment.passage_invented_ok {
+            passage_reasons.push(format!(
+                "原文凭空句超出容忍：{} 句",
+                alignment.passage_invented.len()
+            ));
         }
     }
 
@@ -641,6 +648,18 @@ pub(crate) fn plan_cloud_primary_adoption(
 
     for (task_id, reason) in heading_host_failures(authoring, adopt_passage) {
         group_failures.entry(task_id).or_default().push(reason);
+    }
+
+    // 原文整体采纳、但含少量凭空句：原文照采，这些句子单列为修复目标，交修复循环核对原卷。
+    if adopt_passage {
+        for entry in &alignment.passage_invented {
+            let node_id = entry.get("nodeId").and_then(Value::as_str).unwrap_or_default();
+            needs_cloud_review.push(serde_json::json!({
+                "nodeId": node_id,
+                "reason": "passage_sentence_unverified",
+                "similarity": entry.get("similarity").cloned().unwrap_or(Value::Null),
+            }));
+        }
     }
 
     let qualified_task_ids = authoring
@@ -1957,6 +1976,8 @@ mod tests {
             passage_pass,
             passage_sentence_total: 10,
             passage_sentence_matched: if passage_pass { 10 } else { 4 },
+            passage_invented: Vec::new(),
+            passage_invented_ok: true,
             length_ratio: 1.0,
             length_ratio_ok: true,
             coverage: 1.0,

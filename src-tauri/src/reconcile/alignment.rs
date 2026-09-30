@@ -16,22 +16,29 @@
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// 对齐阈值。默认值对应任务书：单句命中 0.9、凭空句 0.6、原文整体命中率 0.95。
+/// 对齐/采纳阈值。**云端为主**：顺序对、文本大体相似就直接采用云端，修复循环只处理确有
+/// 必要的目标。所有可调门槛集中在此，不散落到各处。
 #[derive(Debug, Clone)]
 pub(crate) struct AlignmentConfig {
-    /// 单句判为命中的最低相似度。
+    /// 单句判为命中的最低相似度。命中即视为「小差异」，直接采用云端。
     pub sentence_threshold: f64,
-    /// 低于此相似度的句子判为「凭空句」（云端无中生有）。
+    /// 低于此相似度的句子判为「整句对不上 / 凭空句」（大差异），单列为修复目标。
     pub invented_threshold: f64,
+    /// 原文整体采纳时容忍的凭空句上限：个数不超过此值。
+    pub invented_max_count: usize,
+    /// 原文整体采纳时容忍的凭空句上限：占原文句总数的比例不超过此值。
+    pub invented_max_ratio: f64,
     /// 原文节点整体采用云端所需的命中句比例。
     pub passage_pass_ratio: f64,
+    /// 题组整体采用云端所需的内容对齐比例（命中句 / 题目内容句总数）。
+    pub group_align_ratio: f64,
     /// 云端原文可读长度 / 原卷原文可读长度的允许下、上限（防截断、防冗余注水）。
     pub length_ratio_min: f64,
     pub length_ratio_max: f64,
     /// 显著源区域被覆盖的最低比例。
     pub coverage_min: f64,
-    /// 命中位置按阅读顺序递增的最低比例（最长非降子序列 / 命中总数）。少量短句歧义命中
-    /// 造成的小幅逆序可容忍，只有大面积错位才判非单调。
+    /// 命中位置按阅读顺序递增的最低比例（最长非降子序列 / 命中总数）。顺序错是结构性问题，
+    /// 门槛不随其它阈值放宽。
     pub order_pass_ratio: f64,
     /// 抽查种子（由 sourceSha256 + batchId 派生，保证可复现）。
     pub sample_seed: u64,
@@ -42,12 +49,15 @@ pub(crate) struct AlignmentConfig {
 impl Default for AlignmentConfig {
     fn default() -> Self {
         Self {
-            sentence_threshold: 0.9,
+            sentence_threshold: 0.8,
             invented_threshold: 0.6,
-            passage_pass_ratio: 0.95,
+            invented_max_count: 2,
+            invented_max_ratio: 0.03,
+            passage_pass_ratio: 0.85,
+            group_align_ratio: 0.8,
             length_ratio_min: 0.5,
             length_ratio_max: 1.5,
-            coverage_min: 0.8,
+            coverage_min: 0.7,
             order_pass_ratio: 0.95,
             sample_seed: 0,
             sample_per_node: 3,
@@ -748,12 +758,19 @@ fn align_node(
 
     let mean = if non_trivial == 0 { 1.0 } else { sim_sum / non_trivial as f64 };
     let sentence_count = non_trivial;
-    let aligned = if input.kind.is_question_content() {
-        sentence_count == 0 || (matched == sentence_count && !has_invented)
+    // 云端为主：命中比例达标即视为该节点小差异、直接采用。凭空句不再逐节点硬阻断——是否
+    // 整体采纳由题组比例（≥group_align_ratio）与原文凭空句容忍在文档级判定。
+    let hit_ratio = if sentence_count == 0 {
+        1.0
     } else {
-        let ratio = if sentence_count == 0 { 1.0 } else { matched as f64 / sentence_count as f64 };
-        ratio >= config.passage_pass_ratio && !has_invented
+        matched as f64 / sentence_count as f64
     };
+    let threshold = if input.kind.is_question_content() {
+        config.group_align_ratio
+    } else {
+        config.passage_pass_ratio
+    };
+    let aligned = hit_ratio >= threshold;
     let alignment = NodeAlignment {
         node_id: input.node_id.clone(),
         kind_label: input.kind.as_str(),
@@ -793,6 +810,11 @@ pub(crate) struct AlignmentReport {
     pub passage_pass: bool,
     pub passage_sentence_total: usize,
     pub passage_sentence_matched: usize,
+    /// 原文里整句对不上/凭空的句子（{nodeId, sentence, similarity}）——即使原文整体采纳，
+    /// 这些仍单列为修复目标。
+    pub passage_invented: Vec<Value>,
+    /// 凭空句是否在容忍范围内（在范围内可整体采纳原文）。
+    pub passage_invented_ok: bool,
     /// 云端可读总长 / 原卷可读总长。
     pub length_ratio: f64,
     pub length_ratio_ok: bool,
@@ -878,6 +900,9 @@ pub(crate) fn assess_alignment(
     let mut cloud_len = 0usize;
     let mut passage_total = 0usize;
     let mut passage_matched = 0usize;
+    let mut passage_invented: Vec<Value> = Vec::new();
+    let mut group_matched: BTreeMap<String, usize> = BTreeMap::new();
+    let mut group_total: BTreeMap<String, usize> = BTreeMap::new();
     let mut group_aligned: BTreeMap<String, bool> = BTreeMap::new();
     let mut group_reasons: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut samples = Vec::new();
@@ -894,23 +919,35 @@ pub(crate) fn assess_alignment(
                     passage_total += 1;
                     if eval.similarity >= config.sentence_threshold {
                         passage_matched += 1;
+                    } else if eval.similarity < config.invented_threshold {
+                        // 整句对不上/凭空句：即使原文整体采纳，也单列为修复目标。
+                        passage_invented.push(json!({
+                            "nodeId": alignment.node_id,
+                            "sentence": eval.text.chars().take(160).collect::<String>(),
+                            "similarity": eval.similarity,
+                        }));
                     }
                 }
             }
         }
+        // 题组内容对齐按**比例**判定（命中句 / 题目内容句总数 ≥ group_align_ratio），
+        // 而不是要求每个节点都完美——个别措辞差异不该整组打回修复。
         if let Some(task_id) = &input.task_id {
-            let entry = group_aligned.entry(task_id.clone()).or_insert(true);
-            if input.kind.is_question_content() && !alignment.aligned {
-                *entry = false;
-                group_reasons.entry(task_id.clone()).or_default().push(format!(
-                    "{} 节点 {} 未对齐原卷（命中 {}/{}，最弱相似度 {:.2}{}）",
-                    alignment.kind_label,
-                    alignment.node_id,
-                    alignment.matched_sentences,
-                    alignment.sentence_count,
-                    alignment.min_similarity,
-                    if alignment.has_invented { "，含凭空句" } else { "" }
-                ));
+            group_aligned.entry(task_id.clone()).or_insert(true);
+            if input.kind.is_question_content() {
+                *group_matched.entry(task_id.clone()).or_default() += alignment.matched_sentences;
+                *group_total.entry(task_id.clone()).or_default() += alignment.sentence_count;
+                if !alignment.aligned {
+                    group_reasons.entry(task_id.clone()).or_default().push(format!(
+                        "{} 节点 {} 命中 {}/{}，最弱相似度 {:.2}{}",
+                        alignment.kind_label,
+                        alignment.node_id,
+                        alignment.matched_sentences,
+                        alignment.sentence_count,
+                        alignment.min_similarity,
+                        if alignment.has_invented { "，含凭空句" } else { "" }
+                    ));
+                }
             }
         }
 
@@ -967,12 +1004,37 @@ pub(crate) fn assess_alignment(
     };
     let passage_pass = passage_total == 0
         || (passage_matched as f64 / passage_total as f64) >= config.passage_pass_ratio;
+    // 原文凭空句容忍：少量（≤invented_max_count 且 ≤invented_max_ratio 占比）仍整体采纳，
+    // 这些句子交给修复循环单独处理，而不是因此整篇原文都不采纳。
+    let passage_invented_ok = passage_invented.len() <= config.invented_max_count
+        && (passage_total == 0
+            || (passage_invented.len() as f64) <= config.invented_max_ratio * passage_total as f64);
+
+    // 题组内容对齐比例达标即采纳该组；不足则记原因，进云端校核清单。
+    for (task_id, total) in &group_total {
+        let matched = group_matched.get(task_id).copied().unwrap_or(0);
+        let ratio = if *total == 0 {
+            1.0
+        } else {
+            matched as f64 / *total as f64
+        };
+        let ok = ratio >= config.group_align_ratio;
+        group_aligned.insert(task_id.clone(), ok);
+        if !ok {
+            group_reasons.entry(task_id.clone()).or_default().push(format!(
+                "题组内容对齐比例 {:.2}（命中 {}/{}）低于 {:.2}",
+                ratio, matched, total, config.group_align_ratio
+            ));
+        }
+    }
 
     AlignmentOutcome::Assessed(Box::new(AlignmentReport {
         nodes,
         passage_pass,
         passage_sentence_total: passage_total,
         passage_sentence_matched: passage_matched,
+        passage_invented,
+        passage_invented_ok,
         length_ratio,
         length_ratio_ok: length_ratio >= config.length_ratio_min
             && length_ratio <= config.length_ratio_max,
@@ -1027,6 +1089,8 @@ impl AlignmentReport {
             "passagePass": self.passage_pass,
             "passageSentenceTotal": self.passage_sentence_total,
             "passageSentenceMatched": self.passage_sentence_matched,
+            "passageInvented": self.passage_invented,
+            "passageInventedOk": self.passage_invented_ok,
             "lengthRatio": self.length_ratio,
             "lengthRatioOk": self.length_ratio_ok,
             "coverage": self.coverage,
@@ -1172,6 +1236,57 @@ mod tests {
         let report = report(&doc, &authoring);
         assert!(report.order_violations > 0, "应检出乱序");
         assert!(!report.monotonic);
+    }
+
+    #[test]
+    fn small_perturbations_are_adopted_without_entering_repair() {
+        // 小扰动（个别换词、标点、空格）：相似度仍 ≥0.8，判为命中、直接采用云端，不进修复清单。
+        let doc = source_doc(&[
+            ("l1", "The Roman palace at Fishbourne was discovered by workmen digging a trench in 1960."),
+            ("l2", "Archaeologists later uncovered mosaic floors of exceptional quality."),
+            ("l3", "The site attracts many thousands of visitors every single year."),
+        ]);
+        let authoring = passage_authoring(&[
+            ("p1", "The Roman palace at Fishbourne was discovered by workmen digging a trench in 1960 ."),
+            ("p2", "Archaeologists later uncovered mosaic floors of exceptional quality!"),
+            ("p3", "The site attracts many thousand of visitors every single year."),
+        ]);
+        let report = report(&doc, &authoring);
+        assert_eq!(
+            report.passage_sentence_matched, report.passage_sentence_total,
+            "小扰动应全部判为命中"
+        );
+        assert!(report.passage_pass, "命中率达标应可整体采纳");
+        assert!(
+            report.passage_invented.is_empty(),
+            "小扰动不得进修复清单：{:?}",
+            report.passage_invented
+        );
+        assert!(report.passage_invented_ok);
+    }
+
+    #[test]
+    fn large_perturbations_enter_the_repair_list() {
+        // 大扰动（整句被换成原卷没有的内容）：判为凭空句，进修复清单（passage_invented）。
+        let doc = source_doc(&[
+            ("l1", "The Roman palace at Fishbourne was discovered by workmen digging a trench in 1960."),
+            ("l2", "Archaeologists later uncovered mosaic floors of exceptional quality."),
+            ("l3", "The site attracts many thousands of visitors every single year."),
+        ]);
+        let authoring = passage_authoring(&[
+            ("p1", "The Roman palace at Fishbourne was discovered by workmen digging a trench in 1960."),
+            ("p2", "Archaeologists later uncovered mosaic floors of exceptional quality."),
+            ("p3", "Quarterly financial statements must be filed with the regulator before April."),
+        ]);
+        let report = report(&doc, &authoring);
+        assert!(
+            report
+                .passage_invented
+                .iter()
+                .any(|entry| entry.get("nodeId").and_then(Value::as_str) == Some("p3")),
+            "大扰动整句应进修复清单：{:?}",
+            report.passage_invented
+        );
     }
 
     #[test]
