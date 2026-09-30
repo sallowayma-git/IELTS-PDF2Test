@@ -77,3 +77,23 @@
 | P1 per-line target | Prior chain artifact, group-3 q40 | Only mismatched slot enters review; peers adopted | Group aggregate masked q40; no content target | first-red |
 | P2 exact sentence | Prior clean-candidate trace | Exact source sentence scores >=0.9 | Score 0.55 with extracted line merging unrelated text | first-red; cause pending |
 | P3 clean candidate | Prior chain artifact | Empty review, zero repair calls, no conflict todo | 15 review targets, 6 repair calls, 1 conflict todo | first-red |
+
+### P0–P3 implementation checkpoint
+- Planning records committed first as 511a9b3. User authorized concurrent development; three clean-context agents handled P1 tests, P2 alignment, P3 fixture. Main thread reviewed and completed implementation; heavy commands remained serial.
+- P0 a9c3d63; P2 e9a5031; P1 f6271cd; P3 81b9ffa. Root causes, exact original timeline and first-red evidence are recorded in closeout.md.
+- Heading was already terminal after 52.929s in the retained run; its timeout was a filename detector defect. Fallback really repeated identical edits with changing CAS versions.
+- Repair module 81 tests green; adoption 11 tests green; alignment 16 tests green. Nine-book before/after numeric tables are identical, including anchors. Exact real PDF sentence now scores 1.0.
+- Full Rust final run in progress. No frontend product source changed. E2E scripts pass syntax checks; clean fixture reconstruction checked against the PDF text.
+
+### Final verification checkpoint
+- Final backend tests after the review-scope fix: 1367 passed, 0 failed, 15 pre-existing ignored; no ignores added. Native exact PDF sentence is 1.0; nine-book table is unchanged in every reported field.
+- build-app ran once; an additional backend-only rebuild after product E2E exposed the scope defect reused dist and produced a fresh manifest with unchanged-input validation.
+- Cloud chain rounds: 15/4, 17/2, 18/1 passed/failed. Final round run-cloud-repair-chain-2026-09-30T21-43-21-635Z. P0 fallback 105.087s, clean phase 63.839s, both ready with lease cleared. Clean adoption has zero review targets, zero repair requests, zero conflict tasks.
+- Heading rounds: first request-trace filename mismatch; second and third 11/11 passed. Final run-heading-presentation-2026-09-30T21-51-02-517Z, 47.305s to ready/cloud partial, lease cleared.
+- Only remaining failure is group-2 model adjudication fixture: after removing the shared-parent false positive, the real text has no instruction_stem_overlap. Its original assertions remain, including >=2 calls. This specific product mechanism is unverified in this fixture.
+- NSIS build started under the user's explicit exception: P0 fixed and third-round remaining failure only a fixture precondition. Installer metadata will be recorded in closeout.md and the final reply. No merge/push/install/cleanup.
+
+### Delivered
+- NSIS build succeeded with jobs=2; copied installer for source commit 79c8ebc to F:\workspace\PDF2Test-builds\IELTS-Author-Studio-0.1.0-79c8ebc-setup.exe.
+- 8,177,875 bytes; SHA256 E4788CDC441C66285ACA72FA27DFAC9D3AA7110E037BC2E37182D3BA4BDAB5CA. Source and copied package hashes match. Shared target remains a Junction to the main repository target.
+- Final report is in closeout.md and the final reply. Documentation-only closeout commit follows the package source commit. No installation, merge, push, stash, or cleanup.

@@ -49,3 +49,15 @@ scripts/e2e/tauri-cdp-cloud-repair-chain.mjs，用夹具天然触发，不人为
 ## 收尾
 e2e 迭代上限 3 轮；第 3 轮仍不全绿就停下报卡点。全绿后重跑 cloud-repair-chain + heading-presentation，
 附对照表回报。之后等协调方「已合并」再做覆盖安装与清理。
+
+## 2026-09-30 P0–P3 收尾（最新）
+
+- P0 a9c3d63：重复编辑不再靠 baseVersion 和重切伪装进展；错误/预算/无进展终态与解锁测试通过。heading 原运行实际早已 terminal，旧超时是 trace 文件名解析误报，ddadded 补齐请求格式并等待 processing 终态。
+- P2 e9a5031：跨栏行文本混入右栏，原生 glyph charRange 的严格连续精确证据恢复原句 1.0；九卷表全部字段无回退。Q34 原卷印字未改。
+- P1 f6271cd：单句 <0.6 独立按节点/槽位进 content_not_aligned，保留整组 <0.8；说明吞题检测以物理行为准。
+- P3 81b9ffa：测试专用人工推断 q27–40 答案夹具、真实结构和来源角色恢复。8dfdd24 补修产品范围漏洞：清单空且无阻断质量问题时零修复调用、无本地快照冲突待办；阻断质量仍处理。
+- 79c8ebc：旧 q40 页脚仍能对齐，按 Item 3 允许的无天然触发最小派生，仅一个题干改词序，真实原卷纠正路径通过。
+- Rust lib 1367 passed/0 failed/15 既有 ignored；最终 chain 第三轮 18 passed/1 failed；heading 第二、三轮均 11/11 passed。回退 105.087s、干净 63.839s、heading 47.305s 进入 ready，lease 均释放。
+- 唯一失败：group-2 本夹具无真实 instruction_stem_overlap；旧触发来自共享父区域。真实反馈/裁定断言保持，未制造额外扰动。这条机制在此真实应用夹具中尚未验证；发布遵循用户授权的「P0 修好、第三轮只剩夹具失败也出包」例外。
+- 安装包 F:\workspace\PDF2Test-builds\IELTS-Author-Studio-0.1.0-79c8ebc-setup.exe，8,177,875 bytes，SHA256 E4788CDC441C66285ACA72FA27DFAC9D3AA7110E037BC2E37182D3BA4BDAB5CA；只生成/复制，未安装。
+- 完整原因、时间线、先红、run 目录及证据分层见 closeout.md。合并、push、覆盖安装、清理由协调方处理。
