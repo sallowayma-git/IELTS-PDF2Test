@@ -192,6 +192,11 @@ pub(crate) fn sanitize_commands(raw: &[Value]) -> Result<(Vec<Value>, Vec<String
 
 const MODEL_HIDDEN_PROVENANCE_KEYS: [&str; 3] = ["sourceAnchors", "provenance", "provenanceStatus"];
 
+/// 静态工具定义里 evidence.sourceFileId 的占位符（前缀可缓存，见 llm_gateway）。
+/// 模型常原样回显它；分发器把回显的占位符归一为主卷真实 ID，而不是当伪 ID 拒绝。
+pub(crate) const REQUEST_SOURCE_FILE_ID_PLACEHOLDER: &str = "SOURCE_FILE_ID_FROM_REQUEST_DATA";
+
+
 fn collect_provenance(
     value: &Value,
     provenance: &mut BTreeMap<(String, String), Map<String, Value>>,
@@ -556,6 +561,13 @@ pub(crate) fn verify_evidence_quotes(
         if declared.is_empty() {
             continue;
         }
+        // 模型原样回显静态工具定义里的占位符：归一为主卷真实 ID，按主卷文本层核验，
+        // 而不是当作编造来源拒绝。其它非主卷、非本作业的 ID 仍按伪 ID 处理。
+        let declared = if declared == REQUEST_SOURCE_FILE_ID_PLACEHOLDER {
+            context.main_source_file_id.as_str()
+        } else {
+            declared
+        };
         let Some(known_source_file_ids) = &context.known_source_file_ids else {
             // 作业清单读不到：无从判定这个 id 是否真实存在，不下编造的结论。
             unverifiable.push(index);
@@ -2335,6 +2347,47 @@ mod cloud_repair_write_entry_tests {
             read_answer(&root, &item_id, "q14").pointer("/labels"),
             Some(&json!(["B"])),
             "编造来源的编辑不得落库"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_echoed_source_file_id_placeholder_is_normalized_to_the_main_paper() {
+        // A1：静态工具定义把 evidence.sourceFileId 写成占位符以便前缀缓存，模型常原样回显。
+        // 分发器把回显的占位符归一为主卷真实 ID，按主卷文本层核验通过，而不是当伪 ID 拒绝。
+        let root = temp_root();
+        let item_id = seed_item(&root, &load_fixture());
+        let mut request = base_request(
+            &item_id,
+            "run-placeholder-normalized",
+            1,
+            set_answer_command("q14", &["A"]),
+        );
+        request.evidence = vec![json!({
+            "sourceFileId": REQUEST_SOURCE_FILE_ID_PLACEHOLDER,
+            "pageIndex": 1,
+            "quote": "Early approaches to organisational design."
+        })];
+        let outcome =
+            apply_with_source(&root, &request, &paged_source()).expect("apply_cloud_edits");
+        assert_eq!(
+            outcome.status,
+            CloudEditStatus::Applied,
+            "回显占位符应归一为主卷并按原文核验通过，errors={:?}",
+            outcome.errors
+        );
+        assert!(
+            !outcome
+                .errors
+                .iter()
+                .any(|error| error.starts_with("CLOUD_EDIT_EVIDENCE_SOURCE_UNKNOWN")),
+            "归一后的占位符不得再报 SOURCE_UNKNOWN：{:?}",
+            outcome.errors
+        );
+        assert!(
+            outcome.evidence_unverifiable.is_empty(),
+            "占位符归一后按主卷核验，不应标 unverifiable：{:?}",
+            outcome.evidence_unverifiable
         );
         let _ = std::fs::remove_dir_all(&root);
     }
