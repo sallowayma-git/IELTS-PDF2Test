@@ -1026,14 +1026,9 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                     }
                     adopted_cloud_candidate_for_answers = Some(accepted);
                 }
-                let passage_adopted = adopted
-                    && saved_authoring.as_ref().is_some_and(|doc| {
-                        doc.get("passage")
-                            == serde_json::to_value(&candidate.authoring)
-                                .ok()
-                                .as_ref()
-                                .and_then(|cloud| cloud.get("passage"))
-                    });
+                let passage_adopted = adoption_result
+                    .as_ref()
+                    .is_some_and(|result| result.passage_adopted);
                 let flagged_json = flagged_groups
                     .iter()
                     .map(|(task_id, reasons)| {

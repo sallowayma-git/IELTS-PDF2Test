@@ -889,6 +889,8 @@ pub(crate) struct AdoptionCommit {
     pub deferred_task_ids: Vec<String>,
     /// 本地有、云端候选没有的依赖单元：保留本地稿并交复核（删除需要看原卷）。
     pub local_only_task_ids: Vec<String>,
+    /// 云端原文整体进入了编辑器（对齐锚点只改来源元数据，不影响这个判断）。
+    pub passage_adopted: bool,
 }
 
 fn group_question_numbers(document: &Value, group: &Value) -> BTreeSet<u32> {
@@ -1293,23 +1295,44 @@ pub(crate) fn editor_runtime_errors(
     }
 }
 
-fn prepare_partial_adoption(current: &Value, cloud: &Value) -> (Value, Vec<String>, Vec<String>) {
-    let units = comparison_units(current, cloud);
-    let mut merged = current.clone();
-    // Passage remains independently editable; use a normalized cloud passage when renderable.
-    if let Some(passage) = cloud.get("passage") {
-        merged["passage"] = passage.clone();
-    }
-    let baseline_errors: BTreeSet<_> = editor_runtime_errors(current)
+fn error_keys(document: &Value) -> BTreeSet<(String, String)> {
+    editor_runtime_errors(document)
         .into_iter()
         .map(|i| (i.code, i.target_id))
-        .collect();
-    if editor_runtime_errors(&merged)
-        .iter()
-        .any(|i| !baseline_errors.contains(&(i.code.clone(), i.target_id.clone())))
-    {
-        merged = current.clone();
+        .collect()
+}
+
+fn prepare_partial_adoption(current: &Value, cloud: &Value) -> (Value, Vec<String>, Vec<String>) {
+    // The passage and the groups reference each other (heading host paragraphs), so the cloud
+    // passage is tried together with the cloud units first. If that leaves a local unit dangling,
+    // keep the local passage instead.
+    let original = error_keys(current);
+    let with_passage = adopt_units(current, cloud, true);
+    let passage_ok = error_keys(&with_passage.0).is_subset(&original);
+    if passage_ok && with_passage.2.is_empty() {
+        return with_passage;
     }
+    let without_passage = adopt_units(current, cloud, false);
+    if passage_ok && with_passage.1.len() >= without_passage.1.len() {
+        with_passage
+    } else {
+        without_passage
+    }
+}
+
+fn adopt_units(
+    current: &Value,
+    cloud: &Value,
+    cloud_passage: bool,
+) -> (Value, Vec<String>, Vec<String>) {
+    let units = comparison_units(current, cloud);
+    let mut merged = current.clone();
+    if cloud_passage {
+        if let Some(passage) = cloud.get("passage") {
+            merged["passage"] = passage.clone();
+        }
+    }
+    let baseline_errors = error_keys(&merged);
     let mut adopted = Vec::new();
     let mut deferred = Vec::new();
     for unit in units {
@@ -1326,11 +1349,7 @@ fn prepare_partial_adoption(current: &Value, cloud: &Value) -> (Value, Vec<Strin
             continue;
         }
         match replace_unit(&merged, current, cloud, &unit.unit_id, true) {
-            Ok(trial)
-                if editor_runtime_errors(&trial)
-                    .iter()
-                    .all(|i| baseline_errors.contains(&(i.code.clone(), i.target_id.clone()))) =>
-            {
+            Ok(trial) if error_keys(&trial).is_subset(&baseline_errors) => {
                 merged = trial;
                 adopted.extend(unit.cloud_task_ids);
             }
@@ -1816,6 +1835,8 @@ pub(crate) fn adopt_cloud_candidate(
         if let Some(assets) = current.get("assets") {
             merged["assets"] = assets.clone();
         }
+        let passage_adopted = merged.get("passage").is_some_and(|passage| !passage.is_null())
+            && merged.get("passage") == cloud_authoring.get("passage");
         let local_only_task_ids: Vec<String> = comparison_units(&current, cloud_authoring)
             .into_iter()
             .filter(|unit| unit.cloud_task_ids.is_empty())
@@ -1917,6 +1938,7 @@ pub(crate) fn adopt_cloud_candidate(
                     adopted_task_ids,
                     deferred_task_ids,
                     local_only_task_ids,
+                    passage_adopted,
                 });
             }
             Err(error) if error.starts_with("EDIT_VERSION_CONFLICT") => {
@@ -2697,6 +2719,7 @@ mod tests {
             vec![cp_node("x", "instruction", Some("early-approaches-q14-15"), &["r1"], false)],
         );
         let result = adopt_cloud_primary(&root, "job-1", "batch-1", 1, &cloud, Some(&report)).expect("adoption commits");
+        assert!(result.passage_adopted, "云端原文随可渲染单元整体进入编辑器");
         assert_eq!(result.adopted_task_ids, vec!["early-approaches-q14-15".to_string()], "对齐不合格的单元也要先采用云端内容");
         assert_eq!(result.deferred_task_ids, vec!["broken-group".to_string()]);
         let conn = crate::library::repository::open_library_connection(&root).unwrap();
