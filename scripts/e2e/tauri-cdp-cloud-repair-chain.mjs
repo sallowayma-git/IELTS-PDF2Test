@@ -777,8 +777,12 @@ async function runIneligibleCandidateFallback(derived) {
       const repair = decision?.repair ?? null;
       const cloudState = decision?.chains?.cloud?.state ?? null;
       if (repair && repair.status !== "running" && cloudState && !["queued", "running"].includes(cloudState)) {
-        finalRepair = repair;
-        break;
+        const snapshot = dumpDb(path.join(runDir, "db-ineligible-fallback-after.json"), "IneligibleFallbackAfter");
+        const job = (snapshot.processingJobs ?? []).find((job) => job.id === fallbackItemId);
+        if (job?.stage === "ready_for_review" && !["queued", "running"].includes(job.cloud_status)) {
+          finalRepair = repair;
+          break;
+        }
       }
       await sleep(600);
     }
@@ -2611,6 +2615,7 @@ async function main() {
   let cleanDecision = null;
   let cleanRepair = null;
   let cleanCloudState = null;
+  let cleanProcessingJob = null;
   const cleanDeadline = Date.now() + 900000;
   while (Date.now() < cleanDeadline) {
     cleanDecision = await readDecision();
@@ -2618,7 +2623,12 @@ async function main() {
     cleanCloudState = cleanDecision?.chains?.cloud?.state ?? null;
     const adoption = cleanRepair?.candidateAdoption ?? cleanDecision?.candidateAdoption ?? null;
     const cloudSettled = cleanCloudState && !["queued", "running"].includes(cleanCloudState);
-    if (adoption && cloudSettled && cleanRepair?.status !== "running") break;
+    if (adoption && cloudSettled && cleanRepair?.status !== "running") {
+      const snapshot = dumpDb(path.join(runDir, "db-clean-candidate-after.json"), "CleanCandidateAfter");
+      cleanProcessingJob = (snapshot.processingJobs ?? []).find((job) => job.id === cleanItemId) ?? null;
+      if (cleanProcessingJob?.stage === "ready_for_review"
+        && !["queued", "running"].includes(cleanProcessingJob.cloud_status)) break;
+    }
     await sleep(600);
   }
 
@@ -2636,6 +2646,9 @@ async function main() {
       || task?.action === "review_difference",
   );
   if (!cleanAdoption) cleanProblems.push("clean candidate 等待结束前没有得到采纳结果");
+  if (cleanProcessingJob?.stage !== "ready_for_review") {
+    cleanProblems.push("clean candidate 没有进入可编辑终态");
+  }
   if (!cleanCloudState || ["queued", "running"].includes(cleanCloudState)) {
     cleanProblems.push(`clean candidate 云端链尚未终止，状态=${cleanCloudState ?? "missing"}`);
   }
@@ -2672,6 +2685,7 @@ async function main() {
       missingAnswerTruth: cleanSanitization.missingAnswerTruth,
     },
     cloudState: cleanCloudState,
+    processingJob: cleanProcessingJob,
     repairStatus: cleanRepair?.status ?? null,
     adoption: cleanAdoption,
     needsCloudReview: cleanNeedsReview,

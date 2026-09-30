@@ -219,7 +219,7 @@ function candidateTrace(jobId) {
   const dir = path.join(appDataDir, "jobs", String(jobId), "cache", "llm");
   if (!fs.existsSync(dir)) throw new Error(`LLM trace directory missing: ${dir}`);
   const inputs = fs.readdirSync(dir)
-    .map((file) => /^generate_authoring_candidate-input-(\d+)\.json$/u.exec(file))
+    .map((file) => /^generate_authoring_candidate-input-(\d+(?:-\d+)?)\.json$/u.exec(file))
     .filter(Boolean)
     .map((match) => ({ stamp: match[1], file: `generate_authoring_candidate-input-${match[1]}.json` }));
   if (!inputs.length) throw new Error("no generate_authoring_candidate request trace was saved");
