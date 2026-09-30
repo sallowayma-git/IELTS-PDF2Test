@@ -335,8 +335,8 @@ async function waitForService(timeoutMs = 20000) {
   return null;
 }
 
-function startService({ candidate = null, plan = null, delayCandidateMs = 0 } = {}) {
-  const args = [serviceScript, "--port", String(servicePort), "--mode", "normal"];
+function startService({ candidate = null, plan = null, delayCandidateMs = 0, mode = "normal" } = {}) {
+  const args = [serviceScript, "--port", String(servicePort), "--mode", mode];
   if (candidate) args.push("--candidate", candidate);
   if (plan) args.push("--plan", plan);
   if (delayCandidateMs > 0) args.push("--delay-candidate-ms", String(delayCandidateMs));
@@ -355,7 +355,7 @@ function startService({ candidate = null, plan = null, delayCandidateMs = 0 } = 
   serviceChild.stdout.on("data", collect);
   serviceChild.stderr.on("data", collect);
   report.service.log = () => out;
-  report.service.modes.push(candidate ? `candidate+plan${delayCandidateMs > 0 ? `+delay-${delayCandidateMs}ms` : ""}` : "skeleton");
+  report.service.modes.push(candidate ? `candidate+plan${delayCandidateMs > 0 ? `+delay-${delayCandidateMs}ms` : ""}` : `skeleton-${mode}`);
   return out;
 }
 
@@ -428,17 +428,17 @@ function llmTraces(jobId, sourceTextChecks = []) {
   if (traces.exists) {
     const files = fs.readdirSync(dir);
     for (const file of files) {
-      const matched = /^(.+)-(input|output)-(\d+)\.json$/u.exec(file);
+      const matched = /^(.+)-(input|output)-\d+(?:-\d+)?\.json$/u.exec(file);
       if (!matched) continue;
       const command = matched[1];
       traces.byCommand[command] = traces.byCommand[command] ?? { input: 0, output: 0 };
       traces.byCommand[command][matched[2]] += 1;
     }
     const inputs = files
-      .map((file) => /^repair_authoring_step-input-(\d+)\.json$/u.exec(file))
+      .map((file) => /^repair_authoring_step-input-(\d+(?:-\d+)?)\.json$/u.exec(file))
       .filter(Boolean)
-      .map((matched) => ({ stamp: Number(matched[1]), file: matched[0] }))
-      .sort((a, b) => a.stamp - b.stamp);
+      .map((matched) => ({ stamp: matched[1], order: Number(matched[1].split("-")[0]), file: matched[0] }))
+      .sort((a, b) => a.order - b.order || a.stamp.localeCompare(b.stamp));
     for (const entry of inputs) {
       try {
         const input = JSON.parse(fs.readFileSync(path.join(dir, entry.file), "utf8"));
@@ -542,10 +542,10 @@ function repairToolCalls(jobId) {
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir)
-    .map((file) => /^repair_authoring_step-output-(\d+)\.json$/u.exec(file))
+    .map((file) => /^repair_authoring_step-output-(\d+(?:-\d+)?)\.json$/u.exec(file))
     .filter(Boolean)
-    .map((matched) => ({ stamp: Number(matched[1]), file: matched[0] }))
-    .sort((a, b) => a.stamp - b.stamp)
+    .map((matched) => ({ stamp: matched[1], order: Number(matched[1].split("-")[0]), file: matched[0] }))
+    .sort((a, b) => a.order - b.order || a.stamp.localeCompare(b.stamp))
     .map((entry) => {
       try {
         const raw = JSON.parse(fs.readFileSync(path.join(dir, entry.file), "utf8"));
@@ -928,9 +928,12 @@ async function main() {
   fs.copyFileSync(fixturePath, path.join(runDir, "source-file", path.basename(fixturePath)));
 
   // ---- 0. 起受控服务（**没有**候选样本：第 1 遍的云端候选会被如实拒绝）----
-  startService({});
+  startService({ mode: "fail" });
   const health0 = await waitForService();
   if (!health0) throw new CannotRunError("受控服务没有就绪");
+  if (health0.mode !== "fail" || health0.candidate || health0.plan) {
+    throw new CannotRunError("预跑服务必须拒绝完整候选请求，避免它消费后续场景样本");
+  }
   report.service.started = true;
   report.service.health = health0;
 
@@ -1103,18 +1106,16 @@ async function main() {
   if (correctionPromptNodes.length !== 1) {
     throw new Error(`content_not_aligned 场景无法定位 ${derived.fix.responseGroupId} 的单一题面节点`);
   }
-  // The fixture has no natural group-3 review; reuse its real local q40 recognition error.
+  // Reuse the fixture's only question-text defect: the OCR-added q40 footer.
   correctionPromptNodes[0].text = derived.fix.before;
   derived.plan.rulings.push({
     targetType: "task_group",
     targetId: "group-2",
-    field: "task_group",
+    field: "instruction_stem_overlap",
     ruling: "current_is_correct",
     reason: "按真实复核反馈核对 group-2 的说明与 q32 题干；原卷支持当前题组内容，保留云端正式稿。",
     evidenceKeyword: "NOT GIVEN if it is impossible to say",
   });
-  derived.plan.answerClaim.searchPages = [1];
-  derived.claim.searchPages = [1];
   const humanProbe = humanProtectionProbe(prepassDraft.ds, [derived.claim?.slotId].filter(Boolean));
   if (humanProbe) {
     // Harness-only competing answer values let the real editor journal exercise the same
@@ -1287,6 +1288,49 @@ async function main() {
   let baselineTooLate = false;
   let humanProbeAttempted = false;
   let humanProbeError = null;
+  const repairSourceChecks = [{
+    pageIndex: derived.fix.sourcePageOneBased,
+    text: `${derived.fix.questionNumber} ${derived.fix.after}`,
+  }];
+  let sampledRepairTrace = null;
+  let lastRepairTraceSignature = null;
+  const sampleRepairTrace = () => {
+    const dir = path.join(appDataDir, "jobs", String(itemId ?? ""), "cache", "llm");
+    let files;
+    try {
+      files = fs.readdirSync(dir).filter((file) => /^repair_authoring_step-(input|output)-\d+(?:-\d+)?\.json$/u.test(file));
+    } catch {
+      return;
+    }
+    if (files.length === 0) return;
+    const signature = files.map((file) => {
+      const stat = fs.statSync(path.join(dir, file));
+      return `${file}:${stat.size}:${stat.mtimeMs}`;
+    }).join("|");
+    if (signature === lastRepairTraceSignature) return;
+    lastRepairTraceSignature = signature;
+
+    const llm = llmTraces(itemId, repairSourceChecks);
+    const toolCalls = repairToolCalls(itemId);
+    const repairRounds = new Map([
+      ...(sampledRepairTrace?.llm.repairRounds ?? []),
+      ...llm.repairRounds,
+    ].map((round) => [round.stamp, round]));
+    const observedToolCalls = new Map([
+      ...(sampledRepairTrace?.toolCalls ?? []),
+      ...toolCalls,
+    ].map((call) => [call.stamp, call]));
+    const previousCalls = sampledRepairTrace?.llm.callRecords ?? [];
+    sampledRepairTrace = {
+      llm: {
+        ...llm,
+        repairRounds: [...repairRounds.values()],
+        callRecords: llm.callRecords.length >= previousCalls.length ? llm.callRecords : previousCalls,
+        byCommand: { ...(sampledRepairTrace?.llm.byCommand ?? {}), ...llm.byCommand },
+      },
+      toolCalls: [...observedToolCalls.values()],
+    };
+  };
   while (Date.now() < repairDeadline) {
     // (a) 本地初稿一出现就**立刻**取基线——它必须落在云端写入之前。
     if (!draft) {
@@ -1406,6 +1450,7 @@ async function main() {
       }
       if (repair.status === "running") sawRunning = true;
     }
+    if (repair?.status) sampleRepairTrace();
     if (repair && repair.status !== "running" && cloudState && !["queued", "running"].includes(cloudState)) {
       finalRepair = repair;
       break;
@@ -1444,12 +1489,26 @@ async function main() {
   report.observed.canonicalChanges = changes;
   report.observed.editVersion = { before: versionBefore, after: versionAfter };
   report.observed.promptText = { before: promptBefore, after: promptAfter };
+  const finalLlmTrace = llmTraces(itemId, repairSourceChecks);
+  const finalRepairToolCalls = repairToolCalls(itemId);
+  const mergedRepairRounds = new Map([
+    ...(sampledRepairTrace?.llm.repairRounds ?? []),
+    ...finalLlmTrace.repairRounds,
+  ].map((round) => [round.stamp, round]));
+  const mergedRepairToolCalls = new Map([
+    ...(sampledRepairTrace?.toolCalls ?? []),
+    ...finalRepairToolCalls,
+  ].map((call) => [call.stamp, call]));
   report.modelTraces = {
-    llm: llmTraces(itemId, [{
-      pageIndex: derived.fix.sourcePageOneBased,
-      text: `${derived.fix.questionNumber} ${derived.fix.after}`,
-    }]),
-    toolCalls: repairToolCalls(itemId),
+    llm: {
+      ...finalLlmTrace,
+      byCommand: { ...(sampledRepairTrace?.llm.byCommand ?? {}), ...finalLlmTrace.byCommand },
+      repairRounds: [...mergedRepairRounds.values()],
+      callRecords: finalLlmTrace.callRecords.length >= (sampledRepairTrace?.llm.callRecords.length ?? 0)
+        ? finalLlmTrace.callRecords
+        : sampledRepairTrace?.llm.callRecords ?? [],
+    },
+    toolCalls: [...mergedRepairToolCalls.values()],
   };
   report.observed.candidateAdoption = finalRepair.candidateAdoption ?? null;
 
@@ -1633,6 +1692,12 @@ async function main() {
     const expectedPageText = pageTexts.get(Number(annotated.sourcePage.oneBased)) ?? null;
     const mode = repairContextMode();
     const problems = [];
+    const correctionTrigger = (report.observed.candidateAdoption?.needsCloudReview ?? []).some((entry) =>
+      entry?.taskId === derived.fix.taskId && entry?.reason === "content_not_aligned",
+    );
+    if (!correctionTrigger) {
+      problems.push(`候选采纳没有产生 ${derived.fix.taskId} 的题组级 content_not_aligned 复核项`);
+    }
     const requestSourceRounds = (report.modelTraces.llm.repairRounds ?? []).filter((round) =>
       (round.sourceTextResults ?? []).some((check) =>
         Number(check.pageIndex) === Number(annotated.sourcePage.oneBased) && check.includesExpectedText,
@@ -1768,12 +1833,12 @@ async function main() {
   const group2Inputs = adoptedInputs.filter((round) => (round.differenceTargets ?? []).some((difference) =>
     difference?.targetType === "task_group"
       && difference?.targetId === "group-2"
-      && difference?.field === "task_group",
+      && difference?.field === "instruction_stem_overlap",
   ));
   if (group2Inputs.length === 0) {
     feedbackProblems.push("修复请求没有把 group-2 的 instruction_stem_overlap 真实反馈带给模型");
   }
-  const expectedGroup2Ruling = "task_group:group-2:task_group=current_is_correct";
+  const expectedGroup2Ruling = "task_group:group-2:instruction_stem_overlap=current_is_correct";
   const group2Ruling = rounds.find(
     (round) => round.tool === "record_ruling" && (round.rulings ?? []).includes(expectedGroup2Ruling),
   );
@@ -1877,8 +1942,9 @@ async function main() {
   if (![27, 28].includes(Number(derived.claim?.questionNumber))) {
     packetProblems.push(`缺页场景应使用 q27/q28 的未解析答案，实际 q${derived.claim?.questionNumber ?? "?"}`);
   }
-  if (JSON.stringify(derived.claim?.searchPages ?? []) !== JSON.stringify([1])) {
-    packetProblems.push(`q27/q28 的 passage 证据页应为第 1 页，实际 ${JSON.stringify(derived.claim?.searchPages ?? [])}`);
+  const expectedClaimSearchPages = [Number(golden?.source?.pageCount) || 5];
+  if (JSON.stringify(derived.claim?.searchPages ?? []) !== JSON.stringify(expectedClaimSearchPages)) {
+    packetProblems.push(`q27/q28 应核查答案页缺失的末页 ${JSON.stringify(expectedClaimSearchPages)}，实际 ${JSON.stringify(derived.claim?.searchPages ?? [])}`);
   }
   if (!answerClaimL1.ok) {
     packetProblems.push(
