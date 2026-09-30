@@ -79,7 +79,7 @@ vi.mock("./finalVersion", () => ({
   sourceActionsAvailable: vi.fn(() => true),
 }));
 
-vi.mock("../../exam-canvas/ExamCanvas", () => ({ ExamCanvas: () => null }));
+vi.mock("../../exam-canvas/ExamCanvas", () => ({ ExamCanvas: ({authoring, taskAdornment, unanchoredTaskAdornment}: import("../../exam-canvas/ExamCanvas").ExamCanvasProps) => <div>{authoring.taskGroups.map((group) => <section key={group.taskId} data-testid="editable-question">{taskAdornment?.(group.taskId)}</section>)}{unanchoredTaskAdornment}</div> }));
 vi.mock("./SelectionInspector", () => ({ SelectionInspector: () => null }));
 vi.mock("./RecognitionPanel", () => ({ RecognitionPanel: () => null }));
 
@@ -207,6 +207,35 @@ describe("ExamWorkspacePage 的云端修复剩余条目刷新", () => {
     await act(async () => {});
     expect(screen.getByTestId("workspace-cloud-adoption-notice").textContent)
       .toContain("未采纳云端候选，继续按本地稿校核：云端候选未覆盖本地题号：15");
+  });
+
+  it("题组异常没有可比较候选时，在题目旁显示可执行的原文件对照入口", async () => {
+    editorRef.current = {...makeEditor(1), draft: {exam:{title:"受控卷"},taskGroups:[{taskId:"task-27",responseGroups:[{responseGroupId:"rg-27",slotIds:["q27"]}]}],answerSlots:{q27:{questionNumber:27}},answerKey:{}}};
+    vi.mocked(getRecognitionDecision).mockResolvedValue(decision("completed", [claimTask]));
+    const {container} = render(<ExamWorkspacePage itemId={ITEM_ID}/>);
+    await act(async()=>{});
+    expect(container.querySelector('.workspace-group-tasks [data-task-id="cloud-question:q27:1"]')).not.toBeNull();
+    const buttons = container.querySelectorAll('.workspace-group-tasks button');
+    expect([...buttons].some((button)=>button.textContent === "对照原文件" || button.textContent?.includes("原文件"))).toBe(true);
+    expect(container.querySelector('[data-testid="workspace-issue-list"]')).toBeNull();
+  });
+
+  it("同一个问题只出现一处：有蓝绿对比的项不再进待办清单，题组旁的项不再进顶部清单", async () => {
+    const draft = {exam:{title:"受控卷"},taskGroups:[{taskId:"task-27",responseGroups:[{responseGroupId:"rg-27",slotIds:["q27"]}]}],answerSlots:{q27:{questionNumber:27}},answerKey:{}};
+    editorRef.current = {...makeEditor(1), draft};
+    const candidate = {taskGroups:[{taskId:"task-27",responseGroups:[]}]};
+    const comparisonTask = {
+      userTaskId:"cloud-diff:slot:q27:answer", action:"review_difference", blocking:false, targetIds:["q27"],
+      message:"第 27 题答案本地与云端不一致", comparisonUnitId:"unit-27", taskIds:["task-27"],
+      localCandidate:candidate, cloudCandidate:candidate, localSelectable:true, cloudSelectable:true, rulingReviewed:true,
+    };
+    vi.mocked(getRecognitionDecision).mockResolvedValue(decision("completed", [comparisonTask, claimTask]));
+    const {container} = render(<ExamWorkspacePage itemId={ITEM_ID}/>);
+    await act(async()=>{});
+    const all = [...container.querySelectorAll("[data-task-id]")].map((element)=>element.getAttribute("data-task-id"));
+    expect(all.filter((id)=>id === "cloud-question:q27:1")).toHaveLength(1);
+    expect(all).not.toContain("cloud-diff:slot:q27:answer");
+    expect(container.querySelectorAll('[data-comparison-unit="unit-27"]')).toHaveLength(1);
   });
 
   it("修复进行中读到 running 时安排重读：1.5 秒后的终态把 cloud-question 条目送进清单（期间不触发任何版本或处理事件）", async () => {

@@ -53,7 +53,7 @@ export function findTargetElement(
   const candidates = locateCandidateIds(draft, targetId);
   return Array.from(doc.querySelectorAll<HTMLElement>(
     "[data-editor-id], [data-question-id], [data-response-group-id]"
-  )).find((element) => [
+  )).find((element) => !element.closest(".cloud-comparison-preview") && [
     element.dataset.editorId,
     element.dataset.questionId,
     element.dataset.responseGroupId

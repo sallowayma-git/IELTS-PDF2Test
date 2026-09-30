@@ -41,6 +41,11 @@ export interface ExamCanvasProps {
   onStructureAction?: (action: ExamCanvasStructureAction) => void;
   /** 只读锁（云端校核进行中）：对画布根节点加 inert，挡住文本/答案/结构/拖动等一切交互。 */
   locked?: boolean;
+  /** Embedded recognition alternatives show only questions, without global navigation IDs. */
+  comparisonPreview?: boolean;
+  /** Author review controls anchored beside a complete question group. */
+  taskAdornment?: (taskId: string) => ReactNode;
+  unanchoredTaskAdornment?: ReactNode;
 }
 
 type VisualNodeV2 = Extract<ContentNodeV2, { type: "figure" | "image" | "diagram" }>;
@@ -990,7 +995,7 @@ export function ExamCanvas(props: ExamCanvasProps) {
   <CanvasAnswersContext.Provider value={{ answers: canvasAnswers, setText, setOption }}>
     <OptionDragContext.Provider value={optionDrag}>
     <div className={`exam-canvas-v2 ${props.mode === "author" ? "is-author" : "is-student"}${listening ? " is-listening" : ""}`} data-testid={`exam-canvas-v2-${props.mode}`} inert={props.locked || undefined}>
-    {listening ? (
+    {!props.comparisonPreview && (listening ? (
       <ListeningHeader
         itemId={props.authoring.jobId}
         mode={props.mode}
@@ -1007,13 +1012,15 @@ export function ExamCanvas(props: ExamCanvasProps) {
         </main>
         <div id="divider" {...dividerProps} />
       </>
-    )}
-    <section id="right" className="reading-pane question-pane pane v2-question-pane" aria-label={listening ? "Listening questions" : "Reading questions"}>
-      <div id="question-groups" className="question-groups v2-question-groups">
+    ))}
+    <section id={props.comparisonPreview ? undefined : "right"} className="reading-pane question-pane pane v2-question-pane" aria-label={listening ? "Listening questions" : "Reading questions"}>
+      <div id={props.comparisonPreview ? undefined : "question-groups"} className="question-groups v2-question-groups">
+        {props.unanchoredTaskAdornment}
         {listening && listeningStructureMissing(props.authoring) ? (
           <p className="empty listening-structure-missing" data-testid="listening-structure-missing">听力结构尚未识别</p>
         ) : null}
         {runtime.taskGroups.filter((task) => !shownTaskIds || shownTaskIds.has(task.taskId)).map((task) => <article key={task.taskId} className={`question-group unified-group v2-task-group${props.selectedId === task.taskId ? " is-selected" : ""}`} data-group-id={task.taskId} data-editor-id={task.taskId} onClick={() => props.mode === "author" && props.onSelect?.(task.taskId)}>
+          {props.taskAdornment?.(task.taskId)}
           <header className="v2-task-header"><h2>{taskTypeLabel(task.taskType)}</h2><div className="v2-instruction"><ContentNodes nodes={task.instructions} canvas={props} /></div></header>
           {task.stimulus?.length ? <div className="v2-stimulus"><ContentNodes nodes={task.stimulus} canvas={props} /></div> : null}
           {(() => {
@@ -1102,14 +1109,14 @@ export function ExamCanvas(props: ExamCanvasProps) {
         </article>)}
       </div>
     </section>
-    <QuestionNavBar
+    {!props.comparisonPreview && <QuestionNavBar
       model={navModel}
       mode={props.mode}
       authoring={props.authoring}
       activeSlotId={props.mode === "author" ? props.selectedId : undefined}
       onSelectSlot={props.onSelect}
       onSelectPart={setSelectedPart}
-    />
+    />}
   </div>
     </OptionDragContext.Provider>
   </CanvasAnswersContext.Provider>

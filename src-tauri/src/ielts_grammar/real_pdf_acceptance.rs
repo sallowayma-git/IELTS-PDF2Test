@@ -4012,3 +4012,96 @@ fn part_detection_matches_expected_label_for_eight_real_pdfs() {
         mismatches.join("\n")
     );
 }
+
+/// Review-target counts per tier for the nine private papers when the faithful physical-pipeline
+/// draft plays the role of a clean cloud candidate. Prints the table the convergence report quotes.
+#[test]
+fn nine_private_pdfs_clean_candidate_review_targets_by_tier() {
+    use crate::cloud_adoption::plan_adoption;
+    use crate::reconcile::alignment::{assess_alignment, AlignmentConfig, AlignmentOutcome};
+    let root = repo_root();
+    let spec = read_json(&root.join(STAGE2_PRESENTATION_SPEC)).expect("stage2 spec must load");
+    let fixtures = spec["fixtures"].as_array().expect("fixtures");
+    let required = fixtures
+        .iter()
+        .filter_map(|fixture| fixture["sourcePath"].as_str())
+        .map(|path| root.join(path))
+        .collect::<Vec<_>>();
+    if !crate::test_support::private_corpus_ready(
+        "nine_private_pdfs_clean_candidate_review_targets_by_tier",
+        &required,
+    ) {
+        return;
+    }
+    let manifest = read_json(&root.join(MANIFEST)).expect("manifest");
+    let mut table = String::from(
+        "\n九卷干净候选复核目标（按档）\nfixture | 文本层 | 原文抽样 | 档1 原文(整段) | 档2 结构 | 档3 内容(严重不符) | 其中 answer_unresolved | 与本地一致时合计(零调用判据)\n",
+    );
+    let mut agreeing_residual = Vec::new();
+    for expected in fixtures {
+        let id = expected["fixtureId"].as_str().expect("fixtureId");
+        let metadata_path = expected["metadataPath"].as_str().expect("metadataPath");
+        let fixture = manifest["fixtures"]
+            .as_array()
+            .and_then(|list| list.iter().find(|f| f["fixtureId"] == id))
+            .cloned()
+            .unwrap_or_else(|| {
+                let metadata = read_json(&root.join(metadata_path)).expect("metadata");
+                json!({
+                    "fixtureId": id, "sourcePath": expected["sourcePath"], "metadataPath": metadata_path,
+                    "originalName": metadata.pointer("/source/originalName"),
+                    "sha256": metadata.pointer("/source/sha256"),
+                    "sizeBytes": metadata.pointer("/source/sizeBytes")
+                })
+            });
+        process_fixture(&root, id, &fixture).unwrap_or_else(|error| panic!("{id}: {error}"));
+        let dir = root.join("tmp/phase4-real-pdf-acceptance").join(id);
+        let physical = read_json(&dir.join("document-ir-v2.physical.json")).expect("physical");
+        let authoring = read_json(&dir.join("authoring-ir-v2.shadow.json")).expect("authoring");
+        let seed = fixture["sha256"]
+            .as_str()
+            .and_then(|sha| sha.get(..16))
+            .and_then(|prefix| u64::from_str_radix(prefix, 16).ok())
+            .unwrap_or(0);
+        let config = AlignmentConfig { sample_seed: seed, ..Default::default() };
+        let outcome = assess_alignment(&physical, &authoring, &config);
+        let candidate = json!({"status": "succeeded", "unresolvedReferences": [], "authoring": authoring});
+        let local = json!({"slots": authoring["answerSlots"].as_object().into_iter().flatten()
+            .map(|(slot_id, slot)| json!({"slotId": slot_id, "questionNumber": slot["questionNumber"]}))
+            .collect::<Vec<_>>()});
+        let raw = plan_adoption(&candidate, &local, &outcome, None);
+        let agreeing = plan_adoption(&candidate, &local, &outcome, Some(&authoring));
+        assert!(raw.document_reasons.is_empty(), "{id}: {:?}", raw.document_reasons);
+        let reason_of = |entry: &Value| entry["reason"].as_str().unwrap_or("").to_string();
+        let count = |plan: &crate::cloud_adoption::CloudPrimaryPlan, pick: &dyn Fn(&str) -> bool| {
+            plan.needs_cloud_review.iter().filter(|entry| pick(&reason_of(entry))).count()
+        };
+        let tier1 = count(&raw, &|r| r == "passage_not_aligned");
+        let tier3 = count(&raw, &|r| r == "content_not_aligned");
+        let unresolved = count(&raw, &|r| r == "answer_unresolved");
+        let tier2 = raw.needs_cloud_review.len() - tier1 - tier3;
+        let residual: Vec<String> = agreeing
+            .needs_cloud_review
+            .iter()
+            .map(|entry| reason_of(entry))
+            .filter(|reason| reason != "answer_unresolved")
+            .collect();
+        agreeing_residual.extend(residual.iter().map(|reason| format!("{id}:{reason}")));
+        let sampled = match &outcome {
+            AlignmentOutcome::Assessed(report) => {
+                format!("{}/{}", report.passage_sample_matched, report.passage_sample_total)
+            }
+            AlignmentOutcome::NoTextLayer => "-".to_string(),
+        };
+        table.push_str(&format!(
+            "{id} | {} | {sampled} | {tier1} | {tier2} | {tier3} | {unresolved} | {}\n",
+            if matches!(outcome, AlignmentOutcome::Assessed(_)) { "有" } else { "无" },
+            residual.len()
+        ));
+    }
+    eprintln!("{table}");
+    assert!(
+        agreeing_residual.is_empty(),
+        "云端与本地一致的干净候选（答案页未解析除外）必须零复核目标：{agreeing_residual:?}"
+    );
+}

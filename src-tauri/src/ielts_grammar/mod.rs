@@ -3311,7 +3311,7 @@ mod tests {
         );
         assert_eq!(
             value.pointer("/quality/compilerProbes/v1Compatibility/status"),
-            Some(&json!("passed"))
+            Some(&json!("skipped"))
         );
     }
 

@@ -1146,3 +1146,24 @@ body.workspace-resizing * {
 .workspace-page .ghost:hover {
   background: var(--paper-control-hover);
 }
+
+/* Unresolved alternatives live beside their question group, sharing ExamCanvas. */
+.cloud-comparison { margin: 12px 0 20px; padding: 12px; background: var(--surface, #fff); border-radius: 8px; }
+.cloud-comparison > p { margin: 0 0 10px; font-size: 13px; }
+.cloud-comparison-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.cloud-comparison-version { border: 2px solid; border-radius: 8px; overflow: hidden; min-width: 0; }
+.cloud-comparison-version.is-local { border-color: #3277c8; }
+.cloud-comparison-version.is-cloud { border-color: #27945f; }
+.cloud-comparison-version > header { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; }
+.cloud-comparison-version.is-local > header { background: #eaf2ff; color: #245a97; }
+.cloud-comparison-version.is-cloud > header { background: #e9f8ef; color: #206f49; }
+.cloud-comparison-preview .exam-canvas-v2 { display: block; }
+.cloud-comparison-preview .passage-pane, .cloud-comparison-preview #divider, .cloud-comparison-preview .question-nav-bar, .cloud-comparison-preview .listening-header { display: none; }
+.cloud-comparison-preview .question-pane { width: 100%; min-width: 0; padding: 12px; }
+.cloud-comparison-preview .v2-task-group { margin: 0; padding: 8px; }
+@media (max-width: 1100px) { .cloud-comparison-grid { grid-template-columns: 1fr; } }
+
+.workspace-group-tasks { margin: 10px 0 16px; padding: 10px 12px; background: #fff9e9; border-left: 3px solid #bc8b25; }
+.workspace-group-tasks ul { list-style: none; margin: 0; padding: 0; }
+.workspace-group-tasks li + li { margin-top: 10px; }
+.workspace-group-tasks small { display: block; margin: 4px 0; }

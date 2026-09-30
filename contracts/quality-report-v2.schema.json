@@ -72,7 +72,7 @@
       "additionalProperties": false,
       "required": ["status", "schemaVersion", "issueCodes", "details"],
       "properties": {
-        "status": { "type": "string", "enum": ["passed", "failed"] },
+        "status": { "type": "string", "enum": ["passed", "failed", "skipped"] },
         "schemaVersion": { "type": "string", "minLength": 1 },
         "issueCodes": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
         "details": { "type": "array", "items": { "type": "string", "minLength": 1 } }

@@ -186,6 +186,9 @@ impl CloudRepairContextNeedV1 {
 ///
 /// 刻意不提供「已修复」这类取值：修好没有修好，看的是当前稿本身与程序校验，
 /// 不是模型的一句话。
+/// Compact batch decisions accepted by record_ruling. Content mutations still use validated domain commands.
+pub const CLOUD_REPAIR_DECISIONS: [&str; 4] =
+    ["use_cloud", "keep_current", "need_context", "user_choice"];
 pub const CLOUD_RULING_CURRENT_IS_CORRECT: &str = "current_is_correct";
 pub const CLOUD_RULING_CANNOT_RESOLVE: &str = "cannot_resolve";
 /// Adopted cloud draft default for an undecidable non-answer delta. It is a recorded comparison,

@@ -4173,3 +4173,11 @@ F-Q2-5 修好后 **40/40**，`saveRetries=[]`）；
   是两种结论，报告里已分开（前者是链条失败，后者才是 cannot-run）。
 - **没有覆盖拖拽上传**：CDP 无法合成真实文件拖放，4 段音频仍走真实按钮 → picker 路径，
   报告里如实标注（任务书 Q2 也认可这条）。
+
+
+## 2026-09-30 cloud convergence
+Current scheduler adopts whole candidate using final hard failures; matched group diff omits taskType; unresolved adopted non-answer is forced quiet. Reading compatibility still emits V1 hard failure. Answer-page writes use independent origin without repairRunId.
+
+## 云端主链最终发现（2026-09-30）
+
+新增语义差异不能把evidenceAnchors、默认false约束视为内容冲突；作答位完整性与答案/音频发布完整性必须区分。部分采用后，已采用单元对比冻结本地，未采用单元对比云端，原文采用需单独记录。独立答案页可能与本地和云端同时冲突，必须成为第三来源差异。撤销需包含完整必要路径差异、大段原文、数组重排及外置槽位；空失败运行不能隐藏上一轮有效撤销入口。

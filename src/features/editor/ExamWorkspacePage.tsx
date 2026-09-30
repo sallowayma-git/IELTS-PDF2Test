@@ -32,6 +32,7 @@ import type { ProcessingState } from "../../api/processingClient";
 import { processingNoteOf, cloudReviewInProgress } from "./workspaceStatus";
 import { answerPageStatusOf, describeAnswerPageRetry } from "./answerPageStatus";
 import { findTargetElement } from "./locate";
+import { CloudComparison, chooseComparison, type ComparisonChoice } from "./CloudComparison";
 
 // 题目工作区（计划 §16.6 / §9.10）。
 // 打开就是最终 IELTS 题面；左侧 passage、右侧 questions 由 ExamCanvas 渲染。
@@ -223,17 +224,50 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   );
   // 云端修复后剩下的（读取时按当前稿重算）。并进同一份清单，识别「详情」里不再另列。
   const [repairAids, setRepairAids] = useState<RepairAidInputV1[]>([]);
+  const comparisons = useMemo(() => {
+    const units = new Map<string, RepairAidInputV1>();
+    for (const task of repairAids) if (task.comparisonUnitId && task.localCandidate && task.cloudCandidate) units.set(task.comparisonUnitId, task);
+    return [...units.values()];
+  }, [repairAids]);
+  const comparisonAnchor = (task: RepairAidInputV1) => task.taskIds?.find((id) => editor.draft?.taskGroups.some((group) => group.taskId === id));
+  const renderComparison = (task: RepairAidInputV1) => <CloudComparison key={task.comparisonUnitId} task={task} disabled={Boolean(busyAction) || cloudReviewing} onOpenSource={sourceActionsEnabled ? () => setSourceOpen(true) : undefined} onChoose={(choice: ComparisonChoice) => withBusy("comparison", async () => {
+    await chooseComparison(itemId, task.comparisonUnitId!, choice, editor.flush);
+    editor.reload();
+    const result = await getRecognitionDecision(itemId);
+    setRepairAids((result.repair?.remainingTasks ?? []) as RepairAidInputV1[]);
+    setNotice(`已采用${choice === "cloud" ? "云端" : "本地"}题组。`);
+  })} />;
   const [cloudAdoptionNotice, setCloudAdoptionNotice] = useState<string | undefined>();
   // **唯一**一份编辑辅助清单（产品决定 2）：安静、不带门槛话术，每个题位只出一条，
   // 修好了就消失。它不是「能不能发布」的判断——按「发布」本身就是确认。
   const taskSummary = useMemo(
-    () => buildEditingAids(editor.draft, issues, repairAids),
+    () => buildEditingAids(editor.draft, issues, repairAids.filter((task) => !task.comparisonUnitId)),
     [editor.draft, issues, repairAids]
   );
+  // Put each actionable question-level issue beside its editable group; the header
+  // retains only tasks which cannot be attached to a current question group.
+  const taskAnchor = (task: UserTaskV1) => {
+    const targets = task.actions.map((action) => action.targetId).filter((id) => id && id !== "document");
+    const contains = (value: unknown): boolean => {
+      if (Array.isArray(value)) return value.some(contains);
+      if (!value || typeof value !== "object") return false;
+      const object = value as Record<string, unknown>;
+      return [object.taskId, object.slotId, object.id, object.responseGroupId].some((id) => typeof id === "string" && targets.includes(id)) || Object.values(object).some(contains) || (Array.isArray(object.slotIds) && object.slotIds.some((id) => targets.includes(id)));
+    };
+    return editor.draft?.taskGroups.find((group) => contains(group))?.taskId;
+  };
+  const renderGroupTasks = (taskId: string) => {
+    const tasks = taskSummary.tasks.filter((task) => taskAnchor(task) === taskId);
+    return tasks.length ? <aside className="workspace-group-tasks" aria-label="这组题需要处理的内容"><ul>{tasks.map((task) => <li key={task.taskId} data-task-id={task.taskId}>
+      <span>{task.title}</span>{task.detail ? <small>{task.detail}</small> : null}
+      <div className="button-row">{task.actions.map((action) => <button key={action.id} className="ghost small" disabled={Boolean(busyAction) || cloudReviewing} onClick={(event) => { event.stopPropagation(); runTaskAction(task, action); }}>{action.label}</button>)}
+      {!task.actions.some((action) => action.id === "view-source") ? <button className="ghost small" disabled={!sourceActionsEnabled} onClick={(event) => { event.stopPropagation(); setSourceOpen(true); }}>对照原文件</button> : null}</div>
+    </li>)}</ul></aside> : null;
+  };
   const [tasksExpanded, setTasksExpanded] = useState(false);
   const visibleTasks = useMemo(
-    () => splitVisibleTasks(taskSummary.tasks, tasksExpanded),
-    [taskSummary.tasks, tasksExpanded]
+    () => splitVisibleTasks(taskSummary.tasks.filter((task) => !taskAnchor(task)), tasksExpanded),
+    [taskSummary.tasks, tasksExpanded, editor.draft]
   );
 
   const previewLimitation = useMemo(
@@ -531,7 +565,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               aria-label={taskSummary.ready ? taskSummary.headline : "正在打开这道题"}
             >
               {/* 编辑辅助，不是门槛：只报「还有几处可以补充」，不报阻断。 */}
-              {taskSummary.ready ? `待补充 ${taskSummary.tasks.length}` : "待补充 …"}
+              {taskSummary.ready ? `文档提示 ${taskSummary.tasks.filter((task) => !taskAnchor(task)).length}` : "待补充 …"}
             </button>
             <button
               data-testid="workspace-recognition-toggle"
@@ -631,7 +665,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               ) : null}
             </>
           ) : (
-            "编辑模式 · 保存后点击「发布」输出到 NAS"
+            `编辑模式 · 保存后点击「发布」输出到 NAS${comparisons.length ? ` · ${comparisons.length} 组待选择` : ""}`
           )}
         </span>
         {mode === "student" && previewLimitation.level === "warning" ? (
@@ -759,7 +793,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
           className="workspace-issues"
           aria-label="还可以补充的内容"
           data-testid="workspace-issue-list"
-          data-task-count={taskSummary.tasks.length}
+          data-task-count={taskSummary.tasks.filter((task) => !taskAnchor(task)).length}
           data-merged-rows={taskSummary.mergedRowCount}
           data-preflight-state={preflightState}
           data-tasks-ready={taskSummary.ready ? "true" : "false"}
@@ -774,7 +808,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               判据用 `taskSummary.ready`（领域规则，可单测），不用 `editor.loading`。 */}
           {!taskSummary.ready ? (
             <p className="empty compact" data-testid="workspace-tasks-loading">{taskSummary.headline}</p>
-          ) : taskSummary.tasks.length ? (
+          ) : visibleTasks.visible.length ? (
             <>
               <p className="workspace-issues-headline" data-testid="workspace-tasks-headline">
                 {taskSummary.headline}
@@ -832,7 +866,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             </>
           ) : (
             // 没有条目就只留一句安静的话——不是「可以导出」这种结论。
-            <p className="empty compact" data-testid="workspace-tasks-clear">{taskSummary.headline}</p>
+            <p className="empty compact" data-testid="workspace-tasks-clear">{taskSummary.tasks.length ? "具体问题已显示在对应题组旁。" : taskSummary.headline}</p>
           )}
           {locateMiss ? (
             <p className="empty compact" role="status" data-testid="workspace-locate-miss">
@@ -901,6 +935,8 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             authoring={editor.draft}
             mode="author"
             locked={cloudReviewing}
+            taskAdornment={(taskId) => <>{comparisons.filter((task) => comparisonAnchor(task) === taskId).map(renderComparison)}{renderGroupTasks(taskId)}</>}
+            unanchoredTaskAdornment={comparisons.filter((task) => !comparisonAnchor(task)).map(renderComparison)}
             selectedId={selectedId}
             onSelect={setSelectedId}
             onTextCommand={cloudReviewing ? undefined : ({ nodeId, expectedText, text }) =>
