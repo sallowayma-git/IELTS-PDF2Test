@@ -1284,6 +1284,10 @@ fn validate_special_truth(
 }
 
 fn process_fixture(root: &Path, fixture_id: &str, fixture: &Value) -> Result<Value, String> {
+    // Every caller writes the same tmp/phase4-real-pdf-acceptance/<fixture> tree; concurrent
+    // tests must not commit the shadow bundle into it at the same time.
+    static OUTPUT_TREE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _output_tree = OUTPUT_TREE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let metadata_path = root.join(
         fixture
             .get("metadataPath")
