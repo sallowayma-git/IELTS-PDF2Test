@@ -128,6 +128,10 @@ pub(crate) struct RepairRunRequest<'a> {
     ///
     /// `None` = 调用方不需要进度（测试、或没有可写状态的地方）。
     pub progress: Option<&'a dyn Fn(RepairProgress)>,
+    /// 采纳计划产出的云端复核目标（needsCloudReview）。修复循环的目标 = 这份清单里可定位到
+    /// 题组/槽位的项 + 采纳后仍在的阻断级质量问题，而不仅是 candidate 与草稿之间的差异。
+    /// 空清单且无阻断质量问题 ⇒ 不建包、零调用。passage 级项（无 taskId/slotId）不生包。
+    pub review_targets: &'a [Value],
 }
 
 /// 一次进度上报的内容。
@@ -993,6 +997,29 @@ fn batch_uses_adopted_cloud_as_canonical(root: &Path, batch_id: &str) -> Command
         == Some(true))
 }
 
+fn reviewed_comparison_differences(
+    root: &Path,
+    batch_id: &str,
+    canonical: &Value,
+    challenger: &Value,
+    adopted: bool,
+) -> CommandResult<Vec<Value>> {
+    let differences = candidate_differences(canonical, challenger);
+    if !adopted {
+        return Ok(differences);
+    }
+    let conn = open_library_connection(root)?;
+    let repair = store::read_batch_repair(&conn, batch_id)?;
+    let targets = repair.as_ref().and_then(|repair| {
+        repair.pointer("/candidateAdoption/needsCloudReview").and_then(Value::as_array)
+    });
+    // Old receipts lack an adoption review plan; keep their conservative comparison behavior.
+    Ok(match targets {
+        Some(targets) => packets::differences_for_review_targets(canonical, challenger, differences, targets),
+        None => differences,
+    })
+}
+
 /// Return the comparison challenger: cloud candidate on the unchanged fallback path, or the
 /// immutable full local authoring snapshot after cloud adoption.
 fn comparison_challenger(
@@ -1036,7 +1063,7 @@ pub(crate) fn build_repair_context(
     let differences = if challenger_authoring.is_null() {
         Vec::new()
     } else {
-        candidate_differences(&canonical, &challenger_authoring)
+        reviewed_comparison_differences(root, batch_id, &canonical, &challenger_authoring, adopted)?
     };
 
     let source_file_id = canonical
@@ -1449,6 +1476,23 @@ fn parse_tool_call(raw: &Value) -> Result<CloudRepairToolCallV1, String> {
         return Err(format!("CLOUD_REPAIR_UNKNOWN_TOOL:{tool}"));
     }
     Ok(call)
+}
+
+fn packet_tool_call_fingerprint(
+    packet_id: &str,
+    call: &CloudRepairToolCallV1,
+    escalation_level: u32,
+) -> String {
+    let mut arguments = call.arguments.clone();
+    // CAS tokens change after a write even when the proposed content has made no progress.
+    if call.tool == "apply_edits" {
+        if let Some(object) = arguments.as_object_mut() {
+            object.remove("baseVersion");
+        }
+    }
+    let arguments = serde_json::to_string(&arguments)
+        .expect("JSON tool arguments must serialize for repeat detection");
+    format!("{packet_id}:{}:{escalation_level}:{arguments}", call.tool)
 }
 
 /// 包模式下执行一次工具调用需要的东西。
@@ -2540,7 +2584,7 @@ fn remaining_tasks(
 
     // ── 2) 尚未裁定的内容差异 ─────────────────────────────────────────────
     if let Some(challenger) = challenger.as_ref() {
-        for difference in candidate_differences(&canonical, challenger) {
+        for difference in reviewed_comparison_differences(root, batch_id, &canonical, challenger, adopted)? {
             let (target_type, target_id, field) = difference_key(&difference);
             let task_id = format!("cloud-diff:{target_type}:{target_id}:{field}");
             match fresh_ruling_for_difference(rulings, &difference) {
@@ -3324,6 +3368,7 @@ where
     let mut incomplete = false;
     // 已经收工的包（按**稳定 id**）。重切之后按 id 过滤，已做完的不会被重新排队。
     let mut done_packets: BTreeSet<String> = BTreeSet::new();
+    let mut repeats: BTreeMap<String, u32> = BTreeMap::new();
     // 以初始包数固定总上限，重切不能增加剩余请求额度，否则编辑循环会越跑越长。
     let global_round_cap = PACKET_MAX_ROUNDS * (queue.len().max(1) as u32);
 
@@ -3403,7 +3448,6 @@ where
         let mut packet_insufficient = 0usize;
         let mut packet_unverified = 0usize;
         let mut packet_status = "rounds_exhausted";
-        let mut repeats: BTreeMap<String, u32> = BTreeMap::new();
         let mut escalated = false;
         // 该收摊了：记录完本包诊断就退出外层循环（取消 / 超时 / 全局预算 / 模型 finish /
         // 网关不可用）。用标志而不是 `break 'packets`，是为了**不让这一包的诊断丢掉**。
@@ -3422,13 +3466,13 @@ where
                 stop_all = true;
                 break;
             }
+            if packet_rounds >= PACKET_MAX_ROUNDS {
+                break;
+            }
             if rounds >= global_round_cap {
                 status = REPAIR_STATUS_BUDGET_EXHAUSTED;
                 packet_status = "global_round_budget";
                 stop_all = true;
-                break;
-            }
-            if packet_rounds >= PACKET_MAX_ROUNDS {
                 break;
             }
             packet_rounds += 1;
@@ -3483,13 +3527,8 @@ where
             // 已经给它加了材料（L2 整页图 / L3 整份原文）——那不是「原地打转」，而是升级
             // 阶梯在推进。若不带上级别，L1 的第三次重复就会被判成 `no_progress` 而**掐断
             // 阶梯**，本包永远到不了 L4，最后只好谎报「预算耗尽」。
-            let fingerprint = format!(
-                "{}:{}:{}",
-                call.tool,
-                level,
-                serde_json::to_string(&call.arguments).unwrap_or_default()
-            );
-            let counter = repeats.entry(fingerprint).or_insert(0);
+            let fingerprint = packet_tool_call_fingerprint(&packet_id, &call, level);
+            let counter = repeats.entry(fingerprint.clone()).or_insert(0);
             *counter += 1;
             if *counter > REPEAT_LIMIT {
                 packet_observations.push(
@@ -3503,6 +3542,7 @@ where
                 .unwrap_or(Value::Null),
             );
                 packet_status = "no_progress";
+                done_packets.insert(packet_id.clone());
                 break;
             }
 
@@ -3520,6 +3560,10 @@ where
                 };
                 execute_tool(request, &call, rounds, &packet, Some(&mut tools))
             };
+            // A stale version was never applied; allow the same edit with a refreshed CAS token.
+            if result.errors.iter().any(|error| error.contains("EDIT_VERSION_CONFLICT")) {
+                repeats.remove(&fingerprint);
+            }
             // P9：没有文本层时的「证据未核验」如实累计——进逐包诊断与整次摘要。
             packet_unverified += evidence_unverifiable_count(&result.result);
             unverified_evidence += evidence_unverifiable_count(&result.result);
@@ -3577,14 +3621,16 @@ where
             }
             packet_observations.push(serde_json::to_value(&result).unwrap_or(Value::Null));
             observations.push(serde_json::to_value(&result).unwrap_or(Value::Null));
+            // 模型在**任何一步**（apply_edits / finish_packet / finish / …）明确提出的
+            // unresolved 都必须持久化进剩余任务：一旦本包落地编辑就以 edited 收工、不再单独
+            // 给 finish_packet 机会，只在 finish 分支收集会把这些疑问丢掉。
+            if let Some(unresolved) = call.arguments.get("unresolved").and_then(Value::as_array) {
+                model_questions.extend(unresolved.iter().map(|entry| match entry {
+                    Value::String(text) => json!({ "message": text }),
+                    other => other.clone(),
+                }));
+            }
             if is_finish_packet || is_finish {
-                let unresolved = call.arguments.get("unresolved").and_then(Value::as_array);
-                if let Some(unresolved) = unresolved {
-                    model_questions.extend(unresolved.iter().map(|entry| match entry {
-                        Value::String(text) => json!({ "message": text }),
-                        other => other.clone(),
-                    }));
-                }
                 if is_finish {
                     finished = true;
                     finish_note = call
@@ -3681,6 +3727,9 @@ where
             "rounds_exhausted" | "no_progress" | "global_round_budget" | "deadline"
         ) {
             incomplete = true;
+        }
+        if matches!(packet_status, "rounds_exhausted" | "no_progress" | "context_insufficient") {
+            done_packets.insert(packet_id.clone());
         }
         packet_reports.push(json!({
             "packetId": packet_id,
@@ -3782,11 +3831,38 @@ fn plan_repair_packets(
         == Some("adopted_cloud_vs_local_snapshot");
     let candidate = comparison_challenger(request.root, request.job_id, request.batch_id, adopted)?
         .unwrap_or(Value::Null);
-    let differences: Vec<Value> = context
+    let mut differences: Vec<Value> = context
         .get("differences")
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    // 轴连接：把采纳复核清单里可定位到题组/槽位的目标并入差异，让它们即使与草稿没有逐字
+    // 差异也能生成修复包（owner_of 会按 targetType/targetId 归到所属题组）。passage 级项
+    // （只有 nodeId、无 taskId/slotId）按决定保持顾问级、不生包。已有同目标差异则不重复。
+    for target in request.review_targets {
+        let (target_type, target_id) = match (
+            target.get("taskId").and_then(Value::as_str),
+            target.get("slotId").and_then(Value::as_str),
+        ) {
+            (_, Some(slot_id)) => ("slot", slot_id),
+            (Some(task_id), None) => ("task_group", task_id),
+            _ => continue,
+        };
+        let already = differences.iter().any(|difference| {
+            difference.get("targetType").and_then(Value::as_str) == Some(target_type)
+                && difference.get("targetId").and_then(Value::as_str) == Some(target_id)
+        });
+        if already {
+            continue;
+        }
+        differences.push(json!({
+            "targetType": target_type,
+            "targetId": target_id,
+            "field": target.get("reason").and_then(Value::as_str).unwrap_or("needs_cloud_review"),
+            "canonical": Value::Null,
+            "candidate": Value::Null,
+        }));
+    }
     let blocking_issues = crate::authoring_v2_commands::unresolved_blocking_issues(&canonical);
     let protected: BTreeSet<String> = context
         .get("protectedTargets")

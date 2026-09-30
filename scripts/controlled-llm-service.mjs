@@ -181,11 +181,16 @@ function textOf(body) {
 function detectTask(text) {
   if (text.includes('--- SLOTS BEGIN ---')) return 'verify_source_answers';
   if (text.includes('--- DIVERGENCES BEGIN ---')) return 'adjudicate_divergence';
-  // 这两句是 `llm_gateway.rs::repair_step_prompt` / `authoring_candidate_prompt` 的
-  // 首句，逐字取自源码——不靠「大概像不像」猜，避免 prompt 改了之后静默串到别的分支。
+  // 这一句是 `llm_gateway.rs::repair_step_prompt` 的首句，逐字取自源码。
   if (text.includes('You are repairing an IELTS Reading authoring draft so it matches the ORIGINAL FILE.')) {
     return 'repair_authoring_step';
   }
+  // 成本轮把「稳定前缀 + 尾部模式说明」用于前缀缓存，候选识别不再有固定首句。按尾部
+  // 结构化的 `Response mode:` 行判定（`llm_gateway.rs::authoring_candidate_prompt_parts`），
+  // 不再依赖提示词开头的文字——那已随布局改动失效，会把候选误判成大纲。
+  if (text.includes('Response mode: missing-field patch')) return 'generate_authoring_candidate_patch';
+  if (text.includes('Response mode: complete candidate')) return 'generate_authoring_candidate';
+  // 兼容旧布局（若仍出现旧首句）。
   if (text.includes('You are recognising an IELTS Reading paper from its ORIGINAL FILE into a COMPLETE authoring draft.')) {
     return 'generate_authoring_candidate';
   }
@@ -1252,6 +1257,51 @@ function authoringCandidateReply(text) {
   return candidate;
 }
 
+/** JSON Pointer（RFC 6901）解析：`/a/b/0` 逐段下钻，未命中返回 undefined。 */
+function resolveJsonPointer(root, pointer) {
+  if (pointer === '' || pointer === '/') return root;
+  const parts = pointer
+    .split('/')
+    .slice(1)
+    .map((part) => part.replace(/~1/gu, '/').replace(/~0/gu, '~'));
+  let node = root;
+  for (const part of parts) {
+    if (node == null || typeof node !== 'object') return undefined;
+    node = Array.isArray(node) ? node[Number(part)] : node[part];
+  }
+  return node;
+}
+
+/**
+ * 缺字段补丁（`Response mode: missing-field patch`）：按 prompt 尾部列出的 JSON 指针，
+ * 从候选样本里取对应值，回 `{missingFields:{<指针>:<值>}}`。后端要求键集合与请求指针
+ * 完全一致，所以每个被请求的指针都要出现（取不到时以 null 占位，保持键数一致）。
+ */
+function authoringCandidatePatchReply(text) {
+  if (!authoringCandidate) return { missingFields: {} };
+  const marker = 'these JSON pointers and no complete candidate: ';
+  const at = text.indexOf(marker);
+  let pointers = [];
+  if (at >= 0) {
+    const rest = text.slice(at + marker.length);
+    const end = rest.indexOf(']');
+    if (end >= 0) {
+      try {
+        pointers = JSON.parse(rest.slice(0, end + 1));
+      } catch {
+        pointers = [];
+      }
+    }
+  }
+  const candidate = candidateForPromptChunk(structuredClone(authoringCandidate), text);
+  const missingFields = {};
+  for (const pointer of pointers) {
+    const value = resolveJsonPointer(candidate, pointer);
+    missingFields[pointer] = value === undefined ? null : value;
+  }
+  return { missingFields };
+}
+
 function replyFor(task, text) {
   if (task === 'verify_source_answers') {
     return sourceVerificationReply(embeddedJson(text, '--- SLOTS BEGIN ---', '--- SLOTS END ---'));
@@ -1260,6 +1310,7 @@ function replyFor(task, text) {
     return adjudicationReply(embeddedJson(text, '--- DIVERGENCES BEGIN ---', '--- DIVERGENCES END ---'));
   }
   if (task === 'generate_authoring_candidate') return authoringCandidateReply(text);
+  if (task === 'generate_authoring_candidate_patch') return authoringCandidatePatchReply(text);
   if (task === 'repair_authoring_step') return repairStepReply(text);
   return outline;
 }

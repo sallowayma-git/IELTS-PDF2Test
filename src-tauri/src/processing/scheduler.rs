@@ -1142,6 +1142,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                         let profile = resolved_profile.clone();
                         let state = state.clone();
                         let app = app.clone();
+                        let review_targets_for_repair = needs_cloud_review.clone();
                         move || {
                             let probe_job_id = job_id.clone();
                             let cancelled_probe = move || -> bool {
@@ -1202,6 +1203,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                                     ),
                                 cancelled: &cancelled_probe,
                                 progress: Some(&progress),
+                                review_targets: &review_targets_for_repair,
                             };
                             let report = crate::cloud_repair::run_repair_loop(
                                 &request,
@@ -2873,6 +2875,95 @@ mod tests {
                 "repair_status={repair_status} applied={applied}"
             );
         }
+    }
+
+    #[test]
+    fn repair_error_persists_unavailable_and_releases_the_edit_lock() {
+        use crate::cloud_repair::REPAIR_STATUS_UNAVAILABLE;
+
+        let root = std::env::temp_dir().join(format!(
+            "processing-repair-terminal-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        crate::util::ensure_app_dirs(&root).expect("创建临时应用目录");
+        let conn = open_library_connection(&root).expect("打开临时库");
+        crate::library::schema::ensure_v2_schema(&conn).expect("创建应用 schema");
+        conn.execute(
+            "INSERT INTO library_items_v2 (id, modality, title, status, created_at, updated_at)
+             VALUES ('item-1', 'reading', 't', 'processing', '2026-01-01', '2026-01-01')",
+            [],
+        )
+        .expect("创建 library item");
+        assert!(
+            queue::enqueue(&conn, "job-1", "item-1", "asset-1", &json!({"cloudEnabled": true}))
+                .expect("入队")
+        );
+        claim_next(&conn, "worker-a")
+            .expect("认领任务")
+            .expect("job must be claimable");
+        advance_stage(
+            &conn,
+            "job-1",
+            "worker-a",
+            STAGE_RECONCILING,
+            Some("succeeded"),
+            Some("running"),
+            Some("running"),
+            Some(0),
+            None,
+        )
+        .expect("推进到云端校核")
+        .expect("lease must remain valid");
+        assert!(queue::cloud_review_in_progress(&conn, "item-1").expect("检查编辑锁"));
+
+        conn.execute(
+            "INSERT INTO recognition_batches_v1
+             (batch_id, library_item_id, job_id, base_edit_version, source_sha256,
+              local_status, cloud_status, source_status, stages_json, created_at, updated_at)
+             VALUES ('batch-1', 'item-1', 'job-1', 1, '', 'succeeded', 'running', 'not_run',
+                     '{}', '2026-01-01', '2026-01-01')",
+            [],
+        )
+        .expect("创建 recognition batch");
+        crate::reconcile::store::write_batch_repair(&conn, "batch-1", &json!({"status": "running"}))
+            .expect("记录 running repair");
+        let repair = crate::cloud_repair::unavailable_summary(
+            &root,
+            "item-1",
+            "batch-1",
+            "llm_http_500:upstream",
+        );
+        crate::reconcile::store::write_batch_repair(&conn, "batch-1", &repair)
+            .expect("写入修复错误终态");
+        let persisted = crate::reconcile::store::read_batch_repair(&conn, "batch-1")
+            .expect("读取修复摘要")
+            .expect("修复摘要必须存在");
+        assert_eq!(persisted["status"], REPAIR_STATUS_UNAVAILABLE);
+        assert_eq!(persisted["lastError"], "llm_http_500:upstream");
+
+        let cloud_status = cloud_status_for_job(true, Some(REPAIR_STATUS_UNAVAILABLE), 0)
+            .expect("真实修复错误必须映射为 cloud failed");
+        advance_stage(
+            &conn,
+            "job-1",
+            "worker-a",
+            STAGE_READY_FOR_REVIEW,
+            Some("succeeded"),
+            Some(&cloud_status),
+            Some("succeeded"),
+            Some(0),
+            Some("CLOUD_REPAIR_UNAVAILABLE"),
+        )
+        .expect("推进到可编辑终态")
+        .expect("lease must remain valid");
+        let row = get_job(&conn, "job-1").expect("读取 processing job").expect("job exists");
+        assert_eq!(row.stage, STAGE_READY_FOR_REVIEW);
+        assert_eq!(row.cloud_status, "failed");
+        assert_eq!(row.lease_owner, None);
+        assert!(!queue::cloud_review_in_progress(&conn, "item-1").expect("检查编辑锁已释放"));
+
+        drop(conn);
+        std::fs::remove_dir_all(&root).expect("清理临时应用目录");
     }
 
     /// 云端**起了但没拿到修复状态**（取消 / lease 丢失 / 冻结失败 / 将来漏设状态）：

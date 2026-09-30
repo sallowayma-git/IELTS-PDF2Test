@@ -23,6 +23,7 @@ if (!fs.existsSync(dbPath)) {
 }
 
 const db = new DatabaseSync(dbPath, { readOnly: true });
+db.exec("PRAGMA busy_timeout = 5000");
 const tables = db
   .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
   .all()

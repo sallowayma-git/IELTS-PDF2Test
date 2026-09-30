@@ -39,7 +39,7 @@
  * 退出码：0 通过 / 1 失败 / 2 部分无法执行 / 3 环境不满足 / 5 全部无法执行
  */
 
-import { spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -63,8 +63,9 @@ import {
   writeReport,
 } from "./lib/tauri-cdp-harness.mjs";
 import { computeScenarioVerdict, SCENARIO_STATUS } from "./lib/chain-verdict.mjs";
-import { deriveAnswerRepairScenario, deriveRepairScenario, diagnoseAnswerClaimL1, loadRepairGolden, textOfNodes } from "./lib/cloud-repair-scenario.mjs";
+import { collectTextNodes, deriveAnswerRepairScenario, deriveRepairScenario, diagnoseAnswerClaimL1, loadRepairGolden, textOfNodes } from "./lib/cloud-repair-scenario.mjs";
 import { loadPublishedPackageWithRealProviderAsync } from "./lib/student-real-provider.mjs";
+import { loadTestInferredAnswers, sanitizeCleanCandidate } from "./lib/clean-authoring-candidate.mjs";
 
 const exePath = path.join(repoRoot, "src-tauri", "target", "debug", "ielts-author-studio.exe");
 const keep = process.argv.includes("--keep");
@@ -335,8 +336,8 @@ async function waitForService(timeoutMs = 20000) {
   return null;
 }
 
-function startService({ candidate = null, plan = null, delayCandidateMs = 0 } = {}) {
-  const args = [serviceScript, "--port", String(servicePort), "--mode", "normal"];
+function startService({ candidate = null, plan = null, delayCandidateMs = 0, mode = "normal" } = {}) {
+  const args = [serviceScript, "--port", String(servicePort), "--mode", mode];
   if (candidate) args.push("--candidate", candidate);
   if (plan) args.push("--plan", plan);
   if (delayCandidateMs > 0) args.push("--delay-candidate-ms", String(delayCandidateMs));
@@ -355,7 +356,7 @@ function startService({ candidate = null, plan = null, delayCandidateMs = 0 } = 
   serviceChild.stdout.on("data", collect);
   serviceChild.stderr.on("data", collect);
   report.service.log = () => out;
-  report.service.modes.push(candidate ? `candidate+plan${delayCandidateMs > 0 ? `+delay-${delayCandidateMs}ms` : ""}` : "skeleton");
+  report.service.modes.push(candidate ? `candidate+plan${delayCandidateMs > 0 ? `+delay-${delayCandidateMs}ms` : ""}` : `skeleton-${mode}`);
   return out;
 }
 
@@ -404,24 +405,41 @@ function writeProfile() {
 }
 
 /** 作业目录里网关调用的痕迹与**模型工具往返记录**。 */
-function llmTraces(jobId) {
+function compactSourceText(value) {
+  return String(value ?? "").normalize("NFKC").replace(/[^\p{L}\p{N}]+/gu, "").toLowerCase();
+}
+
+function sourceTextContains(source, quote) {
+  const compactSource = compactSourceText(source);
+  const compactQuote = compactSourceText(quote);
+  return compactSource.length > 0 && compactQuote.length > 0 && compactSource.includes(compactQuote);
+}
+
+function originalPdfPageTexts(pdfPath) {
+  const script = "import fitz,json,sys; doc=fitz.open(sys.argv[1]); print(json.dumps([page.get_text('text') for page in doc],ensure_ascii=False))";
+  const python = process.env.PDF2TEST_PDF_TEXT_PYTHON ?? "python";
+  const pages = JSON.parse(execFileSync(python, ["-c", script, pdfPath], { encoding: "utf8" }));
+  return new Map(pages.map((text, index) => [index + 1, String(text ?? "")]));
+}
+
+function llmTraces(jobId, sourceTextChecks = []) {
   const jobDir = path.join(appDataDir, "jobs", String(jobId ?? ""));
   const dir = path.join(jobDir, "cache", "llm");
   const traces = { dir, exists: fs.existsSync(dir), byCommand: {}, repairRounds: [], callRecords: [] };
   if (traces.exists) {
     const files = fs.readdirSync(dir);
     for (const file of files) {
-      const matched = /^(.+)-(input|output)-(\d+)\.json$/u.exec(file);
+      const matched = /^(.+)-(input|output)-\d+(?:-\d+)?\.json$/u.exec(file);
       if (!matched) continue;
       const command = matched[1];
       traces.byCommand[command] = traces.byCommand[command] ?? { input: 0, output: 0 };
       traces.byCommand[command][matched[2]] += 1;
     }
     const inputs = files
-      .map((file) => /^repair_authoring_step-input-(\d+)\.json$/u.exec(file))
+      .map((file) => /^repair_authoring_step-input-(\d+(?:-\d+)?)\.json$/u.exec(file))
       .filter(Boolean)
-      .map((matched) => ({ stamp: Number(matched[1]), file: matched[0] }))
-      .sort((a, b) => a.stamp - b.stamp);
+      .map((matched) => ({ stamp: matched[1], order: Number(matched[1].split("-")[0]), file: matched[0] }))
+      .sort((a, b) => a.order - b.order || a.stamp.localeCompare(b.stamp));
     for (const entry of inputs) {
       try {
         const input = JSON.parse(fs.readFileSync(path.join(dir, entry.file), "utf8"));
@@ -430,6 +448,18 @@ function llmTraces(jobId) {
               .map((page) => Number(page?.pageIndex))
               .filter((page) => Number.isInteger(page))
           : [];
+        const sourceEvidencePages = Array.isArray(input.context?.sourceEvidence?.pages)
+          ? input.context.sourceEvidence.pages
+          : [];
+        const sourceTextResults = sourceTextChecks.map((check) => {
+          const page = sourceEvidencePages.find((entry) => Number(entry?.pageIndex) === Number(check.pageIndex));
+          const requestText = (page?.lines ?? []).map((line) => line?.text ?? "").join("\n");
+          return {
+            pageIndex: Number(check.pageIndex),
+            lineCount: Array.isArray(page?.lines) ? page.lines.length : 0,
+            includesExpectedText: sourceTextContains(requestText, check.text),
+          };
+        });
         const toolObservations = (input.observations ?? []).map((observation) => {
           const result = observation?.result ?? {};
           const directPages = Array.isArray(result.pages) ? result.pages : [];
@@ -468,6 +498,7 @@ function llmTraces(jobId) {
           comparisonMode: input.context?.comparisonMode ?? null,
           packetMode: input.context?.contextMode === "packets",
           packetPages,
+          sourceTextResults,
         });
       } catch {
         traces.repairRounds.push({ stamp: entry.stamp, error: "unparsable" });
@@ -512,10 +543,10 @@ function repairToolCalls(jobId) {
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir)
-    .map((file) => /^repair_authoring_step-output-(\d+)\.json$/u.exec(file))
+    .map((file) => /^repair_authoring_step-output-(\d+(?:-\d+)?)\.json$/u.exec(file))
     .filter(Boolean)
-    .map((matched) => ({ stamp: Number(matched[1]), file: matched[0] }))
-    .sort((a, b) => a.stamp - b.stamp)
+    .map((matched) => ({ stamp: matched[1], order: Number(matched[1].split("-")[0]), file: matched[0] }))
+    .sort((a, b) => a.order - b.order || a.stamp.localeCompare(b.stamp))
     .map((entry) => {
       try {
         const raw = JSON.parse(fs.readFileSync(path.join(dir, entry.file), "utf8"));
@@ -746,8 +777,12 @@ async function runIneligibleCandidateFallback(derived) {
       const repair = decision?.repair ?? null;
       const cloudState = decision?.chains?.cloud?.state ?? null;
       if (repair && repair.status !== "running" && cloudState && !["queued", "running"].includes(cloudState)) {
-        finalRepair = repair;
-        break;
+        const snapshot = dumpDb(path.join(runDir, "db-ineligible-fallback-after.json"), "IneligibleFallbackAfter");
+        const job = (snapshot.processingJobs ?? []).find((job) => job.id === fallbackItemId);
+        if (job?.stage === "ready_for_review" && !["queued", "running"].includes(job.cloud_status)) {
+          finalRepair = repair;
+          break;
+        }
       }
       await sleep(600);
     }
@@ -755,6 +790,14 @@ async function runIneligibleCandidateFallback(derived) {
 
     const after = dumpDb(path.join(runDir, "db-ineligible-fallback-after.json"), "IneligibleFallbackAfter");
     const adoption = finalRepair.candidateAdoption ?? null;
+    const processingJob = (after?.processingJobs ?? []).find((job) => job.id === fallbackItemId) ?? null;
+    const editLockActive = Boolean(
+      processingJob
+      && ["queued", "running", "preparing_source", "local_recognition", "cloud_recognition", "reconciling"]
+        .includes(processingJob.stage)
+      && (["queued", "running"].includes(processingJob.cloud_status)
+        || processingJob.stage === "reconciling"),
+    );
     const finalPrompt = promptTextOf(after?.item?.canonical, derived.fix.responseGroupId);
     const journal = Array.isArray(after?.journal) ? after.journal : [];
     const adoptionWrites = journal.filter((entry) => entry.edit_origin === "cloud_candidate_adoption");
@@ -765,6 +808,10 @@ async function runIneligibleCandidateFallback(derived) {
     if (!String(adoption?.reason ?? "").includes("未完整归一化成功")) {
       problems.push(`拒绝原因没有记录候选覆盖不完整：${String(adoption?.reason ?? "")}`);
     }
+    if (!processingJob || processingJob.stage !== "ready_for_review") {
+      problems.push(`修复后 processing job 没有推进到可编辑终态：${JSON.stringify(processingJob)}`);
+    }
+    if (editLockActive) problems.push("修复终态后 processing job 仍锁定编辑");
     if (adoptionWrites.length > 0) problems.push("不合格候选仍写入了云端采纳修订");
     if (repairWrites.length === 0) problems.push("回退后没有以云端校核事务修复本地正式稿");
     if (finalPrompt !== derived.fix.after) {
@@ -778,6 +825,8 @@ async function runIneligibleCandidateFallback(derived) {
         itemId: fallbackItemId,
         localPrompt,
         finalPrompt,
+        processingJob,
+        editLockActive,
         adoption,
         candidateAdoptionJournalRows: adoptionWrites.length,
         cloudRepairJournalRows: repairWrites.length,
@@ -822,47 +871,6 @@ function sha256OfFile(filePath) {
   } catch {
     return null;
   }
-}
-
-/**
- * 读作业目录里**解析器层**抽取出来的逐页原文文本。
- *
- * 与后端 `source_page_texts` 读同一批产物、同样的页号归一（DocumentIR 是 0-based，
- * 归一成 1-based）。这里是**独立**读一遍：模型说它引用了原文，验收侧就自己去看
- * 原文里到底有没有这句话——两边都读同一份 artifact，但走的是两条代码路径。
- */
-function sourcePageTextsFromJob(jobId) {
-  const dir = path.join(appDataDir, "jobs", String(jobId ?? ""));
-  const out = new Map();
-  const readPage = (page, pick) => {
-    const index = Number(page?.pageIndex);
-    if (!Number.isInteger(index) || index < 0) return;
-    const text = pick(page);
-    if (typeof text === "string" && text.trim()) out.set(index + 1, text.trim());
-  };
-  const documentIr = path.join(dir, "document-ir.json");
-  if (fs.existsSync(documentIr)) {
-    const parsed = JSON.parse(fs.readFileSync(documentIr, "utf8"));
-    for (const page of parsed?.pages ?? []) {
-      readPage(page, (entry) => {
-        if (Array.isArray(entry?.lines)) {
-          return entry.lines.map((line) => line?.text ?? "").filter((line) => line.trim()).join("\n");
-        }
-        if (Array.isArray(entry?.spans)) return entry.spans.map((span) => span?.text ?? "").join("");
-        return "";
-      });
-    }
-  }
-  if (out.size === 0) {
-    const compare = path.join(dir, "document-ir-v2.shadow.compare.json");
-    if (fs.existsSync(compare)) {
-      const parsed = JSON.parse(fs.readFileSync(compare, "utf8"));
-      for (const page of parsed?.pages ?? []) {
-        readPage(page, (entry) => entry?.v1Text ?? entry?.v2Text ?? "");
-      }
-    }
-  }
-  return out;
 }
 
 /**
@@ -939,9 +947,12 @@ async function main() {
   fs.copyFileSync(fixturePath, path.join(runDir, "source-file", path.basename(fixturePath)));
 
   // ---- 0. 起受控服务（**没有**候选样本：第 1 遍的云端候选会被如实拒绝）----
-  startService({});
+  startService({ mode: "fail" });
   const health0 = await waitForService();
   if (!health0) throw new CannotRunError("受控服务没有就绪");
+  if (health0.mode !== "fail" || health0.candidate || health0.plan) {
+    throw new CannotRunError("预跑服务必须拒绝完整候选请求，避免它消费后续场景样本");
+  }
   report.service.started = true;
   report.service.health = health0;
 
@@ -1058,6 +1069,8 @@ async function main() {
     return;
   }
 
+  const pdfPageTexts = originalPdfPageTexts(fixturePath);
+  report.scenario.sourcePdfTextPages = pdfPageTexts.size;
   const derived = deriveRepairScenario(prepassDraft.ds, golden);
   if (!derived?.ok) {
     // 前提不成立时，必须把**这份稿子的真实形状**写进报告：只说「没有页脚残留」
@@ -1104,6 +1117,26 @@ async function main() {
     writeFinalReport();
     return;
   }
+  const cleanCandidateSeed = JSON.parse(JSON.stringify(derived.candidate));
+  const correctionGroup = derived.candidate.taskGroups.find((group) => group.taskId === derived.fix.taskId);
+  const correctionResponse = (correctionGroup?.responseGroups ?? []).find(
+    (response) => response.responseGroupId === derived.fix.responseGroupId,
+  );
+  const correctionPromptNodes = collectTextNodes(correctionResponse?.prompt ?? []);
+  if (correctionPromptNodes.length !== 1) {
+    throw new Error(`content_not_aligned 场景无法定位 ${derived.fix.responseGroupId} 的单一题面节点`);
+  }
+  // The OCR-added footer exists in the PDF and still aligns; use the permitted
+  // single-stem derivation when this fixture has no natural low-similarity trigger.
+  correctionPromptNodes[0].text = derived.fix.before.split(/\s+/u).reverse().join(" ");
+  derived.plan.rulings.push({
+    targetType: "task_group",
+    targetId: "group-2",
+    field: "instruction_stem_overlap",
+    ruling: "current_is_correct",
+    reason: "按真实复核反馈核对 group-2 的说明与 q32 题干；原卷支持当前题组内容，保留云端正式稿。",
+    evidenceKeyword: "NOT GIVEN if it is impossible to say",
+  });
   const humanProbe = humanProtectionProbe(prepassDraft.ds, [derived.claim?.slotId].filter(Boolean));
   if (humanProbe) {
     // Harness-only competing answer values let the real editor journal exercise the same
@@ -1121,6 +1154,16 @@ async function main() {
   report.scenario.fix = derived.fix;
   report.scenario.rule = derived.rule;
   report.scenario.unresolved = derived.plan.unresolved;
+  report.scenario.mechanismTriggers = {
+    correction: {
+      taskId: derived.fix.taskId, reason: "content_not_aligned", sourcePageOneBased: derived.fix.sourcePageOneBased,
+      fixtureAdjustment: "single_stem_word_order_derivation_when_no_natural_trigger",
+      localRecognitionText: derived.fix.before,
+      candidateTriggerText: correctionPromptNodes[0].text,
+    },
+    adjudication: { taskId: "group-2", reason: "instruction_stem_overlap" },
+    missingPage: { slotId: derived.claim.slotId, questionNumber: derived.claim.questionNumber, searchPages: derived.claim.searchPages },
+  };
   report.scenario.differences = [
     `response_group:${derived.fix.responseGroupId}:prompt`,
     // W1 是必需差异；派生器没有 claim 时会拒绝返回可执行场景。
@@ -1271,6 +1314,49 @@ async function main() {
   let baselineTooLate = false;
   let humanProbeAttempted = false;
   let humanProbeError = null;
+  const repairSourceChecks = [{
+    pageIndex: derived.fix.sourcePageOneBased,
+    text: `${derived.fix.questionNumber} ${derived.fix.after}`,
+  }];
+  let sampledRepairTrace = null;
+  let lastRepairTraceSignature = null;
+  const sampleRepairTrace = () => {
+    const dir = path.join(appDataDir, "jobs", String(itemId ?? ""), "cache", "llm");
+    let files;
+    try {
+      files = fs.readdirSync(dir).filter((file) => /^repair_authoring_step-(input|output)-\d+(?:-\d+)?\.json$/u.test(file));
+    } catch {
+      return;
+    }
+    if (files.length === 0) return;
+    const signature = files.map((file) => {
+      const stat = fs.statSync(path.join(dir, file));
+      return `${file}:${stat.size}:${stat.mtimeMs}`;
+    }).join("|");
+    if (signature === lastRepairTraceSignature) return;
+    lastRepairTraceSignature = signature;
+
+    const llm = llmTraces(itemId, repairSourceChecks);
+    const toolCalls = repairToolCalls(itemId);
+    const repairRounds = new Map([
+      ...(sampledRepairTrace?.llm.repairRounds ?? []),
+      ...llm.repairRounds,
+    ].map((round) => [round.stamp, round]));
+    const observedToolCalls = new Map([
+      ...(sampledRepairTrace?.toolCalls ?? []),
+      ...toolCalls,
+    ].map((call) => [call.stamp, call]));
+    const previousCalls = sampledRepairTrace?.llm.callRecords ?? [];
+    sampledRepairTrace = {
+      llm: {
+        ...llm,
+        repairRounds: [...repairRounds.values()],
+        callRecords: llm.callRecords.length >= previousCalls.length ? llm.callRecords : previousCalls,
+        byCommand: { ...(sampledRepairTrace?.llm.byCommand ?? {}), ...llm.byCommand },
+      },
+      toolCalls: [...observedToolCalls.values()],
+    };
+  };
   while (Date.now() < repairDeadline) {
     // (a) 本地初稿一出现就**立刻**取基线——它必须落在云端写入之前。
     if (!draft) {
@@ -1390,6 +1476,7 @@ async function main() {
       }
       if (repair.status === "running") sawRunning = true;
     }
+    if (repair?.status) sampleRepairTrace();
     if (repair && repair.status !== "running" && cloudState && !["queued", "running"].includes(cloudState)) {
       finalRepair = repair;
       break;
@@ -1428,7 +1515,27 @@ async function main() {
   report.observed.canonicalChanges = changes;
   report.observed.editVersion = { before: versionBefore, after: versionAfter };
   report.observed.promptText = { before: promptBefore, after: promptAfter };
-  report.modelTraces = { llm: llmTraces(itemId), toolCalls: repairToolCalls(itemId) };
+  const finalLlmTrace = llmTraces(itemId, repairSourceChecks);
+  const finalRepairToolCalls = repairToolCalls(itemId);
+  const mergedRepairRounds = new Map([
+    ...(sampledRepairTrace?.llm.repairRounds ?? []),
+    ...finalLlmTrace.repairRounds,
+  ].map((round) => [round.stamp, round]));
+  const mergedRepairToolCalls = new Map([
+    ...(sampledRepairTrace?.toolCalls ?? []),
+    ...finalRepairToolCalls,
+  ].map((call) => [call.stamp, call]));
+  report.modelTraces = {
+    llm: {
+      ...finalLlmTrace,
+      byCommand: { ...(sampledRepairTrace?.llm.byCommand ?? {}), ...finalLlmTrace.byCommand },
+      repairRounds: [...mergedRepairRounds.values()],
+      callRecords: finalLlmTrace.callRecords.length >= (sampledRepairTrace?.llm.callRecords.length ?? 0)
+        ? finalLlmTrace.callRecords
+        : sampledRepairTrace?.llm.callRecords ?? [],
+    },
+    toolCalls: [...mergedRepairToolCalls.values()],
+  };
   report.observed.candidateAdoption = finalRepair.candidateAdoption ?? null;
 
   // ---- 10. 断言：云端**自己**改了什么 ----
@@ -1448,6 +1555,25 @@ async function main() {
   if (finalRepair.candidateAdoption?.adopted !== true) {
     problems.push(`云端候选应先被正式采纳，实际 ${JSON.stringify(finalRepair.candidateAdoption ?? null)}`);
   }
+  const reviewGroupIds = new Set((finalRepair.candidateAdoption?.needsCloudReview ?? [])
+    .map((entry) => entry?.taskId ?? entry?.targetId)
+    .filter((taskId) => typeof taskId === "string"));
+  const nonReviewGroupIds = (derived.candidate.taskGroups ?? [])
+    .map((group) => group?.taskId)
+    .filter((taskId) => typeof taskId === "string" && !reviewGroupIds.has(taskId));
+  const adoptedGroupIds = finalRepair.candidateAdoption?.adoptedTaskIds ?? [];
+  const notAdoptedWithoutReview = nonReviewGroupIds.filter((taskId) => !adoptedGroupIds.includes(taskId));
+  if (notAdoptedWithoutReview.length > 0) {
+    problems.push(`没有触发复核的题组未被整体采纳：${notAdoptedWithoutReview.join("、")}`);
+  }
+  if (finalRepair.candidateAdoption?.passageAdopted !== true) {
+    problems.push("低相似句应保留为顾问级复核提示，同时整体采纳原文 passage");
+  }
+  report.observed.noTriggerAdoption = {
+    reviewGroupIds: [...reviewGroupIds],
+    adoptedGroupIds,
+    passageAdopted: finalRepair.candidateAdoption?.passageAdopted ?? null,
+  };
   // 版本必须**两个都读到了**才谈得上「推进」。显式拒绝 null：`2 > null` 在 JS 里是 true
   // （null 被转成 0），把「快照缺失」读成「版本推进了」。
   if (versionBefore == null || versionAfter == null) {
@@ -1588,10 +1714,21 @@ async function main() {
     const toolCalls = report.modelTraces.toolCalls ?? [];
     const sourceRounds = toolCalls.filter((call) => call.tool === "read_source");
     const quotes = toolCalls.flatMap((call) => call.evidence ?? []);
-    const pageTexts = sourcePageTextsFromJob(itemId);
+    const pageTexts = pdfPageTexts;
     const expectedPageText = pageTexts.get(Number(annotated.sourcePage.oneBased)) ?? null;
     const mode = repairContextMode();
     const problems = [];
+    const correctionTrigger = (report.observed.candidateAdoption?.needsCloudReview ?? []).some((entry) =>
+      entry?.taskId === derived.fix.taskId && entry?.reason === "content_not_aligned",
+    );
+    if (!correctionTrigger) {
+      problems.push(`候选采纳没有产生 ${derived.fix.taskId} 的题组级 content_not_aligned 复核项`);
+    }
+    const requestSourceRounds = (report.modelTraces.llm.repairRounds ?? []).filter((round) =>
+      (round.sourceTextResults ?? []).some((check) =>
+        Number(check.pageIndex) === Number(annotated.sourcePage.oneBased) && check.includesExpectedText,
+      ),
+    );
 
     // (0) 回合本身必须存在：原文没有真的到过模型手里，后面两条都无从谈起。
     //
@@ -1606,16 +1743,16 @@ async function main() {
         (round.packetPages ?? []).includes(Number(annotated.sourcePage.oneBased)),
       );
       if (roundsWithPage.length === 0) {
-        problems.push(
-          `包模式下没有任何一轮请求带着第 ${annotated.sourcePage.oneBased} 页的原文文本：`
-            + "改对了也只能是从剧本抄的，证明不了「依据原文件」",
-        );
+        problems.push(`包模式下没有任何一轮请求带着第 ${annotated.sourcePage.oneBased} 页`);
+      }
+      if (requestSourceRounds.length === 0) {
+        problems.push(`包模式修复请求没有携带原 PDF 第 ${annotated.sourcePage.oneBased} 页的题号行`);
       }
     } else if (sourceRounds.length === 0) {
       problems.push("整条修复回合里没有一次 read_source：改对了也只是照剧本抄的，证明不了「依据原文件」");
     }
     if (!expectedPageText) {
-      problems.push(`作业目录里读不到第 ${annotated.sourcePage.oneBased} 页的原文文本，无法核对引文`);
+      problems.push(`原 PDF 中读不到第 ${annotated.sourcePage.oneBased} 页，无法核对引文`);
     }
     // (1) 期望值来自人工标注的 fixture —— 与脚本派生彻底脱钩。
     if (promptAfter !== annotated.originalFileSays) {
@@ -1626,10 +1763,10 @@ async function main() {
     // (2) fixture 的标注必须与**真实原文件**对得上：原文里那一行确实是「题号 + 真值」。
     //     对不上说明标注写错了（或文件换了），这时上面的比较没有意义。
     const expectedLine = `${annotated.target.questionNumber} ${annotated.originalFileSays}`;
-    if (expectedPageText && !expectedPageText.includes(expectedLine)) {
+    if (expectedPageText && !sourceTextContains(expectedPageText, expectedLine)) {
       problems.push(`原文第 ${annotated.sourcePage.oneBased} 页里找不到「${expectedLine}」，golden 标注与真实原文件不一致`);
     }
-    if (expectedPageText && !expectedPageText.includes(annotated.originalFileQuote)) {
+    if (expectedPageText && !sourceTextContains(expectedPageText, annotated.originalFileQuote)) {
       problems.push(`golden 自带的引文在原文里找不到：${JSON.stringify(annotated.originalFileQuote)}`);
     }
     // (3) 引文必须能被证伪：模型给出的每一条引文都要在原文里逐字找到。
@@ -1649,10 +1786,10 @@ async function main() {
       const pageIndex = Number(quote?.pageIndex);
       const pageText = Number.isInteger(pageIndex) ? pageTexts.get(pageIndex) ?? null : null;
       if (!pageText) {
-        problems.push(`模型引文声明了第 ${quote?.pageIndex} 页，但作业目录里读不到该页原文`);
+        problems.push(`模型引文声明了第 ${quote?.pageIndex} 页，但原 PDF 中没有该页`);
         continue;
       }
-      if (!pageText.includes(text)) {
+      if (!sourceTextContains(pageText, text)) {
         problems.push(`模型的引文在第 ${pageIndex} 页原文里找不到：${JSON.stringify(text)}`);
       }
     }
@@ -1673,10 +1810,12 @@ async function main() {
       roundsCarryingSourcePage: (report.modelTraces.llm.repairRounds ?? []).filter((round) =>
         (round.packetPages ?? []).includes(Number(annotated.sourcePage.oneBased)),
       ).length,
+      roundsCarryingOriginalQuestionText: requestSourceRounds.length,
       quotes: quotes.map((quote) => ({ pageIndex: quote?.pageIndex ?? null, quote: quote.quote })),
       sourcePageOneBased: annotated.sourcePage.oneBased,
       sourcePageTextLength: expectedPageText?.length ?? 0,
       pagesAvailable: [...pageTexts.keys()].sort((a, b) => a - b),
+      sourceTextSource: "original PDF via PyMuPDF",
       expectedPrompt: annotated.originalFileSays,
       actualPrompt: promptAfter,
     };
@@ -1717,18 +1856,28 @@ async function main() {
   if (adoptedInputs.length === 0) {
     feedbackProblems.push("修复请求没有声明 adopted_cloud_vs_local_snapshot，无法证明云端正式稿是当前稿");
   }
-  const expectedPromptRuling = `response_group:${derived.fix.responseGroupId}:prompt=current_is_correct`;
-  const promptRuling = rounds.find(
-    (round) => round.tool === "record_ruling" && (round.rulings ?? []).includes(expectedPromptRuling),
+  const group2Inputs = adoptedInputs.filter((round) => (round.differenceTargets ?? []).some((difference) =>
+    difference?.targetType === "task_group"
+      && difference?.targetId === "group-2"
+      && difference?.field === "instruction_stem_overlap",
+  ));
+  if (group2Inputs.length === 0) {
+    feedbackProblems.push("修复请求没有把 group-2 的 instruction_stem_overlap 真实反馈带给模型");
+  }
+  const expectedGroup2Ruling = "task_group:group-2:instruction_stem_overlap=current_is_correct";
+  const group2Ruling = rounds.find(
+    (round) => round.tool === "record_ruling" && (round.rulings ?? []).includes(expectedGroup2Ruling),
   );
-  if (!promptRuling) {
-    feedbackProblems.push("没有为原文支持的云端正式题面记录 current_is_correct 裁定");
-  } else if (!(promptRuling.evidence ?? []).some((entry) => {
+  if (!group2Ruling) {
+    feedbackProblems.push("模型没有按 group-2 的真实复核反馈记录题组级 current_is_correct 裁定");
+  } else if (!(group2Ruling.evidence ?? []).some((entry) => {
     const quote = String(entry.quote ?? "");
-    return Number(entry.pageIndex) === Number(derived.fix.sourcePageOneBased)
-      && quote.includes(`${derived.fix.questionNumber} ${derived.fix.after}`);
+    const originalPage = pdfPageTexts.get(Number(entry.pageIndex)) ?? "";
+    return Number(entry.pageIndex) === 3
+      && sourceTextContains(quote, "NOT GIVEN if it is impossible to say")
+      && sourceTextContains(originalPage, quote);
   })) {
-    feedbackProblems.push("云端正式题面的裁定没有带上原文题号行的逐字引文");
+    feedbackProblems.push("group-2 题组级裁定没有带上经原 PDF 第 3 页核验的说明引文");
   }
   if (contextMode === "packets") {
     const unknown = rounds
@@ -1764,11 +1913,12 @@ async function main() {
       contextMode,
       rounds: rounds.map((round) => round.tool),
       baseVersions: rounds.filter((round) => round.tool === "apply_edits").map((round) => round.baseVersion ?? null),
-      promptRuling: expectedPromptRuling,
-      rulingEvidence: promptRuling?.evidence ?? [],
+      group2Ruling: expectedGroup2Ruling,
+      group2FeedbackRounds: group2Inputs.map((round) => ({ stamp: round.stamp, packetId: round.packetId })),
+      rulingEvidence: group2Ruling?.evidence ?? [],
       comparisonMode: adoptedInputs[0]?.comparisonMode,
       draftEditVersions: roundInputs.map((round) => round.draftEditVersion ?? null),
-      behaviorChange: "The adopted candidate already contains the source-backed prompt; repair records the evidence-backed ruling instead of re-applying it.",
+      behaviorChange: "The model adjudicates group-2's real instruction_stem_overlap feedback using source text from the original PDF.",
     });
   } else {
     record("model-adjudicated-adopted-cloud-from-real-feedback", SCENARIO_STATUS.FAILED, { contextMode, problems: feedbackProblems });
@@ -1814,6 +1964,13 @@ async function main() {
   const packetProblems = [];
   if (packetCalls.length === 0) {
     packetProblems.push("没有任何修复调用带上包 id：包模式没有真的生效（或可观测性字段没落盘）");
+  }
+  if (![27, 28].includes(Number(derived.claim?.questionNumber))) {
+    packetProblems.push(`缺页场景应使用 q27/q28 的未解析答案，实际 q${derived.claim?.questionNumber ?? "?"}`);
+  }
+  const expectedClaimSearchPages = [Number(golden?.source?.pageCount) || 5];
+  if (JSON.stringify(derived.claim?.searchPages ?? []) !== JSON.stringify(expectedClaimSearchPages)) {
+    packetProblems.push(`q27/q28 应核查答案页缺失的末页 ${JSON.stringify(expectedClaimSearchPages)}，实际 ${JSON.stringify(derived.claim?.searchPages ?? [])}`);
   }
   if (!answerClaimL1.ok) {
     packetProblems.push(
@@ -2427,6 +2584,131 @@ async function main() {
       : "本次未复现 `editable_draft_exists`，重试路径的实际行为需重新判定。",
   });
   console.log(`[cloud-repair-chain] finding defect-retry-cannot-rerun: ${report.findings.at(-1).kind}`);
+
+  const primaryItemId = itemId;
+  const cleanCandidatePath = path.join(scenarioDir, "authoring-candidate-clean.json");
+  const cleanPlanPath = path.join(scenarioDir, "repair-plan-clean.json");
+  const cleanSanitization = sanitizeCleanCandidate(cleanCandidateSeed, loadTestInferredAnswers(repoRoot), pdfPageTexts);
+  fs.writeFileSync(cleanCandidatePath, JSON.stringify(cleanSanitization.candidate, null, 2));
+  fs.writeFileSync(cleanPlanPath, JSON.stringify(derived.plan, null, 2));
+
+  await session.clickSelector('[data-testid="workspace-back"]');
+  await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, {
+    timeoutMs: 30000,
+    label: "library-before-clean-candidate-import",
+  });
+  const primaryServiceHealth = report.service.health;
+  const cleanServiceHealth = await restartService({ candidate: cleanCandidatePath, plan: cleanPlanPath });
+  report.service.primaryHealth = primaryServiceHealth;
+  report.service.cleanHealth = cleanServiceHealth;
+  record("controlled-service-restarted-with-clean-candidate", SCENARIO_STATUS.PASSED, {
+    candidate: cleanServiceHealth.candidate,
+    plan: cleanServiceHealth.plan,
+  });
+
+  const cleanItemId = await importThroughUi();
+  report.identity.cleanCandidateItemId = cleanItemId;
+  itemId = cleanItemId;
+  await session.clickSelector(`[data-item-id="${cleanItemId}"] .library-row-main`);
+  await session.waitFor(`!!document.querySelector('[data-testid="exam-workspace"]')`, {
+    timeoutMs: 40000,
+    label: "clean-candidate-workspace",
+  });
+  const cleanLocalDraft = await waitForLocalDraft(cleanItemId, 180000);
+  const cleanProblems = [];
+  if (!cleanLocalDraft) cleanProblems.push("clean candidate 条目的本地稿没有落盘");
+
+  let cleanDecision = null;
+  let cleanRepair = null;
+  let cleanCloudState = null;
+  let cleanProcessingJob = null;
+  const cleanDeadline = Date.now() + 900000;
+  while (Date.now() < cleanDeadline) {
+    cleanDecision = await readDecision();
+    cleanRepair = cleanDecision?.repair ?? null;
+    cleanCloudState = cleanDecision?.chains?.cloud?.state ?? null;
+    const adoption = cleanRepair?.candidateAdoption ?? cleanDecision?.candidateAdoption ?? null;
+    const cloudSettled = cleanCloudState && !["queued", "running"].includes(cleanCloudState);
+    if (adoption && cloudSettled && cleanRepair?.status !== "running") {
+      const snapshot = dumpDb(path.join(runDir, "db-clean-candidate-after.json"), "CleanCandidateAfter");
+      cleanProcessingJob = (snapshot.processingJobs ?? []).find((job) => job.id === cleanItemId) ?? null;
+      if (cleanProcessingJob?.stage === "ready_for_review"
+        && !["queued", "running"].includes(cleanProcessingJob.cloud_status)) break;
+    }
+    await sleep(600);
+  }
+
+  const cleanAdoption = cleanRepair?.candidateAdoption ?? cleanDecision?.candidateAdoption ?? null;
+  const cleanNeedsReview = cleanAdoption?.needsCloudReview ?? [];
+  const cleanTrace = llmTraces(cleanItemId);
+  const candidateRequests = cleanTrace.callRecords.filter((entry) => entry.commandName === "generate_authoring_candidate").length;
+  const repairRequests = cleanTrace.callRecords.filter((entry) => entry.commandName === "repair_authoring_step").length;
+  const candidateInputCacheCount = cleanTrace.byCommand.generate_authoring_candidate?.input ?? 0;
+  const repairInputCacheCount = cleanTrace.byCommand.repair_authoring_step?.input ?? 0;
+  const cleanRemainingTasks = cleanRepair?.remainingTasks ?? [];
+  const conflictTodos = cleanRemainingTasks.filter((task) =>
+    String(task?.userTaskId ?? "").startsWith("cloud-diff:")
+      || String(task?.userTaskId ?? "").startsWith("cloud-question:")
+      || task?.action === "review_difference",
+  );
+  if (!cleanAdoption) cleanProblems.push("clean candidate 等待结束前没有得到采纳结果");
+  if (cleanProcessingJob?.stage !== "ready_for_review") {
+    cleanProblems.push("clean candidate 没有进入可编辑终态");
+  }
+  if (!cleanCloudState || ["queued", "running"].includes(cleanCloudState)) {
+    cleanProblems.push(`clean candidate 云端链尚未终止，状态=${cleanCloudState ?? "missing"}`);
+  }
+  if (!cleanRepair || cleanRepair.status === "running") {
+    cleanProblems.push(`clean candidate 修复链尚未终止，状态=${cleanRepair?.status ?? "missing"}`);
+  }
+  if (!cleanTrace.exists || candidateRequests < 1) {
+    cleanProblems.push("clean candidate 的受控候选请求不可观测，无法证明修复调用次数为零");
+  }
+  if (cleanAdoption?.adopted !== true) cleanProblems.push("clean candidate 没有整体采纳");
+  if (cleanNeedsReview.length > 0) {
+    cleanProblems.push(`clean candidate 的 needsCloudReview 仍有 ${cleanNeedsReview.length} 项`);
+  }
+  if (repairRequests !== 0) {
+    cleanProblems.push(`受控服务 repair_authoring_step 次数应为 0，实际请求=${repairRequests}`);
+  }
+  if (conflictTodos.length > 0) cleanProblems.push(`clean candidate 仍有 ${conflictTodos.length} 条冲突类待办`);
+  if (cleanSanitization.missingAnswerTruth.length > 0) {
+    cleanProblems.push(`测试推断夹具没有完整的 q27–q40 答案：${cleanSanitization.missingAnswerTruth.join("、")}`);
+  }
+  report.observed.cleanCandidatePhase = {
+    itemId: cleanItemId,
+    candidate: cleanCandidatePath,
+    plan: cleanPlanPath,
+    sanitization: {
+      group2InstructionChanged: cleanSanitization.group2InstructionChanged,
+      group2StructureRestored: cleanSanitization.group2StructureRestored,
+      restoredQuestions: cleanSanitization.restoredQuestions,
+      passageTextChanged: cleanSanitization.passageTextChanged,
+      answerTruthSource: cleanSanitization.answerTruthSource,
+      answerTruthKind: cleanSanitization.answerTruthKind,
+      hasOfficialAnswerPage: cleanSanitization.hasOfficialAnswerPage,
+      answerTruthUsed: cleanSanitization.answerTruthUsed,
+      missingAnswerTruth: cleanSanitization.missingAnswerTruth,
+    },
+    cloudState: cleanCloudState,
+    processingJob: cleanProcessingJob,
+    repairStatus: cleanRepair?.status ?? null,
+    adoption: cleanAdoption,
+    needsCloudReview: cleanNeedsReview,
+    candidateRequestCount: candidateRequests,
+    candidateInputCacheCount,
+    repairAuthoringStepCount: repairRequests,
+    repairInputCacheCount,
+    repairRequests,
+    conflictTodos,
+    problems: cleanProblems,
+  };
+  if (cleanProblems.length === 0) {
+    record("clean-candidate-second-phase", SCENARIO_STATUS.PASSED, report.observed.cleanCandidatePhase);
+  } else {
+    record("clean-candidate-second-phase", SCENARIO_STATUS.FAILED, report.observed.cleanCandidatePhase);
+  }
+  itemId = primaryItemId;
 
   // ---- 18. 报告 ----
   report.modelTracesAfter = { toolCalls: repairToolCalls(itemId), llm: llmTraces(itemId) };

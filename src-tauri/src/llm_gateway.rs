@@ -215,6 +215,10 @@ fn next_llm_call_index(root: &Path, job_id: &str) -> CommandResult<u64> {
         Err(error) => return Err(format!("llm_call_sequence_read_failed:{error}")),
     };
     let next = current.saturating_add(1);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("llm_call_sequence_write_failed:{error}"))?;
+    }
     fs::write(&path, next.to_string())
         .map_err(|error| format!("llm_call_sequence_write_failed:{error}"))?;
     Ok(next)
@@ -2132,10 +2136,9 @@ pub(crate) fn candidate_missing_field_pointer(error: &str) -> Option<String> {
     };
     let index = |position: usize| parts.get(position).copied().filter(|value| value.parse::<u64>().is_ok());
     match code {
-        "cloud_authoring_output_task_groups_missing" | "cloud_authoring_output_task_groups_empty" => {
-            Some("/taskGroups".to_string())
-        }
-        "cloud_authoring_output_answer_slots_empty" => Some("/answerSlots".to_string()),
+        // /taskGroups 与 /answerSlots 整体缺失或为空不是「叶子字段缺失」——让模型用补丁补一整
+        // 组题目没有意义，多半是它答非所问（返回了别的模式的应答）。这两种情况不进补丁流程，
+        // 直接判定本次候选失败（最多整份重试一次），不在可补指针集合里。
         "cloud_authoring_output_group_task_id_missing" => Some(pointer(&["taskGroups", index(0)?, "taskId"])),
         "cloud_authoring_output_group_range_missing" => Some(pointer(&["taskGroups", index(0)?, "displayRange"])),
         "cloud_authoring_output_group_task_type_missing" => Some(pointer(&["taskGroups", index(0)?, "taskType"])),
@@ -5134,6 +5137,11 @@ mod tests {
         );
         assert!(candidate_missing_field_pointer("llm_json_parse_failed:bad").is_none());
         assert!(candidate_missing_field_pointer("cloud_authoring_output_slot_reference_dangling:q1").is_none());
+        // /taskGroups 与 /answerSlots 整体缺失或为空不是叶子字段缺失，不进补丁流程（返回 None
+        // ⇒ 判定候选失败并整份重试），否则会让模型用「补丁」补一整组题目。
+        assert!(candidate_missing_field_pointer("cloud_authoring_output_task_groups_missing").is_none());
+        assert!(candidate_missing_field_pointer("cloud_authoring_output_task_groups_empty").is_none());
+        assert!(candidate_missing_field_pointer("cloud_authoring_output_answer_slots_empty").is_none());
     }
 
     #[test]

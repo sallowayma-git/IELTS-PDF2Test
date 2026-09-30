@@ -145,6 +145,7 @@ function readJobFailure(itemId) {
   if (!fs.existsSync(dbPath)) return null;
   try {
     const db = new DatabaseSync(dbPath, { readOnly: true });
+    db.exec("PRAGMA busy_timeout = 5000");
     const row = db
       .prepare(
         "SELECT stage, local_status, cloud_status, reconcile_status, last_error_code, retry_count " +

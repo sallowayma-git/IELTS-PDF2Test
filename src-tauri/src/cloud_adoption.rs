@@ -448,7 +448,7 @@ fn recheck_task_type(group: &Value) -> TypeVerdict {
         .to_string();
     let text = group_instruction_text(group);
     let Some(detected) =
-        crate::ielts_grammar::instruction_signature::classify_instruction_task_type(&text)
+        crate::ielts_grammar::classify_instruction_task_type(&text)
     else {
         return TypeVerdict::Accept;
     };
@@ -538,7 +538,8 @@ pub(crate) fn plan_cloud_primary_adoption(
     let adopt_passage = alignment.passage_pass
         && alignment.monotonic
         && alignment.coverage_ok
-        && alignment.length_ratio_ok;
+        && alignment.length_ratio_ok
+        && alignment.passage_invented_ok;
     let mut passage_reasons = Vec::new();
     if !adopt_passage {
         if !alignment.passage_pass {
@@ -556,9 +557,15 @@ pub(crate) fn plan_cloud_primary_adoption(
         if !alignment.length_ratio_ok {
             passage_reasons.push(format!("云端原文长度比异常：{:.2}", alignment.length_ratio));
         }
+        if !alignment.passage_invented_ok {
+            passage_reasons.push(format!(
+                "原文凭空句超出容忍：{} 句",
+                alignment.passage_invented.len()
+            ));
+        }
     }
 
-    // 每组说明 / 题干+选项 命中的源区域集合，用于「说明吞题」重叠检测。
+    // Shared parent regions can contain both roles; only shared physical lines imply swallowed text.
     let mut instruction_regions: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut prompt_regions: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for node in &alignment.nodes {
@@ -571,7 +578,7 @@ pub(crate) fn plan_cloud_primary_adoption(
         target
             .entry(task_id.clone())
             .or_default()
-            .extend(node.source_node_ids.iter().cloned());
+            .extend(node.source_line_ids.iter().cloned());
     }
 
     let mut review_records = Vec::new();
@@ -587,6 +594,35 @@ pub(crate) fn plan_cloud_primary_adoption(
         };
         if group_failures.contains_key(task_id) {
             continue;
+        }
+        // A single invented sentence needs repair even when its siblings keep the group ratio high.
+        for node in alignment.nodes.iter().filter(|node| {
+            node.task_id.as_deref() == Some(task_id)
+                && matches!(node.kind_label, "instruction" | "prompt" | "option")
+                && node.min_similarity < 0.6
+        }) {
+            let mut target = serde_json::json!({
+                "taskId": task_id, "nodeId": node.node_id,
+                "reason": "content_not_aligned", "similarity": node.min_similarity,
+            });
+            if matches!(node.kind_label, "prompt" | "option") {
+                let owners: Vec<&Value> = group.get("responseGroups")
+                    .and_then(Value::as_array).into_iter().flatten()
+                    .filter(|response| ["prompt", "options"].iter().any(|field| {
+                        response.get(*field).and_then(Value::as_array).into_iter().flatten()
+                            .any(|entry| ["id", "optionId"].iter().any(|key| {
+                                entry.get(*key).and_then(Value::as_str) == Some(node.node_id.as_str())
+                            }))
+                    })).collect();
+                if owners.len() == 1 {
+                    if let Some(slots) = owners[0].get("slotIds").and_then(Value::as_array) {
+                        if slots.len() == 1 {
+                            target["slotId"] = slots[0].clone();
+                        }
+                    }
+                }
+            }
+            needs_cloud_review.push(target);
         }
         // 题目内容（说明/题干/选项）未对齐 → 该组不采纳，进云端校核清单。
         if alignment.group_aligned.get(task_id) == Some(&false) {
@@ -643,7 +679,19 @@ pub(crate) fn plan_cloud_primary_adoption(
         group_failures.entry(task_id).or_default().push(reason);
     }
 
-    let qualified_task_ids = authoring
+    // 原文整体采纳、但含少量凭空句：原文照采，这些句子单列为修复目标，交修复循环核对原卷。
+    if adopt_passage {
+        for entry in &alignment.passage_invented {
+            let node_id = entry.get("nodeId").and_then(Value::as_str).unwrap_or_default();
+            needs_cloud_review.push(serde_json::json!({
+                "nodeId": node_id,
+                "reason": "passage_sentence_unverified",
+                "similarity": entry.get("similarity").cloned().unwrap_or(Value::Null),
+            }));
+        }
+    }
+
+    let qualified_task_ids: Vec<String> = authoring
         .get("taskGroups")
         .and_then(Value::as_array)
         .into_iter()
@@ -652,6 +700,73 @@ pub(crate) fn plan_cloud_primary_adoption(
         .filter(|task_id| !group_failures.contains_key(*task_id))
         .map(str::to_string)
         .collect();
+
+    // 采纳后仍未解析的计分答案，以及「候选带答案页证据却与答案键冲突」——都是大差异，
+    // 进云端校核清单（否则会留下一份看似已采纳、答案却缺失或自相矛盾的稿）。
+    let qualified_set: BTreeSet<&str> = qualified_task_ids.iter().map(String::as_str).collect();
+    let answer_key = authoring.get("answerKey").and_then(Value::as_object);
+    let answer_slots = authoring.get("answerSlots").and_then(Value::as_object);
+    let slot_in_qualified = |slot_id: &str| -> bool {
+        group_ids_owning_slot(authoring, slot_id)
+            .iter()
+            .any(|owner| qualified_set.contains(owner.as_str()))
+    };
+    let answer_resolved = |slot_id: &str| -> bool {
+        answer_key
+            .and_then(|map| map.get(slot_id))
+            .is_some_and(|answer| answer.get("kind").and_then(Value::as_str) != Some("unresolved"))
+    };
+    for (slot_id, slot) in answer_slots.into_iter().flatten() {
+        if slot.get("participation").and_then(Value::as_str) != Some("scoring") {
+            continue;
+        }
+        if slot_in_qualified(slot_id) && !answer_resolved(slot_id) {
+            needs_cloud_review
+                .push(serde_json::json!({"slotId": slot_id, "reason": "answer_unresolved"}));
+        }
+    }
+    let slot_by_number: BTreeMap<u64, String> = answer_slots
+        .into_iter()
+        .flatten()
+        .filter_map(|(slot_id, slot)| {
+            slot.get("questionNumber")
+                .and_then(Value::as_u64)
+                .map(|number| (number, slot_id.clone()))
+        })
+        .collect();
+    for evidence in authoring
+        .get("answerPageEvidence")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let slot_id = evidence
+            .get("slotId")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| {
+                evidence
+                    .get("questionNumber")
+                    .and_then(Value::as_u64)
+                    .and_then(|number| slot_by_number.get(&number).cloned())
+            });
+        let Some(slot_id) = slot_id else {
+            continue;
+        };
+        // 只有答案页证据带了**结构化答案**、答案键已解析、两者不一致，才算冲突；
+        // 答案未解析走上面的 answer_unresolved，不在这里重复。
+        let Some(evidence_answer) = evidence.get("answer") else {
+            continue;
+        };
+        if slot_in_qualified(&slot_id)
+            && answer_resolved(&slot_id)
+            && answer_key.and_then(|map| map.get(&slot_id)) != Some(evidence_answer)
+        {
+            needs_cloud_review.push(
+                serde_json::json!({"slotId": slot_id, "reason": "answer_conflicts_answer_page"}),
+            );
+        }
+    }
 
     CloudPrimaryPlan {
         adopt_passage,
@@ -1945,6 +2060,7 @@ mod tests {
             min_similarity: if aligned { 1.0 } else { 0.0 },
             mean_similarity: if aligned { 1.0 } else { 0.0 },
             source_node_ids: src.iter().map(|s| s.to_string()).collect(),
+            source_line_ids: src.iter().map(|s| s.to_string()).collect(),
             anchors: src.iter().map(|s| json!({"nodeIds": [s]})).collect(),
             has_invented: !aligned,
             aligned,
@@ -1957,11 +2073,14 @@ mod tests {
             passage_pass,
             passage_sentence_total: 10,
             passage_sentence_matched: if passage_pass { 10 } else { 4 },
+            passage_invented: Vec::new(),
+            passage_invented_ok: true,
             length_ratio: 1.0,
             length_ratio_ok: true,
             coverage: 1.0,
             coverage_ok: true,
             order_violations: 0,
+            order_in_order_ratio: 1.0,
             monotonic: true,
             group_aligned: groups.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
             group_reasons: BTreeMap::new(),
@@ -1992,6 +2111,124 @@ mod tests {
             .collect::<Vec<_>>()})
     }
 
+
+    #[test]
+    fn cloud_primary_does_not_confuse_shared_region_with_swallowed_question() {
+        let candidate = cp_candidate(json!([{
+            "taskId": "g1", "taskType": "true_false_not_given",
+            "instructions": [{"id": "i1", "type": "text", "text": TFNG_INSTRUCTION}],
+            "responseGroups": [{"responseGroupId": "rg1", "slotIds": ["q1"]}]
+        }]), json!({"q1": {"slotId": "q1", "questionNumber": 1}}));
+        let mut instruction = cp_node("i1", "instruction", Some("g1"), &["shared-region", "line-1"], true);
+        let mut prompt = cp_node("p1", "prompt", Some("g1"), &["shared-region", "line-2"], true);
+        instruction.source_line_ids = BTreeSet::from(["line-1".to_string()]);
+        prompt.source_line_ids = BTreeSet::from(["line-2".to_string()]);
+        let report = cp_report(true, &[("g1", true)], vec![instruction, prompt]);
+        let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1]), &report);
+        assert_eq!(plan.qualified_task_ids, vec!["g1".to_string()]);
+        assert!(plan.needs_cloud_review.is_empty());
+    }
+
+    #[test]
+    fn cloud_primary_flags_low_similarity_question_nodes_without_rejecting_siblings() {
+        for (node_id, kind, expected_slot) in [
+            ("i1", "instruction", None),
+            ("p1", "prompt", Some("q1")),
+            ("o1", "option", Some("q1")),
+        ] {
+            let groups = json!([{
+                "taskId": "g1", "taskType": "true_false_not_given",
+                "instructions": [{"id": "i1", "type": "text", "text": TFNG_INSTRUCTION}],
+                "responseGroups": [
+                    {"responseGroupId": "rg1", "slotIds": ["q1"],
+                     "prompt": [{"id": "p1", "type": "text", "text": "cloud first question"}],
+                     "options": [{"optionId": "o1", "text": "cloud first option"}]},
+                    {"responseGroupId": "rg2", "slotIds": ["q2"],
+                     "prompt": [{"id": "p2", "type": "text", "text": "cloud second question"}]}
+                ]
+            }]);
+            let candidate = cp_candidate(groups, json!({
+                "q1": {"slotId": "q1", "questionNumber": 1},
+                "q2": {"slotId": "q2", "questionNumber": 2}
+            }));
+            let mut suspect = cp_node(node_id, kind, Some("g1"), &["suspect-region"], true);
+            // Nine of ten sentences align, so both the node and its group pass the aggregate
+            // ratio despite one sentence being below the independent review threshold.
+            suspect.sentence_count = 10;
+            suspect.matched_sentences = 9;
+            suspect.min_similarity = 0.55;
+            suspect.mean_similarity = 0.955;
+            suspect.has_invented = true;
+            let report = cp_report(true, &[("g1", true)], vec![
+                suspect, cp_node("p2", "prompt", Some("g1"), &["r2"], true),
+            ]);
+            let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1, 2]), &report);
+            assert!(plan.document_reasons.is_empty(), "{:?}", plan.document_reasons);
+            assert_eq!(plan.qualified_task_ids, vec!["g1".to_string()]);
+            assert!(plan.unqualified.is_empty(), "同组其他题仍应采纳");
+            let targets = plan.needs_cloud_review.iter().filter(|entry| {
+                entry.get("reason").and_then(Value::as_str) == Some("content_not_aligned")
+            }).collect::<Vec<_>>();
+            assert_eq!(targets.len(), 1, "{kind} 的低相似句必须独立进复核：{:?}", plan.needs_cloud_review);
+            assert_eq!(targets[0].get("taskId").and_then(Value::as_str), Some("g1"));
+            assert_eq!(targets[0].get("nodeId").and_then(Value::as_str), Some(node_id));
+            assert_eq!(targets[0].get("slotId").and_then(Value::as_str), expected_slot);
+            assert_eq!(targets[0].get("similarity"), Some(&json!(0.55)));
+            let merged = build_cloud_primary_document(
+                &json!({"passage": {"content": []}, "taskGroups": [], "answerSlots": {}, "answerKey": {}}),
+                candidate.get("authoring").unwrap(), &plan,
+            );
+            assert_eq!(merged.pointer("/taskGroups/0/responseGroups/1/prompt/0/text"), Some(&json!("cloud second question")));
+        }
+    }
+
+    #[test]
+    fn cloud_primary_flags_low_similarity_shared_option_by_node() {
+        let candidate = cp_candidate(json!([{
+            "taskId": "g1", "taskType": "true_false_not_given",
+            "instructions": [{"id": "i1", "type": "text", "text": TFNG_INSTRUCTION}],
+            "optionBank": {"options": [{"optionId": "bank-o1", "text": "shared choice"}]},
+            "responseGroups": [{"responseGroupId": "rg1", "slotIds": ["q1", "q2"]}]
+        }]), json!({
+            "q1": {"slotId": "q1", "questionNumber": 1},
+            "q2": {"slotId": "q2", "questionNumber": 2}
+        }));
+        let mut suspect = cp_node("bank-o1", "option", Some("g1"), &["r1"], false);
+        suspect.min_similarity = 0.59;
+        let report = cp_report(true, &[("g1", true)], vec![suspect]);
+        let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1, 2]), &report);
+        assert_eq!(plan.qualified_task_ids, vec!["g1".to_string()]);
+        assert!(plan.needs_cloud_review.iter().any(|entry| {
+            entry.get("reason").and_then(Value::as_str) == Some("content_not_aligned")
+                && entry.get("taskId").and_then(Value::as_str) == Some("g1")
+                && entry.get("nodeId").and_then(Value::as_str) == Some("bank-o1")
+                && entry.get("slotId").is_none()
+        }), "共享选项应按节点复核，不误绑单题：{:?}", plan.needs_cloud_review);
+    }
+
+    #[test]
+    fn cloud_primary_keeps_review_threshold_strict_and_group_rejection_independent() {
+        let candidate = cp_candidate(json!([{
+            "taskId": "g1", "taskType": "true_false_not_given",
+            "instructions": [{"id": "i1", "type": "text", "text": TFNG_INSTRUCTION}],
+            "responseGroups": [{"responseGroupId": "rg1", "slotIds": ["q1"]}]
+        }]), json!({"q1": {"slotId": "q1", "questionNumber": 1}}));
+        for similarity in [0.6, 0.7, 0.8] {
+            let mut node = cp_node("i1", "instruction", Some("g1"), &["r1"], true);
+            node.min_similarity = similarity;
+            let report = cp_report(true, &[("g1", true)], vec![node]);
+            let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1]), &report);
+            assert_eq!(plan.qualified_task_ids, vec!["g1".to_string()]);
+            assert!(plan.needs_cloud_review.is_empty(), "相似度 {similarity} 不应进入低相似句复核");
+        }
+        let report = cp_report(true, &[("g1", false)], vec![]);
+        let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1]), &report);
+        assert!(plan.qualified_task_ids.is_empty());
+        assert!(plan.needs_cloud_review.iter().any(|entry| {
+            entry.get("taskId").and_then(Value::as_str) == Some("g1")
+                && entry.get("reason").and_then(Value::as_str) == Some("content_not_aligned")
+        }), "题组整体未通过仍应拒绝并进入复核");
+    }
 
     #[test]
     fn cloud_primary_adopts_whole_candidate_when_aligned() {
@@ -2036,6 +2273,39 @@ mod tests {
         assert!(!plan.adopt_passage, "原文不达标应保留本地原文");
         assert!(!plan.passage_reasons.is_empty(), "应给出原文不采纳原因");
         assert_eq!(plan.qualified_task_ids, vec!["g1".to_string()], "题目仍应独立采纳");
+    }
+
+    #[test]
+    fn cloud_primary_flags_unresolved_answer_in_adopted_group() {
+        // 题组内容对齐、被整体采纳，但计分槽位答案仍未解析 → 单列进云端校核（大差异）。
+        let groups = json!([{
+            "taskId": "g1", "taskType": "true_false_not_given",
+            "instructions": [{"id": "i1", "type": "text", "text": TFNG_INSTRUCTION}],
+            "responseGroups": [{"responseGroupId": "rg1", "slotIds": ["q1"]}]
+        }]);
+        let candidate = cp_candidate(
+            groups,
+            json!({"q1": {"slotId": "q1", "questionNumber": 1, "participation": "scoring"}}),
+        );
+        let report = cp_report(
+            true,
+            &[("g1", true)],
+            vec![
+                cp_node("i1", "instruction", Some("g1"), &["r1"], true),
+                cp_node("p1", "prompt", Some("g1"), &["r2"], true),
+            ],
+        );
+        let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1]), &report);
+        assert_eq!(plan.qualified_task_ids, vec!["g1".to_string()], "题组仍应被采纳");
+        assert!(
+            plan.needs_cloud_review.iter().any(|entry| entry
+                .get("slotId")
+                .and_then(Value::as_str)
+                == Some("q1")
+                && entry.get("reason").and_then(Value::as_str) == Some("answer_unresolved")),
+            "采纳后仍未解析的计分答案必须进云端校核：{:?}",
+            plan.needs_cloud_review
+        );
     }
 
     #[test]

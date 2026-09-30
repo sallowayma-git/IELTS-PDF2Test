@@ -79,6 +79,9 @@ pub struct QualityCoverageEntryV2 {
     pub target_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    // 未认领的显著区域独占的原因字段，与「被有理由地忽略」的 reason 语义不能混用。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unassigned_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

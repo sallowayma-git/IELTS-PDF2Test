@@ -1,0 +1,156 @@
+{
+  "pdf": "fixtures/parser/demanding-reading-passage-3.pdf",
+  "modality": "reading",
+  "passageParagraphLabels": [],
+  "groups": [
+    {
+      "questionRange": "27-31",
+      "instructionsHead": "Complete the summary using the list of words and phrases, A-H, below.",
+      "taskType": "summary_completion",
+      "variant": "word_bank",
+      "optionAlphabet": "letters",
+      "optionReuse": false,
+      "hasExample": false,
+      "slots": [
+        {
+          "question": "27",
+          "anchorParagraph": null,
+          "answer": "C"
+        },
+        {
+          "question": "28",
+          "anchorParagraph": null,
+          "answer": "F"
+        },
+        {
+          "question": "29",
+          "anchorParagraph": null,
+          "answer": "D"
+        },
+        {
+          "question": "30",
+          "anchorParagraph": null,
+          "answer": "H"
+        },
+        {
+          "question": "31",
+          "anchorParagraph": null,
+          "answer": "A"
+        }
+      ],
+      "optionBank": [
+        {
+          "label": "A",
+          "content": "methodology"
+        },
+        {
+          "label": "B",
+          "content": "needs"
+        },
+        {
+          "label": "C",
+          "content": "originality"
+        },
+        {
+          "label": "D",
+          "content": "important people"
+        },
+        {
+          "label": "E",
+          "content": "accuracy"
+        },
+        {
+          "label": "F",
+          "content": "interests and feelings"
+        },
+        {
+          "label": "G",
+          "content": "explanation"
+        },
+        {
+          "label": "H",
+          "content": "organisational matters"
+        }
+      ],
+      "notes": "带标题摘要 'How is social history different from historical study?'，5 空行内嵌于一段连续文字；词库在框内 3 列排布（A B C / D E F / G H），PyMuPDF 抽取时字母与内容常被拆成两行（'A' 换行 'methodology'），但 C/F 同行。8 选 5，说明未写 'more than once'，按不复用。PDF 无答案页，答案按原文推断：27 'need...to provide new insights'→originality；28 'popular enthusiasm...popular passions'→interests and feelings；29 'Great Man' theories→important people；30 'bureaucratic issues'→organisational matters；31 'multi-disciplinary perspectives'→methodology。"
+    },
+    {
+      "questionRange": "32-35",
+      "instructionsHead": "Do the following statements agree with the claims of the writer in Reading Passage 3?",
+      "taskType": "yes_no_not_given",
+      "variant": "default",
+      "optionAlphabet": "fixed_truth",
+      "optionReuse": true,
+      "hasExample": false,
+      "slots": [
+        {
+          "question": "32",
+          "anchorParagraph": null,
+          "answer": "NO"
+        },
+        {
+          "question": "33",
+          "anchorParagraph": null,
+          "answer": "YES"
+        },
+        {
+          "question": "34",
+          "anchorParagraph": null,
+          "answer": "NO"
+        },
+        {
+          "question": "35",
+          "anchorParagraph": null,
+          "answer": "NOT GIVEN"
+        }
+      ],
+      "optionBank": null,
+      "notes": "YES/NO/NOT GIVEN 三标签（'claims of the writer'）。答案按原文推断：32 原文是 social history 源自 1960s 文化革命，因果颠倒→NO；33 传统史 12-17 世纪 vs 社会史 19 世纪→YES；34 原文 PDF 字面为 'wanting crass protagonists'（应为 'working-class protagonists' 的排版错误），按原意→NO；35 未提及→NOT GIVEN。"
+    },
+    {
+      "questionRange": "36-40",
+      "instructionsHead": "Choose the correct letter, A, B, C or D.",
+      "taskType": "single_choice",
+      "variant": "default",
+      "optionAlphabet": "letters",
+      "optionReuse": false,
+      "hasExample": false,
+      "slots": [
+        {
+          "question": "36",
+          "anchorParagraph": null,
+          "answer": "D"
+        },
+        {
+          "question": "37",
+          "anchorParagraph": null,
+          "answer": "B"
+        },
+        {
+          "question": "38",
+          "anchorParagraph": null,
+          "answer": "B"
+        },
+        {
+          "question": "39",
+          "anchorParagraph": null,
+          "answer": "C"
+        },
+        {
+          "question": "40",
+          "anchorParagraph": null,
+          "answer": "A"
+        }
+      ],
+      "optionBank": null,
+      "notes": "5 道四选一，每题各自 A-D 选项（per_slot_options）；Q38 选项 D 跨两行。答案按原文推断：36 'negative counterpart to the otherwise dominant modernisation'→D；37 第六段 industrial archaeology 使废弃工厂成为纪念物→B；38 1970s 'idealised view of the past'→B；39 'no conceptual space for the great absences'→C；40 'far more weight...insecurities and emergencies – the fears'→A。"
+    }
+  ],
+  "annotation": {
+    "kind": "human_inferred_test_only",
+    "scope": "clean_candidate_second_phase_only",
+    "hasOfficialAnswerPage": false,
+    "note": "Test-only answers manually inferred from the passage. The PDF has no official answer page; these values are not official answer truth and must not supply the natural repair scenario or production answer inference.",
+    "source": "types-round/truth/demanding-reading-passage-3.json"
+  }
+}

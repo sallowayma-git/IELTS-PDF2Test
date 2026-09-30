@@ -16,20 +16,30 @@
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// 对齐阈值。默认值对应任务书：单句命中 0.9、凭空句 0.6、原文整体命中率 0.95。
+/// 对齐/采纳阈值。**云端为主**：顺序对、文本大体相似就直接采用云端，修复循环只处理确有
+/// 必要的目标。所有可调门槛集中在此，不散落到各处。
 #[derive(Debug, Clone)]
 pub(crate) struct AlignmentConfig {
-    /// 单句判为命中的最低相似度。
+    /// 单句判为命中的最低相似度。命中即视为「小差异」，直接采用云端。
     pub sentence_threshold: f64,
-    /// 低于此相似度的句子判为「凭空句」（云端无中生有）。
+    /// 低于此相似度的句子判为「整句对不上 / 凭空句」（大差异），单列为修复目标。
     pub invented_threshold: f64,
+    /// 原文整体采纳时容忍的凭空句上限：个数不超过此值。
+    pub invented_max_count: usize,
+    /// 原文整体采纳时容忍的凭空句上限：占原文句总数的比例不超过此值。
+    pub invented_max_ratio: f64,
     /// 原文节点整体采用云端所需的命中句比例。
     pub passage_pass_ratio: f64,
+    /// 题组整体采用云端所需的内容对齐比例（命中句 / 题目内容句总数）。
+    pub group_align_ratio: f64,
     /// 云端原文可读长度 / 原卷原文可读长度的允许下、上限（防截断、防冗余注水）。
     pub length_ratio_min: f64,
     pub length_ratio_max: f64,
     /// 显著源区域被覆盖的最低比例。
     pub coverage_min: f64,
+    /// 命中位置按阅读顺序递增的最低比例（最长非降子序列 / 命中总数）。顺序错是结构性问题，
+    /// 门槛不随其它阈值放宽。
+    pub order_pass_ratio: f64,
     /// 抽查种子（由 sourceSha256 + batchId 派生，保证可复现）。
     pub sample_seed: u64,
     /// 每个节点抽查的句子上限。
@@ -39,12 +49,16 @@ pub(crate) struct AlignmentConfig {
 impl Default for AlignmentConfig {
     fn default() -> Self {
         Self {
-            sentence_threshold: 0.9,
+            sentence_threshold: 0.8,
             invented_threshold: 0.6,
-            passage_pass_ratio: 0.95,
+            invented_max_count: 2,
+            invented_max_ratio: 0.03,
+            passage_pass_ratio: 0.85,
+            group_align_ratio: 0.8,
             length_ratio_min: 0.5,
             length_ratio_max: 1.5,
-            coverage_min: 0.8,
+            coverage_min: 0.7,
+            order_pass_ratio: 0.95,
             sample_seed: 0,
             sample_per_node: 3,
         }
@@ -122,6 +136,14 @@ struct SourceModel {
     units: Vec<SourceUnit>,
     total_readable_len: usize,
     significant_ids: BTreeSet<String>,
+    /// Native PDF character order supplies exact evidence when a reconstructed line merges columns.
+    native_evidence: Vec<NativeEvidence>,
+}
+
+struct NativeEvidence {
+    key: Vec<char>,
+    /// Each character maps back to the existing physical line unit.
+    unit_indices: Vec<usize>,
 }
 
 /// 文本承载型区域（其文本参与显著覆盖判定）。非正文的页眉页脚、页码、图片等排除在外；
@@ -311,12 +333,160 @@ fn build_source_model(document_ir: &Value) -> Option<SourceModel> {
     if key.is_empty() {
         return None;
     }
+    let native_evidence = build_native_evidence(pages, &units);
     Some(SourceModel {
+        native_evidence,
         key,
         units,
         total_readable_len,
         significant_ids,
     })
+}
+
+/// Use retained native character ranges, never a gap-tolerant match: every character
+/// in this alternative view must have been observed in a physical source line.
+/// The normal line stream stays authoritative for reading order and fuzzy matching.
+fn build_native_evidence(pages: &[Value], units: &[SourceUnit]) -> Vec<NativeEvidence> {
+    let mut evidence = Vec::new();
+    for page in pages {
+        let page_index = page
+            .get("pageIndex")
+            .or_else(|| page.get("page_index"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let line_units: BTreeMap<&str, usize> = units
+            .iter()
+            .enumerate()
+            .filter(|(_, unit)| unit.page_index == page_index)
+            .flat_map(|(index, unit)| {
+                unit.source_node_ids
+                    .iter()
+                    .map(move |id| (id.as_str(), index))
+            })
+            .collect();
+        let spans: BTreeMap<&str, &Value> = page
+            .get("spans")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|span| Some((span.get("id")?.as_str()?, span)))
+            .collect();
+        let mut glyph_units = BTreeMap::new();
+        for line in page
+            .get("lines")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let Some(index) = line
+                .get("id")
+                .and_then(Value::as_str)
+                .and_then(|id| line_units.get(id))
+                .copied()
+            else {
+                continue;
+            };
+            for span in line
+                .get("spanIds")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .filter_map(|id| spans.get(id))
+            {
+                for id in span
+                    .get("glyphIds")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                {
+                    glyph_units.insert(id, index);
+                }
+            }
+        }
+        let mut glyphs: Vec<(u64, &Value)> = page
+            .get("glyphs")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|glyph| {
+                if glyph
+                    .pointer("/sourceAnchor/extractionMode")
+                    .and_then(Value::as_str)
+                    != Some("pdf_native")
+                {
+                    return None;
+                }
+                Some((
+                    glyph.pointer("/sourceAnchor/charRange/start")?.as_u64()?,
+                    glyph,
+                ))
+            })
+            .collect();
+        glyphs.sort_by_key(|(order, _)| *order);
+        let mut view = NativeEvidence {
+            key: Vec::new(),
+            unit_indices: Vec::new(),
+        };
+        let mut previous_unit = None;
+        let mut previous_end = None;
+        for (order, glyph) in glyphs {
+            let raw = glyph
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let compact = compact_key(&normalize_readable(raw));
+            if previous_end.is_some_and(|end| end != order) {
+                // Do not bridge missing/non-native characters or separate content streams.
+                if !view.key.is_empty() {
+                    evidence.push(view);
+                }
+                view = NativeEvidence {
+                    key: Vec::new(),
+                    unit_indices: Vec::new(),
+                };
+                previous_unit = None;
+            }
+            previous_end = glyph
+                .pointer("/sourceAnchor/charRange/end")
+                .and_then(Value::as_u64);
+            if compact.is_empty() {
+                continue;
+            }
+            let Some(index) = glyph
+                .get("id")
+                .and_then(Value::as_str)
+                .and_then(|id| glyph_units.get(id))
+                .copied()
+            else {
+                if !view.key.is_empty() {
+                    evidence.push(view);
+                }
+                view = NativeEvidence {
+                    key: Vec::new(),
+                    unit_indices: Vec::new(),
+                };
+                previous_unit = None;
+                continue;
+            };
+            if previous_unit.is_some_and(|previous| previous != index)
+                && view.key.last() == Some(&'-')
+            {
+                view.key.pop();
+                view.unit_indices.pop();
+            }
+            previous_unit = Some(index);
+            for ch in compact.chars() {
+                view.key.push(ch);
+                view.unit_indices.push(index);
+            }
+        }
+        if !view.key.is_empty() {
+            evidence.push(view);
+        }
+    }
+    evidence
 }
 
 // ---------------------------------------------------------------------------
@@ -411,28 +581,39 @@ fn split_sentences(readable: &str) -> Vec<String> {
 }
 
 struct SentenceHit {
+    /// Exact native matches cover only the lines whose glyphs supplied the sentence.
+    source_units: Option<Vec<usize>>,
     similarity: f64,
     start: usize,
     end: usize,
 }
 
-/// 在原卷 key 里为一句云端文本定位：精确子串优先（相似度 1.0），否则全局滑窗取最高相似度。
-fn match_sentence(model: &SourceModel, sentence: &[char]) -> SentenceHit {
-    let hay = &model.key;
-    if sentence.is_empty() {
-        return SentenceHit { similarity: 1.0, start: 0, end: 0 };
+/// 原卷 key 里 `needle` 是否至少出现两次（重复句不参与单调判定）。
+fn occurs_at_least_twice(hay: &[char], needle: &[char]) -> bool {
+    match find_sub(hay, needle, 0) {
+        Some(first) => find_sub(hay, needle, first + 1).is_some(),
+        None => false,
     }
-    if hay.is_empty() {
-        return SentenceHit { similarity: 0.0, start: 0, end: 0 };
-    }
-    if let Some(pos) = find_sub(hay, sentence, 0) {
-        return SentenceHit { similarity: 1.0, start: pos, end: pos + sentence.len() };
-    }
+}
+
+/// 在 `[from..]` 区域内滑窗找与 `sentence` 最相似的一段（预筛 + 编辑距离细化）。
+fn best_fuzzy(hay: &[char], sentence: &[char], from: usize) -> SentenceHit {
     let win = sentence.len().min(hay.len()).max(1);
+    if from + win > hay.len() {
+        let start = hay.len().saturating_sub(win);
+        let end = hay.len();
+        let ratio = levenshtein_ratio(sentence, &hay[start..end]);
+        return SentenceHit {
+            source_units: None,
+            similarity: ratio,
+            start,
+            end,
+        };
+    }
     let step = (win / 8).max(1);
-    let mut best_start = 0usize;
+    let mut best_start = from;
     let mut best_prefilter = -1.0f64;
-    let mut i = 0usize;
+    let mut i = from;
     while i + win <= hay.len() {
         let d = bigram_dice(sentence, &hay[i..i + win]);
         if d > best_prefilter {
@@ -441,18 +622,117 @@ fn match_sentence(model: &SourceModel, sentence: &[char]) -> SentenceHit {
         }
         i += step;
     }
-    // 在预筛最优点邻域内用编辑距离细化，兼顾长度偏移。
-    let lo = best_start.saturating_sub(step);
+    let lo = best_start.saturating_sub(step).max(from);
     let hi = (best_start + step).min(hay.len().saturating_sub(win));
-    let mut best = SentenceHit { similarity: 0.0, start: best_start, end: best_start + win };
+    let mut best = SentenceHit {
+        source_units: None,
+        similarity: 0.0,
+        start: best_start,
+        end: (best_start + win).min(hay.len()),
+    };
     for start in lo..=hi {
         let end = (start + win).min(hay.len());
         let ratio = levenshtein_ratio(sentence, &hay[start..end]);
         if ratio > best.similarity {
-            best = SentenceHit { similarity: ratio, start, end };
+            best = SentenceHit {
+                source_units: None,
+                similarity: ratio,
+                start,
+                end,
+            };
         }
     }
     best
+}
+
+fn native_exact_match(model: &SourceModel, sentence: &[char], from: usize) -> Option<SentenceHit> {
+    let mut best = None;
+    for evidence in &model.native_evidence {
+        let mut cursor = 0;
+        while let Some(pos) = find_sub(&evidence.key, sentence, cursor) {
+            let indices: BTreeSet<usize> = evidence.unit_indices[pos..pos + sentence.len()]
+                .iter()
+                .copied()
+                .collect();
+            let first = evidence.unit_indices[pos];
+            let start = model.units[first].range.0;
+            if start >= from {
+                let end = indices
+                    .iter()
+                    .map(|index| model.units[*index].range.1)
+                    .max()
+                    .unwrap_or(start);
+                if best
+                    .as_ref()
+                    .map_or(true, |hit: &SentenceHit| start < hit.start)
+                {
+                    best = Some(SentenceHit {
+                        similarity: 1.0,
+                        start,
+                        end,
+                        source_units: Some(indices.into_iter().collect()),
+                    });
+                }
+            }
+            cursor = pos + 1;
+        }
+    }
+    best
+}
+
+/// 在原卷 key 里为一句云端文本定位。顺序感知：先在命中游标 `from` 之后的窗口里找
+/// （精确优先、再模糊），够好就用以保持阅读顺序；否则回退全局搜索。
+fn match_sentence(model: &SourceModel, sentence: &[char], from: usize, accept: f64) -> SentenceHit {
+    let hay = &model.key;
+    if sentence.is_empty() {
+        return SentenceHit {
+            source_units: None,
+            similarity: 1.0,
+            start: 0,
+            end: 0,
+        };
+    }
+    if hay.is_empty() {
+        return SentenceHit {
+            source_units: None,
+            similarity: 0.0,
+            start: 0,
+            end: 0,
+        };
+    }
+    let from = from.min(hay.len());
+    if let Some(pos) = find_sub(hay, sentence, from) {
+        return SentenceHit {
+            source_units: None,
+            similarity: 1.0,
+            start: pos,
+            end: pos + sentence.len(),
+        };
+    }
+    if let Some(hit) = native_exact_match(model, sentence, from) {
+        return hit;
+    }
+    let forward = best_fuzzy(hay, sentence, from);
+    if forward.similarity >= accept {
+        return forward;
+    }
+    if let Some(pos) = find_sub(hay, sentence, 0) {
+        return SentenceHit {
+            source_units: None,
+            similarity: 1.0,
+            start: pos,
+            end: pos + sentence.len(),
+        };
+    }
+    if let Some(hit) = native_exact_match(model, sentence, 0) {
+        return hit;
+    }
+    let global = best_fuzzy(hay, sentence, 0);
+    if global.similarity >= forward.similarity {
+        global
+    } else {
+        forward
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -504,6 +784,7 @@ pub(crate) struct NodeAlignment {
     pub mean_similarity: f64,
     /// 命中原卷的源节点 id（区域/行），用于合成 nodeIds。
     pub source_node_ids: BTreeSet<String>,
+    pub source_line_ids: BTreeSet<String>,
     /// 由命中区域汇集的真实 sourceAnchors（采纳阶段据此盖 provenanceStatus=source）。
     pub anchors: Vec<Value>,
     /// 含低于 invented 阈值的句子（云端凭空生成）。
@@ -542,7 +823,13 @@ fn node_text(node: &Value) -> String {
     out
 }
 
-fn push_node(inputs: &mut Vec<TextNodeInput>, node: &Value, kind: NodeKind, task_id: &Option<String>, id_key: &str) {
+fn push_node(
+    inputs: &mut Vec<TextNodeInput>,
+    node: &Value,
+    kind: NodeKind,
+    task_id: &Option<String>,
+    id_key: &str,
+) {
     let text = node_text(node);
     if text.trim().is_empty() {
         return;
@@ -553,7 +840,12 @@ fn push_node(inputs: &mut Vec<TextNodeInput>, node: &Value, kind: NodeKind, task
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    inputs.push(TextNodeInput { node_id, kind, task_id: task_id.clone(), text });
+    inputs.push(TextNodeInput {
+        node_id,
+        kind,
+        task_id: task_id.clone(),
+        text,
+    });
 }
 
 /// 枚举候选里所有可对齐文本节点：原文段落、说明、题干、选项、摘要/笔记。
@@ -634,11 +926,13 @@ fn align_node(
     config: &AlignmentConfig,
     covered: &mut BTreeSet<usize>,
     matched_positions: &mut Vec<usize>,
+    cursor: &mut usize,
 ) -> (NodeAlignment, Vec<SentenceEval>) {
     let readable = normalize_readable(&input.text);
     let sentences = split_sentences(&readable);
     let mut evals = Vec::with_capacity(sentences.len());
     let mut source_node_ids = BTreeSet::new();
+    let mut source_line_ids = BTreeSet::new();
     let mut anchor_keys = BTreeSet::new();
     let mut anchors = Vec::new();
     let mut matched = 0usize;
@@ -660,7 +954,7 @@ fn align_node(
             });
             continue;
         }
-        let hit = match_sentence(model, &key);
+        let hit = match_sentence(model, &key, *cursor, config.sentence_threshold);
         non_trivial += 1;
         sim_sum += hit.similarity;
         min_sim = min_sim.min(hit.similarity);
@@ -670,10 +964,28 @@ fn align_node(
         let mut sentence_ids = Vec::new();
         if hit.similarity >= config.sentence_threshold {
             matched += 1;
-            matched_positions.push(hit.start);
-            for index in units_overlapping(model, hit.start, hit.end) {
+            // 短句（<5 词）与原卷中重复出现的句子不参与单调判定：它们的命中位置有歧义，
+            // 会造成假逆序。词数按 ≥2 字符的词元统计——字形逐字空格（"n a m e"）不能把
+            // "candidate name" 这类短标签撑成长句。命中率与覆盖率仍照常计入。
+            let word_count = sentence
+                .split_whitespace()
+                .filter(|word| word.chars().count() >= 2)
+                .count();
+            if word_count >= 5 && !occurs_at_least_twice(&model.key, &key) {
+                matched_positions.push(hit.start);
+            }
+            // 命中游标只前进不后退，供顺序感知匹配定位下一句。
+            *cursor = (*cursor).max(hit.end);
+            for index in hit
+                .source_units
+                .clone()
+                .unwrap_or_else(|| units_overlapping(model, hit.start, hit.end))
+            {
                 covered.insert(index);
                 let unit = &model.units[index];
+                if let Some(line_id) = unit.source_node_ids.last() {
+                    source_line_ids.insert(line_id.clone());
+                }
                 for id in &unit.source_node_ids {
                     source_node_ids.insert(id.clone());
                     sentence_ids.push(id.clone());
@@ -696,12 +1008,19 @@ fn align_node(
 
     let mean = if non_trivial == 0 { 1.0 } else { sim_sum / non_trivial as f64 };
     let sentence_count = non_trivial;
-    let aligned = if input.kind.is_question_content() {
-        sentence_count == 0 || (matched == sentence_count && !has_invented)
+    // 云端为主：命中比例达标即视为该节点小差异、直接采用。凭空句不再逐节点硬阻断——是否
+    // 整体采纳由题组比例（≥group_align_ratio）与原文凭空句容忍在文档级判定。
+    let hit_ratio = if sentence_count == 0 {
+        1.0
     } else {
-        let ratio = if sentence_count == 0 { 1.0 } else { matched as f64 / sentence_count as f64 };
-        ratio >= config.passage_pass_ratio && !has_invented
+        matched as f64 / sentence_count as f64
     };
+    let threshold = if input.kind.is_question_content() {
+        config.group_align_ratio
+    } else {
+        config.passage_pass_ratio
+    };
+    let aligned = hit_ratio >= threshold;
     let alignment = NodeAlignment {
         node_id: input.node_id.clone(),
         kind_label: input.kind.as_str(),
@@ -711,6 +1030,7 @@ fn align_node(
         min_similarity: if sentence_count == 0 { 1.0 } else { min_sim },
         mean_similarity: mean,
         source_node_ids,
+        source_line_ids,
         anchors,
         has_invented,
         aligned,
@@ -741,14 +1061,21 @@ pub(crate) struct AlignmentReport {
     pub passage_pass: bool,
     pub passage_sentence_total: usize,
     pub passage_sentence_matched: usize,
+    /// 原文里整句对不上/凭空的句子（{nodeId, sentence, similarity}）——即使原文整体采纳，
+    /// 这些仍单列为修复目标。
+    pub passage_invented: Vec<Value>,
+    /// 凭空句是否在容忍范围内（在范围内可整体采纳原文）。
+    pub passage_invented_ok: bool,
     /// 云端可读总长 / 原卷可读总长。
     pub length_ratio: f64,
     pub length_ratio_ok: bool,
     /// 显著源区域被命中的比例。
     pub coverage: f64,
     pub coverage_ok: bool,
-    /// 命中位置在阅读顺序上的逆序次数（0 表示单调）。
+    /// 命中位置在阅读顺序上的逆序次数（相邻大幅回跳，仅供诊断）。
     pub order_violations: usize,
+    /// 命中位置按阅读顺序递增的比例（最长非降子序列 / 命中总数）。
+    pub order_in_order_ratio: f64,
     pub monotonic: bool,
     /// 每个题组是否所有题目内容节点都对齐，及不合格原因。
     pub group_aligned: BTreeMap<String, bool>,
@@ -792,6 +1119,22 @@ fn sample_indices(seed: u64, node_id: &str, sentence_count: usize, take: usize) 
 /// 命中位置允许的回溯容差（字符）：同区域内小幅回跳不算乱序。
 const ORDER_SLACK: usize = 100;
 
+/// 最长非降子序列长度（O(n log n)）：命中位置里有多少能构成阅读顺序递增的一条链。
+/// 单个离群命中不会连累整条链，据此判断错位是零星还是大面积。
+fn longest_non_decreasing(positions: &[usize]) -> usize {
+    let mut tails: Vec<usize> = Vec::new();
+    for &value in positions {
+        // 上界查找：允许相等（非降），把 value 放到第一个 > value 的位置。
+        let idx = tails.partition_point(|&tail| tail <= value);
+        if idx == tails.len() {
+            tails.push(value);
+        } else {
+            tails[idx] = value;
+        }
+    }
+    tails.len()
+}
+
 /// 对整个云端候选做对齐校验。原卷无文本层时返回 `NoTextLayer`。
 pub(crate) fn assess_alignment(
     document_ir: &Value,
@@ -808,14 +1151,24 @@ pub(crate) fn assess_alignment(
     let mut cloud_len = 0usize;
     let mut passage_total = 0usize;
     let mut passage_matched = 0usize;
+    let mut passage_invented: Vec<Value> = Vec::new();
+    let mut group_matched: BTreeMap<String, usize> = BTreeMap::new();
+    let mut group_total: BTreeMap<String, usize> = BTreeMap::new();
     let mut group_aligned: BTreeMap<String, bool> = BTreeMap::new();
     let mut group_reasons: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut samples = Vec::new();
+    let mut cursor = 0usize;
 
     for input in &inputs {
         cloud_len += normalize_readable(&input.text).chars().count();
-        let (alignment, evals) =
-            align_node(&model, input, config, &mut covered, &mut matched_positions);
+        let (alignment, evals) = align_node(
+            &model,
+            input,
+            config,
+            &mut covered,
+            &mut matched_positions,
+            &mut cursor,
+        );
 
         if input.kind == NodeKind::Passage {
             for eval in &evals {
@@ -823,23 +1176,35 @@ pub(crate) fn assess_alignment(
                     passage_total += 1;
                     if eval.similarity >= config.sentence_threshold {
                         passage_matched += 1;
+                    } else if eval.similarity < config.invented_threshold {
+                        // 整句对不上/凭空句：即使原文整体采纳，也单列为修复目标。
+                        passage_invented.push(json!({
+                            "nodeId": alignment.node_id,
+                            "sentence": eval.text.chars().take(160).collect::<String>(),
+                            "similarity": eval.similarity,
+                        }));
                     }
                 }
             }
         }
+        // 题组内容对齐按**比例**判定（命中句 / 题目内容句总数 ≥ group_align_ratio），
+        // 而不是要求每个节点都完美——个别措辞差异不该整组打回修复。
         if let Some(task_id) = &input.task_id {
-            let entry = group_aligned.entry(task_id.clone()).or_insert(true);
-            if input.kind.is_question_content() && !alignment.aligned {
-                *entry = false;
-                group_reasons.entry(task_id.clone()).or_default().push(format!(
-                    "{} 节点 {} 未对齐原卷（命中 {}/{}，最弱相似度 {:.2}{}）",
-                    alignment.kind_label,
-                    alignment.node_id,
-                    alignment.matched_sentences,
-                    alignment.sentence_count,
-                    alignment.min_similarity,
-                    if alignment.has_invented { "，含凭空句" } else { "" }
-                ));
+            group_aligned.entry(task_id.clone()).or_insert(true);
+            if input.kind.is_question_content() {
+                *group_matched.entry(task_id.clone()).or_default() += alignment.matched_sentences;
+                *group_total.entry(task_id.clone()).or_default() += alignment.sentence_count;
+                if !alignment.aligned {
+                    group_reasons.entry(task_id.clone()).or_default().push(format!(
+                        "{} 节点 {} 命中 {}/{}，最弱相似度 {:.2}{}",
+                        alignment.kind_label,
+                        alignment.node_id,
+                        alignment.matched_sentences,
+                        alignment.sentence_count,
+                        alignment.min_similarity,
+                        if alignment.has_invented { "，含凭空句" } else { "" }
+                    ));
+                }
             }
         }
 
@@ -849,7 +1214,12 @@ pub(crate) fn assess_alignment(
             .filter(|(_, eval)| !eval.trivial)
             .map(|(index, _)| index)
             .collect();
-        for pick in sample_indices(config.sample_seed, &alignment.node_id, non_trivial.len(), config.sample_per_node) {
+        for pick in sample_indices(
+            config.sample_seed,
+            &alignment.node_id,
+            non_trivial.len(),
+            config.sample_per_node,
+        ) {
             let eval = &evals[non_trivial[pick]];
             samples.push(SampleEntry {
                 node_id: alignment.node_id.clone(),
@@ -889,21 +1259,52 @@ pub(crate) fn assess_alignment(
         .windows(2)
         .filter(|pair| pair[1] + ORDER_SLACK < pair[0])
         .count();
+    let order_in_order_ratio = if matched_positions.len() < 2 {
+        1.0
+    } else {
+        longest_non_decreasing(&matched_positions) as f64 / matched_positions.len() as f64
+    };
     let passage_pass = passage_total == 0
         || (passage_matched as f64 / passage_total as f64) >= config.passage_pass_ratio;
+    // 原文凭空句容忍：少量（≤invented_max_count 且 ≤invented_max_ratio 占比）仍整体采纳，
+    // 这些句子交给修复循环单独处理，而不是因此整篇原文都不采纳。
+    let passage_invented_ok = passage_invented.len() <= config.invented_max_count
+        && (passage_total == 0
+            || (passage_invented.len() as f64) <= config.invented_max_ratio * passage_total as f64);
+
+    // 题组内容对齐比例达标即采纳该组；不足则记原因，进云端校核清单。
+    for (task_id, total) in &group_total {
+        let matched = group_matched.get(task_id).copied().unwrap_or(0);
+        let ratio = if *total == 0 {
+            1.0
+        } else {
+            matched as f64 / *total as f64
+        };
+        let ok = ratio >= config.group_align_ratio;
+        group_aligned.insert(task_id.clone(), ok);
+        if !ok {
+            group_reasons.entry(task_id.clone()).or_default().push(format!(
+                "题组内容对齐比例 {:.2}（命中 {}/{}）低于 {:.2}",
+                ratio, matched, total, config.group_align_ratio
+            ));
+        }
+    }
 
     AlignmentOutcome::Assessed(Box::new(AlignmentReport {
         nodes,
         passage_pass,
         passage_sentence_total: passage_total,
         passage_sentence_matched: passage_matched,
+        passage_invented,
+        passage_invented_ok,
         length_ratio,
         length_ratio_ok: length_ratio >= config.length_ratio_min
             && length_ratio <= config.length_ratio_max,
         coverage,
         coverage_ok: coverage >= config.coverage_min,
         order_violations,
-        monotonic: order_violations == 0,
+        order_in_order_ratio,
+        monotonic: order_in_order_ratio >= config.order_pass_ratio,
         group_aligned,
         group_reasons,
         samples,
@@ -950,11 +1351,14 @@ impl AlignmentReport {
             "passagePass": self.passage_pass,
             "passageSentenceTotal": self.passage_sentence_total,
             "passageSentenceMatched": self.passage_sentence_matched,
+            "passageInvented": self.passage_invented,
+            "passageInventedOk": self.passage_invented_ok,
             "lengthRatio": self.length_ratio,
             "lengthRatioOk": self.length_ratio_ok,
             "coverage": self.coverage,
             "coverageOk": self.coverage_ok,
             "orderViolations": self.order_violations,
+            "orderInOrderRatio": self.order_in_order_ratio,
             "monotonic": self.monotonic,
             "groupAligned": serde_json::to_value(&self.group_aligned).unwrap_or(Value::Null),
             "groupReasons": serde_json::to_value(&self.group_reasons).unwrap_or(Value::Null),
@@ -1029,6 +1433,116 @@ mod tests {
         );
     }
 
+    const RESEARCHER_SENTENCE: &str = "These may be gaps which the young researcher is advised by supervisors to fill, or established views which he or she is encouraged to challenge.";
+
+    /// The native PDF stream writes the left column first, but physical line l2
+    /// contains the left-column phrase and a phrase from the right column.
+    fn merged_column_source() -> Value {
+        let left = [
+            ("l1", "These may be gaps which the "),
+            ("l2", "young researcher is advised by supervisors "),
+            ("l3", "to fill, or established views which he or she "),
+            ("l4", "is encouraged to challenge."),
+        ];
+        let right = "echo a much more widespread collapse of";
+        let mut doc = source_doc(&[
+            ("l1", left[0].1),
+            ("l2", &format!("{}{}", left[1].1, right)),
+            ("l3", left[2].1),
+            ("l4", left[3].1),
+            (
+                "unrelated",
+                "Unrelated material lies between the physical source lines.",
+            ),
+        ]);
+        let mut glyphs = Vec::new();
+        let mut spans = Vec::new();
+        let mut range_start = 0usize;
+        for (line_id, text) in left.into_iter().chain(std::iter::once(("l2", right))) {
+            let span_id = format!("span-{}", spans.len());
+            let mut glyph_ids = Vec::new();
+            for ch in text.chars() {
+                let id = format!("g{range_start}");
+                glyph_ids.push(id.clone());
+                glyphs.push(json!({
+                    "id": id, "text": ch.to_string(),
+                    "sourceAnchor": {"extractionMode": "pdf_native", "charRange": {"start": range_start, "end": range_start + 1}}
+                }));
+                range_start += 1;
+            }
+            spans.push(json!({"id": span_id, "text": text, "glyphIds": glyph_ids}));
+            let line = doc["pages"][0]["lines"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|line| line["id"] == line_id)
+                .unwrap();
+            if line.get("spanIds").is_none() {
+                line["spanIds"] = json!([]);
+            }
+            line["spanIds"].as_array_mut().unwrap().push(json!(span_id));
+        }
+        // Array order is immaterial; character ranges retain the observed PDF order.
+        glyphs.reverse();
+        doc["pages"][0]["glyphs"] = json!(glyphs);
+        doc["pages"][0]["spans"] = json!(spans);
+        doc
+    }
+
+    #[test]
+    fn exact_researcher_sentence_survives_merged_pdf_columns() {
+        let doc = merged_column_source();
+        let candidate = passage_authoring(&[("researcher", RESEARCHER_SENTENCE)]);
+        let result = report(&doc, &candidate);
+        let node = &result.nodes[0];
+        assert!(
+            node.min_similarity >= 0.9,
+            "Exact PDF sentence must not be flagged: {node:?}"
+        );
+        assert_eq!(node.min_similarity, 1.0);
+        assert!(!node.has_invented);
+        assert!(node.aligned);
+        for id in ["l1", "l2", "l3", "l4"] {
+            assert!(
+                node.source_node_ids.contains(id),
+                "missing source line {id}"
+            );
+        }
+        assert!(!node.source_node_ids.contains("unrelated"));
+    }
+
+    #[test]
+    fn native_exact_evidence_does_not_bridge_missing_source_characters() {
+        let mut doc = merged_column_source();
+        doc["pages"][0]["glyphs"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|glyph| glyph["text"] != "v");
+        let result = report(&doc, &passage_authoring(&[("researcher", RESEARCHER_SENTENCE)]));
+        assert!(result.nodes[0].min_similarity < 1.0,
+            "Missing native characters must not produce exact evidence");
+    }
+
+    #[test]
+    fn native_exact_evidence_rejects_invented_sentence_and_preserves_order_gate() {
+        let doc = merged_column_source();
+        let invented = passage_authoring(&[(
+            "invented",
+            "Dragons breathe fire over the distant frozen mountains at midnight.",
+        )]);
+        assert!(report(&doc, &invented).nodes[0].has_invented);
+        let authoring = passage_authoring(&[
+            ("later", "to fill, or established views which he or she"),
+            ("earlier", RESEARCHER_SENTENCE),
+        ]);
+        let result = report(&doc, &authoring);
+        assert_eq!(result.nodes[1].min_similarity, 1.0);
+        assert!(
+            !result.monotonic,
+            "Native exact evidence must still participate in reading-order validation"
+        );
+    }
+
     #[test]
     fn hyphenated_line_break_joins_across_lines() {
         // "imp-\nortant" 断行连字符要去掉再相接。
@@ -1097,22 +1611,97 @@ mod tests {
     }
 
     #[test]
+    fn small_perturbations_are_adopted_without_entering_repair() {
+        // 小扰动（个别换词、标点、空格）：相似度仍 ≥0.8，判为命中、直接采用云端，不进修复清单。
+        let doc = source_doc(&[
+            ("l1", "The Roman palace at Fishbourne was discovered by workmen digging a trench in 1960."),
+            ("l2", "Archaeologists later uncovered mosaic floors of exceptional quality."),
+            ("l3", "The site attracts many thousands of visitors every single year."),
+        ]);
+        let authoring = passage_authoring(&[
+            ("p1", "The Roman palace at Fishbourne was discovered by workmen digging a trench in 1960 ."),
+            ("p2", "Archaeologists later uncovered mosaic floors of exceptional quality!"),
+            ("p3", "The site attracts many thousand of visitors every single year."),
+        ]);
+        let report = report(&doc, &authoring);
+        assert_eq!(
+            report.passage_sentence_matched, report.passage_sentence_total,
+            "小扰动应全部判为命中"
+        );
+        assert!(report.passage_pass, "命中率达标应可整体采纳");
+        assert!(
+            report.passage_invented.is_empty(),
+            "小扰动不得进修复清单：{:?}",
+            report.passage_invented
+        );
+        assert!(report.passage_invented_ok);
+    }
+
+    #[test]
+    fn large_perturbations_enter_the_repair_list() {
+        // 大扰动（整句被换成原卷没有的内容）：判为凭空句，进修复清单（passage_invented）。
+        let doc = source_doc(&[
+            ("l1", "The Roman palace at Fishbourne was discovered by workmen digging a trench in 1960."),
+            ("l2", "Archaeologists later uncovered mosaic floors of exceptional quality."),
+            ("l3", "The site attracts many thousands of visitors every single year."),
+        ]);
+        let authoring = passage_authoring(&[
+            ("p1", "The Roman palace at Fishbourne was discovered by workmen digging a trench in 1960."),
+            ("p2", "Archaeologists later uncovered mosaic floors of exceptional quality."),
+            ("p3", "Quarterly financial statements must be filed with the regulator before April."),
+        ]);
+        let report = report(&doc, &authoring);
+        assert!(
+            report
+                .passage_invented
+                .iter()
+                .any(|entry| entry.get("nodeId").and_then(Value::as_str) == Some("p3")),
+            "大扰动整句应进修复清单：{:?}",
+            report.passage_invented
+        );
+    }
+
+    #[test]
     fn coverage_reflects_uncovered_significant_regions() {
         let doc = source_doc(&[
-            ("l1", "The first paragraph explains the origin of the study."),
-            ("l2", "The second paragraph reports the main experimental result."),
-            ("l3", "The third paragraph discusses limitations and future work."),
+            (
+                "l1",
+                "The first paragraph explains the origin of the study.",
+            ),
+            (
+                "l2",
+                "The second paragraph reports the main experimental result.",
+            ),
+            (
+                "l3",
+                "The third paragraph discusses limitations and future work.",
+            ),
         ]);
         let partial = passage_authoring(&[
-            ("p1", "The first paragraph explains the origin of the study."),
-            ("p2", "The second paragraph reports the main experimental result."),
+            (
+                "p1",
+                "The first paragraph explains the origin of the study.",
+            ),
+            (
+                "p2",
+                "The second paragraph reports the main experimental result.",
+            ),
         ]);
         assert!(!report(&doc, &partial).coverage_ok, "漏掉第三段应覆盖不达标");
 
         let full = passage_authoring(&[
-            ("p1", "The first paragraph explains the origin of the study."),
-            ("p2", "The second paragraph reports the main experimental result."),
-            ("p3", "The third paragraph discusses limitations and future work."),
+            (
+                "p1",
+                "The first paragraph explains the origin of the study.",
+            ),
+            (
+                "p2",
+                "The second paragraph reports the main experimental result.",
+            ),
+            (
+                "p3",
+                "The third paragraph discusses limitations and future work.",
+            ),
         ]);
         let full_report = report(&doc, &full);
         assert!(full_report.coverage_ok);
@@ -1122,9 +1711,18 @@ mod tests {
     #[test]
     fn task_group_blocks_when_instruction_is_invented() {
         let doc = source_doc(&[
-            ("l1", "Do the following statements agree with the information given?"),
-            ("l2", "Write TRUE FALSE or NOT GIVEN next to each statement."),
-            ("l3", "The museum was built beside the original Roman foundations."),
+            (
+                "l1",
+                "Do the following statements agree with the information given?",
+            ),
+            (
+                "l2",
+                "Write TRUE FALSE or NOT GIVEN next to each statement.",
+            ),
+            (
+                "l3",
+                "The museum was built beside the original Roman foundations.",
+            ),
         ]);
         let group = |instruction: &str| {
             json!({
@@ -1142,10 +1740,16 @@ mod tests {
             })
         };
 
-        let aligned = report(&doc, &group("Write TRUE FALSE or NOT GIVEN next to each statement."));
+        let aligned = report(
+            &doc,
+            &group("Write TRUE FALSE or NOT GIVEN next to each statement."),
+        );
         assert_eq!(aligned.group_aligned.get("g1"), Some(&true));
 
-        let invented = report(&doc, &group("Match each heading to the correct paragraph below."));
+        let invented = report(
+            &doc,
+            &group("Match each heading to the correct paragraph below."),
+        );
         assert_eq!(invented.group_aligned.get("g1"), Some(&false));
         assert!(invented.group_reasons.get("g1").is_some_and(|r| !r.is_empty()));
     }
@@ -1164,7 +1768,10 @@ mod tests {
     // --- 9 份私有卷的真实文本层对齐（语料门控；缺卷或未开启时跳过）---
 
     /// 复刻 pdf_facts_shadow 测试里构造 job/source 的方式（该文件的辅助是私有的）。
-    fn shadow_job_source(abs_pdf: &std::path::Path, file_id: &str) -> (crate::ImportJob, crate::SourceFile) {
+    fn shadow_job_source(
+        abs_pdf: &std::path::Path,
+        file_id: &str,
+    ) -> (crate::ImportJob, crate::SourceFile) {
         let mut job = crate::job_store::make_job(crate::CreateJobInput {
             title: Some("alignment shadow fixture".to_string()),
             category: Some("phase2".to_string()),
@@ -1270,7 +1877,9 @@ mod tests {
                     .collect();
                 let text = clean_join(&lines);
                 if !text.trim().is_empty() {
-                    content.push(json!({"id": format!("ideal-{counter}"), "type": "text", "text": text}));
+                    content.push(
+                        json!({"id": format!("ideal-{counter}"), "type": "text", "text": text}),
+                    );
                     counter += 1;
                 }
             }
@@ -1292,9 +1901,36 @@ mod tests {
     }
 
     #[test]
+    fn exact_researcher_sentence_aligns_against_real_pdf_glyphs() {
+        let path =
+            crate::test_support::workspace_path("fixtures/parser/demanding-reading-passage-3.pdf");
+        if !crate::test_support::private_corpus_ready(
+            "exact_researcher_sentence_aligns_against_real_pdf_glyphs",
+            std::slice::from_ref(&path),
+        ) {
+            return;
+        }
+        let (job, source) = shadow_job_source(&path, "researcher-source");
+        let shadow = crate::pdf_facts_shadow::extract_pdf_facts_shadow(&job, &source, &path)
+            .expect("actual researcher PDF must extract");
+        let exact = report(
+            &shadow,
+            &passage_authoring(&[("researcher", RESEARCHER_SENTENCE)]),
+        );
+        assert!(
+            exact.nodes[0].min_similarity >= 0.9,
+            "Exact researcher sentence in actual PDF scored {:?}",
+            exact.nodes[0]
+        );
+        assert!(!exact.nodes[0].has_invented);
+        assert!(exact.nodes[0].source_node_ids.contains("p001-l0015"));
+    }
+
+    #[test]
     fn nine_private_pdfs_ideal_candidate_aligns_against_real_text_layer() {
-        let truth_path =
-            crate::test_support::workspace_path("fixtures/golden/private-pdf-task-presentation-stage2.json");
+        let truth_path = crate::test_support::workspace_path(
+            "fixtures/golden/private-pdf-task-presentation-stage2.json",
+        );
         let truth: Value = serde_json::from_slice(&std::fs::read(&truth_path).unwrap())
             .expect("stage2 truth JSON parses");
         let fixtures = truth["fixtures"].as_array().expect("fixtures array");
@@ -1312,7 +1948,7 @@ mod tests {
 
         let mut assessed = 0usize;
         let mut table = String::from(
-            "\n私有卷 理想候选全量对齐通过率表\nfixture | 文本层 | 原文命中 | 覆盖率 | 长度比 | 单调 | passage节点 | 锚点数\n",
+            "\n私有卷 理想候选全量对齐通过率表\nfixture | 文本层 | 原文命中 | 覆盖率 | 长度比 | 单调(顺序比) | passage节点 | 锚点数\n",
         );
         let mut failures = Vec::new();
         for (index, fixture) in fixtures.iter().enumerate() {
@@ -1332,20 +1968,22 @@ mod tests {
                     let anchor_total: usize = report.nodes.iter().map(|node| node.anchors.len()).sum();
                     let passage_nodes = report.nodes.iter().filter(|n| n.kind_label == "passage").count();
                     table.push_str(&format!(
-                        "{id} | 有 | {}/{} | {:.2} | {:.2} | {} | {} | {}\n",
+                        "{id} | 有 | {}/{} | {:.2} | {:.2} | {}({:.2}) | {} | {}\n",
                         report.passage_sentence_matched,
                         report.passage_sentence_total,
                         report.coverage,
                         report.length_ratio,
                         if report.monotonic { "是" } else { "否" },
+                        report.order_in_order_ratio,
                         passage_nodes,
                         anchor_total,
                     ));
                     if !(report.passage_pass && report.coverage_ok && report.monotonic && report.length_ratio_ok) {
                         failures.push(format!(
-                            "{id}: passage_pass={} coverage_ok={}({:.2}) monotonic={} length_ratio_ok={}({:.2})",
+                            "{id}: passage_pass={} coverage_ok={}({:.2}) monotonic={}(顺序比 {:.2}, 逆序 {}) length_ratio_ok={}({:.2})",
                             report.passage_pass, report.coverage_ok, report.coverage,
-                            report.monotonic, report.length_ratio_ok, report.length_ratio
+                            report.monotonic, report.order_in_order_ratio, report.order_violations,
+                            report.length_ratio_ok, report.length_ratio
                         ));
                     }
                 }

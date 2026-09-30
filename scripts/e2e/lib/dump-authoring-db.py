@@ -21,8 +21,10 @@ def main() -> int:
     db_path, out_path = sys.argv[1], sys.argv[2]
     item_id = sys.argv[3] if len(sys.argv) > 3 else None
 
-    con = sqlite3.connect(db_path)
+    con = sqlite3.connect(db_path, timeout=5.0)
     con.row_factory = sqlite3.Row
+    con.execute("PRAGMA busy_timeout = 5000")
+    con.execute("PRAGMA query_only = ON")
     cur = con.cursor()
 
     out = {"db": db_path, "itemId": item_id, "item": None, "batches": [], "decisions": [], "journal": [], "processingJobs": []}

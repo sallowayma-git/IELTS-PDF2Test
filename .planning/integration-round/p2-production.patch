@@ -1,0 +1,383 @@
+--- a/src-tauri/src/reconcile/alignment.rs
++++ b/src-tauri/src/reconcile/alignment.rs
+@@ -136,6 +136,14 @@
+     units: Vec<SourceUnit>,
+     total_readable_len: usize,
+     significant_ids: BTreeSet<String>,
++    /// Native PDF character order supplies exact evidence when a reconstructed line merges columns.
++    native_evidence: Vec<NativeEvidence>,
++}
++
++struct NativeEvidence {
++    key: Vec<char>,
++    /// Each character maps back to the existing physical line unit.
++    unit_indices: Vec<usize>,
+ }
+ 
+ /// 文本承载型区域（其文本参与显著覆盖判定）。非正文的页眉页脚、页码、图片等排除在外；
+@@ -325,12 +333,160 @@
+     if key.is_empty() {
+         return None;
+     }
++    let native_evidence = build_native_evidence(pages, &units);
+     Some(SourceModel {
++        native_evidence,
+         key,
+         units,
+         total_readable_len,
+         significant_ids,
+     })
++}
++
++/// Use retained native character ranges, never a gap-tolerant match: every character
++/// in this alternative view must have been observed in a physical source line.
++/// The normal line stream stays authoritative for reading order and fuzzy matching.
++fn build_native_evidence(pages: &[Value], units: &[SourceUnit]) -> Vec<NativeEvidence> {
++    let mut evidence = Vec::new();
++    for page in pages {
++        let page_index = page
++            .get("pageIndex")
++            .or_else(|| page.get("page_index"))
++            .and_then(Value::as_i64)
++            .unwrap_or(0);
++        let line_units: BTreeMap<&str, usize> = units
++            .iter()
++            .enumerate()
++            .filter(|(_, unit)| unit.page_index == page_index)
++            .flat_map(|(index, unit)| {
++                unit.source_node_ids
++                    .iter()
++                    .map(move |id| (id.as_str(), index))
++            })
++            .collect();
++        let spans: BTreeMap<&str, &Value> = page
++            .get("spans")
++            .and_then(Value::as_array)
++            .into_iter()
++            .flatten()
++            .filter_map(|span| Some((span.get("id")?.as_str()?, span)))
++            .collect();
++        let mut glyph_units = BTreeMap::new();
++        for line in page
++            .get("lines")
++            .and_then(Value::as_array)
++            .into_iter()
++            .flatten()
++        {
++            let Some(index) = line
++                .get("id")
++                .and_then(Value::as_str)
++                .and_then(|id| line_units.get(id))
++                .copied()
++            else {
++                continue;
++            };
++            for span in line
++                .get("spanIds")
++                .and_then(Value::as_array)
++                .into_iter()
++                .flatten()
++                .filter_map(Value::as_str)
++                .filter_map(|id| spans.get(id))
++            {
++                for id in span
++                    .get("glyphIds")
++                    .and_then(Value::as_array)
++                    .into_iter()
++                    .flatten()
++                    .filter_map(Value::as_str)
++                {
++                    glyph_units.insert(id, index);
++                }
++            }
++        }
++        let mut glyphs: Vec<(u64, &Value)> = page
++            .get("glyphs")
++            .and_then(Value::as_array)
++            .into_iter()
++            .flatten()
++            .filter_map(|glyph| {
++                if glyph
++                    .pointer("/sourceAnchor/extractionMode")
++                    .and_then(Value::as_str)
++                    != Some("pdf_native")
++                {
++                    return None;
++                }
++                Some((
++                    glyph.pointer("/sourceAnchor/charRange/start")?.as_u64()?,
++                    glyph,
++                ))
++            })
++            .collect();
++        glyphs.sort_by_key(|(order, _)| *order);
++        let mut view = NativeEvidence {
++            key: Vec::new(),
++            unit_indices: Vec::new(),
++        };
++        let mut previous_unit = None;
++        let mut previous_end = None;
++        for (order, glyph) in glyphs {
++            let raw = glyph
++                .get("text")
++                .and_then(Value::as_str)
++                .unwrap_or_default();
++            let compact = compact_key(&normalize_readable(raw));
++            if previous_end.is_some_and(|end| end != order) {
++                // Do not bridge missing/non-native characters or separate content streams.
++                if !view.key.is_empty() {
++                    evidence.push(view);
++                }
++                view = NativeEvidence {
++                    key: Vec::new(),
++                    unit_indices: Vec::new(),
++                };
++                previous_unit = None;
++            }
++            previous_end = glyph
++                .pointer("/sourceAnchor/charRange/end")
++                .and_then(Value::as_u64);
++            if compact.is_empty() {
++                continue;
++            }
++            let Some(index) = glyph
++                .get("id")
++                .and_then(Value::as_str)
++                .and_then(|id| glyph_units.get(id))
++                .copied()
++            else {
++                if !view.key.is_empty() {
++                    evidence.push(view);
++                }
++                view = NativeEvidence {
++                    key: Vec::new(),
++                    unit_indices: Vec::new(),
++                };
++                previous_unit = None;
++                continue;
++            };
++            if previous_unit.is_some_and(|previous| previous != index)
++                && view.key.last() == Some(&'-')
++            {
++                view.key.pop();
++                view.unit_indices.pop();
++            }
++            previous_unit = Some(index);
++            for ch in compact.chars() {
++                view.key.push(ch);
++                view.unit_indices.push(index);
++            }
++        }
++        if !view.key.is_empty() {
++            evidence.push(view);
++        }
++    }
++    evidence
+ }
+ 
+ // ---------------------------------------------------------------------------
+@@ -425,6 +581,8 @@
+ }
+ 
+ struct SentenceHit {
++    /// Exact native matches cover only the lines whose glyphs supplied the sentence.
++    source_units: Option<Vec<usize>>,
+     similarity: f64,
+     start: usize,
+     end: usize,
+@@ -445,7 +603,12 @@
+         let start = hay.len().saturating_sub(win);
+         let end = hay.len();
+         let ratio = levenshtein_ratio(sentence, &hay[start..end]);
+-        return SentenceHit { similarity: ratio, start, end };
++        return SentenceHit {
++            source_units: None,
++            similarity: ratio,
++            start,
++            end,
++        };
+     }
+     let step = (win / 8).max(1);
+     let mut best_start = from;
+@@ -462,6 +625,7 @@
+     let lo = best_start.saturating_sub(step).max(from);
+     let hi = (best_start + step).min(hay.len().saturating_sub(win));
+     let mut best = SentenceHit {
++        source_units: None,
+         similarity: 0.0,
+         start: best_start,
+         end: (best_start + win).min(hay.len()),
+@@ -470,7 +634,47 @@
+         let end = (start + win).min(hay.len());
+         let ratio = levenshtein_ratio(sentence, &hay[start..end]);
+         if ratio > best.similarity {
+-            best = SentenceHit { similarity: ratio, start, end };
++            best = SentenceHit {
++                source_units: None,
++                similarity: ratio,
++                start,
++                end,
++            };
++        }
++    }
++    best
++}
++
++fn native_exact_match(model: &SourceModel, sentence: &[char], from: usize) -> Option<SentenceHit> {
++    let mut best = None;
++    for evidence in &model.native_evidence {
++        let mut cursor = 0;
++        while let Some(pos) = find_sub(&evidence.key, sentence, cursor) {
++            let indices: BTreeSet<usize> = evidence.unit_indices[pos..pos + sentence.len()]
++                .iter()
++                .copied()
++                .collect();
++            let first = evidence.unit_indices[pos];
++            let start = model.units[first].range.0;
++            if start >= from {
++                let end = indices
++                    .iter()
++                    .map(|index| model.units[*index].range.1)
++                    .max()
++                    .unwrap_or(start);
++                if best
++                    .as_ref()
++                    .map_or(true, |hit: &SentenceHit| start < hit.start)
++                {
++                    best = Some(SentenceHit {
++                        similarity: 1.0,
++                        start,
++                        end,
++                        source_units: Some(indices.into_iter().collect()),
++                    });
++                }
++            }
++            cursor = pos + 1;
+         }
+     }
+     best
+@@ -481,21 +685,47 @@
+ fn match_sentence(model: &SourceModel, sentence: &[char], from: usize, accept: f64) -> SentenceHit {
+     let hay = &model.key;
+     if sentence.is_empty() {
+-        return SentenceHit { similarity: 1.0, start: 0, end: 0 };
++        return SentenceHit {
++            source_units: None,
++            similarity: 1.0,
++            start: 0,
++            end: 0,
++        };
+     }
+     if hay.is_empty() {
+-        return SentenceHit { similarity: 0.0, start: 0, end: 0 };
++        return SentenceHit {
++            source_units: None,
++            similarity: 0.0,
++            start: 0,
++            end: 0,
++        };
+     }
+     let from = from.min(hay.len());
+     if let Some(pos) = find_sub(hay, sentence, from) {
+-        return SentenceHit { similarity: 1.0, start: pos, end: pos + sentence.len() };
++        return SentenceHit {
++            source_units: None,
++            similarity: 1.0,
++            start: pos,
++            end: pos + sentence.len(),
++        };
++    }
++    if let Some(hit) = native_exact_match(model, sentence, from) {
++        return hit;
+     }
+     let forward = best_fuzzy(hay, sentence, from);
+     if forward.similarity >= accept {
+         return forward;
+     }
+     if let Some(pos) = find_sub(hay, sentence, 0) {
+-        return SentenceHit { similarity: 1.0, start: pos, end: pos + sentence.len() };
++        return SentenceHit {
++            source_units: None,
++            similarity: 1.0,
++            start: pos,
++            end: pos + sentence.len(),
++        };
++    }
++    if let Some(hit) = native_exact_match(model, sentence, 0) {
++        return hit;
+     }
+     let global = best_fuzzy(hay, sentence, 0);
+     if global.similarity >= forward.similarity {
+@@ -592,7 +822,13 @@
+     out
+ }
+ 
+-fn push_node(inputs: &mut Vec<TextNodeInput>, node: &Value, kind: NodeKind, task_id: &Option<String>, id_key: &str) {
++fn push_node(
++    inputs: &mut Vec<TextNodeInput>,
++    node: &Value,
++    kind: NodeKind,
++    task_id: &Option<String>,
++    id_key: &str,
++) {
+     let text = node_text(node);
+     if text.trim().is_empty() {
+         return;
+@@ -603,7 +839,12 @@
+         .and_then(Value::as_str)
+         .unwrap_or_default()
+         .to_string();
+-    inputs.push(TextNodeInput { node_id, kind, task_id: task_id.clone(), text });
++    inputs.push(TextNodeInput {
++        node_id,
++        kind,
++        task_id: task_id.clone(),
++        text,
++    });
+ }
+ 
+ /// 枚举候选里所有可对齐文本节点：原文段落、说明、题干、选项、摘要/笔记。
+@@ -733,7 +974,11 @@
+             }
+             // 命中游标只前进不后退，供顺序感知匹配定位下一句。
+             *cursor = (*cursor).max(hit.end);
+-            for index in units_overlapping(model, hit.start, hit.end) {
++            for index in hit
++                .source_units
++                .clone()
++                .unwrap_or_else(|| units_overlapping(model, hit.start, hit.end))
++            {
+                 covered.insert(index);
+                 let unit = &model.units[index];
+                 for id in &unit.source_node_ids {
+@@ -910,8 +1155,14 @@
+ 
+     for input in &inputs {
+         cloud_len += normalize_readable(&input.text).chars().count();
+-        let (alignment, evals) =
+-            align_node(&model, input, config, &mut covered, &mut matched_positions, &mut cursor);
++        let (alignment, evals) = align_node(
++            &model,
++            input,
++            config,
++            &mut covered,
++            &mut matched_positions,
++            &mut cursor,
++        );
+ 
+         if input.kind == NodeKind::Passage {
+             for eval in &evals {
+@@ -957,7 +1208,12 @@
+             .filter(|(_, eval)| !eval.trivial)
+             .map(|(index, _)| index)
+             .collect();
+-        for pick in sample_indices(config.sample_seed, &alignment.node_id, non_trivial.len(), config.sample_per_node) {
++        for pick in sample_indices(
++            config.sample_seed,
++            &alignment.node_id,
++            non_trivial.len(),
++            config.sample_per_node,
++        ) {
+             let eval = &evals[non_trivial[pick]];
+             samples.push(SampleEntry {
+                 node_id: alignment.node_id.clone(),

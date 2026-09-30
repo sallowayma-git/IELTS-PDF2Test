@@ -256,6 +256,34 @@ fn owner_of(difference: &Value, canonical: &GroupIndex, candidate: &GroupIndex) 
     Owner::Document
 }
 
+// Adoption has already settled other groups; local differences must not reopen them.
+pub(crate) fn differences_for_review_targets(
+    canonical: &Value,
+    candidate: &Value,
+    differences: Vec<Value>,
+    targets: &[Value],
+) -> Vec<Value> {
+    let canonical_index = GroupIndex::build(canonical);
+    let candidate_index = GroupIndex::build(candidate);
+    let owners: BTreeSet<Owner> = targets.iter().filter_map(|target| {
+        let (kind, id) = if let Some(slot) = target.get("slotId").and_then(Value::as_str) {
+            ("slot", slot)
+        } else if let Some(task) = target.get("taskId").and_then(Value::as_str) {
+            ("task_group", task)
+        } else {
+            return None;
+        };
+        Some(owner_of(&json!({"targetType": kind, "targetId": id}), &canonical_index, &candidate_index))
+    }).collect();
+    differences.into_iter().filter(|difference| {
+        let owner = owner_of(difference, &canonical_index, &candidate_index);
+        owners.iter().any(|wanted| match (&owner, wanted) {
+            (Owner::Groups(actual), Owner::Groups(wanted)) => !actual.is_disjoint(wanted),
+            _ => &owner == wanted,
+        })
+    }).collect()
+}
+
 /// 阻塞质量问题的归属：按 `targetIds` 找题组，找不到就是文档级。
 fn owner_of_issue(issue: &Value, canonical: &GroupIndex, candidate: &GroupIndex) -> Owner {
     let owners: BTreeSet<String> = issue
@@ -1731,6 +1759,27 @@ mod tests {
         assert!(
             packets.is_empty(),
             "no difference or blocker means no cloud call: {packets:#?}"
+        );
+    }
+
+    /// 轴连接：采纳复核目标即使与草稿没有逐字差异，也应为可定位到题组 / 槽位的目标生成包
+    /// （overlap、未解析答案）；空清单不生包已由上一条覆盖。
+    #[test]
+    fn review_targets_drive_packets_for_their_owning_group() {
+        let canonical = canonical_paper();
+        let source = index_with_pages(&[(1, &["1 TRUE"]), (2, &["8 B"])]);
+        let overlap =
+            difference("task_group", "tg-1-5", "instruction_stem_overlap", Value::Null, Value::Null);
+        let overlap_packets = plan(&canonical, &Value::Null, std::slice::from_ref(&overlap), &source);
+        assert_eq!(overlap_packets.len(), 1, "overlap 复核目标应生成一个包：{overlap_packets:#?}");
+        let unresolved =
+            difference("slot", "q6", "answer_unresolved", Value::Null, Value::Null);
+        let unresolved_packets =
+            plan(&canonical, &Value::Null, std::slice::from_ref(&unresolved), &source);
+        assert_eq!(
+            unresolved_packets.len(),
+            1,
+            "未解析答案复核目标应生成一个包：{unresolved_packets:#?}"
         );
     }
 

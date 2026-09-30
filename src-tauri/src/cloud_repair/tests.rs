@@ -384,6 +384,7 @@ fn request_for_batch<'a>(
         deadline: Instant::now() + std::time::Duration::from_secs(30),
         cancelled,
         progress: None,
+        review_targets: &[],
     }
 }
 
@@ -664,6 +665,99 @@ fn repair_loop_stops_on_repeated_identical_calls() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// CAS 版本号变化不能把同一条无效编辑伪装成进展。
+#[test]
+fn packet_loop_stops_when_the_same_edit_reappears_after_replanning() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+
+    let response_group = canonical["taskGroups"]
+        .as_array()
+        .and_then(|groups| {
+            groups
+                .iter()
+                .find(|group| group["taskId"] == "early-approaches-q14-15")
+        })
+        .and_then(|group| group["responseGroups"].as_array())
+        .and_then(|groups| groups.first())
+        .cloned()
+        .expect("golden 中必须有 q14/q15 的 response group");
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 20);
+    let mut calls = 0u32;
+    let report = run_packets(&request, |context: &Value, _observations: &[Value]| {
+        calls += 1;
+        Ok(json!({
+            "callId": format!("repeat-{calls}"),
+            "tool": "apply_edits",
+            "arguments": {
+                "baseVersion": context.pointer("/draftSlice/editVersion"),
+                "commands": [{
+                    "op": "setResponseGroup",
+                    "taskId": "early-approaches-q14-15",
+                    "responseGroup": response_group.clone(),
+                }],
+                "evidence": [{
+                    "sourceFileId": "early-approaches-pdf",
+                    "pageIndex": 1,
+                    "quote": "Early approaches to organisational design."
+                }]
+            }
+        }))
+    })
+    .expect("包模式必须返回终态报告");
+
+    assert!(
+        report.applied_count > 0,
+        "测试前提必须是首条结构编辑已实际落库：{:#?}",
+        report.observations
+    );
+    assert!(
+        calls <= 2,
+        "baseVersion 变化不应让重复 responseGroup 编辑继续循环，实际调用 {calls} 次"
+    );
+    assert_ne!(report.status, REPAIR_STATUS_RUNNING);
+    assert!(
+        report
+            .packets
+            .iter()
+            .any(|packet| packet["status"] == "no_progress"),
+        "重复编辑应以 no_progress 收摊：{:#?}",
+        report.packets
+    );
+    std::fs::remove_dir_all(&root).expect("清理临时目录");
+}
+
+#[test]
+fn packet_loop_stops_at_the_per_packet_round_limit() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 20);
+    let mut calls = 0u32;
+    let report = run_packets(&request, |_packet: &Value, _observations: &[Value]| {
+        calls += 1;
+        Ok(json!({
+            "callId": format!("source-{calls}"),
+            "tool": "read_source",
+            "arguments": {"pageIndex": calls}
+        }))
+    })
+    .expect("达到上限时也必须返回终态报告");
+
+    assert_eq!(calls, PACKET_MAX_ROUNDS);
+    assert_eq!(report.rounds, PACKET_MAX_ROUNDS);
+    assert_eq!(report.status, REPAIR_STATUS_BUDGET_EXHAUSTED);
+    assert_eq!(report.packets.len(), 1);
+    assert_eq!(report.packets[0]["status"], "rounds_exhausted");
+    std::fs::remove_dir_all(&root).expect("清理临时目录");
+}
+
 /// 没有 job 时 `read_source` 如实失败，绝不编造原文证据。
 #[test]
 fn read_source_evidence_fails_instead_of_fabricating() {
@@ -880,6 +974,58 @@ fn a_reported_doubt_survives_even_when_nothing_else_is_wrong() {
             .all(|task| task["blocking"] != json!(true)),
         "疑问不是结构错误，不该标成阻断：{:?}",
         report.remaining_tasks
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 包模式下模型在 apply_edits 同一步里带出的未解疑问：这一步让包以 edited 收工、不再单独
+/// 发 finish_packet，疑问也必须进入剩余任务（回归：只在 finish 分支收集会把它丢掉）。
+#[test]
+fn a_doubt_raised_on_the_applying_step_survives_packet_edited_finish() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    // 候选把 q14 改成 A，与当前稿 B 有差异 → 有一个可处理的包。
+    store_candidate(&root, "A");
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 4);
+    let report = run_packets(&request, |context: &Value, _observations: &[Value]| {
+        let version = context.get("editVersion").and_then(Value::as_i64).unwrap_or(0);
+        // 同一步既落地编辑、又声明一处无法确认项：包会因此以 edited 收工。
+        Ok(json!({"callId": "c1", "tool": "apply_edits", "arguments": {
+            "baseVersion": version,
+            "commands": [set_answer("q14", "A")],
+            "unresolved": [{
+                "targetId": "q14",
+                "message": "第 1 页第 14 题答案栏字形模糊，B 与 8 难以区分",
+                "evidence": [{"sourceFileId": "early-approaches-pdf", "pageIndex": 1, "quote": "14 A"}]
+            }]
+        }}))
+    })
+    .expect("包模式循环必须跑完");
+
+    let question = report
+        .remaining_tasks
+        .iter()
+        .find(|task| {
+            task["userTaskId"]
+                .as_str()
+                .unwrap_or("")
+                .starts_with("cloud-question:")
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "apply 步骤带出的疑问必须进剩余任务（edited 收尾不得丢弃）：{:?}",
+                report.remaining_tasks
+            )
+        });
+    assert!(
+        question["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("字形模糊"),
+        "疑问必须带着模型的原话给用户：{question:?}"
     );
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -1816,15 +1962,6 @@ fn scripted_structure_fix_reply(body: &str, round: usize) -> String {
         .and_then(|value| value.pointer("/context/editVersion"))
         .and_then(Value::as_i64)
         .unwrap_or(-1);
-    // 从上一轮的真实观察里取回某个对象的来源依据——这正是模型手里能拿到的东西。
-    let anchors = |pointer: &str| -> Value {
-        input
-            .as_ref()
-            .and_then(|value| value.pointer(&format!("/observations/0/result{pointer}")))
-            .cloned()
-            .unwrap_or_else(|| json!([]))
-    };
-    let complete = round >= 3;
     let text_node = |id: &str, text: &str| {
         json!({
             "type": "text",
@@ -1834,26 +1971,22 @@ fn scripted_structure_fix_reply(body: &str, round: usize) -> String {
             "text": text
         })
     };
-    let option = |index: usize, label: &str, text: &str| {
+    // 已有节点：模型不带来源锚点，apply 时由后端从权威稿回填（A2：已有节点可回填）。
+    let option = |label: &str, text: &str| {
         json!({
             "optionId": format!("option-{}", label.to_lowercase()),
             "label": label,
             "content": [text_node(&format!("option-{}-text", label.to_lowercase()), text)],
-            // 整块替换：依据必须带回来，否则「这段文字出自哪一页」就没了。
-            "sourceAnchors": if complete {
-                anchors(&format!("/taskGroups/0/optionBank/options/{index}/sourceAnchors"))
-            } else {
-                json!([])
-            }
+            "sourceAnchors": []
         })
     };
     let options: Vec<Value> = vec![
-        option(0, "A", "factor A"),
+        option("A", "factor A"),
         // 原文件里 B 的措辞是 "factor B (revised)"：本地读漏了括号部分。
-        option(1, "B", "factor B (revised)"),
-        option(2, "C", "factor C"),
-        option(3, "D", "factor D"),
-        option(4, "E", "factor E"),
+        option("B", "factor B (revised)"),
+        option("C", "factor C"),
+        option("D", "factor D"),
+        option("E", "factor E"),
     ];
     match round {
         1 => json!({
@@ -1861,8 +1994,8 @@ fn scripted_structure_fix_reply(body: &str, round: usize) -> String {
             "tool": "read_draft",
             "arguments": {"taskGroupIds": ["early-approaches-q14-15"]}
         }),
-        2 | 3 => json!({
-            "callId": format!("c{round}"),
+        2 => json!({
+            "callId": "c2",
             "tool": "apply_edits",
             "arguments": {
                 "baseVersion": version,
@@ -1875,11 +2008,7 @@ fn scripted_structure_fix_reply(body: &str, round: usize) -> String {
                             "scope": "task_group",
                             "options": options,
                             "allowReuse": false,
-                            "sourceAnchors": if complete {
-                                anchors("/taskGroups/0/optionBank/sourceAnchors")
-                            } else {
-                                json!([])
-                            }
+                            "sourceAnchors": []
                         }
                     },
                     {
@@ -1891,11 +2020,7 @@ fn scripted_structure_fix_reply(body: &str, round: usize) -> String {
                             "prompt": [{
                                 "type": "paragraph",
                                 "id": "early-approaches-shared-prompt",
-                                "sourceAnchors": if complete {
-                                    anchors("/taskGroups/0/responseGroups/0/prompt/0/sourceAnchors")
-                                } else {
-                                    json!([])
-                                },
+                                "sourceAnchors": [],
                                 "provenanceStatus": "source",
                                 "children": [text_node(
                                     "early-approaches-shared-prompt-text",
@@ -1909,11 +2034,7 @@ fn scripted_structure_fix_reply(body: &str, round: usize) -> String {
                             "scoringPolicy": "per_slot_ielts_normalized",
                             "duplicatePolicy": "reject_submission",
                             "allowOptionReuse": false,
-                            "sourceAnchors": if complete {
-                                anchors("/taskGroups/0/responseGroups/0/sourceAnchors")
-                            } else {
-                                json!([])
-                            }
+                            "sourceAnchors": []
                         }
                     }
                 ],
@@ -1924,7 +2045,7 @@ fn scripted_structure_fix_reply(body: &str, round: usize) -> String {
                 }]
             }
         }),
-        _ => json!({"callId": "c4", "tool": "finish", "arguments": {"note": "选项与作答结构已按原文件修正"}}),
+        _ => json!({"callId": "c3", "tool": "finish", "arguments": {"note": "选项与作答结构已按原文件修正"}}),
     }
     .to_string()
 }
@@ -2485,27 +2606,20 @@ fn cloud_repair_writes_option_bank_and_response_structure_through_the_real_chain
     })
     .expect("修复循环必须跑完");
 
-    // 第一轮漏带来源依据 → 被拒，且逐个点名缺的是谁（模型据此知道要把依据带回来）。
-    let first_attempt = &report.observations[1];
+    // A2：模型编辑的是权威稿里已有的节点（选项库、作答结构、提示段落），未带来源锚点；
+    // 已有节点在 apply 时由后端从权威稿回填 provenance，因此无需模型重报依据即可落库。
+    // 「模型新建、权威稿里没有对应节点」的内容仍须经原卷校验，否则被拒——见 tools.rs 的
+    // apply_cloud_edits 专项用例。
+    let apply_attempt = &report.observations[1];
     assert_eq!(
-        first_attempt["status"], "rejected",
-        "漏带依据必须被拒：{first_attempt:?}"
+        apply_attempt["status"], "ok",
+        "已有节点的结构编辑应落库：{apply_attempt:?}"
     );
-    let first_errors = first_attempt["errors"]
-        .as_array()
-        .map(|errors| {
-            errors
-                .iter()
-                .filter_map(Value::as_str)
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .unwrap_or_default();
-    assert!(
-        first_errors.contains("PROVENANCE_MISSING@response_group:early-approaches-shared-response"),
-        "拒绝理由必须点名是哪个对象丢了依据：{first_errors}"
+    assert_eq!(
+        apply_attempt.pointer("/result/status").and_then(Value::as_str),
+        Some("applied"),
+        "已有节点回填后应 applied 而非 rejected：{apply_attempt:?}"
     );
-    // 第二轮把依据带回来 → 两条命令都落库。
     assert_eq!(
         report.applied_count, 2,
         "选项库与作答结构两条命令都要落库：{:?}",
@@ -2693,6 +2807,12 @@ fn every_exit_path_returns_a_terminal_report_and_never_leaves_running() {
     assert_eq!(report.status, REPAIR_STATUS_UNAVAILABLE);
     // 开工确实写了 running —— 这正是「必须有人写终态」的原因。
     assert_eq!(seen.borrow()[0].status, REPAIR_STATUS_RUNNING);
+    let packet_report = run_packets(&request, |_packet: &Value, _observations: &[Value]| {
+        Err("llm_http_500:packet".to_string())
+    })
+    .expect("包模式中的调用错误也必须转成终态报告");
+    assert_eq!(packet_report.status, REPAIR_STATUS_UNAVAILABLE);
+    assert_eq!(packet_report.last_error.as_deref(), Some("llm_http_500:packet"));
     // 循环之外的失败（join 失败 / 开工前丢 lease）走兜底摘要，同样必须是终态。
     let fallback = unavailable_summary(&root, ITEM_ID, BATCH_ID, "join failed");
     assert_eq!(fallback["status"], REPAIR_STATUS_UNAVAILABLE);
@@ -3933,6 +4053,62 @@ fn seed_adopted_local_snapshot(root: &Path, local_authoring: &Value) {
         &json!({"candidateAdoption": {"adopted": true}}),
     )
     .expect("mark cloud candidate adopted");
+}
+
+#[test]
+fn empty_adoption_review_list_does_not_hide_blocking_quality() {
+    let root = temp_root();
+    let mut cloud = golden_authoring();
+    cloud["quality"]["issues"] = json!([{
+        "issueId": "bad-q14", "code": "ANSWER_KEY_MISSING_SLOT", "severity": "blocking",
+        "message": "q14 missing answer", "targetType": "slot", "targetId": "q14"
+    }]);
+    seed_item(&root, &cloud);
+    seed_packet_job(&root);
+    seed_adopted_local_snapshot(&root, &cloud);
+    let conn = open_library_connection(&root).expect("open library connection");
+    store::write_batch_repair(&conn, BATCH_ID, &json!({
+        "candidateAdoption": {"adopted": true, "needsCloudReview": []}
+    })).expect("persist empty review list");
+    drop(conn);
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 4);
+    let mut calls = 0;
+    let report = run_packets(&request, |_context: &Value, _observations: &[Value]| {
+        calls += 1;
+        Ok(json!({"callId": "finish", "tool": "finish_packet", "arguments": {}}))
+    }).expect("blocking quality must still reach a terminal report");
+    assert!(calls > 0, "blocking quality must still create a repair packet");
+    assert!(report.remaining_tasks.iter().any(|task| task["blocking"] == true));
+    assert_eq!(report.status, REPAIR_STATUS_NEEDS_ATTENTION);
+    std::fs::remove_dir_all(root).expect("remove temporary fixture");
+}
+
+#[test]
+fn adopted_clean_candidate_has_no_repairs_or_conflict_tasks() {
+    let root = temp_root();
+    let cloud = golden_authoring();
+    let mut local = cloud.clone();
+    local["answerKey"]["q14"] = json!({"kind": "unresolved"});
+    seed_item(&root, &cloud);
+    seed_packet_job(&root);
+    seed_adopted_local_snapshot(&root, &local);
+    let conn = open_library_connection(&root).expect("open library connection");
+    store::write_batch_repair(&conn, BATCH_ID, &json!({
+        "candidateAdoption": {"adopted": true, "needsCloudReview": []}
+    })).expect("persist empty adoption review list");
+    drop(conn);
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 4);
+    let mut calls = 0;
+    let report = run_packets(&request, |_context: &Value, _observations: &[Value]| {
+        calls += 1;
+        Ok(json!({"callId": "finish", "tool": "finish_packet", "arguments": {}}))
+    }).expect("clean adoption must finish");
+    assert_eq!(calls, 0, "an unresolved local snapshot is not a conflict after clean cloud adoption");
+    assert_eq!(report.status, REPAIR_STATUS_COMPLETED);
+    assert!(report.remaining_tasks.is_empty(), "{:?}", report.remaining_tasks);
+    std::fs::remove_dir_all(root).expect("remove temporary fixture");
 }
 
 #[test]
@@ -5244,9 +5420,14 @@ fn the_real_controlled_service_drives_the_packet_loop_through_l0_l1_and_finish()
     let captured_requests = std::fs::read_to_string(&request_log_path)
         .expect("真实受控服务必须记录它实际收到的 HTTP 请求体");
     let request_bodies: Vec<&str> = captured_requests.lines().collect();
-    assert!(
-        request_bodies.len() >= 3,
-        "应记录 L0 / L1 / finish_packet 请求：{request_bodies:#?}"
+    // 降本后的最少往返约定：一个包只发 L0、L1 两次模型请求，finish_packet 由 L1 的
+    // 应答就地驱动、不再单独占一次往返。L0 / L1 / finish 三种行为仍分别由下方的
+    // llm-calls 升级级别（records[0]=L0、records[1]=L1）与 packets（finished、
+    // insufficientContext）逐条断言，请求总数只做上界守卫，避免退回到多余往返。
+    assert_eq!(
+        request_bodies.len(),
+        2,
+        "包模式一个包应只发 L0 / L1 两次请求（finish_packet 就地驱动）：{request_bodies:#?}"
     );
     assert!(
         request_bodies
@@ -5262,27 +5443,29 @@ fn the_real_controlled_service_drives_the_packet_loop_through_l0_l1_and_finish()
         "编辑必须真的落库"
     );
     assert_eq!(report.applied_count, 1);
-    assert!(
-        report
-            .packets
-            .iter()
-            .any(|packet| packet["status"] == json!("finished")),
-        "真实受控服务必须在编辑后调用 finish_packet 并结束一个包：{:#?}",
-        report.packets
-    );
+    // 降本后：一个包里一旦 apply_edits 落地，这个包就以终态 "edited" 收工——不再单独发一次
+    // finish_packet 往返（A3）。链路最终 finish 体现为：编辑落库后该包干净收工、队列自然
+    // 跑空，而不是停在 rounds_exhausted / no_progress 这类未完成终态。
     let edited_packet = report
         .packets
         .iter()
-        .position(|packet| packet["edits"].as_u64().unwrap_or(0) > 0)
+        .find(|packet| packet["edits"].as_u64().unwrap_or(0) > 0)
         .expect("逐包诊断必须记录实际编辑的包");
-    let finished_packet = report
-        .packets
-        .iter()
-        .position(|packet| packet["status"] == json!("finished"))
-        .expect("逐包诊断必须记录 finish_packet");
+    assert_eq!(
+        edited_packet["status"],
+        json!("edited"),
+        "编辑落地的包应以终态 edited 干净收工：{:#?}",
+        report.packets
+    );
     assert!(
-        finished_packet > edited_packet,
-        "finish_packet 必须发生在编辑包之后：{:#?}",
+        report.packets.iter().all(|packet| !matches!(
+            packet["status"].as_str(),
+            Some("rounds_exhausted")
+                | Some("no_progress")
+                | Some("global_round_budget")
+                | Some("deadline")
+        )),
+        "链路必须干净收工，不能停在未完成终态：{:#?}",
         report.packets
     );
     // ② 「不够就说」这条出口真的被走过：L1 在逐包诊断里看得见。
@@ -6769,6 +6952,7 @@ fn ten_packets_with_fixed_round_delay_finish_within_a_deadline_scaled_to_the_pac
         deadline: started + std::time::Duration::from_millis(base_deadline_ms),
         cancelled: &not_cancelled,
         progress: None,
+        review_targets: &[],
     };
     // 每个包第一轮：把本包的答案改对（editVersion 从包的 draftSlice 里读）；
     // 重切出的收尾包：finish_packet。每轮把虚拟时钟拨快 400 毫秒模拟真实模型延迟。
@@ -7333,9 +7517,10 @@ fn repair_prompt_only_ever_names_the_real_main_source_file_id() {
             &prompt[..prompt.len().min(2000)]
         );
         for id in &ids {
-            assert_eq!(
-                id, "early-approaches-pdf",
-                "prompt 里的每个 sourceFileId 都必须是主试卷的真实 ID：{ids:?}"
+            assert!(
+                id == "early-approaches-pdf"
+                    || id == tools::REQUEST_SOURCE_FILE_ID_PLACEHOLDER,
+                "prompt 里的 sourceFileId 只能是主卷真实 ID 或可缓存占位符：{ids:?}"
             );
         }
         checked += ids.len();
