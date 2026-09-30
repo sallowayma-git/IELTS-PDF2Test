@@ -22,7 +22,7 @@
 - 夹具 demanding-reading-passage-3 派生候选天然带触发：group-2 instruction_stem_overlap、
   passage-paragraph-2 一句 ~0.55、q27/q28 未解析答案。
 
-## Item 2（轴连接）—— 待做（进行中）
+## Item 2（轴连接）—— 已完成，已提交 1b092b9
 把修复循环目标接成「needsCloudReview（taskId/slotId 类）+ 采纳后阻断级质量问题」，而不仅是 candidate-vs-draft 差异。
 - RepairRunRequest 加 `review_targets: &'a [Value]`；scheduler.rs:1192 处传入 needs_cloud_review（987 行在作用域）；
   tests.rs 的 request() 助手传 &[]。
