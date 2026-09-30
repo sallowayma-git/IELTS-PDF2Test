@@ -3821,8 +3821,8 @@ fn plan_repair_packets(
             target.get("taskId").and_then(Value::as_str),
             target.get("slotId").and_then(Value::as_str),
         ) {
-            (Some(task_id), _) => ("task_group", task_id),
-            (None, Some(slot_id)) => ("slot", slot_id),
+            (_, Some(slot_id)) => ("slot", slot_id),
+            (Some(task_id), None) => ("task_group", task_id),
             _ => continue,
         };
         let already = differences.iter().any(|difference| {
