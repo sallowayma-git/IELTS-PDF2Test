@@ -128,6 +128,10 @@ pub(crate) struct RepairRunRequest<'a> {
     ///
     /// `None` = 调用方不需要进度（测试、或没有可写状态的地方）。
     pub progress: Option<&'a dyn Fn(RepairProgress)>,
+    /// 采纳计划产出的云端复核目标（needsCloudReview）。修复循环的目标 = 这份清单里可定位到
+    /// 题组/槽位的项 + 采纳后仍在的阻断级质量问题，而不仅是 candidate 与草稿之间的差异。
+    /// 空清单且无阻断质量问题 ⇒ 不建包、零调用。passage 级项（无 taskId/slotId）不生包。
+    pub review_targets: &'a [Value],
 }
 
 /// 一次进度上报的内容。
@@ -3784,11 +3788,38 @@ fn plan_repair_packets(
         == Some("adopted_cloud_vs_local_snapshot");
     let candidate = comparison_challenger(request.root, request.job_id, request.batch_id, adopted)?
         .unwrap_or(Value::Null);
-    let differences: Vec<Value> = context
+    let mut differences: Vec<Value> = context
         .get("differences")
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    // 轴连接：把采纳复核清单里可定位到题组/槽位的目标并入差异，让它们即使与草稿没有逐字
+    // 差异也能生成修复包（owner_of 会按 targetType/targetId 归到所属题组）。passage 级项
+    // （只有 nodeId、无 taskId/slotId）按决定保持顾问级、不生包。已有同目标差异则不重复。
+    for target in request.review_targets {
+        let (target_type, target_id) = match (
+            target.get("taskId").and_then(Value::as_str),
+            target.get("slotId").and_then(Value::as_str),
+        ) {
+            (Some(task_id), _) => ("task_group", task_id),
+            (None, Some(slot_id)) => ("slot", slot_id),
+            _ => continue,
+        };
+        let already = differences.iter().any(|difference| {
+            difference.get("targetType").and_then(Value::as_str) == Some(target_type)
+                && difference.get("targetId").and_then(Value::as_str) == Some(target_id)
+        });
+        if already {
+            continue;
+        }
+        differences.push(json!({
+            "targetType": target_type,
+            "targetId": target_id,
+            "field": target.get("reason").and_then(Value::as_str).unwrap_or("needs_cloud_review"),
+            "canonical": Value::Null,
+            "candidate": Value::Null,
+        }));
+    }
     let blocking_issues = crate::authoring_v2_commands::unresolved_blocking_issues(&canonical);
     let protected: BTreeSet<String> = context
         .get("protectedTargets")

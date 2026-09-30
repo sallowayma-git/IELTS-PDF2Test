@@ -1142,6 +1142,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                         let profile = resolved_profile.clone();
                         let state = state.clone();
                         let app = app.clone();
+                        let review_targets_for_repair = needs_cloud_review.clone();
                         move || {
                             let probe_job_id = job_id.clone();
                             let cancelled_probe = move || -> bool {
@@ -1202,6 +1203,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                                     ),
                                 cancelled: &cancelled_probe,
                                 progress: Some(&progress),
+                                review_targets: &review_targets_for_repair,
                             };
                             let report = crate::cloud_repair::run_repair_loop(
                                 &request,

@@ -1734,6 +1734,27 @@ mod tests {
         );
     }
 
+    /// 轴连接：采纳复核目标即使与草稿没有逐字差异，也应为可定位到题组 / 槽位的目标生成包
+    /// （overlap、未解析答案）；空清单不生包已由上一条覆盖。
+    #[test]
+    fn review_targets_drive_packets_for_their_owning_group() {
+        let canonical = canonical_paper();
+        let source = index_with_pages(&[(1, &["1 TRUE"]), (2, &["8 B"])]);
+        let overlap =
+            difference("task_group", "tg-1-5", "instruction_stem_overlap", Value::Null, Value::Null);
+        let overlap_packets = plan(&canonical, &Value::Null, std::slice::from_ref(&overlap), &source);
+        assert_eq!(overlap_packets.len(), 1, "overlap 复核目标应生成一个包：{overlap_packets:#?}");
+        let unresolved =
+            difference("slot", "q6", "answer_unresolved", Value::Null, Value::Null);
+        let unresolved_packets =
+            plan(&canonical, &Value::Null, std::slice::from_ref(&unresolved), &source);
+        assert_eq!(
+            unresolved_packets.len(),
+            1,
+            "未解析答案复核目标应生成一个包：{unresolved_packets:#?}"
+        );
+    }
+
     /// 每条差异归到它所属的题组；不同题组各自成包。
     #[test]
     fn differences_are_owned_by_their_task_group() {

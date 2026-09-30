@@ -384,6 +384,7 @@ fn request_for_batch<'a>(
         deadline: Instant::now() + std::time::Duration::from_secs(30),
         cancelled,
         progress: None,
+        review_targets: &[],
     }
 }
 
@@ -6796,6 +6797,7 @@ fn ten_packets_with_fixed_round_delay_finish_within_a_deadline_scaled_to_the_pac
         deadline: started + std::time::Duration::from_millis(base_deadline_ms),
         cancelled: &not_cancelled,
         progress: None,
+        review_targets: &[],
     };
     // 每个包第一轮：把本包的答案改对（editVersion 从包的 draftSlice 里读）；
     // 重切出的收尾包：finish_packet。每轮把虚拟时钟拨快 400 毫秒模拟真实模型延迟。
