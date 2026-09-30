@@ -136,6 +136,14 @@ struct SourceModel {
     units: Vec<SourceUnit>,
     total_readable_len: usize,
     significant_ids: BTreeSet<String>,
+    /// Native PDF character order supplies exact evidence when a reconstructed line merges columns.
+    native_evidence: Vec<NativeEvidence>,
+}
+
+struct NativeEvidence {
+    key: Vec<char>,
+    /// Each character maps back to the existing physical line unit.
+    unit_indices: Vec<usize>,
 }
 
 /// 文本承载型区域（其文本参与显著覆盖判定）。非正文的页眉页脚、页码、图片等排除在外；
@@ -325,12 +333,160 @@ fn build_source_model(document_ir: &Value) -> Option<SourceModel> {
     if key.is_empty() {
         return None;
     }
+    let native_evidence = build_native_evidence(pages, &units);
     Some(SourceModel {
+        native_evidence,
         key,
         units,
         total_readable_len,
         significant_ids,
     })
+}
+
+/// Use retained native character ranges, never a gap-tolerant match: every character
+/// in this alternative view must have been observed in a physical source line.
+/// The normal line stream stays authoritative for reading order and fuzzy matching.
+fn build_native_evidence(pages: &[Value], units: &[SourceUnit]) -> Vec<NativeEvidence> {
+    let mut evidence = Vec::new();
+    for page in pages {
+        let page_index = page
+            .get("pageIndex")
+            .or_else(|| page.get("page_index"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let line_units: BTreeMap<&str, usize> = units
+            .iter()
+            .enumerate()
+            .filter(|(_, unit)| unit.page_index == page_index)
+            .flat_map(|(index, unit)| {
+                unit.source_node_ids
+                    .iter()
+                    .map(move |id| (id.as_str(), index))
+            })
+            .collect();
+        let spans: BTreeMap<&str, &Value> = page
+            .get("spans")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|span| Some((span.get("id")?.as_str()?, span)))
+            .collect();
+        let mut glyph_units = BTreeMap::new();
+        for line in page
+            .get("lines")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let Some(index) = line
+                .get("id")
+                .and_then(Value::as_str)
+                .and_then(|id| line_units.get(id))
+                .copied()
+            else {
+                continue;
+            };
+            for span in line
+                .get("spanIds")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .filter_map(|id| spans.get(id))
+            {
+                for id in span
+                    .get("glyphIds")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                {
+                    glyph_units.insert(id, index);
+                }
+            }
+        }
+        let mut glyphs: Vec<(u64, &Value)> = page
+            .get("glyphs")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|glyph| {
+                if glyph
+                    .pointer("/sourceAnchor/extractionMode")
+                    .and_then(Value::as_str)
+                    != Some("pdf_native")
+                {
+                    return None;
+                }
+                Some((
+                    glyph.pointer("/sourceAnchor/charRange/start")?.as_u64()?,
+                    glyph,
+                ))
+            })
+            .collect();
+        glyphs.sort_by_key(|(order, _)| *order);
+        let mut view = NativeEvidence {
+            key: Vec::new(),
+            unit_indices: Vec::new(),
+        };
+        let mut previous_unit = None;
+        let mut previous_end = None;
+        for (order, glyph) in glyphs {
+            let raw = glyph
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let compact = compact_key(&normalize_readable(raw));
+            if previous_end.is_some_and(|end| end != order) {
+                // Do not bridge missing/non-native characters or separate content streams.
+                if !view.key.is_empty() {
+                    evidence.push(view);
+                }
+                view = NativeEvidence {
+                    key: Vec::new(),
+                    unit_indices: Vec::new(),
+                };
+                previous_unit = None;
+            }
+            previous_end = glyph
+                .pointer("/sourceAnchor/charRange/end")
+                .and_then(Value::as_u64);
+            if compact.is_empty() {
+                continue;
+            }
+            let Some(index) = glyph
+                .get("id")
+                .and_then(Value::as_str)
+                .and_then(|id| glyph_units.get(id))
+                .copied()
+            else {
+                if !view.key.is_empty() {
+                    evidence.push(view);
+                }
+                view = NativeEvidence {
+                    key: Vec::new(),
+                    unit_indices: Vec::new(),
+                };
+                previous_unit = None;
+                continue;
+            };
+            if previous_unit.is_some_and(|previous| previous != index)
+                && view.key.last() == Some(&'-')
+            {
+                view.key.pop();
+                view.unit_indices.pop();
+            }
+            previous_unit = Some(index);
+            for ch in compact.chars() {
+                view.key.push(ch);
+                view.unit_indices.push(index);
+            }
+        }
+        if !view.key.is_empty() {
+            evidence.push(view);
+        }
+    }
+    evidence
 }
 
 // ---------------------------------------------------------------------------
@@ -425,6 +581,8 @@ fn split_sentences(readable: &str) -> Vec<String> {
 }
 
 struct SentenceHit {
+    /// Exact native matches cover only the lines whose glyphs supplied the sentence.
+    source_units: Option<Vec<usize>>,
     similarity: f64,
     start: usize,
     end: usize,
@@ -445,7 +603,12 @@ fn best_fuzzy(hay: &[char], sentence: &[char], from: usize) -> SentenceHit {
         let start = hay.len().saturating_sub(win);
         let end = hay.len();
         let ratio = levenshtein_ratio(sentence, &hay[start..end]);
-        return SentenceHit { similarity: ratio, start, end };
+        return SentenceHit {
+            source_units: None,
+            similarity: ratio,
+            start,
+            end,
+        };
     }
     let step = (win / 8).max(1);
     let mut best_start = from;
@@ -462,6 +625,7 @@ fn best_fuzzy(hay: &[char], sentence: &[char], from: usize) -> SentenceHit {
     let lo = best_start.saturating_sub(step).max(from);
     let hi = (best_start + step).min(hay.len().saturating_sub(win));
     let mut best = SentenceHit {
+        source_units: None,
         similarity: 0.0,
         start: best_start,
         end: (best_start + win).min(hay.len()),
@@ -470,7 +634,47 @@ fn best_fuzzy(hay: &[char], sentence: &[char], from: usize) -> SentenceHit {
         let end = (start + win).min(hay.len());
         let ratio = levenshtein_ratio(sentence, &hay[start..end]);
         if ratio > best.similarity {
-            best = SentenceHit { similarity: ratio, start, end };
+            best = SentenceHit {
+                source_units: None,
+                similarity: ratio,
+                start,
+                end,
+            };
+        }
+    }
+    best
+}
+
+fn native_exact_match(model: &SourceModel, sentence: &[char], from: usize) -> Option<SentenceHit> {
+    let mut best = None;
+    for evidence in &model.native_evidence {
+        let mut cursor = 0;
+        while let Some(pos) = find_sub(&evidence.key, sentence, cursor) {
+            let indices: BTreeSet<usize> = evidence.unit_indices[pos..pos + sentence.len()]
+                .iter()
+                .copied()
+                .collect();
+            let first = evidence.unit_indices[pos];
+            let start = model.units[first].range.0;
+            if start >= from {
+                let end = indices
+                    .iter()
+                    .map(|index| model.units[*index].range.1)
+                    .max()
+                    .unwrap_or(start);
+                if best
+                    .as_ref()
+                    .map_or(true, |hit: &SentenceHit| start < hit.start)
+                {
+                    best = Some(SentenceHit {
+                        similarity: 1.0,
+                        start,
+                        end,
+                        source_units: Some(indices.into_iter().collect()),
+                    });
+                }
+            }
+            cursor = pos + 1;
         }
     }
     best
@@ -481,21 +685,47 @@ fn best_fuzzy(hay: &[char], sentence: &[char], from: usize) -> SentenceHit {
 fn match_sentence(model: &SourceModel, sentence: &[char], from: usize, accept: f64) -> SentenceHit {
     let hay = &model.key;
     if sentence.is_empty() {
-        return SentenceHit { similarity: 1.0, start: 0, end: 0 };
+        return SentenceHit {
+            source_units: None,
+            similarity: 1.0,
+            start: 0,
+            end: 0,
+        };
     }
     if hay.is_empty() {
-        return SentenceHit { similarity: 0.0, start: 0, end: 0 };
+        return SentenceHit {
+            source_units: None,
+            similarity: 0.0,
+            start: 0,
+            end: 0,
+        };
     }
     let from = from.min(hay.len());
     if let Some(pos) = find_sub(hay, sentence, from) {
-        return SentenceHit { similarity: 1.0, start: pos, end: pos + sentence.len() };
+        return SentenceHit {
+            source_units: None,
+            similarity: 1.0,
+            start: pos,
+            end: pos + sentence.len(),
+        };
+    }
+    if let Some(hit) = native_exact_match(model, sentence, from) {
+        return hit;
     }
     let forward = best_fuzzy(hay, sentence, from);
     if forward.similarity >= accept {
         return forward;
     }
     if let Some(pos) = find_sub(hay, sentence, 0) {
-        return SentenceHit { similarity: 1.0, start: pos, end: pos + sentence.len() };
+        return SentenceHit {
+            source_units: None,
+            similarity: 1.0,
+            start: pos,
+            end: pos + sentence.len(),
+        };
+    }
+    if let Some(hit) = native_exact_match(model, sentence, 0) {
+        return hit;
     }
     let global = best_fuzzy(hay, sentence, 0);
     if global.similarity >= forward.similarity {
@@ -554,6 +784,7 @@ pub(crate) struct NodeAlignment {
     pub mean_similarity: f64,
     /// 命中原卷的源节点 id（区域/行），用于合成 nodeIds。
     pub source_node_ids: BTreeSet<String>,
+    pub source_line_ids: BTreeSet<String>,
     /// 由命中区域汇集的真实 sourceAnchors（采纳阶段据此盖 provenanceStatus=source）。
     pub anchors: Vec<Value>,
     /// 含低于 invented 阈值的句子（云端凭空生成）。
@@ -592,7 +823,13 @@ fn node_text(node: &Value) -> String {
     out
 }
 
-fn push_node(inputs: &mut Vec<TextNodeInput>, node: &Value, kind: NodeKind, task_id: &Option<String>, id_key: &str) {
+fn push_node(
+    inputs: &mut Vec<TextNodeInput>,
+    node: &Value,
+    kind: NodeKind,
+    task_id: &Option<String>,
+    id_key: &str,
+) {
     let text = node_text(node);
     if text.trim().is_empty() {
         return;
@@ -603,7 +840,12 @@ fn push_node(inputs: &mut Vec<TextNodeInput>, node: &Value, kind: NodeKind, task
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    inputs.push(TextNodeInput { node_id, kind, task_id: task_id.clone(), text });
+    inputs.push(TextNodeInput {
+        node_id,
+        kind,
+        task_id: task_id.clone(),
+        text,
+    });
 }
 
 /// 枚举候选里所有可对齐文本节点：原文段落、说明、题干、选项、摘要/笔记。
@@ -690,6 +932,7 @@ fn align_node(
     let sentences = split_sentences(&readable);
     let mut evals = Vec::with_capacity(sentences.len());
     let mut source_node_ids = BTreeSet::new();
+    let mut source_line_ids = BTreeSet::new();
     let mut anchor_keys = BTreeSet::new();
     let mut anchors = Vec::new();
     let mut matched = 0usize;
@@ -733,9 +976,16 @@ fn align_node(
             }
             // 命中游标只前进不后退，供顺序感知匹配定位下一句。
             *cursor = (*cursor).max(hit.end);
-            for index in units_overlapping(model, hit.start, hit.end) {
+            for index in hit
+                .source_units
+                .clone()
+                .unwrap_or_else(|| units_overlapping(model, hit.start, hit.end))
+            {
                 covered.insert(index);
                 let unit = &model.units[index];
+                if let Some(line_id) = unit.source_node_ids.last() {
+                    source_line_ids.insert(line_id.clone());
+                }
                 for id in &unit.source_node_ids {
                     source_node_ids.insert(id.clone());
                     sentence_ids.push(id.clone());
@@ -780,6 +1030,7 @@ fn align_node(
         min_similarity: if sentence_count == 0 { 1.0 } else { min_sim },
         mean_similarity: mean,
         source_node_ids,
+        source_line_ids,
         anchors,
         has_invented,
         aligned,
@@ -910,8 +1161,14 @@ pub(crate) fn assess_alignment(
 
     for input in &inputs {
         cloud_len += normalize_readable(&input.text).chars().count();
-        let (alignment, evals) =
-            align_node(&model, input, config, &mut covered, &mut matched_positions, &mut cursor);
+        let (alignment, evals) = align_node(
+            &model,
+            input,
+            config,
+            &mut covered,
+            &mut matched_positions,
+            &mut cursor,
+        );
 
         if input.kind == NodeKind::Passage {
             for eval in &evals {
@@ -957,7 +1214,12 @@ pub(crate) fn assess_alignment(
             .filter(|(_, eval)| !eval.trivial)
             .map(|(index, _)| index)
             .collect();
-        for pick in sample_indices(config.sample_seed, &alignment.node_id, non_trivial.len(), config.sample_per_node) {
+        for pick in sample_indices(
+            config.sample_seed,
+            &alignment.node_id,
+            non_trivial.len(),
+            config.sample_per_node,
+        ) {
             let eval = &evals[non_trivial[pick]];
             samples.push(SampleEntry {
                 node_id: alignment.node_id.clone(),
@@ -1171,6 +1433,116 @@ mod tests {
         );
     }
 
+    const RESEARCHER_SENTENCE: &str = "These may be gaps which the young researcher is advised by supervisors to fill, or established views which he or she is encouraged to challenge.";
+
+    /// The native PDF stream writes the left column first, but physical line l2
+    /// contains the left-column phrase and a phrase from the right column.
+    fn merged_column_source() -> Value {
+        let left = [
+            ("l1", "These may be gaps which the "),
+            ("l2", "young researcher is advised by supervisors "),
+            ("l3", "to fill, or established views which he or she "),
+            ("l4", "is encouraged to challenge."),
+        ];
+        let right = "echo a much more widespread collapse of";
+        let mut doc = source_doc(&[
+            ("l1", left[0].1),
+            ("l2", &format!("{}{}", left[1].1, right)),
+            ("l3", left[2].1),
+            ("l4", left[3].1),
+            (
+                "unrelated",
+                "Unrelated material lies between the physical source lines.",
+            ),
+        ]);
+        let mut glyphs = Vec::new();
+        let mut spans = Vec::new();
+        let mut range_start = 0usize;
+        for (line_id, text) in left.into_iter().chain(std::iter::once(("l2", right))) {
+            let span_id = format!("span-{}", spans.len());
+            let mut glyph_ids = Vec::new();
+            for ch in text.chars() {
+                let id = format!("g{range_start}");
+                glyph_ids.push(id.clone());
+                glyphs.push(json!({
+                    "id": id, "text": ch.to_string(),
+                    "sourceAnchor": {"extractionMode": "pdf_native", "charRange": {"start": range_start, "end": range_start + 1}}
+                }));
+                range_start += 1;
+            }
+            spans.push(json!({"id": span_id, "text": text, "glyphIds": glyph_ids}));
+            let line = doc["pages"][0]["lines"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|line| line["id"] == line_id)
+                .unwrap();
+            if line.get("spanIds").is_none() {
+                line["spanIds"] = json!([]);
+            }
+            line["spanIds"].as_array_mut().unwrap().push(json!(span_id));
+        }
+        // Array order is immaterial; character ranges retain the observed PDF order.
+        glyphs.reverse();
+        doc["pages"][0]["glyphs"] = json!(glyphs);
+        doc["pages"][0]["spans"] = json!(spans);
+        doc
+    }
+
+    #[test]
+    fn exact_researcher_sentence_survives_merged_pdf_columns() {
+        let doc = merged_column_source();
+        let candidate = passage_authoring(&[("researcher", RESEARCHER_SENTENCE)]);
+        let result = report(&doc, &candidate);
+        let node = &result.nodes[0];
+        assert!(
+            node.min_similarity >= 0.9,
+            "Exact PDF sentence must not be flagged: {node:?}"
+        );
+        assert_eq!(node.min_similarity, 1.0);
+        assert!(!node.has_invented);
+        assert!(node.aligned);
+        for id in ["l1", "l2", "l3", "l4"] {
+            assert!(
+                node.source_node_ids.contains(id),
+                "missing source line {id}"
+            );
+        }
+        assert!(!node.source_node_ids.contains("unrelated"));
+    }
+
+    #[test]
+    fn native_exact_evidence_does_not_bridge_missing_source_characters() {
+        let mut doc = merged_column_source();
+        doc["pages"][0]["glyphs"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|glyph| glyph["text"] != "v");
+        let result = report(&doc, &passage_authoring(&[("researcher", RESEARCHER_SENTENCE)]));
+        assert!(result.nodes[0].min_similarity < 1.0,
+            "Missing native characters must not produce exact evidence");
+    }
+
+    #[test]
+    fn native_exact_evidence_rejects_invented_sentence_and_preserves_order_gate() {
+        let doc = merged_column_source();
+        let invented = passage_authoring(&[(
+            "invented",
+            "Dragons breathe fire over the distant frozen mountains at midnight.",
+        )]);
+        assert!(report(&doc, &invented).nodes[0].has_invented);
+        let authoring = passage_authoring(&[
+            ("later", "to fill, or established views which he or she"),
+            ("earlier", RESEARCHER_SENTENCE),
+        ]);
+        let result = report(&doc, &authoring);
+        assert_eq!(result.nodes[1].min_similarity, 1.0);
+        assert!(
+            !result.monotonic,
+            "Native exact evidence must still participate in reading-order validation"
+        );
+    }
+
     #[test]
     fn hyphenated_line_break_joins_across_lines() {
         // "imp-\nortant" 断行连字符要去掉再相接。
@@ -1292,20 +1664,44 @@ mod tests {
     #[test]
     fn coverage_reflects_uncovered_significant_regions() {
         let doc = source_doc(&[
-            ("l1", "The first paragraph explains the origin of the study."),
-            ("l2", "The second paragraph reports the main experimental result."),
-            ("l3", "The third paragraph discusses limitations and future work."),
+            (
+                "l1",
+                "The first paragraph explains the origin of the study.",
+            ),
+            (
+                "l2",
+                "The second paragraph reports the main experimental result.",
+            ),
+            (
+                "l3",
+                "The third paragraph discusses limitations and future work.",
+            ),
         ]);
         let partial = passage_authoring(&[
-            ("p1", "The first paragraph explains the origin of the study."),
-            ("p2", "The second paragraph reports the main experimental result."),
+            (
+                "p1",
+                "The first paragraph explains the origin of the study.",
+            ),
+            (
+                "p2",
+                "The second paragraph reports the main experimental result.",
+            ),
         ]);
         assert!(!report(&doc, &partial).coverage_ok, "漏掉第三段应覆盖不达标");
 
         let full = passage_authoring(&[
-            ("p1", "The first paragraph explains the origin of the study."),
-            ("p2", "The second paragraph reports the main experimental result."),
-            ("p3", "The third paragraph discusses limitations and future work."),
+            (
+                "p1",
+                "The first paragraph explains the origin of the study.",
+            ),
+            (
+                "p2",
+                "The second paragraph reports the main experimental result.",
+            ),
+            (
+                "p3",
+                "The third paragraph discusses limitations and future work.",
+            ),
         ]);
         let full_report = report(&doc, &full);
         assert!(full_report.coverage_ok);
@@ -1315,9 +1711,18 @@ mod tests {
     #[test]
     fn task_group_blocks_when_instruction_is_invented() {
         let doc = source_doc(&[
-            ("l1", "Do the following statements agree with the information given?"),
-            ("l2", "Write TRUE FALSE or NOT GIVEN next to each statement."),
-            ("l3", "The museum was built beside the original Roman foundations."),
+            (
+                "l1",
+                "Do the following statements agree with the information given?",
+            ),
+            (
+                "l2",
+                "Write TRUE FALSE or NOT GIVEN next to each statement.",
+            ),
+            (
+                "l3",
+                "The museum was built beside the original Roman foundations.",
+            ),
         ]);
         let group = |instruction: &str| {
             json!({
@@ -1335,10 +1740,16 @@ mod tests {
             })
         };
 
-        let aligned = report(&doc, &group("Write TRUE FALSE or NOT GIVEN next to each statement."));
+        let aligned = report(
+            &doc,
+            &group("Write TRUE FALSE or NOT GIVEN next to each statement."),
+        );
         assert_eq!(aligned.group_aligned.get("g1"), Some(&true));
 
-        let invented = report(&doc, &group("Match each heading to the correct paragraph below."));
+        let invented = report(
+            &doc,
+            &group("Match each heading to the correct paragraph below."),
+        );
         assert_eq!(invented.group_aligned.get("g1"), Some(&false));
         assert!(invented.group_reasons.get("g1").is_some_and(|r| !r.is_empty()));
     }
@@ -1357,7 +1768,10 @@ mod tests {
     // --- 9 份私有卷的真实文本层对齐（语料门控；缺卷或未开启时跳过）---
 
     /// 复刻 pdf_facts_shadow 测试里构造 job/source 的方式（该文件的辅助是私有的）。
-    fn shadow_job_source(abs_pdf: &std::path::Path, file_id: &str) -> (crate::ImportJob, crate::SourceFile) {
+    fn shadow_job_source(
+        abs_pdf: &std::path::Path,
+        file_id: &str,
+    ) -> (crate::ImportJob, crate::SourceFile) {
         let mut job = crate::job_store::make_job(crate::CreateJobInput {
             title: Some("alignment shadow fixture".to_string()),
             category: Some("phase2".to_string()),
@@ -1463,7 +1877,9 @@ mod tests {
                     .collect();
                 let text = clean_join(&lines);
                 if !text.trim().is_empty() {
-                    content.push(json!({"id": format!("ideal-{counter}"), "type": "text", "text": text}));
+                    content.push(
+                        json!({"id": format!("ideal-{counter}"), "type": "text", "text": text}),
+                    );
                     counter += 1;
                 }
             }
@@ -1485,9 +1901,36 @@ mod tests {
     }
 
     #[test]
+    fn exact_researcher_sentence_aligns_against_real_pdf_glyphs() {
+        let path =
+            crate::test_support::workspace_path("fixtures/parser/demanding-reading-passage-3.pdf");
+        if !crate::test_support::private_corpus_ready(
+            "exact_researcher_sentence_aligns_against_real_pdf_glyphs",
+            std::slice::from_ref(&path),
+        ) {
+            return;
+        }
+        let (job, source) = shadow_job_source(&path, "researcher-source");
+        let shadow = crate::pdf_facts_shadow::extract_pdf_facts_shadow(&job, &source, &path)
+            .expect("actual researcher PDF must extract");
+        let exact = report(
+            &shadow,
+            &passage_authoring(&[("researcher", RESEARCHER_SENTENCE)]),
+        );
+        assert!(
+            exact.nodes[0].min_similarity >= 0.9,
+            "Exact researcher sentence in actual PDF scored {:?}",
+            exact.nodes[0]
+        );
+        assert!(!exact.nodes[0].has_invented);
+        assert!(exact.nodes[0].source_node_ids.contains("p001-l0015"));
+    }
+
+    #[test]
     fn nine_private_pdfs_ideal_candidate_aligns_against_real_text_layer() {
-        let truth_path =
-            crate::test_support::workspace_path("fixtures/golden/private-pdf-task-presentation-stage2.json");
+        let truth_path = crate::test_support::workspace_path(
+            "fixtures/golden/private-pdf-task-presentation-stage2.json",
+        );
         let truth: Value = serde_json::from_slice(&std::fs::read(&truth_path).unwrap())
             .expect("stage2 truth JSON parses");
         let fixtures = truth["fixtures"].as_array().expect("fixtures array");
