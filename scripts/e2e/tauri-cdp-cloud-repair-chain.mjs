@@ -1126,8 +1126,9 @@ async function main() {
   if (correctionPromptNodes.length !== 1) {
     throw new Error(`content_not_aligned 场景无法定位 ${derived.fix.responseGroupId} 的单一题面节点`);
   }
-  // Reuse the fixture's only question-text defect: the OCR-added q40 footer.
-  correctionPromptNodes[0].text = derived.fix.before;
+  // The OCR-added footer exists in the PDF and still aligns; use the permitted
+  // single-stem derivation when this fixture has no natural low-similarity trigger.
+  correctionPromptNodes[0].text = derived.fix.before.split(/\s+/u).reverse().join(" ");
   derived.plan.rulings.push({
     targetType: "task_group",
     targetId: "group-2",
@@ -1154,7 +1155,12 @@ async function main() {
   report.scenario.rule = derived.rule;
   report.scenario.unresolved = derived.plan.unresolved;
   report.scenario.mechanismTriggers = {
-    correction: { taskId: derived.fix.taskId, reason: "content_not_aligned", sourcePageOneBased: derived.fix.sourcePageOneBased },
+    correction: {
+      taskId: derived.fix.taskId, reason: "content_not_aligned", sourcePageOneBased: derived.fix.sourcePageOneBased,
+      fixtureAdjustment: "single_stem_word_order_derivation_when_no_natural_trigger",
+      localRecognitionText: derived.fix.before,
+      candidateTriggerText: correctionPromptNodes[0].text,
+    },
     adjudication: { taskId: "group-2", reason: "instruction_stem_overlap" },
     missingPage: { slotId: derived.claim.slotId, questionNumber: derived.claim.questionNumber, searchPages: derived.claim.searchPages },
   };
