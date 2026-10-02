@@ -1,4 +1,5 @@
 use crate::{
+    processing::commands::{DEFAULT_CLOUD_TOKEN_BUDGET, MIN_CLOUD_TOKEN_BUDGET, MAX_CLOUD_TOKEN_BUDGET},
     util::{append_text, job_dir, write_json},
     validator::allowed_question_kind,
     CommandResult,
@@ -37,9 +38,6 @@ const RETAINED_LLM_CALL_RECORDS: usize = 200;
 const RETAINED_LLM_CALL_LOG_BYTES: usize = 512 * 1024;
 const LLM_TOKEN_BUDGET_FILE: &str = "llm-token-budget.json";
 const LLM_TOKEN_USAGE_TOTAL_FILE: &str = "llm-token-usage-total.json";
-const DEFAULT_CLOUD_TOKEN_BUDGET: u64 = 100_000;
-const MIN_CLOUD_TOKEN_BUDGET: u64 = 10_000;
-const MAX_CLOUD_TOKEN_BUDGET: u64 = 20_000_000;
 
 #[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -577,7 +575,7 @@ fn run_llm_gateway_with_diagnostics(
                 .unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS);
             profile.insert(
                 "maxOutputTokens".to_string(),
-                json!(configured_max.min(budget)),
+                json!(configured_max.min(budget.saturating_sub(usage_before))),
             );
         }
     }
@@ -1957,6 +1955,7 @@ Rules that matter most:\n\
 - Do not transcribe the reading passage or audio script body. Transcribe instructions and the notes, tables, diagrams, forms, or other stimulus the questions depend on.\n\
 - Put an inline answer_slot node at the exact location of every completion blank inside stimulus: include type, id, slotId matching an answerSlots key, displayLabel, and inline:true; preserve all surrounding text and punctuation.\n\
 - For matching_headings, include a task-group optionBank with every printed heading option; the responseGroup uses kind:matching, optionBankRef, and slotIds. Each heading answerSlot uses hostType:passage_paragraph, interaction:dragdrop, and the supplied local passage nodeId.\n\
+- Reconstruct logical passage paragraphs from the source layout. Physical PDF line wraps and short final lines are not paragraph breaks. Keep real blank-line/indent boundaries and printed paragraph labels; never merge distinct labelled paragraphs. Preserve source anchors for all merged text.\n\
 - For Reading, sourceParagraphs.paragraphMap maps passage labels to existing local nodeIds. Never invent a passage ID; if no target maps to a heading paragraph, report the coverage gap.\n\
 - For a mapped heading paragraph (for example Paragraph A), set answerSlots[*].hostNodeId to that supplied passage nodeId.\n\
 - Give every question an answerKey entry. Use {{\"kind\":\"unresolved\"}} when the original gives no answer; never guess.\n\
@@ -5426,6 +5425,24 @@ mod tests {
         assert_eq!(total.cache_hit_tokens, 1200);
         assert_eq!(total.cache_miss_tokens, 1417);
         assert_eq!(total.unknown_cache_usage_calls, 0);
+    }
+
+    #[test]
+    fn output_cap_uses_remaining_import_budget() {
+        let response = json!({
+            "choices": [{"message": {"content": "not json"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 100}
+        }).to_string();
+        let (base_url, requests) = fake_llm_server(vec![FakeReply::Respond(200, response)]);
+        let job = fake_candidate_job(&base_url, "job-remaining-budget");
+        fs::write(job_dir(&job.root, job.job_id).join(LLM_TOKEN_BUDGET_FILE),
+            json!({"tokenBudget": 10_000}).to_string()).unwrap();
+        write_llm_token_usage_total(&job.root, job.job_id, &LlmTokenUsageTotal {
+            prompt_tokens: 8_000, completion_tokens: 1_500, ..Default::default()
+        }).unwrap();
+        let _ = run_llm_gateway(&job.root, job.job_id, "generate_authoring_candidate", &job.input, None);
+        let request = requests.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(request.contains("\"max_tokens\":500"), "{request}");
     }
 
     #[test]

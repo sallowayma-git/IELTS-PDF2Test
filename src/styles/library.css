@@ -92,7 +92,7 @@
 
 .library-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(0, 260px) auto;
+  grid-template-columns: auto minmax(0, 1.4fr) minmax(180px, 1fr) auto;
   align-items: center;
   gap: 12px;
   min-width: 0;
@@ -163,7 +163,9 @@
 
 .progress-fill { display: block; height: 100%; background: var(--accent); transition: width 320ms ease; }
 
-.library-row-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.library-row-actions { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; justify-content: flex-end; }
+.library-row-actions > button { flex: 0 0 auto; white-space: nowrap; }
+.library-row-actions .part-select { width: 76px; min-width: 0; flex: 0 0 76px; padding: 6px 8px; }
 
 .library-batch-bar {
   position: sticky;

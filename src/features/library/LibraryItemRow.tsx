@@ -104,7 +104,7 @@ export function LibraryItemRow({
               value={row.part ?? ""}
               onChange={(event) => onSetPart(row.id, event.target.value === "" ? null : event.target.value)}
             >
-              <option value="">Part：自动</option>
+              <option value="">自动</option>
               {PART_OPTIONS[row.modality].map((label) => (
                 <option key={label} value={label}>{label}</option>
               ))}

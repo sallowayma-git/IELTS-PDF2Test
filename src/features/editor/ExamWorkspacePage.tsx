@@ -32,6 +32,7 @@ import type { ProcessingState } from "../../api/processingClient";
 import { processingNoteOf, cloudReviewInProgress } from "./workspaceStatus";
 import { answerPageStatusOf, describeAnswerPageRetry } from "./answerPageStatus";
 import { findTargetElement } from "./locate";
+import { useConfirmedHints } from "./useConfirmedHints";
 import { CloudComparison, chooseComparison, type ComparisonChoice } from "./CloudComparison";
 
 // 题目工作区（计划 §16.6 / §9.10）。
@@ -109,7 +110,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   latestDraftRef.current = editor.draft;
   const [detail, setDetail] = useState<JobDetail | undefined>();
   const [sourceOpen, setSourceOpen] = useState(false);
-  const [issuesOpen, setIssuesOpen] = useState(false);
+  const [issuesOpen, setIssuesOpen] = useState(true);
   /** 最近一次「点了问题却在题面上找不到位置」的目标 id；用于给出如实说明而不是静默无反应。 */
   const [locateMiss, setLocateMiss] = useState<string | undefined>();
   const [recognitionOpen, setRecognitionOpen] = useState(false);
@@ -240,10 +241,18 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   const [cloudAdoptionNotice, setCloudAdoptionNotice] = useState<string | undefined>();
   // **唯一**一份编辑辅助清单（产品决定 2）：安静、不带门槛话术，每个题位只出一条，
   // 修好了就消失。它不是「能不能发布」的判断——按「发布」本身就是确认。
+  const confirmedHints = useConfirmedHints(itemId);
   const taskSummary = useMemo(
     () => buildEditingAids(editor.draft, issues, repairAids.filter((task) => !task.comparisonUnitId)),
     [editor.draft, issues, repairAids]
   );
+  const pendingTasks = taskSummary.tasks.filter((task) => !confirmedHints.isConfirmed(task));
+  const hintCount = pendingTasks.length + comparisons.length;
+  function confirmHint(task: UserTaskV1) {
+    try { confirmedHints.confirm(task); }
+    catch { setNotice("确认状态未能保存，请重试。"); }
+  }
+  const confirmButton = (task: UserTaskV1) => <button className="ghost small" disabled={cloudReviewing} aria-label={`已确认：${task.title}`} onClick={(event) => { event.stopPropagation(); confirmHint(task); }}>已确认</button>;
   // Put each actionable question-level issue beside its editable group; the header
   // retains only tasks which cannot be attached to a current question group.
   const taskAnchor = (task: UserTaskV1) => {
@@ -257,18 +266,16 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
     return editor.draft?.taskGroups.find((group) => contains(group))?.taskId;
   };
   const renderGroupTasks = (taskId: string) => {
-    const tasks = taskSummary.tasks.filter((task) => taskAnchor(task) === taskId);
-    return tasks.length ? <aside className="workspace-group-tasks" aria-label="这组题需要处理的内容"><ul>{tasks.map((task) => <li key={task.taskId} data-task-id={task.taskId}>
+    const tasks = pendingTasks.filter((task) => taskAnchor(task) === taskId);
+    return issuesOpen && tasks.length ? <aside className="workspace-group-tasks" aria-label="这组题需要处理的内容"><ul>{tasks.map((task) => <li key={task.taskId} data-task-id={task.taskId}>
       <span>{task.title}</span>{task.detail ? <small>{task.detail}</small> : null}
-      <div className="button-row">{task.actions.map((action) => <button key={action.id} className="ghost small" disabled={Boolean(busyAction) || cloudReviewing} onClick={(event) => { event.stopPropagation(); runTaskAction(task, action); }}>{action.label}</button>)}
+      {task.comparison ? <div className="workspace-task-comparison"><p>当前稿：<del>{task.comparison.current || "（空）"}</del></p><p>{task.comparison.cloudLabel}：<ins>{task.comparison.cloud || "（空）"}</ins></p></div> : null}
+      <div className="button-row">{confirmButton(task)}{task.actions.map((action) => <button key={action.id} className="ghost small" disabled={Boolean(busyAction) || cloudReviewing} onClick={(event) => { event.stopPropagation(); runTaskAction(task, action); }}>{action.label}</button>)}
       {!task.actions.some((action) => action.id === "view-source") ? <button className="ghost small" disabled={!sourceActionsEnabled} onClick={(event) => { event.stopPropagation(); setSourceOpen(true); }}>对照原文件</button> : null}</div>
     </li>)}</ul></aside> : null;
   };
   const [tasksExpanded, setTasksExpanded] = useState(false);
-  const visibleTasks = useMemo(
-    () => splitVisibleTasks(taskSummary.tasks.filter((task) => !taskAnchor(task)), tasksExpanded),
-    [taskSummary.tasks, tasksExpanded, editor.draft]
-  );
+  const visibleTasks = splitVisibleTasks(pendingTasks.filter((task) => !taskAnchor(task)), tasksExpanded);
 
   const previewLimitation = useMemo(
     () => describePreviewPublishLimitation({
@@ -329,7 +336,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
    *   - `view-source`  → 打开原文件抽屉，并把题面上的对应题组滚进视野；
    *
    * 不再有「重新识别」：重跑不会替换已经生成的题稿，挂在条目上只会让人以为能修好它。
-   * 操作后**不**在本地删条目：条目只在题稿确实改好之后（本地检查 / 后端重算）才消失。
+   * 查看与定位不改变提示；用户可另行确认并保存当前提示的查看状态。
    */
   function runTaskAction(_task: UserTaskV1, action: UserTaskActionV1) {
     if (action.id === "view-source") setSourceOpen(true);
@@ -562,10 +569,10 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
                 if (next) setRecognitionOpen(false);
                 return next;
               })}
-              aria-label={taskSummary.ready ? taskSummary.headline : "正在打开这道题"}
+              aria-label={taskSummary.ready ? `${issuesOpen ? "收起" : "展开"}文档提示，${hintCount} 条` : "正在打开这道题"}
             >
               {/* 编辑辅助，不是门槛：只报「还有几处可以补充」，不报阻断。 */}
-              {taskSummary.ready ? `文档提示 ${taskSummary.tasks.filter((task) => !taskAnchor(task)).length}` : "待补充 …"}
+              {taskSummary.ready ? `文档提示 ${hintCount}` : "待补充 …"}
             </button>
             <button
               data-testid="workspace-recognition-toggle"
@@ -588,11 +595,15 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             <button className="workspace-publish-btn" data-testid="workspace-publish" disabled={Boolean(busyAction) || cloudReviewing} onClick={publish}>
               {busyAction === "publish" ? "正在发布…" : "发布"}
             </button>
-            <button aria-label="更多操作" title="更多操作" onClick={() => setMenuOpen((open) => !open)}><MoreHorizontal size={16} /></button>
+            <button aria-label="更多操作" aria-expanded={menuOpen} aria-haspopup="menu" title="更多操作" onClick={() => setMenuOpen((open) => !open)}><MoreHorizontal size={16} /></button>
           </div>
 
           {menuOpen ? (
             <div className="workspace-menu" role="menu">
+              <button role="menuitem" disabled={!confirmedHints.confirmedCount} onClick={() => {
+                try { confirmedHints.reset(); setIssuesOpen(true); setRecognitionOpen(false); setMenuOpen(false); }
+                catch { setNotice("提示未能恢复，请重试。"); }
+              }}>恢复已确认提示</button>
               <button
                 role="menuitem"
                 data-testid="workspace-rerun-recognition"
@@ -786,14 +797,14 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
           互斥由上面两个按钮的 onClick 保证，共用上限由 `.workspace-aside` 保证——
           两层都要有：只设互斥的话，单个面板仍可能独占大半屏；只设共用上限的话，
           两个面板仍会同时展开去抢同一个上限。 */}
-      {(issuesOpen || recognitionOpen) && mode === "edit" ? (
+      {(recognitionOpen || (issuesOpen && (!taskSummary.ready || pendingTasks.some((task) => !taskAnchor(task))))) && mode === "edit" ? (
       <div className="workspace-aside" data-testid="workspace-aside">
-      {issuesOpen ? (
+      {issuesOpen && (!taskSummary.ready || pendingTasks.some((task) => !taskAnchor(task))) ? (
         <aside
           className="workspace-issues"
           aria-label="还可以补充的内容"
           data-testid="workspace-issue-list"
-          data-task-count={taskSummary.tasks.filter((task) => !taskAnchor(task)).length}
+          data-task-count={hintCount}
           data-merged-rows={taskSummary.mergedRowCount}
           data-preflight-state={preflightState}
           data-tasks-ready={taskSummary.ready ? "true" : "false"}
@@ -837,6 +848,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
                       </div>
                     ) : null}
                     <div className="button-row">
+                      {confirmButton(task)}
                       {task.actions.map((action) => (
                         <button
                           key={action.id}
@@ -866,7 +878,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             </>
           ) : (
             // 没有条目就只留一句安静的话——不是「可以导出」这种结论。
-            <p className="empty compact" data-testid="workspace-tasks-clear">{taskSummary.tasks.length ? "具体问题已显示在对应题组旁。" : taskSummary.headline}</p>
+            <p className="empty compact" data-testid="workspace-tasks-clear">没有待查看的文档提示。</p>
           )}
           {locateMiss ? (
             <p className="empty compact" role="status" data-testid="workspace-locate-miss">
@@ -935,8 +947,8 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             authoring={editor.draft}
             mode="author"
             locked={cloudReviewing}
-            taskAdornment={(taskId) => <>{comparisons.filter((task) => comparisonAnchor(task) === taskId).map(renderComparison)}{renderGroupTasks(taskId)}</>}
-            unanchoredTaskAdornment={comparisons.filter((task) => !comparisonAnchor(task)).map(renderComparison)}
+            taskAdornment={(taskId) => issuesOpen ? <>{comparisons.filter((task) => comparisonAnchor(task) === taskId).map(renderComparison)}{renderGroupTasks(taskId)}</> : null}
+            unanchoredTaskAdornment={issuesOpen ? comparisons.filter((task) => !comparisonAnchor(task)).map(renderComparison) : null}
             selectedId={selectedId}
             onSelect={setSelectedId}
             onTextCommand={cloudReviewing ? undefined : ({ nodeId, expectedText, text }) =>

@@ -11,7 +11,7 @@ import { useCallback, useEffect, useState } from "react";
 const STORAGE_KEY = "ielts-author-studio.app-settings.v1";
 /** 与旧 ExportPage 共用的历史 key，迁移期继续兼容读取。 */
 const LEGACY_NAS_KEY = "ielts-author-studio.confirmed-nas-export-dir.v1";
-export const DEFAULT_CLOUD_TOKEN_BUDGET = 100_000;
+export const DEFAULT_CLOUD_TOKEN_BUDGET = 300_000;
 export const MIN_CLOUD_TOKEN_BUDGET = 10_000;
 export const MAX_CLOUD_TOKEN_BUDGET = 20_000_000;
 

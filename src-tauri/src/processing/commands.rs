@@ -15,7 +15,7 @@ use crate::library::repository::{
 use crate::{app_root, CommandResult, CreateJobInput};
 
 const MAX_IMPORT_FILE_BYTES: u64 = 128 * 1024 * 1024;
-pub(crate) const DEFAULT_CLOUD_TOKEN_BUDGET: u64 = 100_000;
+pub(crate) const DEFAULT_CLOUD_TOKEN_BUDGET: u64 = 300_000;
 pub(crate) const MIN_CLOUD_TOKEN_BUDGET: u64 = 10_000;
 pub(crate) const MAX_CLOUD_TOKEN_BUDGET: u64 = 20_000_000;
 pub(crate) const CLOUD_TOKEN_BUDGET_FILE: &str = "llm-token-budget.json";

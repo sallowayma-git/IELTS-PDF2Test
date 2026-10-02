@@ -2333,11 +2333,15 @@ fn group_lines_into_blocks(lines: &[(String, [f32; 4])]) -> Vec<(String, [f32; 4
                 // of indent is enough to be confident.
                 let char_width = (prev_height * 0.45).max(2.0);
                 let indented = bbox[0] > prev.mean_left() + char_width * 2.0;
+                // A short final line in a justified paragraph has a very different
+                // centre and width. Its aligned left edge and normal line spacing
+                // still establish continuation; width is not a paragraph boundary.
+                let aligned_short_line = (bbox[0] - prev.mean_left()).abs() <= char_width
+                    && (bbox[2] - bbox[0]) <= prev.mean_width();
                 !indented
                     && gap <= gap_tol
                     && left_delta <= left_tol
-                    && center_delta <= center_tol
-                    && width_delta <= width_tol
+                    && (aligned_short_line || (center_delta <= center_tol && width_delta <= width_tol))
                     && !looks_like_hard_line_break(trimmed)
                     && !prev.text.trim_end().ends_with(':')
             }
@@ -3767,6 +3771,19 @@ mod tests {
                 .any(|block| block.column_index == 1),
             "right column should be present in the two-column section"
         );
+    }
+
+    #[test]
+    fn short_paragraph_tail_stays_with_its_wrapped_lines() {
+        let lines = vec![
+            ("A long sentence that wraps across the full text column".to_string(), [80.0, 750.0, 500.0, 760.0]),
+            ("and finishes here.".to_string(), [80.0, 737.0, 170.0, 747.0]),
+            ("A separate paragraph after a blank line.".to_string(), [80.0, 710.0, 460.0, 720.0]),
+        ];
+        let blocks = group_lines_into_blocks(&lines);
+        assert_eq!(blocks.len(), 2);
+        assert!(blocks[0].0.ends_with("and finishes here."));
+        assert_eq!(blocks[0].1, [80.0, 737.0, 500.0, 760.0]);
     }
 
     #[test]

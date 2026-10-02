@@ -260,7 +260,7 @@ export function SettingsPage() {
             data-testid="settings-cloud-token-budget"
             onChange={(event) => updateSettings({ cloudTokenBudget: Number(event.target.value) })}
           />
-          <small>按输入和输出 token 合计；达到上限后停止该份试卷后续云端请求。默认 100,000；当前五页卷离线估算约 28,000 token，留约 3.5 倍余量（输出按每次 1,024 token 估算）。</small>
+          <small>按输入和输出 token 合计；达到上限后停止该份试卷后续云端请求。默认 300,000，可按试卷大小调整。校核仅请求待复核范围；缓存命中与实际用量可在题目工作区查看。</small>
         </label>
 
         <label className="settings-field">

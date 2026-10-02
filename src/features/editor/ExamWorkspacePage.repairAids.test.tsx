@@ -158,12 +158,13 @@ function renderedTaskIds(): string[] {
  *  页面里有两个同 testid 的开关（桌面/移动两处布局），点第一个即可。 */
 async function openIssueList() {
   const toggles = screen.getAllByTestId("workspace-issues");
-  fireEvent.click(toggles[0]);
+  if (toggles[0].getAttribute("aria-expanded") !== "true") fireEvent.click(toggles[0]);
   await act(async () => {});
 }
 
 beforeEach(() => {
   vi.useFakeTimers();
+  localStorage.clear();
   editorRef.current = makeEditor(1);
 });
 
@@ -236,6 +237,36 @@ describe("ExamWorkspacePage 的云端修复剩余条目刷新", () => {
     expect(all.filter((id)=>id === "cloud-question:q27:1")).toHaveLength(1);
     expect(all).not.toContain("cloud-diff:slot:q27:answer");
     expect(container.querySelectorAll('[data-comparison-unit="unit-27"]')).toHaveLength(1);
+    const toggle = screen.getAllByTestId("workspace-issues")[0];
+    fireEvent.click(toggle);
+    expect(container.querySelectorAll('[data-comparison-unit="unit-27"]')).toHaveLength(0);
+    expect(container.querySelector(".workspace-group-tasks")).toBeNull();
+    fireEvent.click(toggle);
+    expect(container.querySelectorAll('[data-comparison-unit="unit-27"]')).toHaveLength(1);
+
+  });
+
+  it("文档提示统一收起题组提示与对比；确认后重开仍隐藏，恢复后可再次查看", async () => {
+    editorRef.current = {...makeEditor(1), draft: {exam:{title:"受控卷"},taskGroups:[{taskId:"task-27",responseGroups:[{responseGroupId:"rg-27",slotIds:["q27"]}]}],answerSlots:{q27:{questionNumber:27}},answerKey:{}}};
+    vi.mocked(getRecognitionDecision).mockResolvedValue(decision("completed", [claimTask]));
+    const view = render(<ExamWorkspacePage itemId={ITEM_ID}/>);
+    await act(async () => {});
+    const toggle = screen.getAllByTestId("workspace-issues")[0];
+    expect(toggle.textContent).not.toBe("文档提示 0");
+    fireEvent.click(toggle);
+    expect(document.querySelector(".workspace-group-tasks")).toBeNull();
+    fireEvent.click(toggle);
+    const hint = document.querySelector('[data-task-id="cloud-question:q27:1"]')!;
+    const confirm = [...hint.querySelectorAll("button")].find((button) => button.textContent === "已确认")!;
+    fireEvent.click(confirm);
+    expect(document.querySelector('[data-task-id="cloud-question:q27:1"]')).toBeNull();
+    view.unmount();
+    render(<ExamWorkspacePage itemId={ITEM_ID}/>);
+    await act(async () => {});
+    expect(document.querySelector('[data-task-id="cloud-question:q27:1"]')).toBeNull();
+    fireEvent.click(screen.getByRole("button", {name:"更多操作"}));
+    fireEvent.click(screen.getByRole("menuitem", {name:"恢复已确认提示"}));
+    expect(document.querySelector('[data-task-id="cloud-question:q27:1"]')).not.toBeNull();
   });
 
   it("修复进行中读到 running 时安排重读：1.5 秒后的终态把 cloud-question 条目送进清单（期间不触发任何版本或处理事件）", async () => {
