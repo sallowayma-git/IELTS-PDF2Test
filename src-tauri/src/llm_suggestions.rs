@@ -424,22 +424,20 @@ pub(crate) fn authoring_candidate_output_contract(modality: &str) -> Value {
     let mut shape = json!({
         "taskGroups": [{
             "taskId": "cloud-tg-1",
-            "displayRange": {"kind": "range", "start": 1, "end": 5},
+            "displayRange": {"kind": "range", "start": 1, "end": 1},
             "taskType": "single_choice",
             "instructions": [{"type": "paragraph", "id": "cloud-tg-1-instr", "children": [{"type": "text", "id": "cloud-tg-1-instr-text", "text": "full instruction text"}]}],
             "stimulus": [{"type": "paragraph", "id": "cloud-tg-1-stim", "children": [{"type": "text", "id": "cloud-tg-1-stim-text", "text": "full notes / table / diagram / form text"}]}],
-            "optionBank": {
-                "optionBankId": "cloud-tg-1-bank",
-                "scope": "task_group",
-                "options": [{"optionId": "cloud-opt-a", "label": "A", "content": [{"type": "text", "id": "cloud-opt-a-text", "text": "full option text"}]}],
-                "allowReuse": false
-            },
             "responseGroups": [{
                 "responseGroupId": "cloud-rg-1",
                 "kind": "choice",
                 "prompt": [{"type": "paragraph", "id": "cloud-q1-prompt", "children": [{"type": "text", "id": "cloud-q1-prompt-text", "text": "full question prompt text"}]}],
                 "slotIds": ["cloud-q1"],
-                "optionBankRef": "cloud-tg-1-bank",
+                "options": [
+                    {"optionId": "cloud-opt-a", "label": "A", "content": [{"type": "text", "id": "cloud-opt-a-text", "text": "full option A text"}]},
+                    {"optionId": "cloud-opt-b", "label": "B", "content": [{"type": "text", "id": "cloud-opt-b-text", "text": "full option B text"}]},
+                    {"optionId": "cloud-opt-c", "label": "C", "content": [{"type": "text", "id": "cloud-opt-c-text", "text": "full option C text"}]}
+                ],
                 "cardinality": {"min": 1, "max": 1, "exact": 1},
                 "assignment": "per_slot",
                 "scoringPolicy": "per_slot_ielts_normalized",

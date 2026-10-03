@@ -74,6 +74,7 @@ mod library_commands;
 mod listening_audio;
 mod listening_source_v1;
 mod llm_commands;
+mod candidate_evidence;
 mod llm_gateway;
 mod llm_profiles;
 mod llm_suggestions;

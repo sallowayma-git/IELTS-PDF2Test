@@ -7388,25 +7388,10 @@ fn an_edit_quoting_an_image_only_answer_page_lands_and_is_marked_unverifiable() 
 // 修复链直接瘫痪；而在 P12-Q 语义下则是全部跳过比对、以 unverifiable 落库——
 // P9 的核验等于失效。受控假模型用的是请求里的真实 ID，所以既有测试看不到这个问题。
 
-/// 从一条捕获的 HTTP 请求体里取出**修复 prompt 的原文**（user 消息的全部 text；
-/// messages[0] 是 system 一句话，prompt 在 messages[1].content 的 text part 里）。
+/// 从真实请求的所有消息中读取文本，覆盖可缓存 system 前缀和动态 user 证据。
 fn repair_prompt_text(body: &str) -> Option<String> {
     let envelope: Value = serde_json::from_str(body.get(body.find('{')?..)?).ok()?;
-    let user_message = envelope
-        .get("messages")?
-        .as_array()?
-        .iter()
-        .find(|message| message.get("role").and_then(Value::as_str) == Some("user"))?;
-    Some(
-        user_message
-            .get("content")?
-            .as_array()?
-            .iter()
-            .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
-            .filter_map(|part| part.get("text").and_then(Value::as_str))
-            .collect::<Vec<_>>()
-            .join("\n"),
-    )
+    Some(repair_prompt_texts(&envelope).join("\n"))
 }
 
 /// 收集 prompt 原文里出现的全部 `"sourceFileId":"<id>"`（修复输入的 JSON 是

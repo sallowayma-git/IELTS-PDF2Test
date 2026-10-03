@@ -2821,6 +2821,44 @@ fn write_rgba_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> CommandR
         .map_err(|error| format!("diagram_question_region_png_write:{}", error))
 }
 
+/// Copy original pages without rasterising or changing their layout.
+pub(crate) fn subset_pdf_pages(
+    bytes: &[u8],
+    pages: &[u32],
+    original_count: usize,
+) -> CommandResult<Vec<u8>> {
+    let guard = pdfium_instance()?;
+    let pdfium = guard.as_ref().map_err(|error| error.clone())?;
+    let source = pdfium
+        .load_pdf_from_byte_slice(bytes, None)
+        .map_err(|e| format!("candidate_pdf_open:{e}"))?;
+    if source.pages().len() as usize != original_count
+        || pages.is_empty()
+        || pages
+            .iter()
+            .any(|page| *page == 0 || *page as usize > original_count)
+        || pages.windows(2).any(|pair| pair[0] >= pair[1])
+    {
+        return Err("candidate_pdf_page_selection_invalid".into());
+    }
+    let mut subset = pdfium.create_new_pdf().map_err(|e| e.to_string())?;
+    let range = pages
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    subset
+        .pages_mut()
+        .copy_pages_from_document(&source, &range, 0)
+        .map_err(|e| format!("candidate_pdf_copy:{e}"))?;
+    if subset.pages().len() as usize != pages.len() {
+        return Err("candidate_pdf_copy_incomplete".into());
+    }
+    subset
+        .save_to_bytes()
+        .map_err(|e| format!("candidate_pdf_save:{e}"))
+}
+
 /// Render every page of the PDF to a PNG (2× scale ≈ 144 DPI) for the
 /// vision/OCR rescue path. Emits a `PdfImageExtractionV1`-shaped value
 /// matching the contract `extract_pdf_images_for_vision` consumes.

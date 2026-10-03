@@ -112,6 +112,7 @@ struct LlmCallTrace {
     raw_content: Option<String>,
     response_bytes: u64,
     system_bytes: u64,
+    user_text_bytes: u64,
     media_bytes: u64,
     /// 校核包（`repair_authoring_step`）专属：这一轮问的是**哪个包**、升到了哪一级、
     /// 包里带了哪些页、包自己估了多少 token。没有这四个字段，「输入量下降」就只是一句
@@ -359,6 +360,8 @@ fn call_segment_sizes(input: &Value, trace: &LlmCallTrace) -> CommandResult<Valu
     let tool_sizes = [input.get("tools"), input.get("allowedOps")];
     Ok(json!({
         "system": trace.system_bytes,
+        // Actual transmitted text after prompt scoping, excluding PDF/image payloads.
+        "promptText": trace.system_bytes.saturating_add(trace.user_text_bytes),
         "rules": sum_json_value_sizes(&rule_sizes)?,
         "tools": sum_json_value_sizes(&tool_sizes)?,
         "source": sum_json_value_sizes(&source_sizes)?,
@@ -638,7 +641,7 @@ fn run_llm_gateway_with_diagnostics(
     }
     let budget_reached = budget_block_reason(&usage_total, budget).is_some();
     let output_summary = summarize_llm_output(&output, &trace);
-    let call_record = json!({
+    let mut call_record = json!({
         "recordType": "llm_call",
         "commandName": command_name,
         "jobId": job_id,
@@ -687,7 +690,11 @@ fn run_llm_gateway_with_diagnostics(
         "rejectedPath": rejected_path,
         "recordedAt": Utc::now().to_rfc3339()
     });
-    let metrics_record = json!({
+    call_record["sourcePagesIncluded"] = request_input.pointer("/chunk/sourcePageMap").cloned().unwrap_or(Value::Null);
+    call_record["sourcePageCount"] = request_input.pointer("/chunk/originalPageCount").cloned().unwrap_or(Value::Null);
+    call_record["evidenceScope"] = request_input.pointer("/chunk/evidenceScope").cloned().unwrap_or(Value::Null);
+    call_record["evidenceScopeReason"] = request_input.pointer("/chunk/evidenceScopeReason").cloned().unwrap_or(Value::Null);
+    let mut metrics_record = json!({
         "recordType": "llm_usage",
         "commandName": command_name,
         "jobId": job_id,
@@ -720,6 +727,10 @@ fn run_llm_gateway_with_diagnostics(
         "cloudBudgetReached": budget_reached,
         "recordedAt": call_record.get("recordedAt").cloned().unwrap_or(Value::Null),
     });
+    metrics_record["sourcePagesIncluded"] = call_record["sourcePagesIncluded"].clone();
+    metrics_record["sourcePageCount"] = call_record["sourcePageCount"].clone();
+    metrics_record["evidenceScope"] = call_record["evidenceScope"].clone();
+    metrics_record["evidenceScopeReason"] = call_record["evidenceScopeReason"].clone();
     append_retained_llm_usage_record(root, job_id, &metrics_record)?;
     append_llm_call_record(root, job_id, &call_record)?;
     let output = output?;
@@ -1074,6 +1085,8 @@ fn openai_post(profile: &Value, api_key: Option<&str>, mut body: Value) -> Comma
         trace.system_bytes = trace
             .system_bytes
             .saturating_add(message_role_content_bytes(&body, "system"));
+        trace.user_text_bytes = trace.user_text_bytes
+            .saturating_add(message_role_content_bytes(&body, "user"));
         trace.media_bytes = trace
             .media_bytes
             .saturating_add(embedded_media_bytes(&body));
@@ -1924,12 +1937,63 @@ fn authoring_candidate_prompt_parts(input: &Value) -> (String, String) {
             .unwrap_or(&json!({"paragraphMap": {}, "paragraphs": []})),
     )
     .unwrap_or_default();
-    let local_node_targets = serde_json::to_string(
-        input
-            .get("localNodeTargets")
-            .unwrap_or(&json!({"taskGroups": []})),
-    )
-    .unwrap_or_default();
+    let mut local_targets = input
+        .get("localNodeTargets")
+        .cloned()
+        .unwrap_or_else(|| json!({"taskGroups": []}));
+    if let Some(numbers) = input
+        .pointer("/chunk/questionNumbers")
+        .and_then(Value::as_array)
+    {
+        let allowed: std::collections::BTreeSet<u64> =
+            numbers.iter().filter_map(Value::as_u64).collect();
+        if !allowed.is_empty() {
+            if let Some(groups) = local_targets
+                .get_mut("taskGroups")
+                .and_then(Value::as_array_mut)
+            {
+                // Unknown ranges remain available; only definitely unrelated local hints are omitted.
+                groups.retain(|group| {
+                    group
+                        .get("questionNumbers")
+                        .and_then(Value::as_array)
+                        .map(|numbers| {
+                            numbers.is_empty()
+                                || numbers.iter().any(|number| {
+                                    number
+                                        .as_u64()
+                                        .map(|number| allowed.contains(&number))
+                                        .unwrap_or(true)
+                                })
+                        })
+                        .unwrap_or(true)
+                });
+                for group in groups {
+                    if let Some(prompts) = group
+                        .get_mut("questionPrompts")
+                        .and_then(Value::as_array_mut)
+                    {
+                        prompts.retain(|prompt| {
+                            prompt
+                                .get("questionNumbers")
+                                .and_then(Value::as_array)
+                                .map(|numbers| {
+                                    numbers.is_empty()
+                                        || numbers.iter().any(|number| {
+                                            number
+                                                .as_u64()
+                                                .map(|number| allowed.contains(&number))
+                                                .unwrap_or(true)
+                                        })
+                                })
+                                .unwrap_or(true)
+                        });
+                    }
+                }
+            }
+        }
+    }
+    let local_node_targets = serde_json::to_string(&local_targets).unwrap_or_default();
     let (envelope_extra, modality_rules) = if modality == "listening" {
         (
             ", \"listeningParts\"",
@@ -1941,6 +2005,34 @@ fn authoring_candidate_prompt_parts(input: &Value) -> (String, String) {
     let mut output_contract = input.get("outputContract").cloned().unwrap_or(Value::Null);
     if let Some(contract) = output_contract.as_object_mut() {
         contract.remove("taskPresentationRules");
+        contract.remove("presentationExamples");
+        // Unique details only; transcription / evidence / identity rules are above.
+        contract.insert("rules".into(), json!([
+            "displayRange: {kind:range,start,end} or {kind:set,values}.",
+            "answerKey values: {kind:text,values:[string]}, {kind:option,labels:[string],assignment:per_slot|unordered_set|ordered}, or {kind:unresolved}.",
+            "optionBank needs optionBankId, scope, options, allowReuse; each option needs optionId, label, content array. Fixed truth choices belong in responseGroup.options with the same option shape.",
+            "Content paragraph, heading, list_item and table_cell nodes need children.",
+            "Optional sourceAnchors: {sourceFileId,pageIndex,nodeIds}; pages are 1-based.",
+            "unresolvedRegions entries need sourceFileId, 1-based pageIndex, reason and detail. Never hide coverage gaps."
+        ]));
+        if let Some(shape) = contract.get_mut("shape") {
+            if let Some(response) = shape
+                .pointer_mut("/taskGroups/0/responseGroups/0")
+                .and_then(Value::as_object_mut)
+            {
+                for field in ["kind", "assignment", "cardinality", "allowOptionReuse"] {
+                    response.remove(field);
+                }
+            }
+            if let Some(slot) = shape
+                .pointer_mut("/answerSlots/cloud-q1")
+                .and_then(Value::as_object_mut)
+            {
+                for field in ["slotId", "displayLabel", "interaction"] {
+                    slot.remove(field);
+                }
+            }
+        }
     }
     let prefix = format!(
         "You are an authoring assistant for an {paper} paper. The supplied ORIGINAL FILE is the authority.\n\
@@ -1948,20 +2040,19 @@ Return JSON only. Do not return Markdown, HTML, JavaScript, explanations, or fin
 Follow the response mode and output contract in request-specific data.\n\
 Rules that matter most:\n\
 {modality_rules}\
-- Follow the authoritative taskPresentationRules in the system message for taskType → response kind, assignment, interaction, host, option source, alphabet, reuse, and grouping. Treat outputContract examples as examples only.\n\
+- Follow the authoritative taskPresentationRules in the system message for taskType → response kind, assignment, interaction, host, option source, alphabet, reuse, and grouping. The table describes presentation defaults, not limits on which task types the original can contain.\n\
 - Transcribe every question's full prompt and every option label and full option text.\n\
 - For true_false_not_given use exactly one of TRUE / FALSE / NOT GIVEN; for yes_no_not_given use exactly one of YES / NO / NOT GIVEN. These are fixed response choices and must not use an optionBank.\n\
 - For choose-two tasks use the responseGroup assignment unordered_set.\n\
 - Do not transcribe the reading passage or audio script body. Transcribe instructions and the notes, tables, diagrams, forms, or other stimulus the questions depend on.\n\
 - Put an inline answer_slot node at the exact location of every completion blank inside stimulus: include type, id, slotId matching an answerSlots key, displayLabel, and inline:true; preserve all surrounding text and punctuation.\n\
 - For matching_headings, include a task-group optionBank with every printed heading option; the responseGroup uses kind:matching, optionBankRef, and slotIds. Each heading answerSlot uses hostType:passage_paragraph, interaction:dragdrop, and the supplied local passage nodeId.\n\
-- Reconstruct logical passage paragraphs from the source layout. Physical PDF line wraps and short final lines are not paragraph breaks. Keep real blank-line/indent boundaries and printed paragraph labels; never merge distinct labelled paragraphs. Preserve source anchors for all merged text.\n\
 - For Reading, sourceParagraphs.paragraphMap maps passage labels to existing local nodeIds. Never invent a passage ID; if no target maps to a heading paragraph, report the coverage gap.\n\
 - For a mapped heading paragraph (for example Paragraph A), set answerSlots[*].hostNodeId to that supplied passage nodeId.\n\
 - Give every question an answerKey entry. Use {{\"kind\":\"unresolved\"}} when the original gives no answer; never guess.\n\
 - answerPageEvidence may cite only answers visibly printed in this original file's answer key; quote the exact visible answer line and use a 1-based pageIndex. Use [] if there is no printed answer key.\n\
 - Reuse each supplied local taskId and content nodeId for its equivalent task group, question prompt, instruction, or stimulus node. Match question prompts by question number and instructions or stimulus by their content. Reuse sourceParagraphs nodeIds for passage paragraphs. Use temporary IDs only where no local target exists; never copy an unrelated database ID.\n\
-- Every group needs taskId, displayRange, taskType, instructions, stimulus, and responseGroups. Every responseGroup needs kind, cardinality, assignment, scoringPolicy, duplicatePolicy, allowOptionReuse, and slotIds that exist in answerSlots. Every answerSlot needs slotId, questionNumber, displayLabel, hostType, interaction, participation, and confidence.\n\
+- Every group needs taskId, displayRange, taskType, instructions, stimulus, and responseGroups. Every responseGroup needs responseGroupId, slotIds, scoringPolicy and duplicatePolicy. The backend fills omitted kind/assignment/interaction from taskType and optionBank, slotId from its map key and displayLabel from questionNumber. It fills cardinality=1 ONLY for per_slot groups containing one slot; otherwise provide cardinality from printed instructions. It fills allowOptionReuse ONLY for fixed reuse policies; instruction-controlled reuse must be supplied. Explicit values are preserved and validated. Every answerSlot needs questionNumber, hostType, participation and confidence; examples must explicitly use participation:example.\n\
 - Every content node needs type and id. Heading nodes need non-empty children; text nodes need text.\n\
 - Do not output jobId, schemaVersion, exam, quality, audit, reviewState, sourceDocumentId, provenanceStatus, or publish/verification flags; the backend owns them.\n\
 - Report unreadable areas in unresolvedRegions and unverified coverage in sourceCoverageNotes. Use only outputContract.enums.\n\
@@ -1987,8 +2078,10 @@ Output contract JSON: {}",
         .filter(|note| !note.trim().is_empty())
         .map(|note| format!("\nPrevious validation issue: {note}"))
         .unwrap_or_default();
+    let page_scope = input.pointer("/chunk/sourcePageMap").map(|map| format!(
+        "\nSCOPED ORIGINAL EVIDENCE: this attachment is a subset of the original PDF. Its 1-based attachment pages map to original source pages as {}. In ALL response pageIndex fields (answerPageEvidence, sourceAnchors, unresolvedRegions), use the ATTACHMENT page number; the backend restores original source pages. The rendered-image fallback uses the same attachment numbering. Do not claim omitted pages were inspected. No visible answer key means unresolved answers.\n", map)).unwrap_or_default();
     let tail = format!(
-        "{response_mode}\nRequest-specific data:\nJob JSON: {}\nSource file JSON: {}\nSource paragraph targets: {}\nLocal node targets: {}\n{chunk_rules}{repair}",
+        "{response_mode}{page_scope}\nRequest-specific data:\nJob JSON: {}\nSource file JSON: {}\nSource paragraph targets: {}\nLocal node targets: {}\n{chunk_rules}{repair}",
         serde_json::to_string(input.get("job").unwrap_or(&Value::Null)).unwrap_or_default(),
         serde_json::to_string(input.get("sourceFile").unwrap_or(&Value::Null)).unwrap_or_default(),
         source_paragraphs,
@@ -2010,6 +2103,88 @@ Return exactly one valid JSON object only: no Markdown, explanations, or text ou
 Use the request's output contract and allowed tools exactly. Never invent source content, answers, or identifiers.\n\
 Authoritative taskPresentationRules (shared by recognition and repair):\n{rules}"
     )
+}
+
+fn repair_system_prompt(input: &Value) -> String {
+    let context = input.get("context").unwrap_or(&Value::Null);
+    if context.get("contextMode").and_then(Value::as_str) != Some("packets") {
+        return shared_authoring_system_prompt();
+    }
+    let mut types = std::collections::BTreeSet::new();
+    let mut unknown = false;
+    for slice in ["draftSlice", "candidateSlice", "localSnapshotSlice"] {
+        for group in context
+            .get(slice)
+            .and_then(|v| v.get("taskGroups"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            match group.get("taskType").and_then(Value::as_str) {
+                Some(kind)
+                    if crate::schema::task_presentation::presentation_rules()
+                        .iter()
+                        .any(|rule| {
+                            crate::schema::task_presentation::wire_name(&rule.task_type) == kind
+                        }) =>
+                {
+                    types.insert(kind.to_string());
+                }
+                _ => unknown = true,
+            }
+        }
+    }
+    // A type / structure dispute may require a third type, so retain the full table.
+    let structural = context
+        .get("differences")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|difference| {
+            difference
+                .get("field")
+                .and_then(Value::as_str)
+                .map(|field| {
+                    let field = field.replace('_', "").to_ascii_lowercase();
+                    field.contains("tasktype") || field.contains("responsegroup")
+                })
+                .unwrap_or(false)
+        });
+    let blocked = context
+        .get("blockingIssues")
+        .and_then(Value::as_array)
+        .map(|issues| !issues.is_empty())
+        .unwrap_or(false);
+    if unknown || types.is_empty() || structural || blocked {
+        return shared_authoring_system_prompt();
+    }
+    let scoped = crate::schema::task_presentation::rules_prompt_table_for(
+        &types.into_iter().collect::<Vec<_>>(),
+    );
+    shared_authoring_system_prompt().replace(
+        &crate::schema::task_presentation::rules_prompt_table(),
+        &scoped,
+    )
+}
+
+fn repair_llm_messages(
+    input: &Value,
+    prefix: &str,
+    evidence: Vec<Value>,
+    tail: String,
+) -> Vec<Value> {
+    let system = repair_system_prompt(input);
+    let marker = "Authoritative taskPresentationRules (shared by recognition and repair):";
+    let (header, rules) = system.split_once(marker).expect("authoring system rule marker");
+    // Type-specific rules follow the stable operation/tool prefix so different packet
+    // types can still reuse that prefix. Evidence and observations stay at the tail.
+    let mut content = vec![json!({"type":"text", "text":"Original source evidence for this request:"})];
+    content.extend(evidence);
+    vec![
+        json!({"role":"system", "content":format!("{header}{prefix}\n{marker}{rules}")}),
+        json!({"role":"user", "content":content}),
+        json!({"role":"user", "content":tail}),
+    ]
 }
 
 fn ordered_llm_messages(prefix: &str, evidence: Vec<Value>, request_tail: String) -> Vec<Value> {
@@ -2338,6 +2513,84 @@ fn candidate_value_is_missing(value: &Value) -> bool {
     }
 }
 
+/// Fill omitted deterministic fields, preserving explicit values and all source-dependent content.
+fn fill_candidate_structural_defaults(output: &mut Value) {
+    use crate::schema::ielts_authoring_v2::TaskTypeV2;
+    use crate::schema::task_presentation::{rule_for, wire_name, OptionReusePolicy};
+    let mut interactions = std::collections::BTreeMap::new();
+    if let Some(groups) = output.get_mut("taskGroups").and_then(Value::as_array_mut) {
+        for group in groups {
+            let Some(kind) = group
+                .get("taskType")
+                .and_then(Value::as_str)
+                .and_then(|kind| serde_json::from_value::<TaskTypeV2>(json!(kind)).ok())
+            else {
+                continue;
+            };
+            let rule = rule_for(
+                &kind,
+                group
+                    .get("optionBank")
+                    .map(|v| !v.is_null())
+                    .unwrap_or(false),
+            );
+            if let Some(responses) = group
+                .get_mut("responseGroups")
+                .and_then(Value::as_array_mut)
+            {
+                for response in responses {
+                    let Some(map) = response.as_object_mut() else {
+                        continue;
+                    };
+                    map.entry("kind")
+                        .or_insert(json!(wire_name(&rule.response_kind)));
+                    map.entry("assignment")
+                        .or_insert(json!(wire_name(&rule.assignment)));
+                    if rule.option_reuse_policy != OptionReusePolicy::InstructionControlled {
+                        map.entry("allowOptionReuse")
+                            .or_insert(json!(rule.option_reuse_default));
+                    }
+                    if wire_name(&rule.assignment) == "per_slot"
+                        && map.get("assignment").and_then(Value::as_str) == Some("per_slot")
+                        && map.get("slotIds").and_then(Value::as_array).map(Vec::len) == Some(1)
+                    {
+                        map.entry("cardinality")
+                            .or_insert(json!({"min":1,"max":1,"exact":1}));
+                    }
+                    for slot in map
+                        .get("slotIds")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                    {
+                        interactions
+                            .entry(slot.to_string())
+                            .or_insert_with(std::collections::BTreeSet::new)
+                            .insert(wire_name(&rule.interaction));
+                    }
+                }
+            }
+        }
+    }
+    if let Some(slots) = output.get_mut("answerSlots").and_then(Value::as_object_mut) {
+        for (key, slot) in slots {
+            let Some(map) = slot.as_object_mut() else {
+                continue;
+            };
+            map.entry("slotId").or_insert(json!(key));
+            if let Some(number) = map.get("questionNumber").and_then(Value::as_u64) {
+                map.entry("displayLabel")
+                    .or_insert(json!(number.to_string()));
+            }
+            if let Some(choices) = interactions.get(key).filter(|choices| choices.len() == 1) {
+                map.entry("interaction")
+                    .or_insert(json!(choices.first().unwrap()));
+            }
+        }
+    }
+}
+
 /// 云端完整候选输出的**结构**校验。
 ///
 /// 只校验「形状是否可用」：内容对不对是模型结合原文的语义判断，程序替代不了。
@@ -2363,6 +2616,8 @@ fn validate_authoring_candidate_output_for_chunk_with_source_paragraphs(
     chunk: Option<&Value>,
     source_paragraphs: Option<&Value>,
 ) -> CommandResult<()> {
+    fill_candidate_structural_defaults(output);
+    crate::candidate_evidence::restore_source_pages(output, chunk)?;
     if let Some(allowed) = chunk
         .and_then(|chunk| chunk.get("questionNumbers"))
         .and_then(Value::as_array)
@@ -2888,7 +3143,6 @@ fn dry_run_candidate_finalize(output: &Value, modality: &'static str) -> Command
 /// 工具清单来自 [`crate::schema::cloud_repair_v1::CLOUD_REPAIR_TOOLS`]——**唯一真源**。
 /// 提示词里写一个、分发器不认，是这类循环最典型的漂移；这里刻意引用同一份常量。
 fn repair_step_prompt_content(input: &Value) -> String {
-    let tools = crate::schema::cloud_repair_v1::CLOUD_REPAIR_TOOLS.join(", ");
     let paper = ielts_paper_label(
         input
             .get("modality")
@@ -2921,14 +3175,48 @@ fn repair_step_prompt_content(input: &Value) -> String {
     strip_packet_image_paths(&mut prompt_input);
     let mut stable_tools = input.get("tools").cloned().unwrap_or(Value::Null);
     replace_tool_source_file_ids(&mut stable_tools);
+    if let Some(tools) = stable_tools.as_object_mut() {
+        if input
+            .pointer("/context/comparisonMode")
+            .and_then(Value::as_str)
+            == Some("adopted_cloud_vs_local_snapshot")
+        {
+            tools.remove("read_candidate");
+        }
+        if input.get("modality").and_then(Value::as_str) == Some("listening") {
+            tools.remove("read_passage");
+        }
+        if input
+            .pointer("/context/contextMode")
+            .and_then(Value::as_str)
+            != Some("packets")
+        {
+            tools.remove("finish_packet");
+        }
+    }
+    let tools = stable_tools
+        .as_object()
+        .map(|tools| tools.keys().cloned().collect::<Vec<_>>().join(", "))
+        .unwrap_or_else(|| crate::schema::cloud_repair_v1::CLOUD_REPAIR_TOOLS.join(", "));
     let allowed_ops = input
         .get("allowedOps")
         .cloned()
         .unwrap_or_else(|| json!(crate::cloud_repair::tools::MODEL_ALLOWED_OPS));
-    let repair_rules = input
+    let mut repair_rules = input
         .get("rules")
         .cloned()
         .unwrap_or_else(|| crate::llm_suggestions::repair_tool_rules(&Value::Null));
+    if input.get("rules")
+        == Some(&crate::llm_suggestions::repair_tool_rules(
+            input.get("context").unwrap_or(&Value::Null),
+        ))
+    {
+        repair_rules = json!([
+            "callId must be a non-empty string; tool must be listed in this request; arguments must match its schema.",
+            "Use only allowedOps; resolveIssue and quality/audit/provenance flags are unavailable.",
+            "Successful edits need no confirmation call. Batch related rulings. Request extra evidence at most once."
+        ]);
+    }
     let packet_mode = input
         .pointer("/context/contextMode")
         .and_then(Value::as_str)
@@ -3018,7 +3306,7 @@ This request carries ONE REPAIR PACKET, not the whole paper. A packet is a self-
 - If you call `read_draft`, include `taskGroupIds` and/or `questionNumbers` copied from this packet; the backend rejects empty or out-of-packet selectors.\n\
 If the packet does not contain what you need to judge a listed difference, do NOT guess and do NOT conclude from an impression:\n\
 - call `report_insufficient_context` with the exact pages / quotes / paragraphs you need, or\n\
-- fetch it yourself with `read_source` (a page range or a quote is REQUIRED; at most 3 pages per call), `search_source`, `read_page_region`, `read_passage`, `read_candidate` or `read_draft`.\n\
+- fetch it yourself with `read_source` (a page range or a quote is REQUIRED; at most 3 pages per call), `search_source`, `read_page_region`, or `read_draft`; use other read tools only when listed in this request.\n\
 Every quote you cite must be copied VERBATIM from a line you were actually returned, and you must give its line id and page. A quote you did not receive is not evidence.\n\
 The backend verifies every quote you cite (in apply_edits and record_ruling) against the FULL source text layer — a quote that is not in the source rejects the whole batch with CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:<index>.\n\
 Call `finish_packet` when this packet is done.\n"
@@ -3089,7 +3377,7 @@ fn repair_step_prompt_parts(input: &Value) -> (String, String) {
 
 fn repair_step_prompt(input: &Value) -> String {
     let (prefix, tail) = repair_step_prompt_parts(input);
-    format!("{}\n{prefix}\n{tail}", shared_authoring_system_prompt())
+    format!("{}\n{prefix}\n{tail}", repair_system_prompt(input))
 }
 
 fn replace_tool_source_file_ids(value: &mut Value) {
@@ -3194,7 +3482,7 @@ The extracted source text below is the ONLY evidence you may use; do not invent 
     let mut body = json!({
         "model": model,
         "temperature": llm_temperature(profile),
-        "messages": ordered_llm_messages(&prefix, evidence, request_tail)
+        "messages": repair_llm_messages(input, &prefix, evidence, request_tail)
     });
     if llm_force_json(profile) {
         body["response_format"] = json!({"type": "json_object"});
@@ -5404,6 +5692,7 @@ mod tests {
                 "missing {segment}: {record}"
             );
         }
+        assert!(record["segments"]["promptText"].as_u64().unwrap_or(0) > record["segments"]["system"].as_u64().unwrap_or(0));
         assert!(record["inputBytes"].as_u64().unwrap_or(0) > 0, "{record}");
         assert!(record["inputSummary"].is_object(), "{record}");
         assert!(record["outputSummary"].is_object(), "{record}");
@@ -5896,6 +6185,16 @@ mod tests {
         ];
         for pointer in removals {
             let mut output = base.clone();
+            // Bank-specific negative cases use a bank task; the single-choice
+            // model example correctly keeps its options on the response group.
+            if pointer.contains("/optionBank/") {
+                output["taskGroups"][0]["taskType"] = json!("matching_features");
+                output["taskGroups"][0]["optionBank"] = json!({
+                    "optionBankId":"bank", "scope":"task_group", "allowReuse":false,
+                    "options":base["taskGroups"][0]["responseGroups"][0]["options"].clone()
+                });
+                output["taskGroups"][0]["responseGroups"][0]["optionBankRef"] = json!("bank");
+            }
             let (parent, field) = pointer.rsplit_once('/').unwrap();
             let removed = output
                 .pointer_mut(parent)
@@ -6331,5 +6630,368 @@ mod tests {
         assert_eq!(repair_messages_a[1], repair_messages_b[1]);
         assert_ne!(repair_messages_a[2], repair_messages_b[2]);
         assert_eq!(candidate_messages_a[0], repair_messages_a[0]);
+    }
+    #[test]
+    fn compact_candidate_defaults_reach_the_real_finalizer() {
+        for modality in ["reading", "listening"] {
+            let mut candidate =
+                crate::llm_suggestions::authoring_candidate_output_contract(modality)["shape"]
+                    .clone();
+            let response = candidate
+                .pointer_mut("/taskGroups/0/responseGroups/0")
+                .unwrap()
+                .as_object_mut()
+                .unwrap();
+            for field in ["kind", "assignment", "cardinality", "allowOptionReuse"] {
+                response.remove(field);
+            }
+            let slot = candidate
+                .pointer_mut("/answerSlots/cloud-q1")
+                .unwrap()
+                .as_object_mut()
+                .unwrap();
+            for field in ["slotId", "displayLabel", "interaction"] {
+                slot.remove(field);
+            }
+            validate_authoring_candidate_output_for_chunk(&mut candidate, modality, None).unwrap();
+            assert_eq!(candidate["answerSlots"]["cloud-q1"]["interaction"], "radio");
+            finalize_candidate(&candidate, modality).unwrap();
+            let normalized = crate::reconcile::candidate::normalize_cloud_authoring(
+                &candidate_identity(modality), None, &candidate,
+            ).unwrap();
+            let quality = crate::ielts_grammar::quality::evaluate_quality(&normalized.document, None);
+            assert!(!quality["issues"].as_array().unwrap().iter().any(|issue| {
+                issue["code"].as_str() == Some("TASK_PRESENTATION_CONTRACT_MISMATCH")
+            }), "the model example must pass the product presentation gate: {quality}");
+        }
+    }
+
+    #[test]
+    fn candidate_defaults_do_not_guess_multi_select_reuse_or_source_content() {
+        let mut candidate = json!({"taskGroups":[
+            {"taskType":"multiple_choice","responseGroups":[{"slotIds":["q1"]}]},
+            {"taskType":"matching_features","responseGroups":[{"slotIds":["q2"]}]},
+            {"taskType":"summary_completion","optionBank":{"options":[]},"responseGroups":[{"slotIds":["q3"]}]}
+        ], "answerSlots":{"q1":{"questionNumber":1,"displayLabel":"Example","interaction":"custom"},"q2":{"questionNumber":2},"q3":{"questionNumber":3}}});
+        fill_candidate_structural_defaults(&mut candidate);
+        assert!(candidate
+            .pointer("/taskGroups/0/responseGroups/0/cardinality")
+            .is_none());
+        assert!(candidate
+            .pointer("/taskGroups/1/responseGroups/0/allowOptionReuse")
+            .is_none());
+        assert_eq!(candidate["answerSlots"]["q1"]["displayLabel"], "Example");
+        assert_eq!(candidate["answerSlots"]["q1"]["interaction"], "custom");
+        assert_eq!(candidate["answerSlots"]["q3"]["interaction"], "dragdrop");
+        assert!(candidate.get("answerKey").is_none());
+        assert!(candidate["answerSlots"]["q2"].get("hostNodeId").is_none());
+        assert!(candidate["answerSlots"]["q2"].get("confidence").is_none());
+        // An explicit null is still rejected instead of silently repaired.
+        let mut invalid =
+            crate::llm_suggestions::authoring_candidate_output_contract("reading")["shape"].clone();
+        invalid["taskGroups"][0]["responseGroups"][0]["kind"] = Value::Null;
+        assert!(
+            validate_authoring_candidate_output_for_chunk(&mut invalid, "reading", None).is_err()
+        );
+    }
+
+    #[test]
+    fn repair_request_scopes_rules_and_tools_but_retains_safe_fallbacks() {
+        let context = json!({"contextMode":"packets","comparisonMode":"adopted_cloud_vs_local_snapshot",
+            "draftSlice":{"taskGroups":[{"taskType":"summary_completion"}]},
+            "localSnapshotSlice":{"taskGroups":[{"taskType":"single_choice"}]}});
+        let mut input = json!({"modality":"listening","context":context,
+            "tools":crate::llm_suggestions::repair_tools_table("source-1"),
+            "rules":crate::llm_suggestions::repair_tool_rules(&context)});
+        let (prefix, tail) = repair_step_prompt_parts(&input);
+        let messages = repair_llm_messages(&input, &prefix, vec![], tail);
+        let system = messages[0]["content"].as_str().unwrap();
+        assert!(system.contains("summary_completion | word_bank"));
+        assert!(system.contains("single_choice"));
+        assert!(!system.contains("matching_headings"));
+        assert!(!prefix.contains("\"read_candidate\":"));
+        assert!(!prefix.contains("\"read_passage\":"));
+        for tool in [
+            "read_source",
+            "read_page_region",
+            "read_draft",
+            "apply_edits",
+            "record_ruling",
+            "report_insufficient_context",
+            "finish_packet",
+            "finish",
+        ] {
+            assert!(prefix.contains(&format!("\"{tool}\":")));
+        }
+        let mut other_type = input.clone();
+        other_type["context"]["draftSlice"]["taskGroups"][0]["taskType"] = json!("short_answer");
+        other_type["context"]["localSnapshotSlice"]["taskGroups"][0]["taskType"] = json!("short_answer");
+        let (other_prefix, other_tail) = repair_step_prompt_parts(&other_type);
+        assert_eq!(prefix, other_prefix);
+        let other_messages = repair_llm_messages(&other_type, &other_prefix, vec![], other_tail);
+        let marker = "Authoritative taskPresentationRules (shared by recognition and repair):";
+        assert_eq!(system.split_once(marker).unwrap().0,
+            other_messages[0]["content"].as_str().unwrap().split_once(marker).unwrap().0);
+        input["context"]["differences"] = json!([{"field":"taskType"}]);
+        assert_eq!(
+            repair_system_prompt(&input),
+            shared_authoring_system_prompt()
+        );
+        input["context"]["differences"] = json!([]);
+        input["context"]["blockingIssues"] = json!([{"code":"broken_structure"}]);
+        assert_eq!(
+            repair_system_prompt(&input),
+            shared_authoring_system_prompt()
+        );
+        input["context"]["blockingIssues"] = json!([]);
+        input["context"]["draftSlice"]["taskGroups"][0]["taskType"] = json!("unknown_type");
+        assert_eq!(
+            repair_system_prompt(&input),
+            shared_authoring_system_prompt()
+        );
+    }
+
+    #[test]
+    fn candidate_chunk_omits_unrelated_local_hints_but_keeps_unknown_ranges() {
+        let input = json!({"chunk":{"label":"Q1-2","questionNumbers":[1,2]},"localNodeTargets":{"taskGroups":[
+            {"taskId":"in-scope","questionNumbers":[1,2],"questionPrompts":[{"questionNumbers":[1],"text":"inside"},{"questionNumbers":[9],"text":"outside-prompt"}]},
+            {"taskId":"outside-group","questionNumbers":[9]},
+            {"taskId":"unknown-range"}
+        ]}});
+        let (_, tail) = authoring_candidate_prompt_parts(&input);
+        assert!(tail.contains("in-scope"));
+        assert!(tail.contains("unknown-range"));
+        assert!(!tail.contains("outside-group"));
+        assert!(!tail.contains("outside-prompt"));
+        assert_eq!(
+            input["localNodeTargets"]["taskGroups"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+    }
+
+    #[test]
+    fn optimized_prompt_footprint_has_no_duplicate_contract_examples() {
+        let input = json!({"modality":"reading","outputContract":crate::llm_suggestions::authoring_candidate_output_contract("reading")});
+        let (prefix, tail) = authoring_candidate_prompt_parts(&input);
+        let candidate_chars = shared_authoring_system_prompt().chars().count()
+            + prefix.chars().count()
+            + tail.chars().count();
+        assert!(!prefix.contains("presentationExamples"));
+        assert!(
+            candidate_chars < 15000,
+            "candidate fixed prompt: {candidate_chars}"
+        );
+        let context = json!({"contextMode":"packets","comparisonMode":"adopted_cloud_vs_local_snapshot","draftSlice":{"editVersion":1,"taskGroups":[{"taskType":"single_choice"}]},"questionNumbers":[10]});
+        let repair = json!({"modality":"reading","context":context,"tools":crate::llm_suggestions::repair_tools_table("source-1"),"rules":crate::llm_suggestions::repair_tool_rules(&context),"allowedOps":crate::cloud_repair::tools::MODEL_ALLOWED_OPS});
+        let (prefix, tail) = repair_step_prompt_parts(&repair);
+        let messages = repair_llm_messages(&repair, &prefix, vec![], tail);
+        let repair_chars: usize = messages.iter().map(|message| match &message["content"] {
+            Value::String(text) => text.chars().count(),
+            Value::Array(parts) => parts.iter().filter_map(|part| part["text"].as_str())
+                .map(|text| text.chars().count()).sum(),
+            _ => 0,
+        }).sum();
+        assert!(repair_chars < 15000, "repair fixed prompt: {repair_chars}");
+        println!("OPTIMIZED_PROMPT_FOOTPRINT candidate_chars={candidate_chars} repair_chars={repair_chars}");
+    }
+
+    #[test]
+    fn compact_candidate_crosses_the_gateway_and_repair_sends_the_scoped_request() {
+        let mut candidate =
+            crate::llm_suggestions::authoring_candidate_output_contract("reading")["shape"].clone();
+        for field in ["kind", "assignment", "cardinality", "allowOptionReuse"] {
+            candidate["taskGroups"][0]["responseGroups"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+        }
+        for field in ["slotId", "displayLabel", "interaction"] {
+            candidate["answerSlots"]["cloud-q1"]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+        }
+        let (url, requests) = fake_llm_server(vec![FakeReply::Respond(
+            200,
+            chat_body(&candidate.to_string(), "stop"),
+        )]);
+        let mut job = fake_candidate_job(&url, "job-compact-contract");
+        job.input["outputContract"] =
+            crate::llm_suggestions::authoring_candidate_output_contract("reading");
+        let output =
+            run_openai_compatible_authoring_candidate_llm(&job.root, job.job_id, &job.input, None)
+                .unwrap();
+        finalize_candidate(&output, "reading").unwrap();
+        let raw = requests.recv_timeout(Duration::from_secs(5)).unwrap();
+        let request: Value = serde_json::from_str(raw.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert!(!request["messages"]
+            .to_string()
+            .contains("presentationExamples"));
+
+        let (url, requests) = fake_llm_server(vec![FakeReply::Respond(
+            200,
+            chat_body(
+                r#"{"callId":"done","tool":"finish_packet","arguments":{"note":"checked","unresolved":[]}}"#,
+                "stop",
+            ),
+        )]);
+        job.input["profile"]["baseUrl"] = json!(url);
+        let context = json!({"contextMode":"packets","comparisonMode":"adopted_cloud_vs_local_snapshot",
+            "draftSlice":{"editVersion":1,"taskGroups":[{"taskType":"single_choice"}]}, "sourceEvidence":{"regions":[]}});
+        job.input.as_object_mut().unwrap().remove("outputContract");
+        job.input["context"] = context.clone();
+        job.input["tools"] = crate::llm_suggestions::repair_tools_table("src-1");
+        job.input["rules"] = crate::llm_suggestions::repair_tool_rules(&context);
+        let result =
+            run_openai_compatible_repair_step_llm(&job.root, job.job_id, &job.input, None).unwrap();
+        assert_eq!(result["tool"], "finish_packet");
+        let raw = requests.recv_timeout(Duration::from_secs(5)).unwrap();
+        let request: Value = serde_json::from_str(raw.split_once("\r\n\r\n").unwrap().1).unwrap();
+        let system = request["messages"][0]["content"].as_str().unwrap();
+        assert!(system.contains("single_choice"));
+        assert!(!system.contains("matching_headings"));
+        assert!(!request["messages"].to_string().contains("read_candidate"));
+    }
+    #[test]
+    fn scoped_pdf_crosses_real_gateway_and_image_fallback_with_original_citations() {
+        let source = include_bytes!("../../fixtures/parser/chunked-reading-evidence.pdf");
+        let pages = pdf_extract::extract_text_from_mem_by_pages(source).unwrap();
+        let plan = crate::reconcile::candidate::plan_candidate_chunks(&pages.join("\n"));
+        let scopes = crate::candidate_evidence::plan_pages(&pages, &plan)
+            .unwrap_or_else(|| panic!("Source page boundaries: {pages:?}; plan: {plan:?}"));
+        let mut replies = Vec::new();
+        for (index, chunk) in plan.iter().enumerate() {
+            let mut output = crate::llm_suggestions::authoring_candidate_output_contract("reading")
+                ["shape"]
+                .clone();
+            let number = chunk.question_numbers[0];
+            output["answerSlots"]["cloud-q1"]["questionNumber"] = json!(number);
+            output["answerSlots"]["cloud-q1"]["displayLabel"] = json!(number.to_string());
+            output["taskGroups"][0]["displayRange"] =
+                json!({"kind":"range","start":number,"end":number});
+            output["answerPageEvidence"] = json!([{"questionNumber":number,"pageIndex":scopes[index].len(),"quote":format!("{number} B")}]);
+            if index == 0 {
+                replies.push(FakeReply::Respond(400, "file parts unsupported".into()));
+            }
+            replies.push(FakeReply::Respond(
+                200,
+                chat_body(&output.to_string(), "stop"),
+            ));
+        }
+        let (url, requests) = fake_llm_server(replies);
+        let mut job = fake_candidate_job(&url, "job-scoped-evidence");
+        fs::write(job.input["pdfPath"].as_str().unwrap(), source).unwrap();
+        job.input["outputContract"] =
+            crate::llm_suggestions::authoring_candidate_output_contract("reading");
+        let extraction = crate::pdf_geometry::render_pdf_pages_with_pdfium(
+            job.job_id,
+            Path::new(job.input["pdfPath"].as_str().unwrap()),
+            &job.root.join("pages.json"),
+            &job.root.join("images"),
+            vec![],
+        )
+        .unwrap();
+        job.input["pages"] = extraction["pages"].clone();
+        let mut index = 0;
+        let merged =
+            crate::auto_pipeline::generate_candidate_by_chunks(&job.input, &plan, |request| {
+                let scoped = crate::candidate_evidence::scope_input(
+                    &job.root,
+                    job.job_id,
+                    request,
+                    &scopes[index],
+                    pages.len(),
+                )
+                .unwrap();
+                index += 1;
+                run_llm_gateway(
+                    &job.root,
+                    job.job_id,
+                    "generate_authoring_candidate",
+                    &scoped,
+                    None,
+                )
+            })
+            .unwrap();
+        assert_eq!(merged["answerPageEvidence"].as_array().unwrap().len(), 3);
+        assert!(merged["answerPageEvidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|entry| entry["pageIndex"] == 10));
+        for (index, selected) in scopes.iter().enumerate() {
+            let raw = requests.recv_timeout(Duration::from_secs(5)).unwrap();
+            let request: Value =
+                serde_json::from_str(raw.split_once("\r\n\r\n").unwrap().1).unwrap();
+            let encoded = request
+                .pointer("/messages/1/content/1/file/file_data")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .strip_prefix("data:application/pdf;base64,")
+                .unwrap();
+            let bytes = general_purpose::STANDARD.decode(encoded).unwrap();
+            let copied = pdf_extract::extract_text_from_mem_by_pages(&bytes).unwrap();
+            assert_eq!(copied.len(), selected.len());
+            for (text, page) in copied.iter().zip(selected) {
+                assert_eq!(text.trim(), pages[*page as usize - 1].trim());
+            }
+            if index == 0 {
+                let raw = requests.recv_timeout(Duration::from_secs(5)).unwrap();
+                let fallback: Value =
+                    serde_json::from_str(raw.split_once("\r\n\r\n").unwrap().1).unwrap();
+                let parts = fallback["messages"][1]["content"].as_array().unwrap();
+                assert_eq!(
+                    parts
+                        .iter()
+                        .filter(|part| part["type"] == "image_url")
+                        .count(),
+                    selected.len()
+                );
+                assert!(!parts.iter().any(|part| part["type"] == "file"));
+            }
+        }
+        let records =
+            fs::read_to_string(job_dir(&job.root, job.job_id).join("llm-usage.jsonl")).unwrap();
+        for (record, selected) in records.lines().zip(&scopes) {
+            let record: Value = serde_json::from_str(record).unwrap();
+            assert_eq!(record["sourcePagesIncluded"], json!(selected));
+            assert_eq!(record["sourcePageCount"], 10);
+        }
+        // Retain copied pages for independent rendering / visual inspection.
+        let output =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tmp/pdfs/candidate-evidence");
+        fs::create_dir_all(&output).unwrap();
+        let copied =
+            crate::pdf_geometry::subset_pdf_pages(source, &scopes[1], pages.len()).unwrap();
+        fs::write(output.join("scoped.pdf"), copied).unwrap();
+        println!(
+            "SCOPED_EVIDENCE_PAGES full={} selected={}",
+            pages.len() * plan.len(),
+            scopes.iter().map(Vec::len).sum::<usize>()
+        );
+    }
+
+    #[test]
+    fn scoped_missing_field_patch_restores_citations_once_after_merge() {
+        let mut raw =
+            crate::llm_suggestions::authoring_candidate_output_contract("reading")["shape"].clone();
+        raw["answerSlots"]["cloud-q1"]
+            .as_object_mut()
+            .unwrap()
+            .remove("confidence");
+        raw["answerPageEvidence"][0]["pageIndex"] = json!(3);
+        let input = json!({"modality":"reading","chunk":{"sourcePageMap":[3,4,10]},"repairMissingFields":["/answerSlots/cloud-q1/confidence"]});
+        let output = merge_authoring_candidate_supplement(
+            raw,
+            json!({"missingFields":{"/answerSlots/cloud-q1/confidence":0.9}}),
+            &input,
+        )
+        .unwrap();
+        assert_eq!(output["answerPageEvidence"][0]["pageIndex"], 10);
+        assert_eq!(output["unresolvedRegions"][0]["pageIndex"], 10);
     }
 }

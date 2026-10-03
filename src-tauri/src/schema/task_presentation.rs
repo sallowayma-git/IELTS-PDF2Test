@@ -436,11 +436,19 @@ pub(crate) fn wire_name<T: Serialize>(value: &T) -> String {
 
 /// 给 LLM 的规则表（Markdown）。取值与 JSON 线上字段一致，模型可直接照抄。
 pub fn rules_prompt_table() -> String {
+    rules_prompt_table_for(&[])
+}
+
+/// Empty scope keeps all rules for initial recognition / unknown repair targets.
+pub(crate) fn rules_prompt_table_for(task_types: &[String]) -> String {
     let mut table = String::from(
         "| taskType | variant | responseGroup.kind | assignment | interaction | hostTypes (first = default) | hostPlacement | presentation | exampleSlotPolicy | optionSource | optionAlphabet | optionReusePolicy | allowOptionReuse default | responseGroup granularity |\n\
          |---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n",
     );
     for rule in RULES {
+        if !task_types.is_empty() && !task_types.contains(&wire_name(&rule.task_type)) {
+            continue;
+        }
         let hosts = rule
             .host_types
             .iter()

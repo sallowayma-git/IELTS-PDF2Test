@@ -3081,6 +3081,11 @@ pub(crate) fn generate_cloud_authoring_candidate_raw(
     });
     // 分块计划的依据：**原文件自己的文本**（PDF 走独立的文本层抽取，DOCX/TXT 走同一份
     // 证据文本），绝不读本地识别的结论。
+    let pdf_source_pages = if is_pdf {
+        original_pdf_pages_for_chunk_plan(&upload_path)
+    } else {
+        None
+    };
     let plan_text = if !is_pdf {
         // `data_url_for_pdf` 会按 `data:application/pdf` 发送 `pdfPath`，对 DOCX 是
         // 错误声明，必须先摘掉；证据面改为原文件独立抽出的文本。
@@ -3092,27 +3097,46 @@ pub(crate) fn generate_cloud_authoring_candidate_raw(
         input["sourceText"] = json!(source_text.clone());
         Some(source_text)
     } else {
-        original_pdf_text_for_chunk_plan(&upload_path)
+        pdf_source_pages.as_ref().map(|pages| pages.join("\n"))
     };
     let plan = plan_text
         .as_deref()
         .map(crate::reconcile::candidate::plan_candidate_chunks)
         .unwrap_or_default();
+    let page_scopes = pdf_source_pages
+        .as_ref()
+        .and_then(|pages| crate::candidate_evidence::plan_pages(pages, &plan));
     let api_key = load_llm_api_key(root, &selected);
     generate_candidate_by_chunks(&input, &plan, |request| {
-        candidate_request_with_one_repair(root, job_id, request, api_key.as_deref())
+        let scoped = page_scopes.as_ref().and_then(|scopes| {
+            let index = plan.iter().position(|chunk| {
+                request.pointer("/chunk/questionNumbers") == Some(&json!(chunk.question_numbers))
+            })?;
+            Some(crate::candidate_evidence::scope_or_full(
+                root,
+                job_id,
+                request,
+                &scopes[index],
+                pdf_source_pages.as_ref()?.len(),
+            ))
+        });
+        candidate_request_with_one_repair(
+            root,
+            job_id,
+            scoped.as_ref().unwrap_or(request),
+            api_key.as_deref(),
+        )
     })
 }
 
 /// 原 PDF 的文本层（独立于本地识别的抽取），只用于规划分块。抽不出来（扫描件、
 /// 解析库 panic）就返回 `None`，调用方回到一次整卷请求。
-fn original_pdf_text_for_chunk_plan(path: &Path) -> Option<String> {
+fn original_pdf_pages_for_chunk_plan(path: &Path) -> Option<Vec<String>> {
     let path = path.to_path_buf();
     std::panic::catch_unwind(move || pdf_extract::extract_text_by_pages(&path).ok())
         .ok()
         .flatten()
-        .map(|pages| pages.join("\n"))
-        .filter(|text| !text.trim().is_empty())
+        .filter(|pages| pages.iter().any(|text| !text.trim().is_empty()))
 }
 
 /// S3 编排：有分块计划就逐块请求（输入带 `chunk`，prompt 与校验器据此限定题号），

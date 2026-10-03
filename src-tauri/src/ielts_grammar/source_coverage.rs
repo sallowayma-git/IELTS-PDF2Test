@@ -305,7 +305,10 @@ fn compact_glyph_spaced_digits(text: &str) -> String {
             while next < chars.len() && chars[next].is_whitespace() {
                 next += 1;
             }
-            if next < chars.len() && chars[next].is_ascii_digit() {
+            // Physical line boundaries separate a declaration from its first question.
+            // Joining `Questions 1-13\n1 ...` creates a fictitious 1-131 range.
+            if next < chars.len() && chars[next].is_ascii_digit()
+                && !chars[index..next].iter().any(|ch| matches!(ch, '\n' | '\r')) {
                 index = next;
                 continue;
             }
@@ -413,6 +416,21 @@ mod tests {
         assert_eq!(
             assessment.declared_question_numbers,
             vec![27, 28, 29, 30, 31]
+        );
+    }
+    #[test]
+    fn question_declaration_does_not_join_the_next_lines_question_number() {
+        assert_eq!(
+            declared_question_blocks("Questions 1-13\n\n1 Choose the correct answer."),
+            vec![(1..=13).collect::<Vec<_>>()]
+        );
+        assert_eq!(
+            declared_question_blocks("Questions 2 7 - 3 1\r\n27 Choose the correct answer."),
+            vec![(27..=31).collect::<Vec<_>>()]
+        );
+        assert_eq!(
+            declared_question_blocks("Questions\n1-13\n1 Choose the correct answer."),
+            vec![(1..=13).collect::<Vec<_>>()]
         );
     }
 }
