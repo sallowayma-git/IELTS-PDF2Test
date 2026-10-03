@@ -648,6 +648,71 @@ fn product_chain_pdf_import_reaches_editable_session_and_persists_one_character_
     let _ = fs::remove_dir_all(root);
 }
 
+/// Drives the authoring command cores on the same private PDFs for before/after
+/// paragraph review. Counts are diagnostics, never an accuracy verdict.
+#[test]
+#[ignore = "same-PDF paragraph audit; requires the local Files corpus"]
+fn product_chain_same_pdf_paragraph_corpus() {
+    let report_path = std::env::var("PDF2TEST_PARAGRAPH_CORPUS_REPORT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| workspace_path("tmp/paragraph-corpus-current.json"));
+    let mut fixtures = fs::read_dir(workspace_path("Files"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|v| v.to_str()) == Some("pdf"))
+        .collect::<Vec<_>>();
+    fixtures.sort();
+    assert!(!fixtures.is_empty(), "same-PDF corpus must not be empty");
+    let mut results = Vec::new();
+    for fixture in fixtures {
+        let root = temp_root("paragraph-corpus");
+        ensure_app_dirs(&root).unwrap();
+        let name = fixture.file_name().unwrap().to_str().unwrap();
+        let mut job = chain_job(name);
+        attach_source(&root, &mut job, &format!("Files/{name}"), "MainQuestion");
+        save_job(&root, &job).unwrap();
+        let started = std::time::Instant::now();
+        run_auto_pipeline_core(&root, &job.job_id, Some(AutoPipelineInput {
+            profile_id: None,
+            confidence_threshold: Some(0.85),
+            parse_mode: None,
+            execution_mode: Some("localOnly".into()),
+            target: Some("editableDraft".into()),
+            allow_overwrite: Some(true),
+        })).expect("real PDF import command core must complete");
+        let session = get_authoring_v2_core(&root, &job.job_id)
+            .expect("authoring editor session must open");
+        let authoring = &session["authoring"];
+        let paragraphs = authoring.pointer("/passage/content")
+            .and_then(Value::as_array).into_iter().flatten()
+            .filter(|node| node["type"] == "paragraph")
+            .map(|node| json!({
+                "id": node["id"],
+                "text": crate::reconcile::candidate::nodes_text(node),
+                "anchors": node["sourceAnchors"],
+                "label": node["paragraphLabel"]
+            })).collect::<Vec<_>>();
+        assert!(!paragraphs.is_empty(), "{name}: real passage must survive import");
+        if name.starts_with("19.") {
+            assert!(paragraphs.iter().any(|paragraph| {
+                crate::reconcile::candidate::normalize_text(paragraph["text"].as_str().unwrap_or(""))
+                    .contains("sugar maples can warn each other")
+            }), "the source paragraph wrapping below the picture must remain one paragraph");
+        }
+        results.push(json!({
+            "file": name, "sha256": job.source_files[0].sha256,
+            "paragraphCount": paragraphs.len(), "paragraphs": paragraphs,
+            "elapsedMs": started.elapsed().as_millis(),
+            "quality": authoring["quality"],
+            "verificationLevel": "authoring command cores below UI; local-only, no provider token measurements"
+        }));
+        fs::remove_dir_all(root).unwrap();
+    }
+    write_json(&report_path, &json!({"fixtures":results})).unwrap();
+    println!("PARAGRAPH_CORPUS_REPORT {}", report_path.display());
+}
+
 #[test]
 fn product_chain_ready_authoring_exports_and_publishes_to_nas() {
     let root = temp_root("publish");

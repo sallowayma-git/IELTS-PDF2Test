@@ -20,8 +20,10 @@
 //! 4. 原文没有提供的答案不得以"识别修复"的名义生成；
 //! 5. 模型 `finish` **不等于**产品完成：剩余问题一律由后端按当前 canonical 重算。
 
+mod batch;
 mod decision;
 pub(crate) mod grab;
+mod history;
 pub(crate) mod packets;
 pub(crate) mod tools;
 
@@ -887,7 +889,8 @@ fn comparison_content(value: &Value) -> Value {
                 .filter(|(key, _)| {
                     !matches!(
                         key.as_str(),
-                        "id" | "nodeId" | "optionId"
+                        "id" | "nodeId"
+                            | "optionId"
                             | "sourceAnchors"
                             | "evidenceAnchors"
                             | "quality"
@@ -1413,11 +1416,15 @@ fn reviewed_comparison_differences(
     let conn = open_library_connection(root)?;
     let repair = store::read_batch_repair(&conn, batch_id)?;
     let targets = repair.as_ref().and_then(|repair| {
-        repair.pointer("/candidateAdoption/needsCloudReview").and_then(Value::as_array)
+        repair
+            .pointer("/candidateAdoption/needsCloudReview")
+            .and_then(Value::as_array)
     });
     // Old receipts lack an adoption review plan; keep their conservative comparison behavior.
     Ok(match targets {
-        Some(targets) => packets::differences_for_review_targets(canonical, challenger, differences, targets),
+        Some(targets) => {
+            packets::differences_for_review_targets(canonical, challenger, differences, targets)
+        }
         None => differences,
     })
 }
@@ -2638,6 +2645,7 @@ fn execute_tool(
                 ),
             }
         }
+        "submit_batch_decisions" => batch::execute(request, call, round, context, packet),
         "record_ruling" => {
             // 裁定必须指向**上下文里确实存在**的一条差异。否则模型可以凭空造一条裁定，
             // 把一件它没看过的事情标成「已了结」——那正是「模型不能制造已完成」这条
@@ -2706,7 +2714,7 @@ fn execute_tool(
                         crate::schema::cloud_repair_v1::CLOUD_RULING_KEPT_CLOUD_DEFAULT.to_string()
                     }
                     "user_choice" | "need_context" => "cannot_resolve".to_string(),
-                    "use_cloud" => "current_is_correct".to_string(),
+                    "use_cloud" | "use_local" => "current_is_correct".to_string(),
                     "" => ruling,
                     other => {
                         errors.push(format!("CLOUD_DECISION_UNKNOWN:{other}"));
@@ -2766,7 +2774,7 @@ fn execute_tool(
                     .and_then(Value::as_array)
                     .cloned()
                     .unwrap_or_default();
-                if decision == "use_cloud" && evidence_entries.is_empty() {
+                if matches!(decision, "use_cloud" | "use_local") && evidence_entries.is_empty() {
                     errors.push(format!(
                         "CLOUD_DECISION_SOURCE_EVIDENCE_REQUIRED:{target_type}:{target_id}:{field}"
                     ));
@@ -2796,7 +2804,7 @@ fn execute_tool(
                 evidence_unverifiable_total += unverifiable.len();
                 let annotated_evidence =
                     annotate_evidence_verification(evidence_entries, &unverifiable);
-                if decision == "use_cloud" {
+                if matches!(decision, "use_cloud" | "use_local") {
                     cloud_choices.push(entry.clone());
                 }
                 recorded.push(json!({
@@ -2905,15 +2913,24 @@ fn execute_tool(
                             .collect();
                         for delta in fresh {
                             let (target_type, target_id, field) = difference_key(&delta);
-                            if selected.iter().any(|unit| {
-                                owns(&local, &unit.local_task_ids, &target_id)
-                                    || owns(&cloud, &unit.cloud_task_ids, &target_id)
-                            }) {
+                            let field_only = entries.iter().all(|entry| {
+                                decision::independent_field(&local, &cloud, &current, entry)
+                            });
+                            if (field_only
+                                && entries
+                                    .iter()
+                                    .any(|entry| difference_key(entry) == difference_key(&delta)))
+                                || (!field_only
+                                    && selected.iter().any(|unit| {
+                                        owns(&local, &unit.local_task_ids, &target_id)
+                                            || owns(&cloud, &unit.cloud_task_ids, &target_id)
+                                    }))
+                            {
                                 let (a, b, c) = difference_digests(&delta);
                                 recorded.push(json!({"targetType":target_type,"targetId":target_id,"field":field,
-                                    "ruling":"current_is_correct","decision":"use_cloud","canonicalDigest":a,
+                                    "ruling":"current_is_correct","decision":cloud_choices[0]["decision"],"canonicalDigest":a,
                                     "candidateDigest":b,"contextDigest":c,"recordedAtRound":round,
-                                    "evidence":cloud_choices[0]["evidence"],"reason":"Source-backed cloud comparison unit applied"}));
+                                    "evidence":cloud_choices[0]["evidence"],"reason":"Source-backed candidate comparison unit applied"}));
                             }
                         }
                     }
@@ -2921,7 +2938,7 @@ fn execute_tool(
             }
             let needs_context = recorded.iter().any(|r| r["decision"] == "need_context");
             let mut extra = json!({});
-            if needs_context && packet.is_some() {
+            if needs_context && packet.is_some() && context["contextSupplementUsed"] != true {
                 let mut needs: Vec<Value> = entries
                     .iter()
                     .filter(|e| e["decision"] == "need_context")
@@ -3225,7 +3242,9 @@ fn remaining_tasks(
 
     // ── 2) 尚未裁定的内容差异 ─────────────────────────────────────────────
     if let Some(challenger) = challenger.as_ref() {
-        for difference in reviewed_comparison_differences(root, batch_id, &canonical, challenger, adopted)? {
+        for difference in
+            reviewed_comparison_differences(root, batch_id, &canonical, challenger, adopted)?
+        {
             let (target_type, target_id, field) = difference_key(&difference);
             let task_id = format!("cloud-diff:{target_type}:{target_id}:{field}");
             match fresh_ruling_for_difference(rulings, &difference) {
@@ -3853,7 +3872,10 @@ where
         unverified_evidence += evidence_unverifiable_count(&result.result);
         // 裁定：从**工具真实返回**里取，不重新解释一遍模型输入——否则「记录了什么」
         // 与「回给模型什么」可能不一致，而落盘的必须是后者（模型据此继续推理）。
-        if call.tool == "record_ruling" {
+        if matches!(
+            call.tool.as_str(),
+            "record_ruling" | "submit_batch_decisions"
+        ) {
             if let Some(recorded) = result.result.get("recorded").and_then(Value::as_array) {
                 rulings.extend(recorded.iter().cloned());
             }
@@ -4110,11 +4132,35 @@ where
             .unwrap_or(0) as u32;
         let mut budget = grab::GrabBudget::new();
         // 包内观察：换包清空，不跨包累积。
-        let mut packet_observations: Vec<Value> = Vec::new();
+        let mut packet_observations: Vec<Value> = match history::restore(request, &packet) {
+            Ok(history) => history,
+            Err(error) => {
+                last_error = Some(error);
+                Vec::new()
+            }
+        };
         let mut packet_rounds = 0u32;
         let mut packet_rulings = 0usize;
         let mut packet_edits = 0usize;
         let mut packet_insufficient = 0usize;
+        // Resume source evidence, never editor commands. A recovered supplement consumes the
+        // same per-packet allowance so interrupted conversations cannot repeatedly fetch it.
+        for observation in &packet_observations {
+            if observation
+                .pointer("/result/needsContext")
+                .and_then(Value::as_bool)
+                == Some(true)
+            {
+                if let Ok(result) =
+                    serde_json::from_value::<CloudRepairToolResultV1>(observation.clone())
+                {
+                    merge_fetched_evidence(&mut packet, &result);
+                    packet["contextSupplementUsed"] = json!(true);
+                    packet_insufficient = 1;
+                    level = level.max(1);
+                }
+            }
+        }
         let mut packet_unverified = 0usize;
         let mut packet_status = "rounds_exhausted";
         let mut escalated = false;
@@ -4162,9 +4208,21 @@ where
                         "errors": [error.clone()],
                         "repairNote": error.clone(),
                     }));
+                    let _ = history::append(
+                        request,
+                        &packet,
+                        &Value::Null,
+                        &json!({"status":"rejected","errors":[error.clone()]}),
+                    );
                     match step(&packet, &packet_observations) {
                         Ok(raw) => raw,
                         Err(second) => {
+                            let _ = history::append(
+                                request,
+                                &packet,
+                                &Value::Null,
+                                &json!({"status":"rejected","errors":[second.clone()]}),
+                            );
                             last_error = Some(format!("{second};first_rejection={error}"));
                             status = REPAIR_STATUS_UNAVAILABLE;
                             packet_status = "unavailable";
@@ -4173,12 +4231,22 @@ where
                     }
                 }
                 Err(error) => {
+                    let _ = history::append(
+                        request,
+                        &packet,
+                        &Value::Null,
+                        &json!({"status":"unavailable","errors":[error.clone()]}),
+                    );
                     last_error = Some(error);
                     status = REPAIR_STATUS_UNAVAILABLE;
                     packet_status = "unavailable";
                     break;
                 }
             };
+            // Retain received replies even when cancellation/deadline prevents execution.
+            if let Err(error) = history::append(request, &packet, &raw, &Value::Null) {
+                last_error = Some(format!("CLOUD_HISTORY_WRITE_FAILED:{error}"));
+            }
             if (request.cancelled)() {
                 status = REPAIR_STATUS_CANCELLED;
                 packet_status = "cancelled";
@@ -4195,6 +4263,12 @@ where
                 Ok(call) => call,
                 Err(error) => {
                     // 解析失败也算一个回合：把具体错误回给模型，让它改对再交。
+                    let _ = history::append(
+                        request,
+                        &packet,
+                        &raw,
+                        &json!({"status":"rejected","errors":[error.clone()]}),
+                    );
                     packet_observations.push(json!({
                         "schemaVersion": "CloudRepairToolResultV1",
                         "callId": raw.get("callId").cloned().unwrap_or(Value::Null),
@@ -4241,8 +4315,20 @@ where
                 };
                 execute_tool(&effective_request, &call, rounds, &packet, Some(&mut tools))
             };
+            if let Err(error) = history::append(
+                request,
+                &packet,
+                &raw,
+                &serde_json::to_value(&result).unwrap_or(Value::Null),
+            ) {
+                last_error = Some(format!("CLOUD_HISTORY_WRITE_FAILED:{error}"));
+            }
             // A stale version was never applied; allow the same edit with a refreshed CAS token.
-            if result.errors.iter().any(|error| error.contains("EDIT_VERSION_CONFLICT")) {
+            if result
+                .errors
+                .iter()
+                .any(|error| error.contains("EDIT_VERSION_CONFLICT"))
+            {
                 repeats.remove(&fingerprint);
             }
             // P9：没有文本层时的「证据未核验」如实累计——进逐包诊断与整次摘要。
@@ -4268,15 +4354,29 @@ where
             // 读的就是 `context.escalationLevel` 这个字段：不同步的话，「这一轮到底在 L 几」
             // 会有两个答案——诊断说 L1，模型看到的却是 L0。
             packet["escalationLevel"] = json!(level);
-            if call.tool == "record_ruling" {
+            if matches!(
+                call.tool.as_str(),
+                "record_ruling" | "submit_batch_decisions"
+            ) {
                 if let Some(recorded) = result.result.get("recorded").and_then(Value::as_array) {
                     packet_rulings += recorded.len();
                     rulings.extend(recorded.iter().cloned());
+                    if let Err(error) = store::write_repair_rulings(
+                        request.root,
+                        request.job_id,
+                        request.batch_id,
+                        &json!({"rulings":rulings,"modelQuestions":model_questions}),
+                    ) {
+                        last_error = Some(format!("CLOUD_RULINGS_WRITE_FAILED:{error}"));
+                    }
                 }
             }
             if !valid_insufficient
                 && applied.is_none()
-                && call.tool == "record_ruling"
+                && matches!(
+                    call.tool.as_str(),
+                    "record_ruling" | "submit_batch_decisions"
+                )
                 && result.status == crate::schema::cloud_repair_v1::CloudRepairToolStatusV1::Ok
             {
                 let all_ruled = packet
@@ -4300,6 +4400,7 @@ where
                 }
             }
             if valid_insufficient {
+                packet["contextSupplementUsed"] = json!(true);
                 packet_insufficient += 1;
                 if packet_insufficient > 1 {
                     packet_status = "context_insufficient";
@@ -4491,7 +4592,10 @@ where
         ) {
             incomplete = true;
         }
-        if matches!(packet_status, "rounds_exhausted" | "no_progress" | "context_insufficient") {
+        if matches!(
+            packet_status,
+            "rounds_exhausted" | "no_progress" | "context_insufficient"
+        ) {
             done_packets.insert(packet_id.clone());
         }
         packet_reports.push(json!({
@@ -5108,7 +5212,8 @@ pub(crate) fn cannot_resolve_rulings_for(differences: &[Value]) -> Value {
         .iter()
         .map(|difference| {
             let (target_type, target_id, field) = difference_key(difference);
-            let (canonical_digest, candidate_digest, context_digest) = difference_digests(difference);
+            let (canonical_digest, candidate_digest, context_digest) =
+                difference_digests(difference);
             json!({
                 "targetType": target_type, "targetId": target_id, "field": field,
                 "ruling": crate::schema::cloud_repair_v1::CLOUD_RULING_CANNOT_RESOLVE,

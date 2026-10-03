@@ -7,6 +7,17 @@ pub(crate) fn passage_nodes(
     lines: &[SemanticLine],
     source_anchors: Vec<Value>,
 ) -> Vec<Value> {
+    passage_nodes_with_layout(title, lines, source_anchors, false)
+}
+
+/// Layout recovery is enabled only for real PDF geometry. DOCX paragraphs and
+/// the text-only parser's fabricated rectangles are already explicit boundaries.
+pub(crate) fn passage_nodes_with_layout(
+    title: &str,
+    lines: &[SemanticLine],
+    source_anchors: Vec<Value>,
+    recover_pdf_layout: bool,
+) -> Vec<Value> {
     let mut nodes = Vec::new();
     if !title.trim().is_empty() {
         nodes.push(json!({
@@ -22,20 +33,115 @@ pub(crate) fn passage_nodes(
     if !markers.is_empty() {
         nodes.extend(labelled_paragraph_nodes(lines, &markers));
     } else {
+        let mut paragraphs: Vec<(usize, String, Vec<Value>)> = Vec::new();
+        let mut previous: Option<&SemanticLine> = None;
+        let heights = lines
+            .iter()
+            .filter_map(|line| line.bbox)
+            .map(|bbox| bbox[3])
+            .filter(|height| height.is_finite() && *height > 0.0)
+            .collect::<Vec<_>>();
+        let mut heights = heights;
+        heights.sort_by(f64::total_cmp);
+        let line_height = heights.get(heights.len() / 2).copied().unwrap_or(12.0);
         for (index, line) in lines.iter().enumerate() {
             let text = normalize_instruction_text(&line.text);
             if text.is_empty() {
                 continue;
             }
+            let continuation = recover_pdf_layout
+                && previous.is_some_and(|previous| {
+                    layout_continues_paragraph(previous, line, line_height)
+                });
+            if continuation {
+                if let Some((_, paragraph, anchors)) = paragraphs.last_mut() {
+                    append_wrapped_text(paragraph, &text);
+                    anchors.push(line.source_anchor.clone());
+                }
+            } else {
+                paragraphs.push((index, text, vec![line.source_anchor.clone()]));
+            }
+            previous = Some(line);
+        }
+        for (index, text, anchors) in paragraphs {
             nodes.push(paragraph_node(
                 &format!("passage-paragraph-{}", index + 1),
                 &text,
                 None,
-                vec![line.source_anchor.clone()],
+                anchors,
             ));
         }
     }
     nodes
+}
+
+fn layout_continues_paragraph(
+    previous: &SemanticLine,
+    current: &SemanticLine,
+    line_height: f64,
+) -> bool {
+    let (Some(a), Some(b)) = (previous.bbox, current.bbox) else {
+        return false;
+    };
+    if a.iter().chain(b.iter()).any(|value| !value.is_finite())
+        || a[2] <= 0.0
+        || b[2] <= 0.0
+        || a[3] <= 0.0
+        || b[3] <= 0.0
+    {
+        return false;
+    }
+    // Font changes and explicit heading roles must retain their own boundary.
+    if previous.role.contains("heading")
+        || current.role.contains("heading")
+        || a[3].max(b[3]) > a[3].min(b[3]) * 1.4
+    {
+        return false;
+    }
+    let overlap = (a[0] + a[2]).min(b[0] + b[2]) - a[0].max(b[0]);
+    let left_shift = b[0] - a[0];
+    if overlap <= 0.0 || left_shift > line_height * 0.75 || left_shift < -line_height * 2.5 {
+        return false;
+    }
+    if current.page_index == previous.page_index + 1 {
+        // Without explicit labels, join across pages only with strong lexical
+        // continuation evidence. A fresh capitalised paragraph stays separate.
+        return !ends_sentence(&previous.text)
+            && current
+                .text
+                .trim_start()
+                .chars()
+                .next()
+                .is_some_and(char::is_lowercase);
+    }
+    if current.page_index != previous.page_index {
+        return false;
+    }
+    let gap = b[1] - (a[1] + a[3]);
+    // Same baseline fragments can be pieces of one printed line; separate
+    // columns are excluded above and by the horizontal distance here.
+    if (b[1] - a[1]).abs() < line_height * 0.35 {
+        let horizontal_gap = b[0] - (a[0] + a[2]);
+        return horizontal_gap >= -line_height * 0.2 && horizontal_gap <= line_height;
+    }
+    gap >= -line_height * 0.2 && gap <= line_height * 0.65
+}
+
+fn ends_sentence(text: &str) -> bool {
+    text.trim_end()
+        .trim_end_matches(['\"', '\'', '”', '’', ')', ']'])
+        .ends_with(['.', '!', '?', '。', '！', '？'])
+}
+
+fn append_wrapped_text(paragraph: &mut String, text: &str) {
+    if paragraph.ends_with('\u{00ad}') {
+        paragraph.pop();
+    } else if !(paragraph.ends_with('-')
+        && paragraph[..paragraph.len() - 1].chars().last().is_some_and(char::is_alphanumeric)
+        && text.chars().next().is_some_and(char::is_lowercase)) {
+        paragraph.push(' ');
+    }
+    paragraph.push_str(text);
 }
 
 /// Build a stable label → real passage-node map. Empty maps stay empty so
@@ -109,7 +215,15 @@ fn labelled_paragraph_nodes(
     paragraphs
         .into_iter()
         .filter_map(|paragraph| {
-            let text = paragraph.text.join(" ").trim().to_string();
+            let mut text = String::new();
+            for fragment in &paragraph.text {
+                if text.is_empty() {
+                    text.push_str(fragment);
+                } else {
+                    append_wrapped_text(&mut text, fragment);
+                }
+            }
+            let text = text.trim().to_string();
             if text.is_empty() {
                 return None;
             }
@@ -175,6 +289,10 @@ fn paragraph_markers(
         }
     }
     markers
+}
+
+pub(crate) fn has_source_paragraph_markers(lines: &[SemanticLine]) -> bool {
+    !paragraph_markers(lines).is_empty()
 }
 
 fn paragraph_prefix(text: &str) -> Option<(String, String)> {
@@ -475,5 +593,98 @@ mod tests {
         assert!(nodes
             .iter()
             .all(|node| node.get("paragraphLabel").is_none()));
+    }
+    fn laid_out_line(id: &str, text: &str, x: f64, y: f64, width: f64) -> SemanticLine {
+        let mut value = line(id, text);
+        value.bbox = Some([x, y, width, 12.0]);
+        value
+    }
+
+    #[test]
+    fn pdf_wrapped_passage_restores_paragraphs_without_merging_real_boundaries() {
+        let lines = vec![
+            laid_out_line("p1-a", "A normal paragraph starts", 72.0, 100.0, 300.0),
+            laid_out_line("p1-b", "and ends with a short line.", 72.0, 116.0, 140.0),
+            laid_out_line("p2-a", "A second paragraph follows.", 72.0, 144.0, 300.0),
+            laid_out_line(
+                "p2-b",
+                "Its wrapped sentence continues.",
+                72.0,
+                160.0,
+                260.0,
+            ),
+            laid_out_line("p3", "An indented paragraph.", 88.0, 176.0, 260.0),
+        ];
+        let nodes = passage_nodes_with_layout("", &lines, vec![], true);
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(
+            nodes[0]["children"][0]["text"],
+            "A normal paragraph starts and ends with a short line."
+        );
+        assert_eq!(nodes[0]["sourceAnchors"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            nodes[1]["children"][0]["text"],
+            "A second paragraph follows. Its wrapped sentence continues."
+        );
+        assert_eq!(paragraph_map_from_nodes(&nodes), json!({}));
+        assert_eq!(
+            passage_nodes_with_layout("", &lines, vec![], false).len(),
+            5,
+            "DOCX or fabricated geometry must retain explicit source paragraphs"
+        );
+    }
+
+    #[test]
+    fn pdf_paragraph_recovery_keeps_columns_headings_and_missing_layout_separate() {
+        let mut heading = laid_out_line("heading", "A heading", 72.0, 100.0, 300.0);
+        heading.role = "heading".into();
+        let lines = vec![
+            heading,
+            laid_out_line("body", "Body starts here.", 72.0, 116.0, 230.0),
+            laid_out_line("column", "A different column.", 340.0, 132.0, 200.0),
+            line("unknown", "No layout evidence."),
+        ];
+        assert_eq!(passage_nodes_with_layout("", &lines, vec![], true).len(), 4);
+    }
+
+    #[test]
+    fn pdf_paragraph_recovery_joins_image_wrapping_and_proven_page_continuation() {
+        let mut continuation = laid_out_line(
+            "next-page",
+            "continues on the next page.",
+            72.0,
+            60.0,
+            400.0,
+        );
+        continuation.page_index = 1;
+        let mut new_paragraph = laid_out_line(
+            "new-page-paragraph",
+            "A fresh paragraph.",
+            72.0,
+            90.0,
+            400.0,
+        );
+        new_paragraph.page_index = 1;
+        let lines = vec![
+            laid_out_line(
+                "narrow",
+                "This wraps around an image and",
+                72.0,
+                100.0,
+                230.0,
+            ),
+            laid_out_line(
+                "wide",
+                "continues across the full page and",
+                72.0,
+                116.0,
+                460.0,
+            ),
+            continuation,
+            new_paragraph,
+        ];
+        let nodes = passage_nodes_with_layout("", &lines, vec![], true);
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0]["children"][0]["text"], "This wraps around an image and continues across the full page and continues on the next page.");
     }
 }

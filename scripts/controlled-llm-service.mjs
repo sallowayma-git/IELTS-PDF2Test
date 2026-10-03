@@ -1047,7 +1047,9 @@ function answerLineFromPacket(context, questionNumber) {
  */
 function exampleSourceFileId(input) {
   const evidence = input?.tools?.apply_edits?.arguments?.evidence;
-  const id = Array.isArray(evidence) ? evidence[0]?.sourceFileId : null;
+  // Compact tool contracts use a cacheable source placeholder; resolve it from the
+  // request data exactly as the prompt instructs the model to do.
+  const id = Array.isArray(evidence) ? evidence[0]?.sourceFileId : input?.sourceFile?.fileId;
   return typeof id === 'string' && id.length > 0 ? id : null;
 }
 

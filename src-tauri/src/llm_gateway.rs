@@ -2035,27 +2035,18 @@ fn authoring_candidate_prompt_parts(input: &Value) -> (String, String) {
         }
     }
     let prefix = format!(
-        "You are an authoring assistant for an {paper} paper. The supplied ORIGINAL FILE is the authority.\n\
-Return JSON only. Do not return Markdown, HTML, JavaScript, explanations, or final export files.\n\
-Follow the response mode and output contract in request-specific data.\n\
-Rules that matter most:\n\
+        "Recognise the supplied ORIGINAL FILE as an {paper} paper. Return JSON matching the request contract.\n\
 {modality_rules}\
-- Follow the authoritative taskPresentationRules in the system message for taskType → response kind, assignment, interaction, host, option source, alphabet, reuse, and grouping. The table describes presentation defaults, not limits on which task types the original can contain.\n\
-- Transcribe every question's full prompt and every option label and full option text.\n\
-- For true_false_not_given use exactly one of TRUE / FALSE / NOT GIVEN; for yes_no_not_given use exactly one of YES / NO / NOT GIVEN. These are fixed response choices and must not use an optionBank.\n\
-- For choose-two tasks use the responseGroup assignment unordered_set.\n\
-- Do not transcribe the reading passage or audio script body. Transcribe instructions and the notes, tables, diagrams, forms, or other stimulus the questions depend on.\n\
-- Put an inline answer_slot node at the exact location of every completion blank inside stimulus: include type, id, slotId matching an answerSlots key, displayLabel, and inline:true; preserve all surrounding text and punctuation.\n\
-- For matching_headings, include a task-group optionBank with every printed heading option; the responseGroup uses kind:matching, optionBankRef, and slotIds. Each heading answerSlot uses hostType:passage_paragraph, interaction:dragdrop, and the supplied local passage nodeId.\n\
-- For Reading, sourceParagraphs.paragraphMap maps passage labels to existing local nodeIds. Never invent a passage ID; if no target maps to a heading paragraph, report the coverage gap.\n\
-- For a mapped heading paragraph (for example Paragraph A), set answerSlots[*].hostNodeId to that supplied passage nodeId.\n\
-- Give every question an answerKey entry. Use {{\"kind\":\"unresolved\"}} when the original gives no answer; never guess.\n\
-- answerPageEvidence may cite only answers visibly printed in this original file's answer key; quote the exact visible answer line and use a 1-based pageIndex. Use [] if there is no printed answer key.\n\
-- Reuse each supplied local taskId and content nodeId for its equivalent task group, question prompt, instruction, or stimulus node. Match question prompts by question number and instructions or stimulus by their content. Reuse sourceParagraphs nodeIds for passage paragraphs. Use temporary IDs only where no local target exists; never copy an unrelated database ID.\n\
-- Every group needs taskId, displayRange, taskType, instructions, stimulus, and responseGroups. Every responseGroup needs responseGroupId, slotIds, scoringPolicy and duplicatePolicy. The backend fills omitted kind/assignment/interaction from taskType and optionBank, slotId from its map key and displayLabel from questionNumber. It fills cardinality=1 ONLY for per_slot groups containing one slot; otherwise provide cardinality from printed instructions. It fills allowOptionReuse ONLY for fixed reuse policies; instruction-controlled reuse must be supplied. Explicit values are preserved and validated. Every answerSlot needs questionNumber, hostType, participation and confidence; examples must explicitly use participation:example.\n\
-- Every content node needs type and id. Heading nodes need non-empty children; text nodes need text.\n\
-- Do not output jobId, schemaVersion, exam, quality, audit, reviewState, sourceDocumentId, provenanceStatus, or publish/verification flags; the backend owns them.\n\
-- Report unreadable areas in unresolvedRegions and unverified coverage in sourceCoverageNotes. Use only outputContract.enums.\n\
+- Apply system taskPresentationRules; they are defaults, not restrictions on source task types.\n\
+- Transcribe full question prompts, instructions, option labels/text and question stimulus (notes, tables, forms, diagrams). Do not transcribe reading passage or audio script body. Preserve punctuation and surrounding text.\n\
+- Completion blanks require inline answer_slot nodes: type, id, slotId matching answerSlots, displayLabel, inline:true.\n\
+- Fixed choices: TRUE / FALSE / NOT GIVEN or YES / NO / NOT GIVEN, in responseGroup.options, never optionBank. Choose-two uses unordered_set.\n\
+- matching_headings needs every printed heading in a task-group optionBank; responseGroup uses matching, optionBankRef, slotIds. Slots use passage_paragraph, dragdrop, and hostNodeId from sourceParagraphs.paragraphMap (for example Paragraph A). Missing mapping is a coverage gap; never invent passage ids.\n\
+- Reuse equivalent local taskId/content nodeId and mapped passage nodeIds. Match prompts by question number, instructions/stimulus by content. Create temporary ids only for missing targets.\n\
+- Each group requires taskId, displayRange, taskType, instructions, stimulus, responseGroups. Each responseGroup requires responseGroupId, slotIds, scoringPolicy, duplicatePolicy. Backend supplies omitted kind/assignment/interaction from taskType and optionBank, slotId from map key, displayLabel from questionNumber, cardinality=1 only for one-slot per_slot, and fixed reuse defaults. Supply instruction-controlled cardinality/reuse; explicit values are validated.\n\
+- Each slot requires questionNumber, hostType, participation, confidence; examples use participation:example. Each content node needs type/id; headings need non-empty children, text nodes need text.\n\
+- Every question needs answerKey: use {{\"kind\":\"unresolved\"}} unless the original prints its answer. answerPageEvidence cites only visibly printed answer-key lines, with exact quote and 1-based pageIndex; otherwise [].\n\
+- Use outputContract.enums. Report unreadable areas in unresolvedRegions and coverage gaps in sourceCoverageNotes. Backend owns jobId, schemaVersion, exam, quality, audit, reviewState, sourceDocumentId, provenanceStatus and publish/verification flags; omit them.\n\
 Output contract JSON: {}",
         serde_json::to_string(&output_contract).unwrap_or_default()
     );
@@ -3138,11 +3129,53 @@ fn dry_run_candidate_finalize(output: &Value, modality: &'static str) -> Command
         .map(|_| ())
 }
 
+/// A fresh request carries a bounded packet and persisted conversation memory, not
+/// the entire chat transcript. Local version guards and provenance never need to
+/// be generated by the model.
+fn compact_batch_review_prompt(input: &Value) -> String {
+    let mut data = input.clone();
+    if let Some(object) = data.as_object_mut() {
+        for key in ["profile", "pdfPath", "sourceText", "apiKey", "apiKeySource", "pages",
+                    "tools", "allowedOps", "rules", "repairNote", "inputFootprint"] {
+            object.remove(key);
+        }
+    }
+    strip_packet_image_paths(&mut data);
+    let mut tools = input.get("tools").cloned().unwrap_or(Value::Null);
+    replace_tool_source_file_ids(&mut tools);
+    if let Some(object) = tools.as_object_mut() {
+        object.retain(|name, _| name == "submit_batch_decisions");
+    }
+    let allowed_ops = input.get("allowedOps").cloned().unwrap_or(Value::Null);
+    if let Some(issue) = input.get("repairNote").and_then(Value::as_str)
+        .filter(|issue| !issue.trim().is_empty()) {
+        data["validationIssue"] = json!(issue);
+    }
+    let paper = ielts_paper_label(input.get("modality").and_then(Value::as_str).unwrap_or("reading"));
+    format!(
+        "You are repairing an {paper} authoring draft so it matches the ORIGINAL FILE.\nCompare this packet's Cloud and Local alternatives against ORIGINAL source evidence. Return exactly one JSON object: {{\"callId\":\"batch-1\",\"tool\":\"submit_batch_decisions\",\"arguments\":{{\"decisions\":[{{\"decisionId\":\"d1\",\"choice\":\"Cloud\",\"evidenceLineIds\":[\"p1:l2\"]}}]}}}}.\n\
+- One decision per listed difference; copy decisionId (d1, d2, …). Legacy differences without decisionId require targetType/targetId/field. In adopted_cloud_vs_local_snapshot, Cloud=draftSlice and Local=localSnapshotSlice; otherwise Cloud=candidateSlice and Local=draftSlice. Do not retransmit either alternative. Backend applies dependency-closed selections and all version/human-edit guards.\n\
+- Wrong means BOTH alternatives are wrong: provide commands using the permitted domain operations and evidence supporting the corrected source content. Do not send a whole candidate.\n\
+- Unknown means evidence cannot decide: provide a short reason and optional exact needs for missing source evidence. Never guess answers; missing or ambiguous answer evidence is Unknown.\n\
+- Prefer evidenceLineIds:[\"p1:l2\"] copied from this request’s sourceEvidence.pages[].lines[].id; backend expands only supplied lines to source/page/quote. Cloud/Local need only decisionId, choice and these line ids. Wrong also uses line ids. If no usable line supports the decision, provide evidence:[{{sourceFileId,pageIndex,quote}}], copying the actual sourceFileId with 1-based pages and a short verbatim quote. Local/Cloud/Wrong choices require evidence. Image-only evidence remains unverified if the text layer cannot confirm it. PDF layout line breaks are not necessarily paragraph boundaries; preserve actual paragraph structure.\n\
+- canonicalRef/candidateRef/resultRef/pagesRef/imageRef are JSON pointers rooted at context, replacing duplicated alternatives or fetched evidence. Resolve them against current context; errors and unsatisfied needs remain explicit. scopeManifest describes omitted evidence; do not claim anything beyond this packet.\n\
+- historySummary and observations retain bounded feedback from the local history. Current context is authoritative: never automatically reapply an old choice or overwrite a later edit. Respect remaining needs and judge current differences only. New PDF comparisons are independent; do not inherit answers from another document.\n\
+Permitted tool contracts: {}\nWrong commands allowed operations: {}\n\
+Input JSON: {}",
+        serde_json::to_string(&tools).unwrap_or_default(),
+        serde_json::to_string(&allowed_ops).unwrap_or_default(),
+        serde_json::to_string(&data).unwrap_or_default()
+    )
+}
+
 /// 修复回合的 prompt。
 ///
 /// 工具清单来自 [`crate::schema::cloud_repair_v1::CLOUD_REPAIR_TOOLS`]——**唯一真源**。
 /// 提示词里写一个、分发器不认，是这类循环最典型的漂移；这里刻意引用同一份常量。
 fn repair_step_prompt_content(input: &Value) -> String {
+    if input.get("reviewMode").and_then(Value::as_str) == Some("compact_batch") {
+        return compact_batch_review_prompt(input);
+    }
     let paper = ielts_paper_label(
         input
             .get("modality")
@@ -3156,6 +3189,7 @@ fn repair_step_prompt_content(input: &Value) -> String {
     if let Some(object) = prompt_input.as_object_mut() {
         for key in [
             "profile",
+            "inputFootprint",
             "pdfPath",
             "sourceText",
             "apiKey",
@@ -3299,6 +3333,7 @@ The first-pass cloud candidate is only an input and it can be wrong. For every d
         format!(
         "\nWHAT YOU ARE LOOKING AT\n\
 This request carries ONE REPAIR PACKET, not the whole paper. A packet is a self-contained slice built locally for the differences it contains: {slice_description}, the source lines of the pages in scope, and a picture of the anchored regions.\n\
+- canonicalRef/candidateRef/resultRef/pagesRef/imageRef are JSON pointers rooted at context; resolve them there. Errors and unsatisfied needs remain explicit.\n\
 - `scopeManifest` says what was INCLUDED, what was OMITTED, and which tool fetches an omitted part.\n\
 - `scope.pages` / `scope.answerPages` are 1-based. `sourceEvidence.pages[].lines[].id` looks like `p4:l12` (page 4, line 12).\n\
 - `sourceEvidence.regions[]` carry `imageAttached`; when it is true the region picture is attached to this request as an image.\n\
@@ -3308,7 +3343,6 @@ If the packet does not contain what you need to judge a listed difference, do NO
 - call `report_insufficient_context` with the exact pages / quotes / paragraphs you need, or\n\
 - fetch it yourself with `read_source` (a page range or a quote is REQUIRED; at most 3 pages per call), `search_source`, `read_page_region`, or `read_draft`; use other read tools only when listed in this request.\n\
 Every quote you cite must be copied VERBATIM from a line you were actually returned, and you must give its line id and page. A quote you did not receive is not evidence.\n\
-The backend verifies every quote you cite (in apply_edits and record_ruling) against the FULL source text layer — a quote that is not in the source rejects the whole batch with CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:<index>.\n\
 Call `finish_packet` when this packet is done.\n"
         )
     } else {
@@ -3328,7 +3362,7 @@ Work like an editor: read what you need, then submit ONE batch of domain command
 {base_version_rule}\
 - Use only the stable ids you were given. Never invent ids.\n\
 - Attach evidence copied from the original file to content changes (sourceFileId, 1-based pageIndex, exact quote). A malformed evidence entry rejects the whole batch.\n\
-- EVERY evidence.quote is checked against the FULL source text layer before anything is applied (whitespace, quote marks, hyphens and letter case are normalized; the declared page may differ from the page where the quote is found by at most 1). A quote that does not appear in the source rejects the whole batch with CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:<index>. record_ruling evidence goes through the same check — a fabricated quote keeps the ruling from being recorded. two cases are recorded as unverifiable instead of rejected, and are never treated as verified: (a) evidence citing a sourceFileId other than the main paper on this request (the backend has no text layer for other files, for example a separately uploaded answer sheet); (b) a quote that appears nowhere in the text layer while its declared page (or a neighbor) has no usable text layer — that is a scanned or image-embedded page, which you may have read via its picture.\n\
+- Quotes for apply_edits and record_ruling are checked against the FULL source text layer, normalizing whitespace, quotes, hyphens and case; page may differ by at most 1. Unmatched quotes reject the batch with CLOUD_EDIT_EVIDENCE_QUOTE_NOT_IN_SOURCE:<index>. Exceptions remain unverifiable, never verified: sourceFileId other than the main paper, or an unmatched quote on a scanned or image-embedded page with no usable text layer on it or a neighbor.\n\
 - Never invent an answer the file does not give.\n\
 - If a batch is rejected because a target is protected by a human edit, narrow the batch — do not retry the same commands.\n\
 {document_scope_rule}\
@@ -3537,8 +3571,9 @@ fn trace_packet_metrics(input: &Value) {
                 .collect()
         })
         .unwrap_or_default();
-    let estimated_input_tokens = context
-        .get("estimatedInputTokens")
+    let estimated_input_tokens = input
+        .pointer("/inputFootprint/estimatedInputTokens")
+        .or_else(|| context.get("estimatedInputTokens"))
         .and_then(Value::as_u64)
         .map(|tokens| tokens as usize);
     with_trace(|trace| {
@@ -3660,6 +3695,31 @@ fn validate_repair_tool_arguments(tool: &str, arguments: &Value) -> CommandResul
             .is_some_and(|items| !items.is_empty())
     };
     match tool {
+        "submit_batch_decisions" => {
+            let Some(decisions) = arguments.get("decisions").and_then(Value::as_array) else {
+                return missing("needs a decisions array");
+            };
+            if decisions.is_empty() { return missing("decisions must not be empty"); }
+            for decision in decisions {
+                if non_empty_str(decision.get("decisionId")).is_none() {
+                    for key in ["targetType", "targetId", "field"] {
+                        if non_empty_str(decision.get(key)).is_none() {
+                            return missing(&format!("decision needs decisionId or {key}"));
+                        }
+                    }
+                }
+                if !matches!(decision.get("choice").and_then(Value::as_str),
+                    Some("Cloud" | "Local" | "Wrong" | "Unknown")) {
+                    return missing("choice must be Cloud, Local, Wrong or Unknown");
+                }
+                if decision.get("choice").and_then(Value::as_str) == Some("Wrong")
+                    && !decision.get("commands").and_then(Value::as_array)
+                        .is_some_and(|commands| !commands.is_empty()) {
+                    return missing("Wrong needs non-empty correction commands");
+                }
+            }
+            Ok(())
+        }
         "search_source" => match arguments
             .get("query")
             .and_then(Value::as_str)
@@ -6770,6 +6830,105 @@ mod tests {
                 .len(),
             3
         );
+    }
+
+    #[test]
+    fn compact_batch_crosses_real_gateway_without_legacy_tool_contracts() {
+        let reply = json!({"callId":"batch-1","tool":"submit_batch_decisions",
+            "arguments":{"decisions":[{"targetType":"slot","targetId":"q1",
+                "field":"prompt","choice":"Cloud","evidence":[
+                    {"sourceFileId":"source-1","pageIndex":1,"quote":"Question 1"}]}]}});
+        let (url, requests) = fake_llm_server(vec![FakeReply::Respond(200,
+            chat_body(&reply.to_string(), "stop"))]);
+        let mut job = fake_candidate_job(&url, "job-compact-batch-gateway");
+        job.input["reviewMode"] = json!("compact_batch");
+        job.input["context"] = json!({"contextMode":"packets",
+            "draftSlice":{"editVersion":1,"taskGroups":[{"taskType":"single_choice"}]},
+            "sourceEvidence":{"regions":[]},"differences":[
+                {"targetType":"slot","targetId":"q1","field":"prompt"}]});
+        job.input["tools"] = crate::llm_suggestions::repair_tools_table("source-1");
+        job.input["allowedOps"] = json!(crate::cloud_repair::tools::MODEL_ALLOWED_OPS);
+        let parsed = run_openai_compatible_repair_step_llm(
+            &job.root, job.job_id, &job.input, None).unwrap();
+        assert_eq!(parsed["tool"], "submit_batch_decisions");
+        let raw = requests.recv_timeout(Duration::from_secs(5)).unwrap();
+        let request: Value = serde_json::from_str(raw.split_once("\r\n\r\n").unwrap().1).unwrap();
+        let text = request["messages"].to_string();
+        assert!(text.contains("submit_batch_decisions"));
+        assert!(!text.contains("\\\"read_draft\\\":"));
+        assert!(!text.contains("matching_headings"));
+        let chars: usize = request["messages"].as_array().unwrap().iter().map(|message| {
+            match &message["content"] {
+                Value::String(text) => text.chars().count(),
+                Value::Array(parts) => parts.iter().filter_map(|part| part["text"].as_str())
+                    .map(|text| text.chars().count()).sum(),
+                _ => 0,
+            }
+        }).sum();
+        println!("COMPACT_BATCH_GATEWAY_PROMPT chars={chars}");
+        assert!(chars < 5000, "scoped compact prompt: {chars}");
+    }
+
+    #[test]
+    fn compact_requests_accept_known_legacy_tools_for_controlled_fallback() {
+        // The compact prompt is the default; existing tools keep their established
+        // parser/argument validators for fallback and retained product workflows.
+        for (tool, arguments) in [
+            ("read_source", json!({"pageIndex":1})),
+            ("apply_edits", json!({"baseVersion":1,"commands":[]})),
+            ("finish_packet", json!({})),
+        ] {
+            let mut reply = json!({"callId":"fallback-1", "tool":tool, "arguments":arguments});
+            validate_repair_step_output(&mut reply).unwrap();
+        }
+        let mut unknown = json!({"callId":"fallback-1", "tool":"invented_tool", "arguments":{}});
+        assert!(validate_repair_step_output(&mut unknown).is_err());
+    }
+
+    #[test]
+    fn compact_batch_prompt_does_not_repeat_legacy_tools_or_candidates() {
+        let input = json!({"reviewMode":"compact_batch", "context":{"contextMode":"packets"},
+            "tools":{"submit_batch_decisions":{"arguments":{"decisions":[]}},
+                "read_draft":{"large":"LEGACY_READ_SCHEMA"}},
+            "profile":{"apiKey":"SECRET"}, "pdfPath":"/private/paper.pdf",
+            "allowedOps":["updateQuestionPrompt"]});
+        let prompt = repair_step_prompt_content(&input);
+        assert!(prompt.contains("Cloud") && prompt.contains("Unknown"));
+        assert!(prompt.contains("historySummary") && prompt.contains("canonicalRef"));
+        assert!(!prompt.contains("LEGACY_READ_SCHEMA") && !prompt.contains("SECRET"));
+        assert!(!prompt.contains("/private/paper.pdf"));
+        assert!(prompt.chars().count() < 3000, "compact prompt: {}", prompt.chars().count());
+        for choice in ["Cloud", "Local", "Unknown"] {
+            validate_repair_tool_arguments("submit_batch_decisions", &json!({"decisions":[
+                {"targetType":"task_group", "targetId":"tg1", "field":"taskType", "choice":choice}
+            ]})).unwrap();
+        }
+        validate_repair_tool_arguments("submit_batch_decisions", &json!({"decisions":[
+            {"decisionId":"d1", "choice":"Cloud"}
+        ]})).unwrap();
+        assert!(validate_repair_tool_arguments("submit_batch_decisions", &json!({"decisions":[
+            {"targetType":"task_group", "targetId":"tg1", "field":"taskType", "choice":"Wrong"}
+        ]})).is_err());
+        let mut a = input.clone();
+        a["tools"]["submit_batch_decisions"]["arguments"]["evidence"] =
+            json!([{"sourceFileId":"document-a", "pageIndex":1,"quote":"sample"}]);
+        a["sourceFile"] = json!({"fileId":"document-a"});
+        let mut b = a.clone();
+        b["tools"]["submit_batch_decisions"]["arguments"]["evidence"][0]["sourceFileId"] = json!("document-b");
+        b["sourceFile"]["fileId"] = json!("document-b");
+        let (prefix_a, tail_a) = repair_step_prompt_parts(&a);
+        let (prefix_b, tail_b) = repair_step_prompt_parts(&b);
+        assert_eq!(prefix_a, prefix_b, "document identity must not fragment cached rules");
+        assert_ne!(tail_a, tail_b);
+        let tail_json = tail_a.strip_prefix("Input JSON: ").unwrap();
+        serde_json::from_str::<Value>(tail_json).expect("full request tail must be one JSON object");
+        a["repairNote"] = json!("previous reply rejected");
+        a["inputFootprint"] = json!({"estimatedInputTokens":345});
+        let (_, retry_tail) = repair_step_prompt_parts(&a);
+        let retry_json: Value = serde_json::from_str(retry_tail.strip_prefix("Input JSON: ").unwrap()).unwrap();
+        assert_eq!(retry_json["validationIssue"], "previous reply rejected");
+        assert!(retry_json.get("inputFootprint").is_none());
+        println!("COMPACT_REVIEW_PROMPT chars={}", prompt.chars().count());
     }
 
     #[test]

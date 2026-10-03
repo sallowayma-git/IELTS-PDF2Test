@@ -868,7 +868,10 @@ pub(crate) fn build_direct_canonical(
                     page_index: page_index as i32,
                     order: passage_lines.len(),
                     role: "passage".to_string(),
-                    bbox: None,
+                    bbox: line.get("bbox").and_then(Value::as_object).and_then(|bbox| Some([
+                        bbox.get("x")?.as_f64()?, bbox.get("y")?.as_f64()?,
+                        bbox.get("width")?.as_f64()?, bbox.get("height")?.as_f64()?,
+                    ])),
                 });
             }
         }
@@ -877,10 +880,11 @@ pub(crate) fn build_direct_canonical(
         .iter()
         .map(|line| line.source_anchor.clone())
         .collect::<Vec<_>>();
-    let passage_content = crate::ielts_grammar::reading::passage_nodes(
+    let passage_content = crate::ielts_grammar::reading::passage_nodes_with_layout(
         &job.title,
         &passage_lines,
         passage_anchors.clone(),
+        question_file.file_type == "pdf",
     )
     .into_iter()
     .filter(|node| node.get("type").and_then(Value::as_str) == Some("paragraph"))

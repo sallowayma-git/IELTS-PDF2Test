@@ -2616,7 +2616,9 @@ fn cloud_repair_writes_option_bank_and_response_structure_through_the_real_chain
         "已有节点的结构编辑应落库：{apply_attempt:?}"
     );
     assert_eq!(
-        apply_attempt.pointer("/result/status").and_then(Value::as_str),
+        apply_attempt
+            .pointer("/result/status")
+            .and_then(Value::as_str),
         Some("applied"),
         "已有节点回填后应 applied 而非 rejected：{apply_attempt:?}"
     );
@@ -2812,7 +2814,10 @@ fn every_exit_path_returns_a_terminal_report_and_never_leaves_running() {
     })
     .expect("包模式中的调用错误也必须转成终态报告");
     assert_eq!(packet_report.status, REPAIR_STATUS_UNAVAILABLE);
-    assert_eq!(packet_report.last_error.as_deref(), Some("llm_http_500:packet"));
+    assert_eq!(
+        packet_report.last_error.as_deref(),
+        Some("llm_http_500:packet")
+    );
     // 循环之外的失败（join 失败 / 开工前丢 lease）走兜底摘要，同样必须是终态。
     let fallback = unavailable_summary(&root, ITEM_ID, BATCH_ID, "join failed");
     assert_eq!(fallback["status"], REPAIR_STATUS_UNAVAILABLE);
@@ -4067,9 +4072,14 @@ fn empty_adoption_review_list_does_not_hide_blocking_quality() {
     seed_packet_job(&root);
     seed_adopted_local_snapshot(&root, &cloud);
     let conn = open_library_connection(&root).expect("open library connection");
-    store::write_batch_repair(&conn, BATCH_ID, &json!({
-        "candidateAdoption": {"adopted": true, "needsCloudReview": []}
-    })).expect("persist empty review list");
+    store::write_batch_repair(
+        &conn,
+        BATCH_ID,
+        &json!({
+            "candidateAdoption": {"adopted": true, "needsCloudReview": []}
+        }),
+    )
+    .expect("persist empty review list");
     drop(conn);
     let not_cancelled = || false;
     let request = request(&root, &not_cancelled, 4);
@@ -4077,9 +4087,16 @@ fn empty_adoption_review_list_does_not_hide_blocking_quality() {
     let report = run_packets(&request, |_context: &Value, _observations: &[Value]| {
         calls += 1;
         Ok(json!({"callId": "finish", "tool": "finish_packet", "arguments": {}}))
-    }).expect("blocking quality must still reach a terminal report");
-    assert!(calls > 0, "blocking quality must still create a repair packet");
-    assert!(report.remaining_tasks.iter().any(|task| task["blocking"] == true));
+    })
+    .expect("blocking quality must still reach a terminal report");
+    assert!(
+        calls > 0,
+        "blocking quality must still create a repair packet"
+    );
+    assert!(report
+        .remaining_tasks
+        .iter()
+        .any(|task| task["blocking"] == true));
     assert_eq!(report.status, REPAIR_STATUS_NEEDS_ATTENTION);
     std::fs::remove_dir_all(root).expect("remove temporary fixture");
 }
@@ -4094,9 +4111,14 @@ fn adopted_clean_candidate_has_no_repairs_or_conflict_tasks() {
     seed_packet_job(&root);
     seed_adopted_local_snapshot(&root, &local);
     let conn = open_library_connection(&root).expect("open library connection");
-    store::write_batch_repair(&conn, BATCH_ID, &json!({
-        "candidateAdoption": {"adopted": true, "needsCloudReview": []}
-    })).expect("persist empty adoption review list");
+    store::write_batch_repair(
+        &conn,
+        BATCH_ID,
+        &json!({
+            "candidateAdoption": {"adopted": true, "needsCloudReview": []}
+        }),
+    )
+    .expect("persist empty adoption review list");
     drop(conn);
     let not_cancelled = || false;
     let request = request(&root, &not_cancelled, 4);
@@ -4104,10 +4126,18 @@ fn adopted_clean_candidate_has_no_repairs_or_conflict_tasks() {
     let report = run_packets(&request, |_context: &Value, _observations: &[Value]| {
         calls += 1;
         Ok(json!({"callId": "finish", "tool": "finish_packet", "arguments": {}}))
-    }).expect("clean adoption must finish");
-    assert_eq!(calls, 0, "an unresolved local snapshot is not a conflict after clean cloud adoption");
+    })
+    .expect("clean adoption must finish");
+    assert_eq!(
+        calls, 0,
+        "an unresolved local snapshot is not a conflict after clean cloud adoption"
+    );
     assert_eq!(report.status, REPAIR_STATUS_COMPLETED);
-    assert!(report.remaining_tasks.is_empty(), "{:?}", report.remaining_tasks);
+    assert!(
+        report.remaining_tasks.is_empty(),
+        "{:?}",
+        report.remaining_tasks
+    );
     std::fs::remove_dir_all(root).expect("remove temporary fixture");
 }
 
@@ -4153,7 +4183,10 @@ fn adopted_cloud_keeps_undecidable_non_answer_silently_but_leaves_answer_for_the
     assert_eq!(report.status, REPAIR_STATUS_NEEDS_ATTENTION);
     // 采纳云端后非答案差异原文无法裁定：静默保留云端，不产生用户任务；答案冲突仍留给用户。
     assert!(
-        !report.remaining_tasks.iter().any(|t| t["field"] == "prompt"),
+        !report
+            .remaining_tasks
+            .iter()
+            .any(|t| t["field"] == "prompt"),
         "{:#?}",
         report.remaining_tasks
     );
@@ -4164,8 +4197,13 @@ fn adopted_cloud_keeps_undecidable_non_answer_silently_but_leaves_answer_for_the
     let kept = crate::reconcile::store::read_repair_rulings(&root, ITEM_ID, BATCH_ID)
         .unwrap()
         .expect("裁定必须落盘");
-    assert!(kept["rulings"].as_array().unwrap().iter().any(|ruling| ruling["field"] == "prompt"
-        && ruling["ruling"] == crate::schema::cloud_repair_v1::CLOUD_RULING_KEPT_CLOUD_DEFAULT));
+    assert!(kept["rulings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|ruling| ruling["field"] == "prompt"
+            && ruling["ruling"]
+                == crate::schema::cloud_repair_v1::CLOUD_RULING_KEPT_CLOUD_DEFAULT));
     assert_eq!(read_answer(&root, "q14")["labels"], json!(["B"]));
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -4174,9 +4212,11 @@ fn adopted_cloud_keeps_undecidable_non_answer_silently_but_leaves_answer_for_the
 fn kept_cloud_default_is_refused_for_answers_even_in_adopted_mode() {
     let root = temp_root();
     let mut cloud = golden_authoring();
-    cloud["answerKey"]["q14"] = json!({"kind":"option","labels":["B"],"assignment":"unordered_set"});
+    cloud["answerKey"]["q14"] =
+        json!({"kind":"option","labels":["B"],"assignment":"unordered_set"});
     let mut local = cloud.clone();
-    local["answerKey"]["q14"] = json!({"kind":"option","labels":["A"],"assignment":"unordered_set"});
+    local["answerKey"]["q14"] =
+        json!({"kind":"option","labels":["A"],"assignment":"unordered_set"});
     seed_item(&root, &cloud);
     seed_packet_job(&root);
     seed_adopted_local_snapshot(&root, &local);
@@ -4196,27 +4236,57 @@ fn kept_cloud_default_is_refused_for_answers_even_in_adopted_mode() {
         }]}}))
     })
     .unwrap();
-    let rejected = report.observations.iter().find(|o| o["callId"] == "keep-default-on-answer").expect("observation");
+    let rejected = report
+        .observations
+        .iter()
+        .find(|o| o["callId"] == "keep-default-on-answer")
+        .expect("observation");
     assert_eq!(rejected["status"], "rejected", "{rejected:#?}");
-    assert!(rejected["errors"].to_string().contains("CLOUD_RULING_KEPT_CLOUD_DEFAULT_NOT_ALLOWED"));
-    assert!(report.remaining_tasks.iter().any(|t| t["field"] == "answer"), "答案冲突仍是用户任务");
+    assert!(rejected["errors"]
+        .to_string()
+        .contains("CLOUD_RULING_KEPT_CLOUD_DEFAULT_NOT_ALLOWED"));
+    assert!(
+        report
+            .remaining_tasks
+            .iter()
+            .any(|t| t["field"] == "answer"),
+        "答案冲突仍是用户任务"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
 fn backend_forced_context_insufficient_keeps_the_cloud_default_only_for_adopted_non_answers() {
-    let difference = |field: &str| json!({
-        "targetType": "slot", "targetId": "q14", "field": field,
-        "canonical": "a", "candidate": "b", "contextDigest": "c"
-    });
+    let difference = |field: &str| {
+        json!({
+            "targetType": "slot", "targetId": "q14", "field": field,
+            "canonical": "a", "candidate": "b", "contextDigest": "c"
+        })
+    };
     for (mode, field, expected) in [
-        ("adopted_cloud_vs_local_snapshot", "prompt", crate::schema::cloud_repair_v1::CLOUD_RULING_KEPT_CLOUD_DEFAULT),
-        ("adopted_cloud_vs_local_snapshot", "answer", crate::schema::cloud_repair_v1::CLOUD_RULING_CANNOT_RESOLVE),
-        ("local_draft_vs_cloud_candidate", "prompt", crate::schema::cloud_repair_v1::CLOUD_RULING_CANNOT_RESOLVE),
+        (
+            "adopted_cloud_vs_local_snapshot",
+            "prompt",
+            crate::schema::cloud_repair_v1::CLOUD_RULING_KEPT_CLOUD_DEFAULT,
+        ),
+        (
+            "adopted_cloud_vs_local_snapshot",
+            "answer",
+            crate::schema::cloud_repair_v1::CLOUD_RULING_CANNOT_RESOLVE,
+        ),
+        (
+            "local_draft_vs_cloud_candidate",
+            "prompt",
+            crate::schema::cloud_repair_v1::CLOUD_RULING_CANNOT_RESOLVE,
+        ),
     ] {
-        let packet = json!({"packetId": "p", "comparisonMode": mode, "differences": [difference(field)]});
+        let packet =
+            json!({"packetId": "p", "comparisonMode": mode, "differences": [difference(field)]});
         let mut rulings = Vec::new();
-        assert_eq!(force_context_insufficient_rulings(&packet, &mut rulings, 1), 1);
+        assert_eq!(
+            force_context_insufficient_rulings(&packet, &mut rulings, 1),
+            1
+        );
         assert_eq!(rulings[0]["ruling"], expected, "{mode} {field}");
     }
 }
@@ -5128,12 +5198,12 @@ fn packets_mode_requests_carry_no_whole_pdf_and_the_fetched_page_reaches_the_mod
     // 只断言工具名是**恒真**的：工具清单无条件拼在 prompt 里，模型即使没被告知这条
     // 出口也能通过。要断言的是「不够就说」这条出口的**说明**确实在，且写明不许猜。
     assert!(
-        seen[0].contains("call `report_insufficient_context` with the exact pages"),
+        seen[0].contains("Unknown means evidence cannot decide"),
         "prompt 必须告诉模型「不够就说」这条出口怎么用：{}",
         &seen[0][..seen[0].len().min(600)]
     );
     assert!(
-        seen[0].contains("do NOT guess"),
+        seen[0].contains("Never guess answers"),
         "prompt 必须写明「上下文不够时不许猜」"
     );
     // ③ 第一轮里没有答案页那一行；第二轮里必须有（回退真的在传内容）。
@@ -7479,8 +7549,7 @@ fn repair_prompt_only_ever_names_the_real_main_source_file_id() {
         );
         for id in &ids {
             assert!(
-                id == "early-approaches-pdf"
-                    || id == tools::REQUEST_SOURCE_FILE_ID_PLACEHOLDER,
+                id == "early-approaches-pdf" || id == tools::REQUEST_SOURCE_FILE_ID_PLACEHOLDER,
                 "prompt 里的 sourceFileId 只能是主卷真实 ID 或可缓存占位符：{ids:?}"
             );
         }
@@ -7847,4 +7916,501 @@ fn independent_answer_page_conflict_is_repaired_or_kept_visible_when_local_and_c
         }
         let _ = std::fs::remove_dir_all(root);
     }
+}
+
+#[test]
+fn compact_batch_cloud_choice_settles_in_one_call_and_retains_transcript() {
+    let root = temp_root();
+    let local = golden_authoring();
+    seed_item(&root, &local);
+    store_candidate(&root, "A");
+    let mut cloud = local.clone();
+    cloud["answerKey"]["q14"] =
+        json!({"kind":"option","labels":["A"],"assignment":"unordered_set"});
+    let mut candidate = store::read_cloud_authoring_candidate(&root, ITEM_ID, BATCH_ID)
+        .unwrap()
+        .unwrap();
+    candidate.authoring = serde_json::from_value(cloud).unwrap();
+    store::write_cloud_authoring_candidate(&root, BATCH_ID, &candidate).unwrap();
+    seed_packet_job(&root);
+    seed_batch_row(&root, 1);
+    store::write_local_authoring_snapshot(&root, BATCH_ID, ITEM_ID, 1, &"a".repeat(64), &local)
+        .unwrap();
+    let not_cancelled = || false;
+    let req = request(&root, &not_cancelled, 6);
+    let mut calls = 0;
+    let report=run_packets(&req,|_:&Value,_:&[Value]| {
+        calls+=1;
+        assert_eq!(calls,1,"compact selection must not ask for model confirmation");
+        Ok(json!({"callId":"compact-cloud","tool":"submit_batch_decisions","arguments":{"decisions":[{
+            "decisionId":"d1","choice":"Cloud",
+            "evidence":[{"sourceFileId":"early-approaches-pdf","pageIndex":3,"quote":"14 A"}]
+        }]}}))
+    }).unwrap();
+    assert_eq!(report.status, REPAIR_STATUS_COMPLETED, "{report:#?}");
+    assert_eq!(report.applied_count, 1);
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["A"]));
+    let text = std::fs::read_to_string(
+        crate::util::job_dir(&root, ITEM_ID)
+            .join("recognition")
+            .join(format!("{BATCH_ID}.repair-history.jsonl")),
+    )
+    .unwrap();
+    let entry: Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+    assert_eq!(entry["response"]["tool"], "submit_batch_decisions");
+    assert!(entry["context"]["draftSlice"].is_object());
+    assert!(entry["result"]["result"]["recorded"].is_array());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn compact_batch_invalid_selection_does_not_mutate() {
+    let root = temp_root();
+    let local = golden_authoring();
+    seed_item(&root, &local);
+    let cancelled = || false;
+    let req = request(&root, &cancelled, 6);
+    let context = json!({"editVersion":1,"differences":[{"targetType":"slot","targetId":"q14","field":"answer"}]});
+    for (target, choice) in [("q999", "Cloud"), ("q14", "Guess")] {
+        let call = CloudRepairToolCallV1 {
+            call_id: "invalid-compact".into(),
+            tool: "submit_batch_decisions".into(),
+            arguments: json!({"decisions":[{"targetType":"slot","targetId":target,"field":"answer","choice":choice}]}),
+        };
+        let (result, count) = execute_tool(&req, &call, 1, &context, None);
+        assert_eq!(
+            result.status,
+            crate::schema::cloud_repair_v1::CloudRepairToolStatusV1::Rejected
+        );
+        assert!(count.is_none());
+        assert_eq!(
+            read_answer(&root, "q14")["labels"],
+            local["answerKey"]["q14"]["labels"]
+        );
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn compact_batch_local_selects_frozen_snapshot_and_checks_dependency_conflicts() {
+    let root = temp_root();
+    let current = golden_authoring();
+    seed_item(&root, &current);
+    store_candidate(&root, "A");
+    seed_packet_job(&root);
+    seed_batch_row(&root, 1);
+    let mut local = current.clone();
+    local["answerKey"]["q14"]["labels"] = json!(["A"]);
+    store::write_local_authoring_snapshot(&root, BATCH_ID, ITEM_ID, 1, &"a".repeat(64), &local)
+        .unwrap();
+    let not_cancelled = || false;
+    let req = request(&root, &not_cancelled, 6);
+    let context = json!({"comparisonMode":"adopted_cloud_vs_local_snapshot","editVersion":1,"differences":[{"targetType":"slot","targetId":"q14","field":"answer"},{"targetType":"slot","targetId":"q15","field":"answer"}]});
+    let evidence = json!([{"sourceFileId":"early-approaches-pdf","pageIndex":3,"quote":"14 A"}]);
+    let conflicted = CloudRepairToolCallV1 {
+        call_id: "conflicting-batch".into(),
+        tool: "submit_batch_decisions".into(),
+        arguments: json!({"decisions":[
+            {"targetType":"slot","targetId":"q14","field":"answer","choice":"Cloud","evidence":evidence},
+            {"targetType":"slot","targetId":"q15","field":"answer","choice":"Local","evidence":evidence}
+        ]}),
+    };
+    let (result, count) = execute_tool(&req, &conflicted, 1, &context, None);
+    assert_eq!(
+        result.status,
+        crate::schema::cloud_repair_v1::CloudRepairToolStatusV1::Rejected,
+        "{result:#?}"
+    );
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.starts_with("CLOUD_DECISION_CONFLICTING_UNIT")),
+        "{result:#?}"
+    );
+    assert!(count.is_none());
+    let call = CloudRepairToolCallV1 {
+        call_id: "local-batch".into(),
+        tool: "submit_batch_decisions".into(),
+        arguments: json!({"decisions":[
+            {"targetType":"slot","targetId":"q14","field":"answer","choice":"Local","evidence":evidence}
+        ]}),
+    };
+    let (result, count) = execute_tool(&req, &call, 1, &context, None);
+    assert_eq!(
+        result.status,
+        crate::schema::cloud_repair_v1::CloudRepairToolStatusV1::Ok,
+        "{result:#?}"
+    );
+    assert_eq!(count, Some(1));
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["A"]));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn repair_local_history_restores_feedback_without_replaying_edits() {
+    let root = temp_root();
+    let cancelled = || false;
+    let req = request(&root, &cancelled, 6);
+    let packet = json!({"packetId":"p1","draftSlice":{"editVersion":1}});
+    let response = json!({"tool":"submit_batch_decisions","arguments":{"decisions":[]}});
+    let result = json!({"status":"rejected","errors":["CLOUD_BATCH_DUPLICATE_TARGET"]});
+    history::append(&req, &packet, &response, &result).unwrap();
+    history::append(&req, &packet, &response, &Value::Null).unwrap();
+    let restored = history::restore(&req, &packet).unwrap();
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored[0]["errors"][0], "CLOUD_BATCH_DUPLICATE_TARGET");
+    assert_eq!(restored[0]["restoredFromLocalHistory"], true);
+    assert!(history::restore(&req, &json!({"packetId":"different"}))
+        .unwrap()
+        .is_empty());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+fn seed_compact_batch_fixture(root: &Path) {
+    let local = golden_authoring();
+    seed_item(root, &local);
+    store_candidate(root, "C");
+    let mut cloud = local.clone();
+    cloud["answerKey"]["q14"]["labels"] = json!(["C"]);
+    let mut candidate = store::read_cloud_authoring_candidate(root, ITEM_ID, BATCH_ID)
+        .unwrap()
+        .unwrap();
+    candidate.authoring = serde_json::from_value(cloud).unwrap();
+    store::write_cloud_authoring_candidate(root, BATCH_ID, &candidate).unwrap();
+    seed_packet_job(root);
+    seed_batch_row(root, 1);
+    store::write_local_authoring_snapshot(root, BATCH_ID, ITEM_ID, 1, &"a".repeat(64), &local)
+        .unwrap();
+}
+
+#[test]
+fn compact_batch_wrong_corrects_real_packet_and_finishes_without_confirmation() {
+    let root = temp_root();
+    seed_compact_batch_fixture(&root);
+    let not_cancelled = || false;
+    let req = request(&root, &not_cancelled, 6);
+    let mut calls = 0;
+    let report=run_packets(&req,|_:&Value,_:&[Value]| {
+        calls+=1; assert_eq!(calls,1);
+        Ok(json!({"callId":"wrong-correction","tool":"submit_batch_decisions","arguments":{"decisions":[{
+            "decisionId":"d1","choice":"Wrong","commands":[set_answer("q14","A")],
+            "evidence":[{"sourceFileId":"early-approaches-pdf","pageIndex":3,"quote":"14 A"}]
+        }]}}))
+    }).unwrap();
+    assert_eq!(report.status, REPAIR_STATUS_COMPLETED, "{report:#?}");
+    assert_eq!(report.applied_count, 1);
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["A"]));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn compact_batch_unknown_supplements_once_and_keeps_unresolved_visible() {
+    let root = temp_root();
+    seed_compact_batch_fixture(&root);
+    let not_cancelled = || false;
+    let req = request(&root, &not_cancelled, 6);
+    let mut calls = 0;
+    let report=run_packets(&req,|context:&Value,_:&[Value]| {
+        calls+=1; assert!(calls<=2,"Unknown must not grow into an unbounded conversation");
+        if calls==2 { assert_eq!(context["contextSupplementUsed"],true); }
+        Ok(json!({"callId":format!("unknown-{calls}"),"tool":"submit_batch_decisions","arguments":{"decisions":[{
+            "decisionId":"d1","choice":"Unknown","reason":"source is ambiguous",
+            "needs":[{"kind":"pages","from":3,"to":3}]
+        }]}}))
+    }).unwrap();
+    assert_eq!(calls, 2, "{report:#?}");
+    assert_eq!(report.applied_count, 0);
+    assert_eq!(report.status, REPAIR_STATUS_NEEDS_ATTENTION, "{report:#?}");
+    assert_eq!(report.packets[0]["status"], "context_insufficient");
+    assert_eq!(report.packets[0]["insufficientContext"], 2);
+    assert!(!report.remaining_tasks.is_empty());
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["B"]));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn repair_history_recovers_complete_lines_and_preserves_interrupted_tail() {
+    let root = temp_root();
+    let cancelled = || false;
+    let req = request(&root, &cancelled, 6);
+    let packet = json!({"packetId":"p1","draftSlice":{"editVersion":1}});
+    let result = json!({"status":"rejected","errors":["complete failure"]});
+    history::append(&req, &packet, &Value::Null, &result).unwrap();
+    let path = crate::util::job_dir(&root, ITEM_ID)
+        .join("recognition")
+        .join(format!("{BATCH_ID}.repair-history.jsonl"));
+    use std::io::Write;
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(b"{\"unfinished\"")
+        .unwrap();
+    assert_eq!(history::restore(&req, &packet).unwrap().len(), 1);
+    history::append(&req, &packet, &Value::Null, &result).unwrap();
+    assert_eq!(history::restore(&req, &packet).unwrap().len(), 2);
+    let mut newer = packet.clone();
+    newer["draftSlice"]["editVersion"] = json!(2);
+    let stale = history::restore(&req, &newer).unwrap();
+    assert_eq!(stale.len(), 1);
+    assert_eq!(stale[0]["result"]["staleFeedbackCount"], 2);
+    assert!(std::fs::read_dir(path.parent().unwrap())
+        .unwrap()
+        .any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("interrupted")));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn compact_batch_cloud_keeps_previous_repair_in_adopted_current_draft() {
+    let root = temp_root();
+    seed_compact_batch_fixture(&root);
+    let not_cancelled = || false;
+    let req = request(&root, &not_cancelled, 6);
+    let correction = CloudRepairToolCallV1 {
+        call_id: "previous-source-correction".into(),
+        tool: "apply_edits".into(),
+        arguments: json!({"baseVersion":1,"commands":[set_answer("q14","A")]}),
+    };
+    let (result, count) = execute_tool(&req, &correction, 1, &json!({"editVersion":1}), None);
+    assert_eq!(
+        result.status,
+        crate::schema::cloud_repair_v1::CloudRepairToolStatusV1::Ok
+    );
+    assert_eq!(count, Some(1));
+    let conn = open_library_connection(&root).unwrap();
+    store::write_batch_repair(
+        &conn,
+        BATCH_ID,
+        &json!({"candidateAdoption":{"adopted":true}}),
+    )
+    .unwrap();
+    let before = get_canonical_ds(&conn, ITEM_ID).unwrap().unwrap().1;
+    let mut calls = 0;
+    let report=run_packets(&req,|context:&Value,_:&[Value]| {
+        calls+=1;assert_eq!(calls,1);
+        assert_eq!(context["comparisonMode"],"adopted_cloud_vs_local_snapshot");
+        Ok(json!({"callId":"keep-repaired-cloud","tool":"submit_batch_decisions","arguments":{"decisions":[{
+            "decisionId":"d1","choice":"Cloud","evidence":[{"sourceFileId":"early-approaches-pdf","pageIndex":3,"quote":"14 A"}]
+        }]}}))
+    }).unwrap();
+    assert_eq!(report.status, REPAIR_STATUS_COMPLETED, "{report:#?}");
+    assert_eq!(
+        read_answer(&root, "q14")["labels"],
+        json!(["A"]),
+        "must not restore old candidate C"
+    );
+    assert_eq!(get_canonical_ds(&conn, ITEM_ID).unwrap().unwrap().1, before);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+fn scripted_compact_wrong_reply(_body: &str, _round: usize) -> String {
+    json!({"callId":"http-compact","tool":"submit_batch_decisions","arguments":{"decisions":[{
+        "decisionId":"d1","choice":"Wrong","commands":[set_answer("q14","A")],
+        "evidence":[{"sourceFileId":"early-approaches-pdf","pageIndex":3,"quote":"14 A"}]
+    }]}})
+    .to_string()
+}
+
+#[test]
+fn compact_batch_real_http_gateway_drives_the_default_packet_write_path() {
+    let root = temp_root();
+    seed_compact_batch_fixture(&root);
+    let (url, seen) = spawn_scripted_repair_service_with(scripted_compact_wrong_reply);
+    crate::llm_profiles::save_profiles(&root,&[json!({"profileId":"controlled-repair","provider":"OpenAiCompatible","baseUrl":url,"model":"controlled-repair-v1","enabled":true,"forceJson":true})]).unwrap();
+    let not_cancelled = || false;
+    let req = request(&root, &not_cancelled, 6);
+    let report = run_packets(&req, |context: &Value, observations: &[Value]| {
+        repair_authoring_step_through_gateway(
+            &root,
+            ITEM_ID,
+            Some("controlled-repair"),
+            context,
+            observations,
+        )
+    })
+    .unwrap();
+    assert_eq!(report.status, REPAIR_STATUS_COMPLETED, "{report:#?}");
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["A"]));
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    assert!(seen[0].contains("submit_batch_decisions"));
+    assert!(seen[0].contains("decisionId"));
+    assert!(!seen[0].contains("application/pdf"));
+    assert!(!seen[0].contains("canonicalDigest"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn compact_batch_mixes_independent_questions_inside_one_task_group() {
+    let root = temp_root();
+    let mut local = golden_authoring();
+    let template = local["taskGroups"][0]["responseGroups"][0].clone();
+    let mut options = local["taskGroups"][0]["optionBank"]["options"].clone();
+    options.as_array_mut().unwrap().truncate(4);
+    let mut responses = Vec::new();
+    for number in [14, 15] {
+        let mut response = template.clone();
+        response["responseGroupId"] = json!(format!("independent-{number}"));
+        response["slotIds"] = json!([format!("q{number}")]);
+        response.as_object_mut().unwrap().remove("optionBankRef");
+        response["assignment"] = json!("per_slot");
+        response["cardinality"] = json!({"min":1,"max":1,"exact":1});
+        response["options"] = options.clone();
+        for option in response["options"].as_array_mut().unwrap() {
+            option["optionId"] = json!(format!(
+                "q{number}-{}",
+                option["optionId"].as_str().unwrap()
+            ));
+            option["content"][0]["id"] = json!(format!(
+                "q{number}-{}",
+                option["content"][0]["id"].as_str().unwrap()
+            ));
+        }
+        response["prompt"][0]["id"] = json!(format!("independent-prompt-{number}"));
+        response["prompt"][0]["children"][0]["id"] = json!(format!("independent-text-{number}"));
+        response["prompt"][0]["children"][0]["text"] =
+            json!(format!("Question {number}: choose one factor."));
+        local["answerSlots"][format!("q{number}")]["hostNodeId"] =
+            json!(format!("independent-prompt-{number}"));
+        local["answerSlots"][format!("q{number}")]["interaction"] = json!("radio");
+        local["answerSlots"][format!("q{number}")]["constraints"]["acceptedOptionLabels"] =
+            json!(["A", "B", "C", "D"]);
+        local["answerKey"][format!("q{number}")]["assignment"] = json!("per_slot");
+        responses.push(response);
+    }
+    local["taskGroups"][0]["responseGroups"] = json!(responses);
+    local["taskGroups"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("optionBank");
+    local["taskGroups"][0]["instructions"][0]["children"][0]["text"] =
+        json!("Choose ONE letter, A-D, for each question.");
+    local["taskGroups"][0]["instructionSignature"]["answerAssignment"] = json!("per_slot");
+    local["taskGroups"][0]["taskType"] = json!("single_choice");
+    local["taskGroups"][0]["instructionSignature"]["taskType"] = json!("single_choice");
+    local["taskGroups"][0]["instructionSignature"]["normalizedText"] =
+        json!("Choose ONE letter, A-D, for each question.");
+    local["taskGroups"][0]["instructionSignature"]["optionAlphabet"] = json!("A-D");
+    local["taskGroups"][0]["instructionSignature"]["selectionCardinality"] =
+        json!({"min":1,"max":1,"exact":1});
+    let mut cloud = local.clone();
+    cloud["answerKey"]["q14"]["labels"] = json!(["A"]);
+    cloud["answerKey"]["q15"]["labels"] = json!(["C"]);
+    seed_item(&root, &local);
+    store_candidate(&root, "A");
+    let mut candidate = store::read_cloud_authoring_candidate(&root, ITEM_ID, BATCH_ID)
+        .unwrap()
+        .unwrap();
+    candidate.authoring = serde_json::from_value(cloud).unwrap();
+    store::write_cloud_authoring_candidate(&root, BATCH_ID, &candidate).unwrap();
+    seed_packet_job(&root);
+    seed_batch_row(&root, 1);
+    store::write_local_authoring_snapshot(&root, BATCH_ID, ITEM_ID, 1, &"a".repeat(64), &local)
+        .unwrap();
+    let not_cancelled = || false;
+    let req = request(&root, &not_cancelled, 6);
+    let mut calls = 0;
+    let report=run_packets(&req,|context:&Value,_:&[Value]| {
+        calls+=1;assert_eq!(calls,1,"ordinary independent questions should finish in one batch: {context:#?}");
+        let decisions:Vec<_>=context["differences"].as_array().unwrap().iter().enumerate().map(|(index,d)|json!({
+            "decisionId":format!("d{}",index+1),"choice":if d["targetId"]=="q14" {"Cloud"} else {"Local"},
+            "evidence":[{"sourceFileId":"early-approaches-pdf","pageIndex":3,"quote":"14 A"}]
+        })).collect();
+        Ok(json!({"callId":"mixed-independent","tool":"submit_batch_decisions","arguments":{"decisions":decisions}}))
+    }).unwrap();
+    assert_eq!(report.status, REPAIR_STATUS_COMPLETED, "{report:#?}");
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["A"]));
+    assert_eq!(
+        read_answer(&root, "q15")["labels"],
+        local["answerKey"]["q15"]["labels"]
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn compact_batch_non_answer_unknown_is_never_counted_as_verified() {
+    let root = temp_root();
+    seed_compact_batch_fixture(&root);
+    let not_cancelled = || false;
+    let req = request(&root, &not_cancelled, 6);
+    let current = golden_authoring();
+    let prompt = current["taskGroups"][0]["responseGroups"][0]["prompt"][0]["children"][0]["text"]
+        .as_str()
+        .unwrap();
+    let edit = CloudRepairToolCallV1 {
+        call_id: "uncertain-cloud-prompt".into(),
+        tool: "apply_edits".into(),
+        arguments: json!({"baseVersion":1,
+        "commands":[{"op":"replaceText","nodeId":"early-approaches-shared-prompt-text","from":0,"to":prompt.chars().count(),"text":"An uncertain OCR question prompt"}]}),
+    };
+    assert_eq!(
+        execute_tool(&req, &edit, 1, &json!({"editVersion":1}), None)
+            .0
+            .status,
+        crate::schema::cloud_repair_v1::CloudRepairToolStatusV1::Ok
+    );
+    let conn = open_library_connection(&root).unwrap();
+    store::write_batch_repair(
+        &conn,
+        BATCH_ID,
+        &json!({"candidateAdoption":{"adopted":true}}),
+    )
+    .unwrap();
+    let before = get_canonical_ds(&conn, ITEM_ID).unwrap().unwrap();
+    let mut calls = 0;
+    let report=run_packets(&req,|_:&Value,_:&[Value]| {
+        calls+=1;assert!(calls<=2);
+        Ok(json!({"callId":format!("unknown-prompt-{calls}"),"tool":"submit_batch_decisions","arguments":{"decisions":[{
+            "decisionId":"d1","choice":"Unknown","reason":"source prompt cannot be read reliably","needs":[{"kind":"pages","from":1,"to":1}]
+        }]}}))
+    }).unwrap();
+    assert_eq!(calls, 2);
+    assert_eq!(report.adjudicated_count, 0);
+    assert_eq!(report.packets[0]["status"], "context_insufficient");
+    assert_eq!(get_canonical_ds(&conn, ITEM_ID).unwrap().unwrap(), before);
+    assert!(
+        report
+            .remaining_tasks
+            .iter()
+            .any(|task| task["contextInsufficient"] == true),
+        "{report:#?}"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn compact_batch_line_references_use_only_evidence_provided_in_current_packet() {
+    let root = temp_root();
+    seed_compact_batch_fixture(&root);
+    let not_cancelled = || false;
+    let req = request(&root, &not_cancelled, 6);
+    let context = json!({"editVersion":1,"differences":[{"targetType":"slot","targetId":"q14","field":"answer"}],
+        "sourceEvidence":{"sourceFileId":"early-approaches-pdf","pages":[{"pageIndex":3,"lines":[{"id":"provided-answer-line","text":"14 A"}]}]}});
+    let call = |line: &str| CloudRepairToolCallV1 {
+        call_id: format!("line-{line}"),
+        tool: "submit_batch_decisions".into(),
+        arguments: json!({"decisions":[{
+            "decisionId":"d1","choice":"Wrong","commands":[set_answer("q14","A")],"evidenceLineIds":[line]
+        }]}),
+    };
+    let (rejected, count) = execute_tool(&req, &call("unprovided-line"), 1, &context, None);
+    assert_eq!(
+        rejected.status,
+        crate::schema::cloud_repair_v1::CloudRepairToolStatusV1::Rejected
+    );
+    assert!(count.is_none());
+    let (accepted, count) = execute_tool(&req, &call("provided-answer-line"), 1, &context, None);
+    assert_eq!(
+        accepted.status,
+        crate::schema::cloud_repair_v1::CloudRepairToolStatusV1::Ok,
+        "{accepted:#?}"
+    );
+    assert_eq!(count, Some(1));
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["A"]));
+    let _ = std::fs::remove_dir_all(root);
 }

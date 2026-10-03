@@ -62,7 +62,7 @@ use option_bank::{detect_completion_option_bank, detect_option_bank, option_bank
 use option_run::{detect_option_runs, option_run_value, run_matches_alphabet, OptionRun};
 use prompt_assembler::assemble_prompt;
 use question_number::{expand_expression, parse_question_expression};
-use reading::{is_paper_section_header, passage_nodes, visual_passage_lines};
+use reading::{is_paper_section_header, visual_passage_lines};
 
 pub(crate) const SHADOW_ARTIFACT_FILE: &str = "authoring-ir-v2.shadow.json";
 pub(crate) const SHADOW_COMPARE_FILE: &str = "authoring-ir-v2.shadow.compare.json";
@@ -621,6 +621,10 @@ fn build_passage(
         passage_lines = visual_passage_lines(fallback_lines);
     }
     rebind_lines_to_physical(&mut passage_lines, physical_lines);
+    let recover_pdf_layout = source_type == "pdf" && !physical_lines.is_empty();
+    if recover_pdf_layout && !reading::has_source_paragraph_markers(&passage_lines) {
+        passage_lines = passage_physical_lines(&passage_lines, physical_lines);
+    }
     let title = candidate
         .and_then(|value| value.get("title"))
         .and_then(Value::as_str)
@@ -642,7 +646,7 @@ fn build_passage(
     anchors.extend(physical_span_anchors(&anchors, physical_lines));
     anchors.extend(passage_preamble_anchors(physical_lines, &passage_pages));
     let anchors = valid_anchors(&anchors);
-    let mut content = passage_nodes(title, &passage_lines, anchors.clone());
+    let mut content = reading::passage_nodes_with_layout(title, &passage_lines, anchors.clone(), recover_pdf_layout);
     let paragraph_map = reading::paragraph_map_from_nodes(&content);
     for asset in assets.iter().filter(|asset| {
         asset.get("kind").and_then(Value::as_str) == Some("raster_image")
@@ -844,6 +848,67 @@ fn rebind_lines_to_physical(lines: &mut [SemanticLine], physical_lines: &[Semant
         line.source_anchor = merged_physical_anchor(&matched);
         line.bbox = union_line_bbox(&matched);
     }
+}
+
+/// Recover physical lines only when their text reconstructs the entire selected
+/// source block. Never replace a truncated/ambiguous match or include nearby
+/// question text merely because its rectangle overlaps the passage.
+fn passage_physical_lines(lines: &[SemanticLine], physical_lines: &[SemanticLine]) -> Vec<SemanticLine> {
+    let mut result = Vec::new();
+    let mut emitted = BTreeSet::new();
+    for line in lines {
+        let ids = line.source_anchor.get("nodeIds").and_then(Value::as_array)
+            .into_iter().flatten().filter_map(Value::as_str).collect::<BTreeSet<_>>();
+        let matched = physical_lines.iter().filter(|candidate| candidate.page_index == line.page_index)
+            .filter(|candidate| candidate.source_anchor.get("nodeIds").and_then(Value::as_array)
+                .into_iter().flatten().filter_map(Value::as_str).any(|id| ids.contains(id)))
+            .collect::<Vec<_>>();
+        let key = matched.iter().map(|candidate| physical_text_key(&candidate.text)).collect::<String>();
+        if !matched.is_empty() && key == physical_text_key(&line.text) {
+            let fragment_texts = split_source_text_at_physical_lines(&line.text, &matched);
+            let source_heading = matched.len() == 1 && line.text.chars().count() < 70
+                && !line.text.trim_end().ends_with(['.', '!', '?', '。', '！', '？']);
+            for (candidate, text) in matched.into_iter().zip(fragment_texts) {
+                if emitted.insert((candidate.page_index, candidate.id.clone())) {
+                    let mut recovered = candidate.clone();
+                    // The glyph layer may put a space between every character.
+                    // Borrow its geometry, never its spelling or whitespace.
+                    recovered.text = text;
+                    recovered.role = if source_heading { "heading".into() } else { line.role.clone() };
+                    result.push(recovered);
+                }
+            }
+        } else {
+            let mut retained = line.clone();
+            if retained.source_anchor["extractionMode"] == "manual" { retained.bbox = None; }
+            result.push(retained);
+        }
+    }
+    result
+}
+
+fn split_source_text_at_physical_lines(text: &str, lines: &[&SemanticLine]) -> Vec<String> {
+    let mut cursor = 0;
+    let mut result = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        if index + 1 == lines.len() {
+            result.push(text[cursor..].trim().to_string());
+            break;
+        }
+        let needed = physical_text_key(&line.text).chars().count();
+        let mut consumed = 0;
+        let mut boundary = cursor;
+        for (offset, ch) in text[cursor..].char_indices() {
+            if consumed == needed && (ch.is_alphanumeric() || ch.is_whitespace()) { break; }
+            if ch.is_alphanumeric() {
+                consumed += ch.to_lowercase().count();
+            }
+            boundary = cursor + offset + ch.len_utf8();
+        }
+        result.push(text[cursor..boundary].trim().to_string());
+        cursor = boundary;
+    }
+    result
 }
 
 fn bbox_intersects(left: [f64; 4], right: [f64; 4]) -> bool {
@@ -2403,6 +2468,28 @@ fn strip_html(input: &str) -> String {
 mod tests {
     use super::*;
     use chrono::Utc;
+
+    #[test]
+    fn pdf_passage_layout_recovery_preserves_source_words_and_subheadings() {
+        let mut source = semantic_line("source", "A sentence wraps onto its next line.", 0, "g1");
+        source.source_anchor["nodeIds"] = json!(["g1", "g2"]);
+        let mut first = semantic_line("line-1", "A s e n t e n c e w r a p s", 0, "g1");
+        first.bbox = Some([72.0, 100.0, 300.0, 12.0]);
+        let mut second = semantic_line("line-2", "o n t o i t s n e x t l i n e .", 0, "g2");
+        second.bbox = Some([72.0, 116.0, 200.0, 12.0]);
+        let mut heading = semantic_line("heading", "Short heading", 0, "g3");
+        heading.bbox = Some([72.0, 88.0, 200.0, 12.0]);
+        let physical = vec![heading.clone(), first, second];
+        let restored = passage_physical_lines(&[heading, source], &physical);
+        assert_eq!(restored[1].text, "A sentence wraps");
+        assert_eq!(restored[2].text, "onto its next line.");
+        let nodes = reading::passage_nodes_with_layout("", &restored, vec![], true);
+        assert_eq!(nodes.len(), 2, "a source subheading cannot merge with prose");
+        assert_eq!(nodes[1]["children"][0]["text"], "A sentence wraps onto its next line.");
+        let lines = [semantic_line("a", "First sentence.", 0, "a"), semantic_line("b", "“Next sentence.”", 0, "b")];
+        let split = split_source_text_at_physical_lines("First sentence. “Next sentence.”", &[&lines[0], &lines[1]]);
+        assert_eq!(split, vec!["First sentence.", "“Next sentence.”"]);
+    }
 
     fn semantic_line(id: &str, text: &str, page_index: i32, node_id: &str) -> SemanticLine {
         SemanticLine {

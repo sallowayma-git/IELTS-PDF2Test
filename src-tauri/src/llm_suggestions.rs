@@ -241,7 +241,6 @@ pub(crate) fn make_adjudication_input(
             "fileId": source.file_id,
             "originalName": source.original_name,
             "fileType": source.file_type,
-            "sha256": source.sha256,
             "sizeBytes": source.size_bytes
         },
         "pdfPath": pdf_path.to_string_lossy(),
@@ -296,7 +295,6 @@ pub(crate) fn make_source_verification_input(
             "fileId": source.file_id,
             "originalName": source.original_name,
             "fileType": source.file_type,
-            "sha256": source.sha256,
             "sizeBytes": source.size_bytes
         },
         "pdfPath": pdf_path.to_string_lossy(),
@@ -389,7 +387,6 @@ pub(crate) fn make_cloud_paper_generation_input(
             "fileId": source.file_id,
             "originalName": source.original_name,
             "fileType": source.file_type,
-            "sha256": source.sha256,
             "sizeBytes": source.size_bytes
         },
         "pdfPath": pdf_path.to_string_lossy(),
@@ -604,7 +601,6 @@ pub(crate) fn make_cloud_authoring_candidate_input(
             "fileId": source.file_id,
             "originalName": source.original_name,
             "fileType": source.file_type,
-            "sha256": source.sha256,
             "sizeBytes": source.size_bytes
         },
         "pdfPath": pdf_path.to_string_lossy(),
@@ -636,7 +632,12 @@ pub(crate) fn make_repair_authoring_step_input(
     // 观察历史有界：只带最近的若干条，省略多少如实写明。多轮修复不该让 prompt 无限增长，
     // 而最近的观察（上一批被拒的具体原因、刚写入的新版本）才是模型下一步需要的。
     let omitted = observations.len().saturating_sub(MAX_REPAIR_OBSERVATIONS);
-    let recent = &observations[omitted..];
+    let (recent, history_summary) = crate::cloud_repair::packets::compact_model_observations(
+        context,
+        observations,
+        MAX_REPAIR_OBSERVATIONS,
+    );
+    let model_context = crate::cloud_repair::packets::compact_model_context(context);
     let mut input = json!({
         "mode": "repair_authoring_step",
         "modality": candidate_modality(modality),
@@ -645,11 +646,12 @@ pub(crate) fn make_repair_authoring_step_input(
         "sourceFile": {
             "fileId": source.file_id,
             "originalName": source.original_name,
-            "fileType": source.file_type,
-            "sha256": source.sha256
+            "fileType": source.file_type
         },
-        "context": context,
+        "context": model_context,
         "observations": recent,
+        "historySummary": history_summary,
+        "inputFootprint":{"estimatedInputTokens":context.get("estimatedInputTokens").cloned().unwrap_or(Value::Null)},
         "omittedObservationCount": omitted,
         "tools": repair_tools_table(&source.file_id),
         // 唯一真源：分发器真正放行的 op 清单。手抄一份迟早漂移。
@@ -657,6 +659,21 @@ pub(crate) fn make_repair_authoring_step_input(
         "rules": repair_tool_rules(context)
     });
     let packet_mode = context.get("contextMode").and_then(Value::as_str) == Some("packets");
+    if packet_mode {
+        input["reviewMode"] = json!("compact_batch");
+        input["tools"] = json!({"submit_batch_decisions": {
+            "arguments":{"decisions":[{"decisionId":"d1 from differences","choice":"Cloud|Local|Wrong|Unknown","evidenceLineIds":["p1:l2 from provided sourceEvidence.pages.lines.id"]}]},
+            "wrong":"commands only for incorrect fields; replaceText from/to are numeric character offsets; to=current character count for whole-text replacement. Bundle taskGroup must be the complete corrected group with its answerSlots and answerKey.",
+            "correctionExamples":[
+                {"op":"setAnswer","slotId":"target slot","value":{"kind":"text","values":["source answer"]}},
+                {"op":"replaceText","nodeId":"existing text node","from":0,"to":5,"text":"correct source text"},
+                {"op":"setTaskType","taskId":"existing task","taskType":"type from candidate"},
+                {"op":"upsertTaskGroupBundle","taskGroup":{},"answerSlots":[],"answerKey":{},"note":"complete corrected group and its slots/answers from packet"}
+            ],
+            "unknown":"reason and needs; backend permits one evidence supplement"
+        }});
+        input.as_object_mut().unwrap().remove("rules");
+    }
     let attach_full_source = context.get("attachFullSource").and_then(Value::as_bool) == Some(true);
     // L0-L2 只传包证据，连本机 PDF 路径也不进入 repair input；只有 L3 后端确实要附整份
     // PDF 时才把路径交给网关。legacy 则保留原有路径，作为 L3 与回归对照。
@@ -683,6 +700,7 @@ pub(crate) fn make_repair_authoring_step_input(
 /// 都不可接受：示例是 prompt 的一部分，属于「修 prompt 不放宽校验器」的范畴。
 pub(crate) fn repair_tools_table(main_source_file_id: &str) -> Value {
     json!({
+        "submit_batch_decisions": {"purpose":"Batch choose Cloud/Local/Wrong/Unknown", "arguments":{"decisions":[]}},
         "read_draft": {
             "purpose": "Read the CURRENT draft (authoritative canonical) for specific task groups. In packet mode, taskGroupIds or questionNumbers from this packet are REQUIRED; an empty or out-of-packet selector is rejected.",
             "arguments": {"taskGroupIds": ["task id from this packet"], "questionNumbers": [1, 2]}
@@ -1508,5 +1526,20 @@ mod tests {
             table["apply_edits"]["arguments"]["baseVersion"].is_number(),
             "baseVersion must be shown with its numeric type"
         );
+    }
+    #[test]
+    fn repair_input_keeps_token_footprint_for_local_diagnostics_only() {
+        let input = make_repair_authoring_step_input(
+            &json!({"model":"m"}),
+            &fixture_job(),
+            "p",
+            &fixture_source(),
+            Path::new("/tmp/paper.pdf"),
+            &json!({"contextMode":"packets","estimatedInputTokens":1234}),
+            &[],
+            "reading",
+        );
+        assert_eq!(input["inputFootprint"]["estimatedInputTokens"], 1234);
+        assert!(input["context"].get("estimatedInputTokens").is_none());
     }
 }

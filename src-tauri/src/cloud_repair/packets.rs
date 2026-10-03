@@ -1315,6 +1315,302 @@ fn build_packet(
     packet
 }
 
+/// A wire-only projection. The persisted packet keeps its fingerprints, version and complete
+/// comparison values; those are local concurrency/audit data, not model reasoning material.
+pub(crate) fn compact_model_context(context: &Value) -> Value {
+    let mut projected = model_content(context);
+    let challenger = if projected.get("localSnapshotSlice").is_some() {
+        "localSnapshotSlice"
+    } else {
+        "candidateSlice"
+    };
+    let replacements: Vec<_> = projected
+        .get("differences")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|difference| {
+            ["canonical", "candidate"].map(|side| {
+                let slice = if side == "canonical" {
+                    "draftSlice"
+                } else {
+                    challenger
+                };
+                difference_pointer(&projected, difference, side, slice)
+            })
+        })
+        .collect();
+    if let Some(differences) = projected
+        .get_mut("differences")
+        .and_then(Value::as_array_mut)
+    {
+        for (index, (difference, pointers)) in differences.iter_mut().zip(replacements).enumerate() {
+            if let Some(object) = difference.as_object_mut() {
+                // Wire aliases are deliberately scoped to this exact raw packet ordering.
+                // The backend resolves them against the unchanged local differences array.
+                object.insert("decisionId".to_string(), json!(format!("d{}", index + 1)));
+                for (side, pointer) in ["canonical", "candidate"].into_iter().zip(pointers) {
+                    if let Some(pointer) = pointer {
+                        object.remove(side);
+                        object.insert(format!("{side}Ref"), json!(pointer));
+                    }
+                }
+            }
+        }
+    }
+    projected
+}
+
+fn model_content(value: &Value) -> Value {
+    const LOCAL_KEYS: &[&str] = &[
+        "sourceAnchors",
+        "provenance",
+        "provenanceStatus",
+        "audit",
+        "quality",
+        "qualityIssues",
+        "reviewState",
+        "sha256",
+        "sourceHash",
+        "contextDigest",
+        "canonicalDigest",
+        "candidateDigest",
+        "recordedAtRound",
+        "recordedBy",
+        "estimatedInputTokens",
+    ];
+    match value {
+        Value::Object(object) => Value::Object(
+            object
+                .iter()
+                .filter(|(key, _)| !LOCAL_KEYS.contains(&key.as_str()))
+                .map(|(key, value)| (key.clone(), model_content(value)))
+                .collect(),
+        ),
+        Value::Array(values) => Value::Array(values.iter().map(model_content).collect()),
+        _ => value.clone(),
+    }
+}
+
+fn pointer_key(key: &str) -> String {
+    key.replace('~', "~0").replace('/', "~1")
+}
+
+/// Replace only a field whose contents are verifiably present in its own side's slice. Missing
+/// targets, normalized constraints and answer-page evidence remain inline; they are not duplicates.
+fn difference_pointer(
+    context: &Value,
+    difference: &Value,
+    side: &str,
+    slice: &str,
+) -> Option<String> {
+    let value = difference.get(side)?;
+    if value.is_null() {
+        return None;
+    }
+    let target = difference.get("targetId")?.as_str()?;
+    let field = difference.get("field")?.as_str()?;
+    let kind = difference.get("targetType")?.as_str()?;
+    let document = context.get(slice)?;
+    let pointer = match kind {
+        "task_group" => {
+            let index = document
+                .get("taskGroups")?
+                .as_array()?
+                .iter()
+                .position(|group| group.get("taskId").and_then(Value::as_str) == Some(target))?;
+            format!("/{slice}/taskGroups/{index}/{}", pointer_key(field))
+        }
+        "response_group" => {
+            let groups = document.get("taskGroups")?.as_array()?;
+            let (group_index, response_index) =
+                groups.iter().enumerate().find_map(|(i, group)| {
+                    group
+                        .get("responseGroups")?
+                        .as_array()?
+                        .iter()
+                        .position(|r| {
+                            r.get("responseGroupId").and_then(Value::as_str) == Some(target)
+                        })
+                        .map(|j| (i, j))
+                })?;
+            format!(
+                "/{slice}/taskGroups/{group_index}/responseGroups/{response_index}/{}",
+                pointer_key(field)
+            )
+        }
+        "slot" if field == "answer" => format!("/{slice}/answerKey/{}", pointer_key(target)),
+        "slot" => format!(
+            "/{slice}/answerSlots/{}/{}",
+            pointer_key(target),
+            pointer_key(field)
+        ),
+        _ => return None,
+    };
+    let resolved = context.pointer(&pointer)?;
+    let same = resolved == value
+        || matches!(field, "instructions" | "stimulus" | "prompt")
+            && value
+                .as_str()
+                .is_some_and(|text| normalize_text(&nodes_text(resolved)) == normalize_text(text));
+    same.then_some(pointer)
+}
+
+/// Keep complete observations in the local repair run. Each HTTP request gets a rolling window
+/// plus a small continuity receipt; evidence already merged into the current packet is referenced.
+pub(crate) fn compact_model_observations(
+    context: &Value,
+    observations: &[Value],
+    max_count: usize,
+) -> (Vec<Value>, Value) {
+    let omitted = observations.len().saturating_sub(max_count);
+    let recent = observations[omitted..]
+        .iter()
+        .map(|observation| {
+            let mut projected = model_content(observation);
+            if let Some(result) = projected.get_mut("result") {
+                // `report_insufficient_context` results carry large fetched slices/images which have
+                // already been merged by the repair orchestrator. Never drop unsatisfied needs.
+                if let Some(satisfied) = result.get_mut("satisfied").and_then(Value::as_array_mut) {
+                    for entry in satisfied {
+                        let fetched = entry.get("result").cloned().unwrap_or(Value::Null);
+                        if let Some(pointer) = find_evidence_pointer(context, &fetched) {
+                            if let Some(object) = entry.as_object_mut() {
+                                object.remove("result");
+                                object.insert("resultRef".to_string(), json!(pointer));
+                            }
+                        }
+                    }
+                } else if let Some(pointer) = find_evidence_pointer(context, result) {
+                    *result = json!({"resultRef": pointer});
+                }
+                reference_result_fields(context, result);
+            }
+            bound_feedback_text(&mut projected);
+            projected
+        })
+        .collect();
+    let summary = json!({
+        "totalObservationCount": observations.len(),
+        "omittedObservationCount": omitted,
+        "priorRejectedCount": observations[..omitted].iter()
+            .filter(|o| o.get("status").and_then(Value::as_str) == Some("rejected")).count(),
+        "latestEditVersion": context.pointer("/draftSlice/editVersion")
+            .or_else(|| observations.iter().rev().find_map(|o| o.pointer("/result/editVersion"))),
+        "historyStorage": "Complete tool history is retained locally; current context is authoritative.",
+    });
+    (recent, summary)
+}
+
+/// Bound diagnostic prose only in the uploaded copy; source text and correction content remain
+/// complete, and the local JSONL contains the original feedback without truncation.
+fn bound_feedback_text(value: &mut Value) {
+    const FEEDBACK_CHARS: usize = 2048;
+    fn bound_text(value: &mut Value) {
+        if let Some(text) = value.as_str() {
+            if text.chars().count() > FEEDBACK_CHARS {
+                let mut shortened: String = text.chars().take(FEEDBACK_CHARS - 48).collect();
+                shortened.push_str(" [truncated; complete feedback retained locally]");
+                *value = json!(shortened);
+            }
+        }
+    }
+    match value {
+        Value::Object(object) => {
+            for (key, child) in object.iter_mut() {
+                if matches!(key.as_str(), "repairNote" | "noteForModel" | "note") {
+                    bound_text(child);
+                } else if key == "errors" {
+                    if let Some(errors) = child.as_array_mut() {
+                        for error in errors { bound_text(error); }
+                    }
+                } else {
+                    bound_feedback_text(child);
+                }
+            }
+        }
+        Value::Array(values) => values.iter_mut().for_each(bound_feedback_text),
+        _ => {}
+    }
+}
+
+fn reference_result_fields(context: &Value, result: &mut Value) {
+    let Some(object) = result.as_object_mut() else {
+        return;
+    };
+    for key in ["pages", "paragraphs", "image"] {
+        let pointer = object
+            .get(key)
+            .and_then(|value| find_evidence_pointer(context, value));
+        if let Some(pointer) = pointer {
+            object.remove(key);
+            object.insert(format!("{key}Ref"), json!(pointer));
+        }
+    }
+    // Fetched results not wholly identical may still contain an identical image/pages array.
+    if let Some(satisfied) = object.get_mut("satisfied").and_then(Value::as_array_mut) {
+        for entry in satisfied {
+            if let Some(result) = entry.get_mut("result") {
+                reference_result_fields(context, result);
+            }
+        }
+    }
+}
+
+fn find_evidence_pointer(context: &Value, value: &Value) -> Option<String> {
+    if value.is_null() || value.as_object().is_some_and(|object| object.is_empty()) {
+        return None;
+    }
+    for key in ["draftSlice", "candidateSlice", "localSnapshotSlice"] {
+        if context
+            .get(key)
+            .is_some_and(|slice| model_content(slice) == *value)
+        {
+            return Some(format!("/{key}"));
+        }
+    }
+    for key in ["pages", "paragraphs"] {
+        let base = format!("/sourceEvidence/{key}");
+        let Some(evidence) = context.pointer(&base) else {
+            continue;
+        };
+        if evidence == value && evidence.as_array().is_some_and(|a| !a.is_empty()) {
+            return Some(base);
+        }
+        for (index, entry) in evidence.as_array().into_iter().flatten().enumerate() {
+            if entry == value {
+                return Some(format!("{base}/{index}"));
+            }
+        }
+    }
+    for (index, region) in context
+        .pointer("/sourceEvidence/regions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        if region.get("image").is_some_and(|image| image == value) {
+            return Some(format!("/sourceEvidence/regions/{index}/image"));
+        }
+    }
+    for (index, entry) in context
+        .pointer("/sourceEvidence/fetched")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        if entry
+            .get("result")
+            .is_some_and(|result| model_content(result) == *value)
+        {
+            return Some(format!("/sourceEvidence/fetched/{index}/result"));
+        }
+    }
+    None
+}
+
 /// 题组锚点 → 裁剪请求（pageIndex + bbox）。同一页多个锚点只留一个区域请求。
 ///
 /// 缺 bbox 的**那一页**退整页图，判据是「**这一组**在这一页有没有 bbox」，不是
@@ -1557,6 +1853,157 @@ fn scope_manifest(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_projection_references_duplicate_text_without_mutating_local_packet() {
+        let text = "This is a lengthy instruction that must be read accurately. ".repeat(100);
+        let context = json!({
+            "contextMode": "packets", "comparisonMode": "adopted_cloud_vs_local_snapshot",
+            "estimatedInputTokens": 1234,
+            "draftSlice": {"editVersion": 8, "taskGroups": [{"taskId": "tg1",
+                "instructions": [node("cloud", &text, 0)]}]},
+            "localSnapshotSlice": {"taskGroups": [{"taskId": "tg1",
+                "instructions": [node("local", "Different instructions", 0)]}]},
+            "differences": [difference("task_group", "tg1", "instructions",
+                json!(text), json!("Different instructions"))],
+            "sourceEvidence": {"pages": [{"pageIndex": 1,
+                "lines": [{"id": "p1:l1", "text": "Source text"}]}]},
+        });
+        let original = context.clone();
+        let compact = compact_model_context(&context);
+        assert_eq!(context, original);
+        assert_eq!(context["estimatedInputTokens"], json!(1234));
+        assert!(compact.get("estimatedInputTokens").is_none());
+        assert_eq!(compact["comparisonMode"], context["comparisonMode"]);
+        assert_eq!(compact["draftSlice"]["editVersion"], json!(8));
+        let diff = &compact["differences"][0];
+        assert!(diff.get("contextDigest").is_none());
+        assert!(diff.get("canonical").is_none());
+        assert!(diff.get("candidate").is_none());
+        for side in ["canonical", "candidate"] {
+            let pointer = diff[format!("{side}Ref")].as_str().unwrap();
+            let original_text = context["differences"][0][side].as_str().unwrap();
+            assert_eq!(normalize_text(&nodes_text(compact.pointer(pointer).unwrap())), normalize_text(original_text));
+        }
+        assert_eq!(compact["sourceEvidence"], context["sourceEvidence"]);
+        assert!(
+            serde_json::to_vec(&compact).unwrap().len()
+                < serde_json::to_vec(&context).unwrap().len() * 2 / 3
+        );
+    }
+
+    #[test]
+    fn model_projection_preserves_external_evidence_and_missing_targets() {
+        let context = json!({
+            "draftSlice": {"answerKey": {"q1": {"kind": "text", "values": ["TRUE"]}}},
+            "candidateSlice": {"answerKey": {"q1": {"kind": "text", "values": ["FALSE"]}}},
+            "differences": [
+                difference("slot", "q1", "answer", json!({"kind": "text", "values": ["TRUE"]}),
+                    json!({"kind": "text", "values": ["Answer page says NOT GIVEN"]})),
+                difference("task_group", "missing", "instructions", json!("local"), json!("cloud")),
+            ],
+        });
+        let compact = compact_model_context(&context);
+        assert_eq!(compact["differences"][0]["decisionId"], json!("d1"));
+        assert_eq!(compact["differences"][1]["decisionId"], json!("d2"));
+        assert!(context["differences"][0].get("decisionId").is_none());
+        assert_eq!(
+            compact["differences"][0]["canonicalRef"],
+            json!("/draftSlice/answerKey/q1")
+        );
+        assert_eq!(
+            compact["differences"][0]["candidate"],
+            context["differences"][0]["candidate"]
+        );
+        assert_eq!(compact["differences"][1]["canonical"], json!("local"));
+        assert_eq!(compact["differences"][1]["candidate"], json!("cloud"));
+    }
+
+    #[test]
+    fn uploaded_diagnostics_are_bounded_without_shortening_source_or_local_history() {
+        let long = "校核错误".repeat(2048);
+        let observations = vec![json!({"status": "rejected", "errors": [long],
+            "result": {"repairNote": long, "noteForModel": long, "sourceText": long}})];
+        let (recent, _) = compact_model_observations(&json!({}), &observations, 12);
+        for text in [&recent[0]["errors"][0], &recent[0]["result"]["repairNote"], &recent[0]["result"]["noteForModel"]] {
+            assert!(text.as_str().unwrap().chars().count() <= 2048);
+            assert!(text.as_str().unwrap().contains("retained locally"));
+        }
+        assert_eq!(recent[0]["result"]["sourceText"], json!(long));
+        assert_eq!(observations[0]["errors"][0], json!(long));
+    }
+
+    #[test]
+    fn rolling_history_keeps_failures_and_references_only_identical_current_evidence() {
+        let context = json!({"draftSlice": {"editVersion": 9, "taskGroups": [{"taskId": "tg1"}]}});
+        let mut observations: Vec<_> = (0..40)
+            .map(|i| {
+                json!({"callId": format!("c{i}"),
+            "status": "ok", "result": {"editVersion": i}})
+            })
+            .collect();
+        observations
+            .push(json!({"callId": "read", "status": "ok", "result": context["draftSlice"]}));
+        observations.push(json!({"callId": "old", "status": "ok", "result": {"editVersion": 8, "taskGroups": [{"taskId": "tg1"}]}}));
+        observations.push(json!({"callId": "failure", "status": "rejected", "errors": ["BAD_REFERENCE"], "result": null}));
+        let original = observations.clone();
+        let (recent, summary) = compact_model_observations(&context, &observations, 3);
+        assert_eq!(observations, original);
+        assert_eq!(recent.len(), 3);
+        assert_eq!(recent[0]["result"]["resultRef"], json!("/draftSlice"));
+        assert_eq!(recent[1]["result"], observations[41]["result"]);
+        assert_eq!(recent[2]["errors"], json!(["BAD_REFERENCE"]));
+        assert_eq!(summary["totalObservationCount"], json!(43));
+        assert_eq!(summary["omittedObservationCount"], json!(40));
+        assert_eq!(summary["latestEditVersion"], json!(9));
+    }
+
+    #[test]
+    fn fetched_history_keeps_unsatisfied_needs_and_new_material_inline() {
+        let context = json!({"sourceEvidence": {"fetched": [
+            {"kind": "passage", "result": {"text": "Known source"}}
+        ]}});
+        let observation = json!({"status": "ok", "result": {
+            "satisfied": [
+                {"kind": "passage", "result": {"text": "Known source"}},
+                {"kind": "search", "result": {"text": "New source"}}
+            ], "unsatisfied": ["Missing page 3"]
+        }});
+        let (recent, _) = compact_model_observations(&context, &[observation], 12);
+        assert_eq!(
+            recent[0]["result"]["satisfied"][0]["resultRef"],
+            json!("/sourceEvidence/fetched/0/result")
+        );
+        assert_eq!(
+            recent[0]["result"]["satisfied"][1]["result"]["text"],
+            json!("New source")
+        );
+        assert_eq!(
+            recent[0]["result"]["unsatisfied"],
+            json!(["Missing page 3"])
+        );
+    }
+
+    #[test]
+    fn already_uploaded_source_pages_and_images_are_not_repeated_in_history() {
+        let context = json!({"sourceEvidence": {
+            "pages": [{"pageIndex": 1, "lines": [{"id": "p1:l1", "text": "Evidence"}]}],
+            "regions": [{"pageIndex": 1, "image": {"dataUrl": "a".repeat(4096)}}]
+        }});
+        let observations = vec![
+            json!({"callId": "pages", "status": "ok", "result": {
+                "kind": "pdf", "pages": context["sourceEvidence"]["pages"]}}),
+            json!({"callId": "image", "status": "ok", "result": {
+                "pageIndex": 1, "image": context["sourceEvidence"]["regions"][0]["image"]}}),
+        ];
+        let (recent, _) = compact_model_observations(&context, &observations, 12);
+        assert_eq!(recent[0]["result"]["kind"], json!("pdf"));
+        assert_eq!(recent[0]["result"]["pagesRef"], json!("/sourceEvidence/pages"));
+        assert!(recent[0]["result"].get("pages").is_none());
+        assert_eq!(recent[1]["result"]["imageRef"], json!("/sourceEvidence/regions/0/image"));
+        assert!(recent[1]["result"].get("image").is_none());
+        assert_eq!(observations[1]["result"]["image"]["dataUrl"].as_str().unwrap().len(), 4096);
+    }
 
     fn line(page: u32, index: usize, text: &str) -> SourceLine {
         SourceLine {

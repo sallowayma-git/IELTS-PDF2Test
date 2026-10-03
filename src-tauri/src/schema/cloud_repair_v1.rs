@@ -67,7 +67,7 @@ pub const CLOUD_RULING_REASON_CONTEXT_INSUFFICIENT: &str = "CONTEXT_INSUFFICIENT
 /// `read_candidate`）全部只读、不接受路径、只作用于本 job，且受每包预算约束
 /// （见 `cloud_repair::grab::GrabBudget`）。它们存在的理由与校核包是同一件事：
 /// 上下文不再一次性给全，模型必须能**主动**取回它真正需要的那一块。
-pub const CLOUD_REPAIR_TOOLS: [&str; 11] = [
+pub const CLOUD_REPAIR_TOOLS: [&str; 12] = [
     "read_draft",
     "read_source",
     "search_source",
@@ -76,6 +76,7 @@ pub const CLOUD_REPAIR_TOOLS: [&str; 11] = [
     "read_candidate",
     "apply_edits",
     "record_ruling",
+    "submit_batch_decisions",
     "report_insufficient_context",
     "finish_packet",
     "finish",
