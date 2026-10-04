@@ -27,7 +27,7 @@ import { RecognitionPanel } from "./RecognitionPanel";
 import { useCanonicalEditor } from "./useCanonicalEditor";
 import { describeDeferredRemoteRefresh } from "./remoteVersion";
 import { toUserFacingError } from "../../utils/userFacingError";
-import { getPublishPreflight, listLibraryItems, type PublishCheckResultV1 } from "../../api/workspaceClient";
+import { getPublishPreflight, getLibraryItemProcessing, type PublishCheckResultV1 } from "../../api/workspaceClient";
 import type { ProcessingState } from "../../api/processingClient";
 import { processingNoteOf, cloudReviewInProgress } from "./workspaceStatus";
 import { answerPageStatusOf, describeAnswerPageRetry } from "./answerPageStatus";
@@ -162,8 +162,8 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   const [cloudStopRequested, setCloudStopRequested] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    listLibraryItems(false)
-      .then((items) => { if (!cancelled) setProcessingState(items.find((item) => item.id === itemId)?.processing ?? null); })
+    getLibraryItemProcessing(itemId)
+      .then((state) => { if (!cancelled) setProcessingState(state); })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [itemId, processingTick]);

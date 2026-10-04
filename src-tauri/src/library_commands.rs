@@ -19,6 +19,30 @@ use rusqlite::{Connection, OptionalExtension};
 use serde_json::Value;
 use std::path::Path;
 
+/// Processing-only reads do not load a document or scan unrelated library rows.
+pub(crate) fn get_library_item_processing_core(root: &Path, item_id: &str) -> CommandResult<Value> {
+    crate::util::validate_path_segment("item_id", item_id)?;
+    let conn = crate::library::repository::open_library_connection(root)?;
+    serde_json::to_value(crate::processing::queue::get_job_by_library_item(&conn, item_id)?)
+        .map_err(|error| error.to_string())
+}
+
+/// Refresh a single library row while retaining the existing four-source merge contract.
+pub(crate) fn get_library_row_core(root: &Path, item_id: &str) -> CommandResult<Value> {
+    let dir = crate::util::safe_job_dir(root, item_id)?;
+    let item = crate::library::commands::get_library_item_summary_core(root, item_id)?;
+    let conn = crate::library::repository::open_library_connection(root)?;
+    let (summary, in_trash) = crate::db::get_library_row_summary(&conn, item_id)?;
+    // Initial listLibraryItems excludes deleted rows. Match that merge contract
+    // so an event cannot change a trash row's title/Part until the next full refresh.
+    let item = if in_trash { Value::Null } else { item };
+    let job = crate::util::read_json_opt(&dir.join("job.json"))?;
+    if item.is_null() && summary.is_none() && job.is_none() {
+        return Ok(Value::Null);
+    }
+    Ok(serde_json::json!({"job":job,"summary":summary,"item":item,"inTrash":in_trash}))
+}
+
 // ── 统一 status 枚举映射 ───────────────────────────────────────────────────
 // 阅读 JobStatus 与写作 WritingJobStatus → 统一枚举 draft|needs_review|ready|exported。
 // 集中一处，避免散落。
@@ -637,6 +661,58 @@ mod tests {
 
     fn cleanup(root: &PathBuf) {
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn incremental_library_row_preserves_reading_writing_and_trash_without_payload_reads() {
+        let root = make_reading_appdata();
+        migrate_existing_into_library(&root).unwrap();
+        // Summary refresh must not parse unchanged document artifacts or revision payloads.
+        fs::write(crate::util::job_dir(&root, "import-test-1").join("authoring-ir.json"), "invalid JSON").unwrap();
+        let row = get_library_row_core(&root, "import-test-1").unwrap();
+        let conn = crate::library::repository::open_library_connection(&root).unwrap();
+        assert_eq!(row["summary"], serde_json::to_value(list_exams(&conn, &LibraryFilter::default()).unwrap().remove(0)).unwrap());
+        assert_eq!(row["job"]["jobId"], "import-test-1");
+        assert_eq!(row["inTrash"], false);
+        assert!(get_library_row_core(&root, "missing").unwrap().is_null());
+        assert!(get_library_item_processing_core(&root, "missing").unwrap().is_null());
+        cleanup(&root);
+
+        let root = make_writing_appdata();
+        migrate_existing_into_library(&root).unwrap();
+        let row = get_library_row_core(&root, "writing-test-1").unwrap();
+        assert!(row["job"].is_null());
+        assert_eq!(row["summary"]["subject"], "writing");
+        let conn = crate::library::repository::open_library_connection(&root).unwrap();
+        assert!(delete_library_exam_core(&root, "writing-test-1").unwrap());
+        let row = get_library_row_core(&root, "writing-test-1").unwrap();
+        assert_eq!(row["inTrash"], true);
+        assert_eq!(row["summary"], serde_json::to_value(crate::db::list_trashed_items(&conn).unwrap().remove(0)).unwrap());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn incremental_library_row_and_processing_follow_item_identity_and_terminal_state() {
+        let root = make_reading_appdata();
+        let conn = crate::library::repository::open_library_connection(&root).unwrap();
+        crate::library::repository::upsert_item_shell(&conn, &crate::library::repository::UpsertItemInput {
+            id: "import-test-1", modality: "listening", title: "V2 Title", status: "processing", source_asset_id: None,
+        }).unwrap();
+        // Processing job IDs need not equal library item IDs.
+        crate::processing::queue::enqueue(&conn, "worker-job", "import-test-1", "source", &Value::Null).unwrap();
+        assert_eq!(get_library_item_processing_core(&root, "import-test-1").unwrap()["stage"], "queued");
+        conn.execute("UPDATE processing_jobs_v2 SET stage='cancelled', event_seq=5 WHERE id='worker-job'", []).unwrap();
+        let row = get_library_row_core(&root, "import-test-1").unwrap();
+        assert_eq!(row["item"]["title"], "V2 Title");
+        assert_eq!(row["item"]["modality"], "listening");
+        assert_eq!(row["item"]["processing"]["stage"], "cancelled");
+        assert_eq!(row["item"]["processing"]["eventSeq"], 5);
+        crate::db::soft_delete_library_item(&conn, "import-test-1").unwrap();
+        let row = get_library_row_core(&root, "import-test-1").unwrap();
+        assert_eq!(row["inTrash"], true);
+        assert_eq!(row["summary"]["title"], "V2 Title");
+        assert!(row["item"].is_null(), "trash refresh must match the full list's deleted-V2 exclusion");
+        cleanup(&root);
     }
 
     #[test]

@@ -66,6 +66,7 @@ vi.mock("../api/workspaceClient", () => ({
   getWorkspaceItem: vi.fn(async () => ({ item: { sourcePurged: false } })),
   getPublishPreflight: vi.fn(async () => null),
   listLibraryItems: vi.fn(async () => []),
+  getLibraryItemProcessing: vi.fn(async () => null),
   applyEditorCommands: vi.fn(),
 }));
 

@@ -11,7 +11,7 @@ import {
   setLibraryItemPart,
   type EmptyRecycleBinResult
 } from "../../api/tauriCommands";
-import { listLibraryItems, type LibraryItemSummaryV2 } from "../../api/workspaceClient";
+import { getLibraryRow, listLibraryItems, type LibraryItemSummaryV2 } from "../../api/workspaceClient";
 import type { ImportJob, LibraryExamSummary } from "../../types";
 import { buildRow, type LibraryRowV1 } from "./libraryTypes";
 
@@ -71,6 +71,12 @@ export function useLibraryStore(): LibraryStore {
   const [error, setError] = useState<string | undefined>();
   const [tick, setTick] = useState(0);
   const optimistic = useRef<LibraryRowV1[]>([]);
+  const [subscribed, setSubscribed] = useState(false);
+  const active = useRef(false);
+  const snapshotPending = useRef(true);
+  const snapshotGeneration = useRef(0);
+  const dirtyItems = useRef(new Set<string>());
+  const refreshingItems = useRef(new Set<string>());
 
   const refresh = useCallback(() => setTick((value) => value + 1), []);
 
@@ -92,39 +98,91 @@ export function useLibraryStore(): LibraryStore {
       })
     ]);
     const merged = mergeRows(jobs, summaries, trashed, v2Items);
-    const known = new Set(merged.map((row) => row.id));
-    // 真实数据一到就丢掉同 id 的乐观行。
-    optimistic.current = optimistic.current.filter((row) => !known.has(row.id));
-    return [...optimistic.current, ...merged];
+    return merged;
   }, []);
 
+  // A single in-flight read per item. Events arriving during that read request a
+  // follow-up; an older response never hides a terminal/cancel event.
+  const refreshItem = useCallback(async (itemId: string): Promise<void> => {
+    if (refreshingItems.current.has(itemId) || snapshotPending.current || !active.current) return;
+    refreshingItems.current.add(itemId);
+    try {
+      while (dirtyItems.current.has(itemId) && !snapshotPending.current && active.current) {
+        dirtyItems.current.delete(itemId);
+        const generation = snapshotGeneration.current;
+        const data = await getLibraryRow(itemId);
+        if (!active.current) return;
+        if (snapshotPending.current || generation !== snapshotGeneration.current) {
+          dirtyItems.current.add(itemId);
+          break;
+        }
+        if (dirtyItems.current.has(itemId)) continue;
+        const next = data ? buildRow(itemId, data.job ?? undefined, data.summary ?? undefined,
+          { inTrash: data.inTrash }, data.item ?? undefined) : undefined;
+        optimistic.current = optimistic.current.filter((row) => row.id !== itemId);
+        setRows((current) => {
+          const remaining = current.filter((row) => row.id !== itemId);
+          return (next ? [...remaining, next] : remaining)
+            .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+        });
+      }
+    } catch (cause) {
+      if (active.current) {
+        console.error("[library] single-item refresh failed; refreshing snapshot", cause);
+        dirtyItems.current.delete(itemId);
+        // A terminal event must not silently leave a stale row when the item read fails.
+        refresh();
+      }
+    } finally {
+      refreshingItems.current.delete(itemId);
+      if (active.current && !snapshotPending.current && dirtyItems.current.has(itemId)) void refreshItem(itemId);
+    }
+  }, [refresh]);
+
   useEffect(() => {
+    let stopped = false;
+    active.current = true;
+    let unlisten: (() => void) | undefined;
+    // Subscribe before the initial snapshot. Events during its read are buffered,
+    // then re-read individually after the snapshot so old list responses cannot win.
+    subscribeProcessing((update) => {
+      if (stopped) return;
+      dirtyItems.current.add(update.itemId);
+      void refreshItem(update.itemId);
+    }).then((stop) => {
+      if (stopped) stop(); else { unlisten = stop; setSubscribed(true); }
+    }).catch((cause) => {
+      console.error("[library] processing subscription failed", cause);
+      if (!stopped) setSubscribed(true);
+    });
+    window.addEventListener("focus", refresh);
+    return () => { stopped = true; active.current = false; unlisten?.(); window.removeEventListener("focus", refresh); };
+  }, [refresh, refreshItem]);
+
+  useEffect(() => {
+    if (!subscribed) return;
     let cancelled = false;
+    snapshotPending.current = true;
+    const generation = ++snapshotGeneration.current;
     setError(undefined);
     load()
       .then((next) => {
-        if (!cancelled) setRows(next);
+        if (cancelled || generation !== snapshotGeneration.current) return;
+        const known = new Set(next.map((row) => row.id));
+        optimistic.current = optimistic.current.filter((row) => !known.has(row.id));
+        setRows([...optimistic.current, ...next]);
       })
       .catch((cause) => {
         if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (cancelled || generation !== snapshotGeneration.current) return;
+        setLoading(false);
+        snapshotPending.current = false;
+        for (const itemId of dirtyItems.current) void refreshItem(itemId);
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [load, tick]);
-
-  useEffect(() => {
-    let stopped = false;
-    let unlisten: (() => void) | undefined;
-    subscribeProcessing(refresh).then((stop) => {
-      if (stopped) stop(); else { unlisten = stop; refresh(); }
-    }).catch(console.error);
-    window.addEventListener("focus", refresh);
-    return () => { stopped = true; unlisten?.(); window.removeEventListener("focus", refresh); };
-  }, [refresh]);
+    return () => { cancelled = true; };
+  }, [load, tick, subscribed, refreshItem]);
 
   const prependOptimistic = useCallback((next: LibraryRowV1[]) => {
     optimistic.current = [...next, ...optimistic.current];

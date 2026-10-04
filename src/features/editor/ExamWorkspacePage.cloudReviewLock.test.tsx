@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { getRecognitionDecision } from "../../api/recognitionClient";
 import { cancelProcessing } from "../../api/processingClient";
-import { listLibraryItems } from "../../api/workspaceClient";
+import { getLibraryItemProcessing } from "../../api/workspaceClient";
 import { ExamWorkspacePage } from "./ExamWorkspacePage";
 
 const editorRef = vi.hoisted(() => ({ current: null as unknown }));
@@ -28,7 +28,7 @@ vi.mock("../../api/publishClient", () => ({ describePublishOutcome: vi.fn(() => 
 vi.mock("../../api/workspaceClient", () => ({
   getWorkspaceItem: vi.fn(async () => null),
   getPublishPreflight: vi.fn(async () => null),
-  listLibraryItems: vi.fn(async () => []),
+  getLibraryItemProcessing: vi.fn(async () => null),
 }));
 vi.mock("../settings/appSettings", () => ({ readAppSettings: vi.fn(() => ({})), writeAppSettings: vi.fn() }));
 vi.mock("../../app/router", () => ({ go: vi.fn(), libraryPath: vi.fn(() => "/library") }));
@@ -56,7 +56,7 @@ function makeEditor() {
 }
 
 function withProcessing(stage: string, cloudStatus: string) {
-  vi.mocked(listLibraryItems).mockResolvedValue([{ id: ITEM_ID, processing: { stage, localStatus: "succeeded", cloudStatus, actionableCount: 0, eventSeq: 1 } }] as never);
+  vi.mocked(getLibraryItemProcessing).mockResolvedValue({ stage, localStatus: "succeeded", cloudStatus, actionableCount: 0, eventSeq: 1 });
 }
 
 beforeEach(() => {

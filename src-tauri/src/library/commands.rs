@@ -164,13 +164,35 @@ pub(crate) fn list_library_items_core(root: &Path, include_deleted: bool) -> Com
 
     let mut result = Vec::new();
     for row in rows {
-        let processing = crate::processing::queue::get_job(&conn, &row.id)?;
+        let processing = crate::processing::queue::get_job_by_library_item(&conn, &row.id)?;
         let mut value = serde_json::to_value(row).map_err(|error| error.to_string())?;
         value["processing"] =
             serde_json::to_value(processing).map_err(|error| error.to_string())?;
         result.push(value);
     }
     Ok(Value::Array(result))
+}
+
+/// Refresh one library row after a processing event without loading the whole library.
+/// Uses the same Part detection/backfill and serialized fields as the initial list.
+pub(crate) fn get_library_item_summary_core(root: &Path, item_id: &str) -> CommandResult<Value> {
+    let conn = open_library_connection(root)?;
+    let Some(mut row) = get_item(&conn, item_id)? else {
+        return Ok(Value::Null);
+    };
+    if row.part_source.is_none() && row.has_canonical_ds {
+        if let Some((label, source)) = compute_part_for_row(&conn, &row) {
+            row.part_label = label.clone();
+            row.part_source = Some(source.clone());
+            if let Err(error) = persist_part_backfill(&conn, &[(row.id.clone(), label, source)]) {
+                eprintln!("[library] part backfill failed for {item_id}: {error}");
+            }
+        }
+    }
+    let processing = crate::processing::queue::get_job_by_library_item(&conn, item_id)?;
+    let mut value = serde_json::to_value(row).map_err(|error| error.to_string())?;
+    value["processing"] = serde_json::to_value(processing).map_err(|error| error.to_string())?;
+    Ok(value)
 }
 
 /// 手动设置某条目的 Part 标签：来源记为 `manual`，压过一切自动判定。

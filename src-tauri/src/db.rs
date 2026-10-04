@@ -571,6 +571,40 @@ pub(crate) fn list_exams(
     Ok(out)
 }
 
+/// The same summary as the library/trash lists, without loading a revision payload.
+pub(crate) fn get_library_row_summary(
+    conn: &Connection,
+    id: &str,
+) -> CommandResult<(Option<LibraryExamSummary>, bool)> {
+    let v1_trash: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM library_items WHERE id=?1 AND deleted_at IS NOT NULL)",
+        [id], |row| row.get(0),
+    ).map_err(|error| format!("library_row_trash:{error}"))?;
+    let v2_trash = if table_exists(conn, "library_items_v2") {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM library_items_v2 WHERE id=?1 AND deleted_at IS NOT NULL)",
+            [id], |row| row.get::<_, bool>(0),
+        ).map_err(|error| format!("library_row_v2_trash:{error}"))?
+    } else { false };
+    let in_trash = v1_trash || v2_trash;
+    let sql = if v1_trash {
+        "SELECT id, NULL AS exam_id, title, subject, category, difficulty AS frequency, status,
+         CASE WHEN subject='writing' THEN category ELSE NULL END AS task_type,
+         tags_json, NULL AS source_hash, 0 AS issue_errors, 0 AS issue_warnings, created_at, updated_at
+         FROM library_items WHERE id=?1".to_string()
+    } else if v2_trash {
+        "SELECT id, NULL AS exam_id, title, modality AS subject, part_label AS category,
+         NULL AS frequency, status, NULL AS task_type, '[]' AS tags_json,
+         NULL AS source_hash, 0 AS issue_errors, 0 AS issue_warnings, created_at, updated_at
+         FROM library_items_v2 WHERE id=?1".to_string()
+    } else {
+        format!("SELECT {SUMMARY_COLUMNS} FROM ({}) active WHERE id=?1 LIMIT 1", active_summary_source_sql())
+    };
+    let summary = conn.query_row(&sql, [id], row_to_summary).optional()
+        .map_err(|error| format!("library_row_summary:{error}"))?;
+    Ok((summary, in_trash))
+}
+
 pub(crate) fn get_exam(conn: &Connection, id: &str) -> CommandResult<Option<LibraryExamDetail>> {
     let sql = format!(
         "SELECT {SUMMARY_COLUMNS}, payload_json FROM ({}) active WHERE id=?1 LIMIT 1",

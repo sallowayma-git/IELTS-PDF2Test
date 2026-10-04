@@ -434,9 +434,9 @@ fn write_pipeline_authoring_v2_shadow(
     document: Option<&Value>,
     physical_shadow: Option<&Value>,
     modality: crate::schema::ielts_authoring_v2::ExamModalityV2,
-) -> CommandResult<()> {
+) -> CommandResult<Option<Value>> {
     if !authoring_v2_shadow_enabled() {
-        return Ok(());
+        return Ok(None);
     }
     let listening = modality == crate::schema::ielts_authoring_v2::ExamModalityV2::Listening;
     let shadow_path = dir.join(AUTHORING_V2_SHADOW_ARTIFACT_FILE);
@@ -487,7 +487,8 @@ fn write_pipeline_authoring_v2_shadow(
                     write_canonical_json_atomic(&shadow_path, &direct)?;
                     let _ = fs::remove_file(&error_path);
                     let _ = fs::remove_file(dir.join(AUTHORING_V2_SHADOW_COMPARE_FILE));
-                    return Ok(());
+                    // Keep the optional direct-canonical gate's historical independent V1 build.
+                    return Ok(None);
                 }
                 Err(error) => {
                     eprintln!("[direct-canonical] build failed; falling back to V1 chain: {error}");
@@ -505,8 +506,11 @@ fn write_pipeline_authoring_v2_shadow(
         &shadow_path,
         modality,
     ) {
-        Ok(_) => {
+        Ok(authoring_v2) => {
             let _ = fs::remove_file(error_path);
+            // This is the final post-mutation draft, with the caller's modality. Its quality
+            // has already been evaluated and schema-validated by the successful writer.
+            return Ok(authoring_v2.get("quality").cloned());
         }
         Err(error) => {
             let _ = fs::remove_file(&shadow_path);
@@ -522,7 +526,7 @@ fn write_pipeline_authoring_v2_shadow(
             )?;
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 fn legacy_has_reliable_question_groups(split: &Value) -> bool {
@@ -4397,18 +4401,16 @@ where
         } else {
             None
         };
-        let answer_constraint_document =
-            build_authoring_v2_shadow(&job, &ir, &split, doc.as_ref(), physical_shadow.as_ref())
-                .ok()
-                .or_else(|| {
-                    read_json_opt(&dir.join(AUTHORING_V2_SHADOW_ARTIFACT_FILE))
-                        .ok()
-                        .flatten()
-                })
-                .unwrap_or_else(|| ir.clone());
         if let Some(outcome) = worker_outcome.as_ref() {
             match &outcome.vision_answer {
                 Ok((candidate, output)) => {
+                    // Only a successful cloud answer candidate consumes this pre-answer draft.
+                    // The actual scheduler runs localOnly, so avoid an unused full V2 build there.
+                    let answer_constraint_document = build_authoring_v2_shadow(
+                        &job, &ir, &split, doc.as_ref(), physical_shadow.as_ref(),
+                    ).ok().or_else(|| {
+                        read_json_opt(&dir.join(AUTHORING_V2_SHADOW_ARTIFACT_FILE)).ok().flatten()
+                    }).unwrap_or_else(|| ir.clone());
                     let answer_count = candidate
                         .get("answers")
                         .and_then(Value::as_object)
@@ -4614,7 +4616,7 @@ where
             );
         }
         write_json(&dir.join("authoring-ir.json"), &ir)?;
-        write_pipeline_authoring_v2_shadow(
+        let written_quality = write_pipeline_authoring_v2_shadow(
             &dir,
             &job,
             &ir,
@@ -4638,6 +4640,10 @@ where
         let static_runtime_passed = report_passed && runtime_mode == "static-rust";
 
         let v2_quality_gate = if quality_gate_v2_enabled() {
+            if let Some(quality) = written_quality {
+                quality
+            } else {
+            // Direct-canonical and writer failures retain the independent gate build.
             // Rebuild with the row's modality, not the reading default: the gate a
             // listening paper reports must include its per-part audio issues, otherwise
             // a paper with no bound audio would look ready.
@@ -4659,6 +4665,7 @@ where
                 "error": error
             }),
         }
+            }
         } else {
             json!({"state":"disabled","issues":[],"hardFailures":[]})
         };
@@ -5499,6 +5506,68 @@ mod tests {
             updated_at: now,
             current_step: WorkflowStep::DocumentReview,
             issue_counts: IssueCounts::default(),
+        }
+    }
+
+    #[test]
+    fn local_import_builds_final_authoring_once_and_reuses_its_modality_quality() {
+        use crate::schema::ielts_authoring_v2::ExamModalityV2;
+        // This count targets the product's default builder. Optional direct-canonical keeps
+        // its existing separate gate path and is covered by its own tests.
+        if crate::environment::qlg_direct_canonical_enabled() {
+            return;
+        }
+        for (file_type, modality) in [
+            ("pdf", ExamModalityV2::Reading),
+            ("docx", ExamModalityV2::Reading),
+            ("pdf", ExamModalityV2::Listening),
+        ] {
+            let root = std::env::temp_dir().join(format!("pdf2test-single-v2-build-{}", Uuid::new_v4().simple()));
+            ensure_app_dirs(&root).unwrap();
+            let mut job = sample_job();
+            let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(format!("../fixtures/parser/complex-reading.{file_type}"));
+            let (hash, size, _) = crate::util::hash_file_or_path(&fixture).unwrap();
+            let source = &mut job.source_files[0];
+            source.file_type = file_type.to_string();
+            source.original_name = format!("fixture.{file_type}");
+            source.stored_name = source.original_name.clone();
+            source.sha256 = hash;
+            source.size_bytes = size;
+            let dir = job_dir(&root, &job.job_id);
+            ensure_job_dirs(&dir).unwrap();
+            fs::copy(&fixture, dir.join("uploads").join(&source.stored_name)).unwrap();
+            save_job(&root, &job).unwrap();
+            let conn = crate::library::repository::open_library_connection(&root).unwrap();
+            crate::library::repository::upsert_item_shell(&conn, &crate::library::repository::UpsertItemInput {
+                id: &job.job_id, modality: if modality == ExamModalityV2::Listening { "listening" } else { "reading" },
+                title: &job.title, status: "working", source_asset_id: None,
+            }).unwrap();
+            drop(conn);
+
+            let before = crate::ielts_grammar::authoring_build_count_for_test();
+            let report = run_auto_pipeline_core_with_gateway(&root, &job.job_id,
+                Some(AutoPipelineInput { execution_mode: Some("localOnly".into()), ..Default::default() }),
+                |_, _, _, _, _| panic!("localOnly must not call the cloud"),
+            ).unwrap();
+            let count = crate::ielts_grammar::authoring_build_count_for_test() - before;
+            assert_eq!(count, 1, "{file_type} {modality:?}: default local import builds the final V2 document once");
+            let saved = read_json_opt(&dir.join(AUTHORING_V2_SHADOW_ARTIFACT_FILE)).unwrap().unwrap();
+            // Compare the complete persisted representation. serde_json's default float
+            // decoder can round a DOCX bbox width (117.75999999999999 -> 117.76) on load;
+            // subject the in-memory gate to that same wire round trip, without omitting
+            // source anchors or accepting a tolerance in any quality field.
+            let gate_bytes = crate::schema::common::canonical_json_bytes(report.pointer("/quality/v2Gate").unwrap()).unwrap();
+            let persisted_gate: Value = serde_json::from_slice(&gate_bytes).unwrap();
+            assert_eq!(crate::schema::common::canonical_json_bytes(&persisted_gate).unwrap(),
+                crate::schema::common::canonical_json_bytes(saved.get("quality").unwrap()).unwrap(),
+                "gate must use the final saved draft's quality");
+            assert_eq!(saved["modality"], json!(if modality == ExamModalityV2::Listening { "listening" } else { "reading" }));
+            if modality == ExamModalityV2::Listening {
+                assert!(saved.get("passage").is_none() || saved["passage"].is_null());
+                assert_ne!(saved["quality"]["state"], json!("ready"), "missing audio remains gated");
+            }
+            let _ = fs::remove_dir_all(root);
         }
     }
 

@@ -1000,6 +1000,22 @@ async fn list_library_items(include_deleted: Option<bool>, app: AppHandle) -> Co
 
 // ── 识别闭环：统一建议读取与人工决策（reconcile 的薄壳）──────────────
 
+#[tauri::command]
+async fn get_library_item_processing(item_id: String, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        library_commands::get_library_item_processing_core(&root, &item_id)
+    }).await.map_err(|error| format!("library_processing_join:{error}"))?
+}
+
+#[tauri::command]
+async fn get_library_row(item_id: String, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        library_commands::get_library_row_core(&root, &item_id)
+    }).await.map_err(|error| format!("library_row_join:{error}"))?
+}
+
 /// 撤销整轮云端自动修复。
 ///
 /// 走 Rust 批次撤销（`cloud_repair::tools::undo_repair`）：按 `repairRunId` 找到本次
@@ -1800,6 +1816,8 @@ pub fn run() {
             get_workspace_item,
             apply_editor_commands,
             list_library_items,
+            get_library_item_processing,
+            get_library_row,
             get_recognition_decision,
             apply_recognition_decisions,
             undo_cloud_repair,

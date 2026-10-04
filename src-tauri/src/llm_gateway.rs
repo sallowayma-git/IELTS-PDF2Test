@@ -7021,6 +7021,13 @@ mod tests {
         let plan = crate::reconcile::candidate::plan_candidate_chunks(&pages.join("\n"));
         let scopes = crate::candidate_evidence::plan_pages(&pages, &plan)
             .unwrap_or_else(|| panic!("Source page boundaries: {pages:?}; plan: {plan:?}"));
+        assert_eq!(scopes, vec![
+            vec![1, 2, 3, 4, 10],
+            vec![3, 4, 5, 6, 7, 10],
+            vec![6, 7, 8, 9, 10],
+        ]);
+        assert_eq!(scopes.iter().map(Vec::len).sum::<usize>(), 16,
+            "Numbered instructions previously inflated these three attachments to 20 pages");
         let mut replies = Vec::new();
         for (index, chunk) in plan.iter().enumerate() {
             let mut output = crate::llm_suggestions::authoring_candidate_output_contract("reading")

@@ -60,7 +60,7 @@ vi.mock("../../api/publishClient", () => ({
 vi.mock("../../api/workspaceClient", () => ({
   getWorkspaceItem: vi.fn(async () => null),
   getPublishPreflight: vi.fn(async () => null),
-  listLibraryItems: vi.fn(async () => []),
+  getLibraryItemProcessing: vi.fn(async () => null),
 }));
 
 vi.mock("../settings/appSettings", () => ({

@@ -1,4 +1,5 @@
 import { command } from "./tauriCommands";
+import type { ImportJob, LibraryExamSummary } from "../types";
 import type { ProcessingState } from "./processingClient";
 
 // Workspace API client（M1 / 计划 §16.14 拆分的第一片）：
@@ -62,6 +63,22 @@ export interface ApplyEditorCommandsResultV1 {
 
 export async function getWorkspaceItem(itemId: string): Promise<WorkspaceItemV1> {
   return command("get_workspace_item", { itemId });
+}
+
+/** Lightweight single-item reads for progress events; no canonical document payload. */
+export function getLibraryItemProcessing(itemId: string): Promise<ProcessingState | null> {
+  return command("get_library_item_processing", { itemId });
+}
+
+export interface LibraryRowData {
+  job: ImportJob | null;
+  summary: LibraryExamSummary | null;
+  item: LibraryItemSummaryV2 | null;
+  inTrash: boolean;
+}
+
+export function getLibraryRow(itemId: string): Promise<LibraryRowData | null> {
+  return command("get_library_row", { itemId });
 }
 
 /** 发布门禁结果（`check_publish_preflight`）：编辑器把它作为可操作问题直接呈现。 */

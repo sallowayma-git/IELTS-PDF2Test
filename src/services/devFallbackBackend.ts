@@ -2479,6 +2479,17 @@ function phase5Session(store: Store, jobId: string): AuthoringEditorSessionV2 {
   };
 }
 
+function devLibraryItem(store: Store, itemId: string) {
+  const ds = store.authoringV2[itemId];
+  if (!ds) return null;
+  const manualPart = localStorage.getItem(`dev-part:${itemId}`);
+  return { id: itemId, title: ds.exam.title, modality: "reading",
+    status: ds.quality.state === "ready" ? "ready" : "action_required",
+    currentEditVersion: store.authoringV2Revisions[itemId] ?? 0, hasCanonicalDs: true,
+    createdAt: now(), updatedAt: now(), deletedAt: null, sourceAssetId: null,
+    partLabel: manualPart ?? null, partSource: manualPart ? "manual" : null };
+}
+
 export async function devFallbackInvoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
   const store = load();
 
@@ -2491,15 +2502,20 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         item: { itemId, title: session.authoring.exam.title, modality: "reading", status: "ready",
           editVersion: session.revision, hasCanonicalDs: true, updatedAt: now() }, issues: session.authoring.quality.issues } as T;
     }
+    case "get_library_item_processing":
+      // The browser fixture does not run the native processing queue.
+      return null as T;
+    case "get_library_row": {
+      const itemId = String(args.itemId ?? "");
+      const job = store.jobs.find((job) => job.jobId === itemId) ?? null;
+      const writing = store.writingJobs.find((job) => job.jobId === itemId);
+      const summary = job ? readingSummary(job) : writing ? writingSummary(writing) : null;
+      const item = devLibraryItem(store, itemId);
+      if (!job && !summary && !item) return null as T;
+      return { job, summary, item, inTrash: store.trashedIds.includes(itemId) } as T;
+    }
     case "list_library_items": {
-      return Object.entries(store.authoringV2).map(([itemId, ds]) => {
-        const manualPart = localStorage.getItem(`dev-part:${itemId}`);
-        return { id: itemId, title: ds.exam.title,
-          modality: "reading", status: ds.quality.state === "ready" ? "ready" : "action_required",
-          currentEditVersion: store.authoringV2Revisions[itemId] ?? 0, hasCanonicalDs: true,
-          createdAt: now(), updatedAt: now(), deletedAt: null, sourceAssetId: null,
-          partLabel: manualPart ?? null, partSource: manualPart ? "manual" : null };
-      }) as T;
+      return Object.keys(store.authoringV2).map((itemId) => devLibraryItem(store, itemId)) as T;
     }
     case "set_library_item_part": {
       const id = String(args.itemId ?? "");

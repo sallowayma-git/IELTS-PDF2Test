@@ -68,6 +68,16 @@ pub(crate) const SHADOW_ARTIFACT_FILE: &str = "authoring-ir-v2.shadow.json";
 pub(crate) const SHADOW_COMPARE_FILE: &str = "authoring-ir-v2.shadow.compare.json";
 pub(crate) const SHADOW_ERROR_FILE: &str = "authoring-ir-v2.shadow.error.json";
 
+#[cfg(test)]
+std::thread_local! {
+    static AUTHORING_BUILD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn authoring_build_count_for_test() -> usize {
+    AUTHORING_BUILD_COUNT.with(std::cell::Cell::get)
+}
+
 pub(crate) fn write_authoring_v2_shadow(
     job_dir: &Path,
     job: &ImportJob,
@@ -146,6 +156,8 @@ pub(crate) fn build_authoring_v2_shadow_for_modality(
     physical_shadow: Option<&Value>,
     modality: ExamModalityV2,
 ) -> CommandResult<Value> {
+    #[cfg(test)]
+    AUTHORING_BUILD_COUNT.with(|count| count.set(count.get() + 1));
     let listening = modality == ExamModalityV2::Listening;
     let source = job
         .source_files

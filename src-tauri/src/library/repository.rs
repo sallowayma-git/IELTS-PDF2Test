@@ -63,14 +63,13 @@ pub(crate) struct LibraryItemRowV2 {
 }
 
 fn row_from(row: &rusqlite::Row<'_>) -> rusqlite::Result<LibraryItemRowV2> {
-    let canonical: Option<String> = row.get("canonical_ds_json")?;
     Ok(LibraryItemRowV2 {
         id: row.get("id")?,
         modality: row.get("modality")?,
         title: row.get("title")?,
         status: row.get("status")?,
         current_edit_version: row.get("current_edit_version")?,
-        has_canonical_ds: canonical.is_some(),
+        has_canonical_ds: row.get("has_canonical_ds")?,
         source_asset_id: row.get("source_asset_id")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
@@ -81,7 +80,7 @@ fn row_from(row: &rusqlite::Row<'_>) -> rusqlite::Result<LibraryItemRowV2> {
 }
 
 const ITEM_COLUMNS: &str =
-    "id, modality, title, status, current_edit_version, canonical_ds_json, source_asset_id, created_at, updated_at, deleted_at, part_label, part_source";
+    "id, modality, title, status, current_edit_version, canonical_ds_json IS NOT NULL AS has_canonical_ds, source_asset_id, created_at, updated_at, deleted_at, part_label, part_source";
 
 /// 写入 Part 标签与来源（`None` 清空）。返回是否有行被更新。
 pub(crate) fn set_item_part(
@@ -2320,6 +2319,36 @@ mod tests {
 
     fn patch_replace_text(node_id: &str, text: &str) -> Value {
         serde_json::json!({ "op": "replaceText", "nodeId": node_id, "from": 0, "to": 5, "text": text })
+    }
+
+    #[test]
+    fn summary_projection_preserves_null_empty_deleted_and_full_document_reads() {
+        let conn = memory_repo();
+        for id in ["null", "empty", "full", "deleted"] {
+            upsert_item_shell(&conn, &UpsertItemInput {
+                id, modality: "reading", title: id, status: "ready", source_asset_id: None,
+            }).unwrap();
+        }
+        conn.execute("UPDATE library_items_v2 SET canonical_ds_json='' WHERE id='empty'", []).unwrap();
+        let full = sample_ds(&"long title ".repeat(10_000));
+        seed_canonical_ds(&conn, "full", &full.to_string(), "ready").unwrap();
+        seed_canonical_ds(&conn, "deleted", &sample_ds("Deleted").to_string(), "ready").unwrap();
+        conn.execute("UPDATE library_items_v2 SET deleted_at='2026-10-04' WHERE id='deleted'", []).unwrap();
+
+        let active = list_items(&conn, false).unwrap();
+        assert_eq!(active.len(), 3);
+        assert!(!get_item(&conn, "null").unwrap().unwrap().has_canonical_ds);
+        // Existing semantics: an empty string is present even though it is not valid JSON.
+        assert!(get_item(&conn, "empty").unwrap().unwrap().has_canonical_ds);
+        assert!(get_canonical_ds(&conn, "empty").is_err());
+        assert_eq!(get_canonical_ds(&conn, "full").unwrap().unwrap().0, full);
+        let all = list_items(&conn, true).unwrap();
+        assert_eq!(all.len(), 4);
+        let deleted = get_item(&conn, "deleted").unwrap().unwrap();
+        assert!(deleted.has_canonical_ds && deleted.deleted_at.is_some());
+        assert!(get_item(&conn, "missing").unwrap().is_none());
+        let summaries = serde_json::to_value(all).unwrap().to_string();
+        assert!(!summaries.contains("long title"));
     }
 
     #[test]

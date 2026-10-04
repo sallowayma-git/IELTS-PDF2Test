@@ -25,6 +25,10 @@ fn auxiliary_page(text: &str) -> bool {
     if text.trim().is_empty() {
         return true;
     }
+    // This establishes the context for a recognised instruction, not permission
+    // to omit the page: a question page may also contain a headerless answer key.
+    let question_section = section_header(text)
+        && !crate::ielts_grammar::source_coverage::declared_question_blocks(text).is_empty();
     text.lines().any(|line| {
         let lower = line.trim().to_ascii_lowercase();
         if lower.contains("answer key")
@@ -39,6 +43,17 @@ fn auxiliary_page(text: &str) -> bool {
         let rest = line[digits.len()..].trim_start_matches(|c: char| {
             c.is_whitespace() || c == '.' || c == ')' || c == ':' || c == '-'
         });
+        if question_section && !digits.is_empty() {
+            let instruction = rest.split_whitespace().collect::<Vec<_>>().join(" ");
+            if instruction
+                .trim_end_matches('.')
+                .eq_ignore_ascii_case("Choose the correct answer")
+            {
+                // Exclude only this positively recognised instruction as an answer
+                // row. All other short numbered rows on this page remain shareable.
+                return false;
+            }
+        }
         !digits.is_empty() && !rest.is_empty() && rest.split_whitespace().count() <= 5
     })
 }
@@ -300,6 +315,51 @@ mod tests {
             .all(|scope| scope.contains(&5)));
         pages[3] = "Questions 14-26".into();
         assert!(plan_pages(&pages, &plan).is_none());
+    }
+
+    #[test]
+    fn numbered_instructions_are_not_shared_but_mixed_answer_rows_still_are() {
+        let source = include_bytes!("../../fixtures/parser/chunked-reading-evidence.pdf");
+        let mut pages = pdf_extract::extract_text_from_mem_by_pages(source).unwrap();
+        let plan = crate::reconcile::candidate::plan_candidate_chunks(&pages.join("\n"));
+        let scopes = plan_pages(&pages, &plan).unwrap();
+        assert_eq!(scopes.iter().map(Vec::len).sum::<usize>(), 16);
+        assert!(!scopes[2].contains(&1));
+        assert!(!scopes[0].contains(&7));
+
+        for answers in [
+            "1 TRUE\n2 Arctic Ocean",
+            "14 B", // Previous section's answer beside a later section's questions.
+            "Answer key\n14 B",
+            "Answers\n14 B",
+            "Solutions\n14 B",
+        ] {
+            let original = pages[0].clone();
+            pages[0].push_str(&format!("\n{answers}"));
+            assert!(plan_pages(&pages, &plan)
+                .unwrap()
+                .iter()
+                .all(|scope| scope.contains(&1)), "Mixed question/answer page omitted: {answers}");
+            pages[0] = original;
+        }
+        pages[6].push_str("\n14 B");
+        assert!(plan_pages(&pages, &plan)
+            .unwrap()
+            .iter()
+            .all(|scope| scope.contains(&7)));
+
+        // Neither a section label nor a question range alone licenses exclusions.
+        for unknown in [
+            "1 Choose the correct answer.",
+            "READING PASSAGE 1\n1 Choose the correct answer.",
+            "Questions 1-13\n1 Choose the correct answer.",
+            "READING PASSAGE 1\nQuestions 1-13\n1 Choose B",
+        ] {
+            assert!(auxiliary_page(unknown), "Unclassified answer-like row omitted: {unknown}");
+        }
+        assert!(!auxiliary_page(
+            "READING PASSAGE 1\nQuestions 1-13\n1 CHOOSE   the correct answer."
+        ));
     }
     #[test]
     fn ambiguous_sections_and_partial_ranges_keep_full_source() {
