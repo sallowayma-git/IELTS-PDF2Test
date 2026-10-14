@@ -612,6 +612,11 @@ fn pdf_page_text_layers(pdf_path: &std::path::Path) -> Vec<(usize, String)> {
 /// 200 字符约等于一行标题：真正的正文页都远长于此，成本可控。
 const SPARSE_TEXT_PAGE_CHARS: usize = 200;
 
+fn page_needs_visual_evidence(text: &str) -> bool {
+    let text = text.to_ascii_lowercase().split_whitespace().collect::<Vec<_>>().join(" ");
+    ["label the map", "label the plan", "label the diagram", "map below", "plan below", "diagram below", "graph below", "chart below", "map on the"].iter().any(|needle| text.contains(needle))
+}
+
 fn select_image_pages(extraction: &Value, page_texts: &[(usize, String)]) -> Value {
     let text_by_page: std::collections::BTreeMap<usize, usize> = page_texts
         .iter()
@@ -629,7 +634,10 @@ fn select_image_pages(extraction: &Value, page_texts: &[(usize, String)]) -> Val
                         .get(&index)
                         .is_none_or(|chars| *chars < SPARSE_TEXT_PAGE_CHARS)
                 });
-            sparse && crate::parser::image_count_from_extraction(&json!({"pages":[page]})) > 0
+            let visual = page.get("requiresVisual").and_then(Value::as_bool) == Some(true)
+                || index.and_then(|i| usize::try_from(i).ok()).and_then(|i| page_texts.iter().find(|(n,_)| *n==i))
+                    .is_some_and(|(_,text)| page_needs_visual_evidence(text));
+            (sparse || visual) && crate::parser::image_count_from_extraction(&json!({"pages":[page]})) > 0
         });
     }
     next
@@ -711,7 +719,7 @@ fn make_direct_input(
         // 每页文字层。
         "pageTexts": page_texts,
         // 扫描页渲染图（`pages[].images[]`，由网关注入 data URL）。
-        "pages": image_pages.get("pages").cloned().unwrap_or_else(|| json!([])),
+        "pages": if repair.is_some() { json!([]) } else { image_pages.get("pages").cloned().unwrap_or_else(|| json!([])) },
         "extractionWarnings": image_pages.get("warnings").cloned().unwrap_or_else(|| json!([])),
         "outputContract": {
             "schema": "IeltsAuthoringIRV2-direct",
@@ -2016,6 +2024,14 @@ pub(crate) fn write_direct_result(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn direct_images_only_cover_scanned_sparse_or_explicit_visual_pages() {
+        let extraction=json!({"pages":(1..=4).map(|n|json!({"pageIndex":n,"images":[{"path":"page.png"}]})).collect::<Vec<_>>()});
+        let text=vec![(1,"ordinary readable text ".repeat(30)),(3,"Answer Key".into()),(4,format!("Label the map below. {}","question text ".repeat(30)))];
+        let selected=select_image_pages(&extraction,&text);
+        assert_eq!(selected["pages"].as_array().unwrap().iter().map(|p|p["pageIndex"].as_u64().unwrap()).collect::<Vec<_>>(),vec![2,3,4]);
+    }
 
     fn identity() -> DirectIdentity {
         DirectIdentity {

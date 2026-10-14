@@ -34,6 +34,8 @@ base64 = "0.22"
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native-sync-persistent", "crypto-rust"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 symphonia = { version = "0.6.0", default-features = false, features = ["aac", "isomp4", "mp3", "pcm", "wav"] }
+jpeg-encoder = "0.6"
+jpeg-decoder = { version = "0.3", default-features = false }
 
 [profile.release]
 # Aggressive size optimization for the shipped binary. LTO + single

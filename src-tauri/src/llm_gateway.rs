@@ -1510,6 +1510,59 @@ fn data_url_for_image(root: &Path, job_id: &str, image: &Value) -> CommandResult
     ))
 }
 
+/// Shared direct-exam transport encoding. Keep the original asset untouched;
+/// only the model attachment is grayscale JPEG (1400px long edge, quality 60).
+fn compact_direct_jpeg(bytes: &[u8]) -> CommandResult<Vec<u8>> {
+    let (width, height, channels, pixels) = if bytes.starts_with(b"\x89PNG") {
+        let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+        decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+        let mut reader = decoder.read_info().map_err(|e| format!("direct_image_decode:{e}"))?;
+        if u64::from(reader.info().width) * u64::from(reader.info().height) > 64_000_000 { return Err("direct_image_dimensions_too_large".into()); }
+        let mut pixels = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut pixels).map_err(|e| format!("direct_image_decode:{e}"))?;
+        pixels.truncate(info.buffer_size());
+        let channels = match info.color_type { png::ColorType::Grayscale => 1, png::ColorType::GrayscaleAlpha => 2, png::ColorType::Rgb => 3, png::ColorType::Rgba => 4, _ => return Err("direct_image_color_unsupported".into()) };
+        (info.width as usize, info.height as usize, channels, pixels)
+    } else {
+        let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(bytes));
+        decoder.read_info().map_err(|e| format!("direct_image_decode:{e}"))?;
+        let info = decoder.info().ok_or("direct_image_info_missing")?;
+        if u64::from(info.width) * u64::from(info.height) > 64_000_000 { return Err("direct_image_dimensions_too_large".into()); }
+        let channels = match info.pixel_format { jpeg_decoder::PixelFormat::L8 => 1, jpeg_decoder::PixelFormat::RGB24 => 3, _ => return Err("direct_image_color_unsupported".into()) };
+        let pixels = decoder.decode().map_err(|e| format!("direct_image_decode:{e}"))?;
+        (info.width as usize, info.height as usize, channels, pixels)
+    };
+    if width == 0 || height == 0 { return Err("direct_image_dimensions_invalid".into()); }
+    let gray = pixels.chunks_exact(channels).map(|pixel| {
+        let value = if channels < 3 { u32::from(pixel[0]) } else { (u32::from(pixel[0])*299 + u32::from(pixel[1])*587 + u32::from(pixel[2])*114)/1000 };
+        let alpha = if channels == 2 || channels == 4 { u32::from(pixel[channels-1]) } else { 255 };
+        ((value*alpha + 255*(255-alpha))/255) as u8
+    }).collect::<Vec<_>>();
+    let longest = width.max(height);
+    let scale = 1400.0 / longest.max(1400) as f64;
+    let out_width = (width as f64*scale).round().max(1.0) as usize;
+    let out_height = (height as f64*scale).round().max(1.0) as usize;
+    let mut resized = Vec::with_capacity(out_width*out_height);
+    for y in 0..out_height { for x in 0..out_width {
+        let left=x*width/out_width; let right=((x+1)*width/out_width).max(left+1);
+        let top=y*height/out_height; let bottom=((y+1)*height/out_height).max(top+1);
+        let mut sum=0u64;
+        for sy in top..bottom { for sx in left..right { sum += u64::from(gray[sy*width+sx]); } }
+        resized.push((sum/((right-left)*(bottom-top)) as u64) as u8);
+    }}
+    let mut encoded=Vec::new();
+    jpeg_encoder::Encoder::new(&mut encoded,60).encode(&resized,out_width as u16,out_height as u16,jpeg_encoder::ColorType::Luma)
+        .map_err(|e| format!("direct_image_encode:{e}"))?;
+    Ok(encoded)
+}
+
+fn direct_image_data_url(root: &Path, job_id: &str, image: &Value) -> CommandResult<String> {
+    let raw_path=image.get("path").and_then(Value::as_str).ok_or("vision_image_path_missing")?;
+    let (_, bytes)=read_llm_file(root,job_id,raw_path,MAX_LLM_IMAGE_BYTES,"image")?;
+    let encoded=compact_direct_jpeg(&bytes)?;
+    Ok(format!("data:image/jpeg;base64,{}",general_purpose::STANDARD.encode(encoded)))
+}
+
 /// PDF 渲染出的黑白页常以 RGB PNG 存储，直接附上会把每张页图膨胀到数百 KB。
 /// 包模式的文本层已经保留逐行内容；对近灰度 PNG 将像素转成灰度、把整页最长边缩到
 /// 600 像素以内，再用较强 DEFLATE 压缩。页面结构图仍随首包提供，细节不足时模型可以
@@ -1748,7 +1801,9 @@ fn append_pdf_images_to_content(
             content.push(
                 json!({"type": "text", "text": format!("Page {}, image {}", page_index, image_index + 1)}),
             );
-            let image_data_url = data_url_for_image(root, job_id, image)?;
+            let image_data_url = if input.get("mode").and_then(Value::as_str) == Some(crate::cloud_direct::DIRECT_COMMAND_NAME) {
+                direct_image_data_url(root, job_id, image)?
+            } else { data_url_for_image(root, job_id, image)? };
             inline_bytes = inline_bytes.saturating_add(image_data_url.len() as u64);
             if inline_bytes > MAX_LLM_INLINE_BYTES {
                 return Err("vision_inline_payload_too_large".to_string());
@@ -2468,14 +2523,13 @@ fn run_openai_compatible_generate_exam_direct_llm(
     if text_pages == 0 && image_count == 0 {
         return Err("exam_direct_no_evidence".to_string());
     }
-    let mut body = json!({
-        "model": model,
-        "temperature": llm_temperature(profile),
-        "messages": [
-            {"role": "system", "content": crate::cloud_direct::direct_system_prompt()},
-            {"role": "user", "content": content}
-        ]
-    });
+    let mut messages = vec![
+        json!({"role":"system", "content":crate::cloud_direct::direct_system_prompt()}),
+        json!({"role":"user", "content":content})
+    ];
+    let tail = exam_direct_tail(input);
+    if !tail.is_empty() { messages.push(json!({"role":"user", "content":tail})); }
+    let mut body = json!({"model":model,"temperature":llm_temperature(profile),"messages":messages});
     if llm_force_json(profile) {
         body["response_format"] = json!({"type": "json_object"});
     }
@@ -2496,7 +2550,7 @@ fn exam_direct_prompt(input: &Value) -> String {
         .get("example")
         .cloned()
         .unwrap_or(Value::Null);
-    let example_text = serde_json::to_string_pretty(&example).unwrap_or_default();
+    let example_text = serde_json::to_string(&example).unwrap_or_default();
     // 补充范例（TFNG/单选、表格/流程图填空）：每份独立成段，覆盖主范例没有的
     // 题型与宿主差异（prompt 宿主 vs table_cell/flow_step 宿主）。
     let extra_examples = input
@@ -2509,14 +2563,13 @@ fn exam_direct_prompt(input: &Value) -> String {
                 .filter_map(|entry| {
                     let name = entry.get("name").and_then(Value::as_str)?;
                     let document = entry.get("document")?;
-                    let text = serde_json::to_string_pretty(document).ok()?;
+                    let text = serde_json::to_string(document).ok()?;
                     Some(format!("ADDITIONAL COMPLETE EXAMPLE — {name}:\n{text}"))
                 })
                 .collect::<Vec<_>>()
                 .join("\n\n")
         })
         .unwrap_or_default();
-    let repair = input.get("repair");
     let mut prompt = format!(
         "Convert the ONE IELTS Reading test PDF below into one complete exam JSON object.\n\
 The original file is supplied per page: pages with a text layer arrive as \
@@ -2531,6 +2584,12 @@ ONE COMPLETE STANDARD EXAMPLE (guidance only, do not copy its content):\n\
 Return the single JSON object described in the system prompt (meta, passage, taskGroups, \
 answerSlots, answerKey, warnings). JSON only, no Markdown, no code fences."
     );
+    prompt
+}
+
+fn exam_direct_tail(input: &Value) -> String {
+    let mut prompt = String::new();
+    let repair = input.get("repair");
     if let Some(chunk_note) = input.get("chunkNote").and_then(Value::as_str) {
         prompt.push_str(&format!("\n\n=== PAGE RANGE NOTE ===\n{chunk_note}"));
     }
@@ -2538,11 +2597,11 @@ answerSlots, answerKey, warnings). JSON only, no Markdown, no code fences."
         prompt.push_str(&format!("\n\n=== FORMAT NOTE ===\n{json_note}"));
     }
     if let Some(repair) = repair {
-        let issues = serde_json::to_string_pretty(
+        let issues = serde_json::to_string(
             repair.get("compilerIssues").unwrap_or(&Value::Null),
         )
         .unwrap_or_default();
-        let current = serde_json::to_string_pretty(
+        let current = serde_json::to_string(
             repair.get("currentOutput").unwrap_or(&Value::Null),
         )
         .unwrap_or_default();
@@ -5186,6 +5245,33 @@ mod tests {
             writer.finish().unwrap();
         }
         encoded
+    }
+
+    #[test]
+    fn direct_page_images_are_small_grayscale_jpeg_with_readable_dimensions() {
+        let (width,height)=(1979u32,2800u32);
+        let mut pixels=vec![255; width as usize*height as usize*3];
+        for y in (150..2600).step_by(45) { for x in 150..1700 { if x%70<45 { let at=(y as usize*width as usize+x as usize)*3; pixels[at..at+3].fill(0); } } }
+        let png=encode_test_rgb_png(width,height,&pixels);
+        let jpeg=compact_direct_jpeg(&png).unwrap();
+        assert!(jpeg.len()<100_000,"JPEG bytes={}",jpeg.len());
+        let mut decoder=jpeg_decoder::Decoder::new(std::io::Cursor::new(&jpeg));
+        decoder.decode().unwrap(); let info=decoder.info().unwrap();
+        assert_eq!(info.height,1400);
+        assert_eq!(info.pixel_format,jpeg_decoder::PixelFormat::L8);
+        assert!(info.width>900 && info.width<1100);
+        assert!(compact_direct_jpeg(&jpeg).is_ok(),"JPEG answer attachments use the same encoder");
+    }
+
+    #[test]
+    fn direct_examples_are_compact_and_repair_data_does_not_change_prefix() {
+        let mut input=json!({"example":{"a":[1,2,3]},"examples":[{"name":"first","document":{}},{"name":"second","document":{"b":[4,5]}}]});
+        let prefix=exam_direct_prompt(&input);
+        assert!(prefix.contains(r#"{"a":[1,2,3]}"#));
+        input["repair"]=json!({"compilerIssues":[{"code":"broken"}],"currentOutput":{"key":"fixed"}});
+        assert_eq!(exam_direct_prompt(&input),prefix);
+        assert!(exam_direct_tail(&input).contains("COMPILER ISSUES"));
+        assert!(!prefix.contains("CURRENT OUTPUT"));
     }
 
     #[test]
