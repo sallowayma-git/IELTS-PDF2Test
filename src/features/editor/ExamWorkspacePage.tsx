@@ -282,7 +282,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
     return issuesOpen && tasks.length ? <aside className="workspace-group-tasks" aria-label="这组题需要处理的内容"><ul>{tasks.map((task) => <li key={task.taskId} data-task-id={task.taskId}>
       <span>{task.title}</span>{task.detail ? <small>{task.detail}</small> : null}
       {task.comparison ? <div className="workspace-task-comparison"><p>当前稿：<del>{task.comparison.current || "（空）"}</del></p><p>{task.comparison.cloudLabel}：<ins>{task.comparison.cloud || "（空）"}</ins></p></div> : null}
-      <div className="button-row">{confirmButton(task)}{task.actions.map((action) => <button key={action.id} className="ghost small" disabled={Boolean(busyAction) || cloudReviewing} onClick={(event) => { event.stopPropagation(); runTaskAction(task, action); }}>{action.label}</button>)}
+      <div className="button-row">{confirmButton(task)}{task.actions.map((action) => <button key={action.id} className="ghost small" disabled={Boolean(busyAction)} onClick={(event) => { event.stopPropagation(); runTaskAction(task, action); }}>{action.label}</button>)}
       {!task.actions.some((action) => action.id === "view-source") ? <button className="ghost small" disabled={!sourceActionsEnabled} onClick={(event) => { event.stopPropagation(); setSourceOpen(true); }}>对照原文件</button> : null}</div>
     </li>)}</ul></aside> : null;
   };
@@ -550,11 +550,11 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
           <div className="workspace-title">
             <EditableTitle
               title={editor.title ?? title}
-              editing={titleEditing}
+              editing={titleEditing && !cloudReviewing}
               onBegin={() => { if (!cloudReviewing) setTitleEditing(true); }}
               onCommit={(next) => {
                 setTitleEditing(false);
-                editor.setTitle(next);
+                if (!cloudReviewing) editor.setTitle(next);
               }}
               onCancel={() => setTitleEditing(false)}
             />
@@ -713,7 +713,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
 
       {cloudReviewing ? (
         <div className="workspace-notice" role="status" data-testid="workspace-cloud-review-banner">
-          <span>云端正在校核，暂不进行修改{processingNote ? `（${processingNote}）` : ""}。</span>
+          <span>云端正在校核，可滚动查看，暂不能编辑{processingNote ? `（${processingNote}）` : ""}。</span>
           <button
             className="ghost small"
             data-testid="workspace-cloud-review-stop"
@@ -963,8 +963,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
           </div>
         ) : null}
         {editor.draft && mode === "edit" ? (
-          // 云端校核期间画布只读：ExamCanvas 内部对根节点加 inert 挡住一切交互，
-          // 同时这里不下发编辑回调（作者工具随 onStructureAction 缺席而隐藏）。双重兜底。
+          // 云端校核期间仅禁用编辑：保留滚动、题号导航、选择及原文件查看。
           <ExamCanvas
             authoring={editor.draft}
             mode="author"
@@ -1035,13 +1034,13 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             ) : null}
             {preview?.ok ? (
               // key 绑草稿版本令牌：草稿一变，预览的作答状态整体重置。
-              <ExamCanvas key={`student-preview-${previewToken}`} authoring={editor.draft} mode="student" />
+              <ExamCanvas key={`student-preview-${previewToken}`} authoring={editor.draft} mode="student" locked={cloudReviewing} />
             ) : null}
           </div>
         ) : null}
       </div>
 
-      {editor.draft && mode === "edit" ? <SelectionInspector draft={editor.draft} selectedId={selectedId} onPatch={editor.applyPatch} onClose={() => setSelectedId(undefined)} /> : null}
+      {editor.draft && mode === "edit" ? <SelectionInspector draft={editor.draft} selectedId={selectedId} locked={cloudReviewing} onPatch={editor.applyPatch} onClose={() => setSelectedId(undefined)} /> : null}
 
       {sourceOpen ? (
         <div className="drawer-scrim" role="presentation" onClick={() => setSourceOpen(false)}>

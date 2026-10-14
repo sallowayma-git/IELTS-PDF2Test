@@ -29,7 +29,7 @@ export class EditorCommandConflictError extends Error {
   }
 }
 
-function findTextNode(document: IeltsAuthoringIRV2, nodeId: string): { text: string } | undefined {
+export function findEditorTextNode(document: IeltsAuthoringIRV2, nodeId: string): { text: string } | undefined {
   let found: { text: string } | undefined;
   const walk = (value: unknown): void => {
     if (found || !value || typeof value !== "object") return;
@@ -68,12 +68,12 @@ export function compileEditorCommand(command: EditorCommandV1, document: IeltsAu
       hotspot: { hotspotId: hotspotSubmitValueForSlot(document, command.slotId), slotId: command.slotId, normalizedRect: command.rect }
     };
   }
-  const node = findTextNode(document, command.nodeId);
+  const node = findEditorTextNode(document, command.nodeId);
   const actual = node?.text ?? "";
   if (actual !== command.expectedText) {
     throw new EditorCommandConflictError(command.nodeId, command.expectedText, actual);
   }
-  return { op: "replaceText", nodeId: command.nodeId, from: 0, to: codePointLength(actual), text: command.text };
+  return { op: "replaceText", nodeId: command.nodeId, from: 0, to: codePointLength(actual), text: command.text, expectedText: actual };
 }
 
 export function compileEditorCommands(commands: EditorCommandV1[], document: IeltsAuthoringIRV2): AuthoringPatchV2[] {

@@ -431,6 +431,7 @@
 .inline-text-editor:focus { outline: 2px solid var(--paper-focus, #1f6387); outline-offset: 1px; }
 
 .exam-canvas-v2 .v2-author-editable { border-radius: 0; cursor: text; }
+.exam-canvas-v2 .v2-empty-text-placeholder { color: var(--text-muted, #687883); font-style: italic; }
 /* 可编辑文字 hover：淡蓝底（基准强调色的 8%） */
 .exam-canvas-v2 .v2-author-editable:hover { background: rgba(65, 143, 198, 0.08); }
 .exam-canvas-v2 .v2-author-editable:focus { outline: 2px solid var(--paper-focus, #1f6387); outline-offset: 1px; }

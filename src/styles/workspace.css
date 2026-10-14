@@ -693,6 +693,7 @@ body.workspace-resizing * {
   padding: 8px 10px;
   min-width: 0;
 }
+.workspace-selection .workspace-selection-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
 
 /* ================ Load error ================ */
 /* 载入失败是一块居中的纸面框（基准 #results 同款线框），不再是无边界的裸文本。 */

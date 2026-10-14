@@ -237,4 +237,15 @@ describe("编辑模式选项编排", () => {
     expect(screen.queryByLabelText(/删除选项|添加选项/)).toBeNull();
     expect(container.querySelector("[data-option-row], [data-option-list]")).toBeNull();
   });
+
+  it("拖动开始后云端校核启动：松手不会提交结构编辑", () => {
+    const onStructureAction = vi.fn();
+    const { container, rerender } = render(<ExamCanvas authoring={makeDraft()} mode="author" onStructureAction={onStructureAction} />);
+    layOutRows(container);
+    fireEvent.pointerDown(screen.getByLabelText(/拖动调整选项 C/), { button: 0, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientY: 5, pointerId: 1 });
+    rerender(<ExamCanvas authoring={makeDraft()} mode="author" locked onStructureAction={onStructureAction} />);
+    fireEvent.pointerUp(window, { clientY: 5, pointerId: 1 });
+    expect(onStructureAction).not.toHaveBeenCalled();
+  });
 });

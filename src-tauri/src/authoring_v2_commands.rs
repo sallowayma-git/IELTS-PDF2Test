@@ -1558,7 +1558,12 @@ fn replace_text(document: &mut Value, patch: &Map<String, Value>) -> CommandResu
     let node_id = required_string(patch, "nodeId")?;
     let from = required_u64(patch, "from")? as usize;
     let to = required_u64(patch, "to")? as usize;
-    let text = required_string(patch, "text")?;
+    // Text edits may intentionally clear a paragraph. IDs must be non-empty,
+    // but the replacement text is allowed to be empty or whitespace.
+    let text = patch
+        .get("text")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "AUTHORING_PATCH_FIELD_REQUIRED:text".to_string())?;
     if text.chars().count() > 100_000 {
         return Err("AUTHORING_PATCH_TEXT_TOO_LARGE:max=100000".to_string());
     }
@@ -1571,6 +1576,13 @@ fn replace_text(document: &mut Value, patch: &Map<String, Value>) -> CommandResu
         .get("text")
         .and_then(Value::as_str)
         .ok_or_else(|| format!("AUTHORING_PATCH_TEXT_MISSING:{node_id}"))?;
+    if let Some(expected) = patch.get("expectedText") {
+        let expected = expected.as_str()
+            .ok_or_else(|| "AUTHORING_PATCH_FIELD_REQUIRED:expectedText".to_string())?;
+        if expected != original {
+            return Err(format!("AUTHORING_PATCH_TEXT_CONFLICT:{node_id}"));
+        }
+    }
     let chars = original.chars().collect::<Vec<_>>();
     if from > to || to > chars.len() {
         return Err(format!(
@@ -3675,6 +3687,16 @@ mod tests {
         .unwrap();
         assert_eq!(document["children"][0]["text"], "Choose THREE letters.");
         assert_eq!(document["children"][0]["provenanceStatus"], "user_edited");
+    }
+
+    #[test]
+    fn replace_text_rejects_stale_expected_text_without_changing_the_node() {
+        let mut document = text_document();
+        let before = document.clone();
+        let error = apply_patch(&mut document, &json!({"op":"replaceText", "nodeId":"text-1",
+            "from":0, "to":1, "expectedText":"older passage", "text":"new passage"})).unwrap_err();
+        assert_eq!(error, "AUTHORING_PATCH_TEXT_CONFLICT:text-1");
+        assert_eq!(document, before);
     }
 
     #[test]

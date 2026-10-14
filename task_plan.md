@@ -1,3 +1,26 @@
+# Active follow-up: cloud review remains browsable (2026-10-14)
+
+- [complete] Replaced whole-canvas inert with edit-only read-only controls.
+- [complete] Disabled text/answers/structure/audio/inspector writes; preserved selection, navigation, scroll and view actions.
+- [complete] 557 frontend tests, TypeScript, production frontend build and embedded Tauri debug build passed. Browser controlled-IPC workflow verified; native UI gap retained.
+
+# Active fix: 2026-10-14 editing after cloud review
+
+## Goal
+Restore editing and persistence after cloud review; validate UI and real command handlers separately.
+
+- [complete] Reproduced late cloud refresh rollback and loss of edits arriving during conflict recovery.
+- [complete] Fixed whole-node text rebase, empty text saving, empty-node editor access, async editor races and snapshot reads.
+- [complete] Frontend 552 pass; Rust 1450 pass / 16 ignored; browser edit/save/reload verified with dev adapter; embedded Tauri debug build passed. Native UI verification remains unavailable (Sky service), documented explicitly.
+
+## Current evidence
+Native computer-use service fails at startup. Existing native E2E harness targets Windows WebView2, this host is macOS. User error detail requested asynchronously.
+
+## Errors
+Initial shell globs matched no files; replaced with targeted rg. Native UI inventory: Sky Computer Use service startup request failed.
+
+## Historical tracking
+
 # Active Implementation: 2026-09-30 云端主链收敛
 
 ## Goal
