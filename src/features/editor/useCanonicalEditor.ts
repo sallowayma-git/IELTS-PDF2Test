@@ -123,6 +123,7 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
   const [deferredRemoteRefresh, setDeferredRemoteRefresh] = useState<DeferredRemoteRefresh>();
   const deferredRemoteRef = useRef<DeferredRemoteRefresh | undefined>(undefined);
   const draftRef = useRef<IeltsAuthoringIRV2 | undefined>(undefined);
+  const loadedItemRef = useRef<string | undefined>(undefined);
   const titleRef = useRef<string | undefined>(undefined);
   const versionRef = useRef(0);
   // 已保存的权威稿版本号。用 state 暴露给界面（预览要显示当前版本），
@@ -210,17 +211,20 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
     rebase: ConflictRebaseResult,
     localTitle: string | undefined
   ) => {
-    draftRef.current = rebase.rebased;
-    setDraft(rebase.rebased);
+    const rebasedTitle = localTitle ?? latestTitle;
+    const rebased = rebasedTitle === undefined ? rebase.rebased
+      : { ...rebase.rebased, exam: { ...rebase.rebased.exam, title: rebasedTitle } };
+    draftRef.current = rebased;
+    setDraft(rebased);
     setVersion(latestVersion);
     // 这次读取已经拿到最新版本，推迟记录不再有意义。
     clearDeferredRemoteRefresh();
     batchRef.current = undefined;
     pendingRef.current = rebase.applied;
-    pendingTitleRef.current = localTitle && localTitle !== latestTitle ? localTitle : undefined;
-    if (latestTitle !== undefined) {
-      titleRef.current = latestTitle;
-      setTitleState(latestTitle);
+    pendingTitleRef.current = localTitle !== undefined && localTitle !== latestTitle ? localTitle : undefined;
+    if (rebasedTitle !== undefined) {
+      titleRef.current = rebasedTitle;
+      setTitleState(rebasedTitle);
     }
     // 撤销栈建立在旧基线上，重放后不再可靠。
     undoStack.current = [];
@@ -281,11 +285,10 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
         // 只有冲突里有人工写入、或重放本身失败时，才落到下面的按钮。
         if (conflict && !autoRebaseTried.current) {
           autoRebaseTried.current = true;
-          const localTitle = batchRef.current?.title ?? pendingTitleRef.current;
           let latestTitle: string | undefined;
           const outcome = await tryAutoRebase({
             localBase: batchRef.current?.baseVersion ?? versionRef.current,
-            outstanding: [...(batchRef.current?.commands ?? []), ...pendingRef.current],
+            outstanding: () => [...(batchRef.current?.commands ?? []), ...pendingRef.current],
             fetchLatest: async () => {
               const workspace = await getWorkspaceItem(itemId);
               latestTitle = workspace.item.title;
@@ -297,7 +300,8 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
             }
           });
           if (outcome.kind === "rebased") {
-            adoptRebase(outcome.latest.ds, outcome.latest.editVersion, latestTitle, outcome.rebase, localTitle);
+            adoptRebase(outcome.latest.ds, outcome.latest.editVersion, latestTitle, outcome.rebase,
+              pendingTitleRef.current ?? batchRef.current?.title);
             return run();
           }
         }
@@ -370,6 +374,15 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
     setLoadError(undefined);
     getWorkspaceItem(itemId).then((workspace) => {
       if (cancelled) return;
+      if (loadedItemRef.current === itemId && draftRef.current) {
+        // A cloud refresh can finish after the user's next save or edit. Never roll
+        // back a committed version, or replace a draft with changes still queued.
+        if (workspace.editVersion < versionRef.current) return;
+        if (countUnsaved() > 0) {
+          noteRemoteVersion(workspace.editVersion);
+          return;
+        }
+      }
       // 即使权威稿尚未 seed（识别进行中，ds=null），也先采纳后端返回的版本号：否则编辑器
       // 停在初始 base 0，标题这类无需 draft 的编辑会以过期基线 0 发出保存，撞上已被建壳/
       // seed 推到的 current，永久变红——这正是「识别进行中编辑变红」的根因。
@@ -400,6 +413,7 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
         }
       } catch { /* Ignore an unreadable local recovery record. */ }
       draftRef.current = loaded;
+      loadedItemRef.current = itemId;
       titleRef.current = loadedTitle;
       setDraft(loaded);
       setTitleState(loadedTitle);
@@ -413,7 +427,7 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
       if (!cancelled) setLoadError(error instanceof Error ? error.message : String(error));
     }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [itemId, reloadTick, recoveryKey, checkpoint, persist]);
+  }, [itemId, reloadTick, recoveryKey, checkpoint, persist, countUnsaved, noteRemoteVersion]);
 
   const schedule = useCallback(() => {
     checkpoint();
@@ -546,10 +560,10 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
     if (conflictRecovering) return;
     setConflictRecovering(true);
     try {
-      const outstanding = outstandingCommands();
-      const localTitle = batchRef.current?.title ?? pendingTitleRef.current;
       const workspace = await getWorkspaceItem(itemId);
       if (!workspace.ds) throw new Error("ITEM_DS_NOT_SEEDED");
+      const outstanding = outstandingCommands();
+      const localTitle = pendingTitleRef.current ?? batchRef.current?.title;
       const base = workspace.ds as unknown as IeltsAuthoringIRV2;
       // 逐条重放：某条补丁因原文已改动而无法应用时停下，已应用的部分照常保存，
       // 未应用的部分明确告知用户——绝不静默丢弃本地修改。

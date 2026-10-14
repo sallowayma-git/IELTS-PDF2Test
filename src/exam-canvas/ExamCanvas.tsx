@@ -39,7 +39,7 @@ export interface ExamCanvasProps {
   onTextCommand?: (command: { nodeId: string; expectedText: string; text: string }) => void;
   onAnswerChange?: (slotId: string, value: AnswerValueV2) => void;
   onStructureAction?: (action: ExamCanvasStructureAction) => void;
-  /** 只读锁（云端校核进行中）：对画布根节点加 inert，挡住文本/答案/结构/拖动等一切交互。 */
+  /** 云端校核期间只禁用编辑，保留滚动、选择、导航及音频播放。 */
   locked?: boolean;
   /** Embedded recognition alternatives show only questions, without global navigation IDs. */
   comparisonPreview?: boolean;
@@ -261,6 +261,7 @@ function EditableTextNode({
   const [expectedText, setExpectedText] = useState(node.text);
   const author = canvas.mode === "author";
   const editable = Boolean(canvas.onTextCommand ?? canvas.onTextChange);
+  useEffect(() => { if (canvas.locked) setEditing(false); }, [canvas.locked]);
   const beginEditing = () => {
     setExpectedText(node.text);
     setEditing(true);
@@ -278,12 +279,12 @@ function EditableTextNode({
     marks.includes("bold") ? "is-bold" : "",
     marks.includes("italic") ? "is-italic" : "",
     marks.includes("underline") ? "is-underlined" : "",
-    author ? "v2-author-editable" : "",
+    author && editable ? "v2-author-editable" : "",
     selected ? "is-selected" : "",
     editing ? "is-editing" : ""
   ].filter(Boolean).join(" ");
 
-  if (author && editing) {
+  if (author && editing && editable) {
     return (
       <span key={node.id} className={className} data-editor-id={node.id}>
         <InlineTextEditor
@@ -304,7 +305,7 @@ function EditableTextNode({
       // 作者模式下文本要能被键盘聚焦并进入编辑，否则原位编辑对键盘用户不可达。
       tabIndex={author ? 0 : undefined}
       role={author ? "button" : undefined}
-      aria-label={author ? `编辑文字：${node.text.slice(0, 40)}` : undefined}
+      aria-label={author ? `${editable ? "编辑文字" : "查看文字"}：${node.text.trim() ? node.text.slice(0, 40) : "（空白）"}` : undefined}
       onClick={(event) => {
         if (!author) return;
         event.stopPropagation();
@@ -320,7 +321,9 @@ function EditableTextNode({
         }
       }}
     >
-      {node.text}
+      {author && editable && !node.text.trim()
+        ? <span className="v2-empty-text-placeholder">点击输入文字</span>
+        : node.text}
     </span>
   );
 }
@@ -484,14 +487,14 @@ function ContentNodes({ nodes, canvas }: { nodes: ContentNodeV2[] | undefined; c
           : control;
         if (slot.interaction === "text") {
           // 学生预览也要能真实输入（与学生 AnswerSlotNode 行为一致），不再是无回显的 uncontrolled 输入框。
-          return withTools(<label key={node.id} data-editor-id={node.id} className={`v2-answer-slot v2-answer-slot-text${authorClass}${selectedClass}`} onClick={select}><span className="v2-slot-label">{slot.displayLabel}</span><input type="text" name={slot.slotId} value={values[0] ?? ""} placeholder={node.placeholder || "Answer"} onChange={(event) => canvasState.setText(slot.slotId, event.target.value)} /></label>);
+          return withTools(<label key={node.id} data-editor-id={node.id} className={`v2-answer-slot v2-answer-slot-text${authorClass}${selectedClass}`} onClick={select}><span className="v2-slot-label">{slot.displayLabel}</span><input type="text" name={slot.slotId} readOnly={canvas.locked} value={values[0] ?? ""} placeholder={node.placeholder || "Answer"} onChange={(event) => canvasState.setText(slot.slotId, event.target.value)} /></label>);
         }
         if (slot.interaction === "select") {
           const binding = slotPresentationFor(canvas.authoring, slot.slotId);
           if (!binding) return null;
           return withTools(<label key={node.id} data-editor-id={node.id} className={`v2-answer-slot v2-answer-slot-select${authorClass}${selectedClass}`} onClick={select}>
             <span className="v2-slot-label">{slot.displayLabel}</span>
-            <select aria-label={`Answer ${slot.displayLabel}`} value={values[0] ?? ""} onChange={(event) => canvasState.setOption(slot.slotId, event.target.value, true, false)}>
+            <select disabled={canvas.locked} aria-label={`Answer ${slot.displayLabel}`} value={values[0] ?? ""} onChange={(event) => canvasState.setOption(slot.slotId, event.target.value, true, false)}>
               <option value="">Select…</option>
               {binding.options.map((option) => <option key={option.optionId} value={option.label}>{option.label}</option>)}
             </select>
@@ -560,7 +563,7 @@ function AnswerDropTarget({
   const targetLabel = paragraphLabel ? `Paragraph ${paragraphLabel}` : `Response ${slot.displayLabel}`;
   const emptyLabel = /heading/iu.test(binding.task.taskType) ? "Drop heading here" : "Drop option here";
   const start = (event: React.PointerEvent<HTMLElement>) => {
-    if (!value || event.button > 0) return;
+    if (canvas.locked || !value || event.button > 0) return;
     event.preventDefault();
     event.stopPropagation();
     drag?.begin({
@@ -587,7 +590,7 @@ function AnswerDropTarget({
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        if (value) answers.setOption(slotId, value, false, false, "per_slot");
+        if (!canvas.locked && value) answers.setOption(slotId, value, false, false, "per_slot");
         if (canvas.mode === "author") canvas.onSelect?.(slotId);
       }}
     >
@@ -634,7 +637,7 @@ function AnswerOptionPool({
             className="v2-answer-option-token"
             data-option-label={option.label}
             aria-label={`Drag option ${option.label}`}
-            disabled={disabled}
+            disabled={disabled || canvas.locked}
             onPointerDown={(event) => {
               if (event.button > 0 || disabled) return;
               event.preventDefault();
@@ -687,7 +690,13 @@ function matrixHandled(
   ).length > 0;
 }
 
-export function ExamCanvas(props: ExamCanvasProps) {
+export function ExamCanvas(inputProps: ExamCanvasProps) {
+  // Enforce read-only at the component boundary as well as in the workspace.
+  // Navigation/selection callbacks remain available while editing callbacks do not.
+  const props = inputProps.locked ? { ...inputProps,
+    onTextCommand: undefined, onTextChange: undefined,
+    onAnswerChange: undefined, onStructureAction: undefined
+  } : inputProps;
   const runtime = useMemo(() => buildRuntimeViewModelV2(props.authoring), [props.authoring]);
   const interactionModel = useMemo(() => buildReadingInteractionModelV2(runtime), [runtime]);
   const [studentAnswers, setStudentAnswers] = useState<Record<string, string[]>>({});
@@ -696,10 +705,12 @@ export function ExamCanvas(props: ExamCanvasProps) {
     : studentAnswers;
 
   const setText = (slotId: string, value: string) => {
+    if (props.locked) return;
     if (props.mode === "author") props.onAnswerChange?.(slotId, { kind: "text", values: [value], normalization: "ielts_default" });
     else setStudentAnswers((current) => ({ ...current, [slotId]: value ? [value] : [] }));
   };
   const setOption = (slotId: string, label: string, checked: boolean, multiple: boolean, assignment: "per_slot" | "unordered_set" = "per_slot") => {
+    if (props.locked) return;
     const current = canvasAnswers[slotId] ?? [];
     const next = multiple ? current.filter((value) => value !== label) : [];
     if (checked) next.push(label);
@@ -764,7 +775,7 @@ export function ExamCanvas(props: ExamCanvasProps) {
   const dragRef = useRef<OptionDragSession | null>(null);
   const optionDrag = useMemo<OptionDragController>(() => ({
     begin: (init) => {
-      if (dragRef.current) return;
+      if (canvasPropsRef.current.locked || dragRef.current) return;
       dragRef.current = { ...init, beforeOptionId: null };
       init.row.classList.add("is-dragging");
       init.list.classList.add("is-reordering");
@@ -838,7 +849,7 @@ export function ExamCanvas(props: ExamCanvasProps) {
         track(session, release.x, release.y);
       }
       detach();
-      if (!commit || session.beforeOptionId === null) return;
+      if (!commit || canvasPropsRef.current.locked || session.beforeOptionId === null) return;
       resolveLive(session);
       // 落在自己前后等于没动（用**最新** DOM 的行序判断；行已不在时跳过判断，
       // 动作照常上报，由工作区对最新草稿校验并响亮失败）。
@@ -932,6 +943,7 @@ export function ExamCanvas(props: ExamCanvasProps) {
       if (!moved || !validTarget) return;
 
       const currentProps = canvasPropsRef.current;
+      if (currentProps.locked) return;
       const binding = slotPresentationFor(currentProps.authoring, session.sourceSlotId ?? "")
         ?? currentProps.authoring.taskGroups
           .flatMap((task) => task.responseGroups.map((response) => ({ task, response, options: response.options?.length ? response.options : task.optionBank?.options ?? [] })))
@@ -994,11 +1006,12 @@ export function ExamCanvas(props: ExamCanvasProps) {
   return <AnswerDragContext.Provider value={answerDrag}>
   <CanvasAnswersContext.Provider value={{ answers: canvasAnswers, setText, setOption }}>
     <OptionDragContext.Provider value={optionDrag}>
-    <div className={`exam-canvas-v2 ${props.mode === "author" ? "is-author" : "is-student"}${listening ? " is-listening" : ""}`} data-testid={`exam-canvas-v2-${props.mode}`} inert={props.locked || undefined}>
+    <div className={`exam-canvas-v2 ${props.mode === "author" ? "is-author" : "is-student"}${listening ? " is-listening" : ""}`} data-testid={`exam-canvas-v2-${props.mode}`} data-readonly={props.locked || undefined}>
     {!props.comparisonPreview && (listening ? (
       <ListeningHeader
         itemId={props.authoring.jobId}
         mode={props.mode}
+        locked={props.locked}
         selectedPart={selectedPart}
         parts={listeningPartViews ?? []}
         onAudioChanged={() => reloadAudio(false)}
@@ -1039,7 +1052,7 @@ export function ExamCanvas(props: ExamCanvasProps) {
               options={bankOptions}
               answers={canvasAnswers}
               selectedId={props.selectedId}
-              interactive
+              interactive={!props.locked}
               renderContent={(nodes) => nodes?.length ? <ContentNodes nodes={nodes} canvas={props} /> : null}
               onSelectOption={setOption}
               onSelectTarget={props.mode === "author" ? props.onSelect : undefined}
@@ -1081,7 +1094,7 @@ export function ExamCanvas(props: ExamCanvasProps) {
               && response.slotIds.every((slotId) => containsAnswerSlot(task.stimulus, new Set([slotId])));
             return <section key={response.responseGroupId} className={`v2-response-group${props.selectedId === response.responseGroupId ? " is-selected" : ""}`} data-response-group-id={response.responseGroupId} data-assignment={response.assignment} onClick={(event) => { if (props.mode === "author") { event.stopPropagation(); props.onSelect?.(response.responseGroupId); } }}>
               {sharedPromptNodes?.length ? <div className="v2-response-prompt"><ContentNodes nodes={sharedPromptNodes} canvas={props} /></div> : null}
-              {inlineStimulusComplete ? null : unordered ? <fieldset className="v2-shared-selection" data-option-list={props.mode === "author" ? "" : undefined}><legend>Select {response.cardinality.exact || response.slotIds.length} options for {response.slotIds.map((slotId) => runtime.questionDisplayMap[slotId]).join(", ")}</legend>{options.map((option, optionIndex) => { const checked = response.slotIds.some((slotId) => (canvasAnswers[slotId] ?? []).includes(option.label)); return <label key={option.optionId} className={`v2-choice-item${checked ? " is-checked" : ""}`} {...optionRowProps(option)}><OptionDragHandle canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} index={optionIndex} /><input type="checkbox" value={option.label} checked={checked} disabled={!checked && unorderedSelected >= unorderedLimit} onChange={(event) => { const selected = Array.from(new Set(response.slotIds.flatMap((slotId) => canvasAnswers[slotId] ?? []).filter((value) => value !== option.label))).slice(0, response.slotIds.length); if (event.target.checked) selected.push(option.label); response.slotIds.forEach((slotId, index) => setOption(slotId, selected[index] ?? "", Boolean(selected[index]), false, "unordered_set")); }} /><span><strong>{option.label}</strong>{optionContentDuplicatesLabel(option) ? null : <> <ContentNodes nodes={option.content} canvas={props} /></>}</span><OptionDeleteButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} option={option} count={options.length} /></label>; })}<div className="v2-slot-summary">{response.slotIds.map((slotId) => <span key={slotId} className="v2-slot-chip" data-question-id={slotId}>{runtime.questionDisplayMap[slotId]}: {(canvasAnswers[slotId] ?? []).join(", ") || "—"}</span>)}</div></fieldset> : <div className="v2-slot-list">{response.slotIds.map((slotId, index) => {
+              {inlineStimulusComplete ? null : unordered ? <fieldset className="v2-shared-selection" data-option-list={props.mode === "author" ? "" : undefined}><legend>Select {response.cardinality.exact || response.slotIds.length} options for {response.slotIds.map((slotId) => runtime.questionDisplayMap[slotId]).join(", ")}</legend>{options.map((option, optionIndex) => { const checked = response.slotIds.some((slotId) => (canvasAnswers[slotId] ?? []).includes(option.label)); return <label key={option.optionId} className={`v2-choice-item${checked ? " is-checked" : ""}`} {...optionRowProps(option)}><OptionDragHandle canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} index={optionIndex} /><input type="checkbox" value={option.label} checked={checked} disabled={props.locked || (!checked && unorderedSelected >= unorderedLimit)} onChange={(event) => { const selected = Array.from(new Set(response.slotIds.flatMap((slotId) => canvasAnswers[slotId] ?? []).filter((value) => value !== option.label))).slice(0, response.slotIds.length); if (event.target.checked) selected.push(option.label); response.slotIds.forEach((slotId, index) => setOption(slotId, selected[index] ?? "", Boolean(selected[index]), false, "unordered_set")); }} /><span><strong>{option.label}</strong>{optionContentDuplicatesLabel(option) ? null : <> <ContentNodes nodes={option.content} canvas={props} /></>}</span><OptionDeleteButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} option={option} count={options.length} /></label>; })}<div className="v2-slot-summary">{response.slotIds.map((slotId) => <span key={slotId} className="v2-slot-chip" data-question-id={slotId}>{runtime.questionDisplayMap[slotId]}: {(canvasAnswers[slotId] ?? []).join(", ") || "—"}</span>)}</div></fieldset> : <div className="v2-slot-list">{response.slotIds.map((slotId, index) => {
                 const slot = runtime.answerSlots[slotId];
                 if (!slot) return null;
                 const values = canvasAnswers[slotId] ?? [];
@@ -1091,16 +1104,16 @@ export function ExamCanvas(props: ExamCanvasProps) {
                   ? paragraphLabelFor(props.authoring, slot.hostNodeId)
                   : undefined;
                 const answerControl = textEntry
-                  ? <input className="v2-text-answer" type="text" name={slotId} value={values[0] ?? ""} maxLength={slot.constraints?.maxCharacters} aria-label={`Answer ${runtime.questionDisplayMap[slotId]}`} onChange={(event) => setText(slotId, event.target.value)} />
+                  ? <input className="v2-text-answer" readOnly={props.locked} type="text" name={slotId} value={values[0] ?? ""} maxLength={slot.constraints?.maxCharacters} aria-label={`Answer ${runtime.questionDisplayMap[slotId]}`} onChange={(event) => setText(slotId, event.target.value)} />
                   : slot.interaction === "select"
-                    ? <select className="v2-select-answer" data-question-id={slotId} aria-label={`Answer ${runtime.questionDisplayMap[slotId]}`} value={values[0] ?? ""} onChange={(event) => setOption(slotId, event.target.value, true, false)}><option value="">Select…</option>{options.map((option) => <option key={option.optionId} value={option.label}>{option.label}</option>)}</select>
+                    ? <select className="v2-select-answer" disabled={props.locked} data-question-id={slotId} aria-label={`Answer ${runtime.questionDisplayMap[slotId]}`} value={values[0] ?? ""} onChange={(event) => setOption(slotId, event.target.value, true, false)}><option value="">Select…</option>{options.map((option) => <option key={option.optionId} value={option.label}>{option.label}</option>)}</select>
                     : slot.interaction === "dragdrop"
                       ? slot.hostType === "passage_paragraph"
                         ? <span className="v2-passage-target-reference">{paragraphLabel ? `Paragraph ${paragraphLabel}` : "Passage paragraph"}</span>
                         : <AnswerDropTarget canvas={props} slotId={slotId} placement="row" />
                       : options.length
-                        ? <div className={`v2-choice-options${isTfngOptionSet(options) ? " v2-tfng-options" : ""}`} data-option-list={props.mode === "author" ? "" : undefined}>{options.map((option, optionIndex) => <label key={`${slotId}-${option.optionId}`} className={`v2-choice-item${values.includes(option.label) ? " is-checked" : ""}`} {...optionRowProps(option)}><OptionDragHandle canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} index={optionIndex} /><input type={slot.interaction === "checkbox" ? "checkbox" : "radio"} name={slotId} value={option.label} checked={values.includes(option.label)} onChange={(event) => setOption(slotId, option.label, event.target.checked, slot.interaction === "checkbox")} /><span><strong>{option.label}</strong>{optionContentDuplicatesLabel(option) ? null : <> <ContentNodes nodes={option.content} canvas={props} /></>}</span><OptionDeleteButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} option={option} count={options.length} /></label>)}</div>
-                        : <input className="v2-text-answer" type="text" name={slotId} value={values[0] ?? ""} aria-label={`Answer ${runtime.questionDisplayMap[slotId]}`} onChange={(event) => setText(slotId, event.target.value)} />;
+                        ? <div className={`v2-choice-options${isTfngOptionSet(options) ? " v2-tfng-options" : ""}`} data-option-list={props.mode === "author" ? "" : undefined}>{options.map((option, optionIndex) => <label key={`${slotId}-${option.optionId}`} className={`v2-choice-item${values.includes(option.label) ? " is-checked" : ""}`} {...optionRowProps(option)}><OptionDragHandle canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} index={optionIndex} /><input disabled={props.locked} type={slot.interaction === "checkbox" ? "checkbox" : "radio"} name={slotId} value={option.label} checked={values.includes(option.label)} onChange={(event) => setOption(slotId, option.label, event.target.checked, slot.interaction === "checkbox")} /><span><strong>{option.label}</strong>{optionContentDuplicatesLabel(option) ? null : <> <ContentNodes nodes={option.content} canvas={props} /></>}</span><OptionDeleteButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} option={option} count={options.length} /></label>)}</div>
+                        : <input className="v2-text-answer" readOnly={props.locked} type="text" name={slotId} value={values[0] ?? ""} aria-label={`Answer ${runtime.questionDisplayMap[slotId]}`} onChange={(event) => setText(slotId, event.target.value)} />;
                 return <div key={slotId} className={`v2-slot-question${props.selectedId === slotId ? " is-selected" : ""}`} data-question-id={slotId} onClick={(event) => { if (props.mode === "author") { event.stopPropagation(); props.onSelect?.(slotId); } }}><div className="v2-slot-question-label"><span className="v2-slot-number">{runtime.questionDisplayMap[slotId]}</span>{hostPromptNode ? <span className="v2-slot-prompt" style={{ flex: 1, minWidth: 0 }}><ContentNodes nodes={[hostPromptNode]} canvas={props} /></span> : null}{slot.hostType === "passage_paragraph" ? <span className="v2-passage-target-reference">{paragraphLabel ? `Paragraph ${paragraphLabel}` : "Passage paragraph"}</span> : response.kind === "text_entry" || response.kind === "matching" ? <span>Response {index + 1}</span> : null}</div>{answerControl}</div>;
               })}</div>}
               {options.length || (props.mode === "author" && (response.kind === "choice" || response.kind === "matching")) ? <OptionAddButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} /> : null}

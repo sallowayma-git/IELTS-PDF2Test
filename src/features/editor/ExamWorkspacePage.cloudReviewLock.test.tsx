@@ -72,6 +72,7 @@ describe("ExamWorkspacePage 云端校核锁横幅", () => {
     await act(async () => {});
 
     expect(screen.getByTestId("workspace-cloud-review-banner").textContent).toContain("云端正在校核");
+    expect(screen.getByTestId("workspace-cloud-review-banner").textContent).toContain("可滚动查看，暂不能编辑");
     expect((screen.getByTestId("workspace-save") as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(screen.getByTestId("workspace-cloud-review-stop"));

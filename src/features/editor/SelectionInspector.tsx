@@ -26,9 +26,10 @@ function RectFields({ value, onChange }: { value: Rect; onChange: (value: Rect) 
   </label>)}</div>;
 }
 
-export function SelectionInspector({ draft, selectedId, onPatch, onClose }: {
-  draft: IeltsAuthoringIRV2; selectedId?: string; onPatch: (patch: AuthoringPatchV2) => void; onClose: () => void;
+export function SelectionInspector({ draft, selectedId, onPatch: applyPatch, onClose, locked }: {
+  draft: IeltsAuthoringIRV2; selectedId?: string; onPatch: (patch: AuthoringPatchV2) => void; onClose: () => void; locked?: boolean;
 }) {
+  const onPatch = (patch: AuthoringPatchV2) => { if (!locked) applyPatch(patch); };
   const node = selectedId ? locateContentNode(draft, selectedId)?.node : undefined;
   if (!node || !["figure", "diagram", "image", "table_cell"].includes(node.type)) return null;
   const media = node.type === "figure" || node.type === "diagram" || node.type === "image" ? node : undefined;
@@ -36,6 +37,7 @@ export function SelectionInspector({ draft, selectedId, onPatch, onClose }: {
   return <aside className="workspace-selection" aria-label="选中内容设置">
     <header><strong>{media ? "图片与答案位置" : "单元格"}</strong>
       <button className="ghost small" title="关闭设置" aria-label="关闭设置" onClick={onClose}><X size={16} /></button></header>
+    <fieldset className="workspace-selection-fields" disabled={locked}>
     {media ? <>
       <label>图片<select value={media.assetId} onChange={(event) => onPatch({ op: "setNodeAttrs", nodeId: media.id, attrs: { assetId: event.target.value } })}>
         {draft.assets.filter((asset) => asset.mime.startsWith("image/")).map((asset) => <option key={asset.assetId} value={asset.assetId}>{asset.altText || asset.assetId}</option>)}
@@ -79,5 +81,6 @@ export function SelectionInspector({ draft, selectedId, onPatch, onClose }: {
         <option value="none">无</option><option value="row">行表头</option><option value="column">列表头</option>
       </select></label>
     </> : null}
+    </fieldset>
   </aside>;
 }

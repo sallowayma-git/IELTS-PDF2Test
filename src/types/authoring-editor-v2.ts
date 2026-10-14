@@ -53,7 +53,7 @@ export type AuthoringNodeAttributeV2 = {
 };
 
 export type AuthoringPatchV2 =
-  | { op: "replaceText"; nodeId: string; from: number; to: number; text: string; preserveProvenance?: boolean; restoreProvenanceStatus?: ProvenanceStatus }
+  | { op: "replaceText"; nodeId: string; from: number; to: number; text: string; expectedText?: string; preserveProvenance?: boolean; restoreProvenanceStatus?: ProvenanceStatus }
   | { op: "setNodeAttrs"; nodeId: string; attrs: AuthoringNodeAttributeV2; removeAttrs?: Array<keyof AuthoringNodeAttributeV2>; preserveProvenance?: boolean; restoreProvenanceStatus?: ProvenanceStatus }
   | { op: "replaceContent"; target: AuthoringContentTargetV2; content: ContentNodeV2[]; preserveProvenance?: boolean; restoreProvenanceStatus?: ProvenanceStatus }
   | { op: "insertNode"; target: AuthoringContentTargetV2; index: number; node: ContentNodeV2; parentId?: string }

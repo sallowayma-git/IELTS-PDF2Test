@@ -162,6 +162,9 @@ function patchText(document: IeltsAuthoringIRV2, patch: Extract<AuthoringPatchV2
   if (!node || node.type !== "text" || typeof node.text !== "string") {
     throw new Error(`AUTHORING_PATCH_TEXT_NODE_REQUIRED:${patch.nodeId}`);
   }
+  if (patch.expectedText !== undefined && patch.expectedText !== node.text) {
+    throw new Error(`AUTHORING_PATCH_TEXT_CONFLICT:${patch.nodeId}`);
+  }
   const chars = Array.from(node.text);
   if (patch.from < 0 || patch.to < patch.from || patch.to > chars.length) {
     throw new Error(`AUTHORING_PATCH_TEXT_RANGE_INVALID:${patch.nodeId}`);
