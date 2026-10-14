@@ -29,6 +29,10 @@ pub(crate) const DIRECT_MAX_OUTPUT_TOKENS: u64 = 32_000;
 ///
 /// 以**产品资源**（`src-tauri/resources/cloud-direct/`）为准，`docs/plans/` 下
 /// 只留副本：产品资源随包走、可被审计，docs 是方案记录（B15）。
+const LISTENING_SYSTEM: &str = include_str!("../resources/cloud-direct/listening/system.md");
+const LISTENING_EXAMPLE: &str =
+    include_str!("../resources/cloud-direct/listening/example-compact.json");
+
 const DIRECT_SYSTEM_PROMPT: &str = include_str!("../resources/cloud-direct/system.md");
 /// 验证时使用的范例（western celebrity：heading / features / summary）。
 const DIRECT_EXAMPLE: &str =
@@ -47,10 +51,7 @@ pub(crate) fn direct_examples() -> Vec<(&'static str, Value)> {
             "matching_headings + matching_features + summary_completion",
             DIRECT_EXAMPLE,
         ),
-        (
-            "true_false_not_given + single_choice",
-            DIRECT_EXAMPLE_TFNG,
-        ),
+        ("true_false_not_given + single_choice", DIRECT_EXAMPLE_TFNG),
         (
             "table_completion + flowchart_completion",
             DIRECT_EXAMPLE_COMPLETION,
@@ -113,7 +114,7 @@ pub(crate) fn run_exam_direct(
         return Err(format!("cloud_direct_source_not_pdf:{}", source.file_type));
     }
     // 每页文字层：独立抽取，绝不读本地识别产物（原文件自己的文本才是证据）。
-    let page_texts = pdf_page_text_layers(&upload_path);
+    let mut page_texts = pdf_page_text_layers(&upload_path);
     // 页图：复用 vision 抽取缓存（扫描页必须带图）。抽取失败**不静默降级**：
     // 记一条警告随产物进编辑器（B14），提醒人工核对扫描内容。
     let mut evidence_warnings: Vec<String> = Vec::new();
@@ -126,7 +127,10 @@ pub(crate) fn run_exam_direct(
             Value::Null
         }
     };
-    let image_pages = select_image_pages(&extraction, &page_texts);
+    let mut image_pages = select_image_pages(&extraction, &page_texts);
+    if is_listening(root, job_id) {
+        append_answer_evidence(root, &job, &mut page_texts, &mut image_pages)?;
+    }
     if page_texts.is_empty() && crate::parser::image_count_from_extraction(&image_pages) == 0 {
         return Err("cloud_direct_no_evidence".to_string());
     }
@@ -134,6 +138,7 @@ pub(crate) fn run_exam_direct(
     let mut calls = 0usize;
     let mut chunked = false;
     let base_input = make_direct_input(
+        root,
         &profile,
         &job,
         &selected,
@@ -143,7 +148,13 @@ pub(crate) fn run_exam_direct(
         &image_pages,
         None,
     );
-    let mut raw = match run_llm_gateway(root, job_id, DIRECT_COMMAND_NAME, &base_input, api_key.as_deref()) {
+    let mut raw = match run_llm_gateway(
+        root,
+        job_id,
+        DIRECT_COMMAND_NAME,
+        &base_input,
+        api_key.as_deref(),
+    ) {
         Ok(value) => {
             calls += 1;
             value
@@ -158,7 +169,13 @@ pub(crate) fn run_exam_direct(
             retry_input["jsonNote"] = json!(
                 "Your previous reply was not a single valid JSON object. Return ONLY the JSON object described in the system prompt: no Markdown, no code fences, no commentary, starting with { and ending with }."
             );
-            match run_llm_gateway(root, job_id, DIRECT_COMMAND_NAME, &retry_input, api_key.as_deref()) {
+            match run_llm_gateway(
+                root,
+                job_id,
+                DIRECT_COMMAND_NAME,
+                &retry_input,
+                api_key.as_deref(),
+            ) {
                 Ok(value) => {
                     calls += 1;
                     value
@@ -192,10 +209,11 @@ pub(crate) fn run_exam_direct(
 
     let identity = DirectIdentity::new(&job, &source, root);
     let mut document = normalize_direct_output(root, &raw, &identity)?;
-    let mut compile_issues = compile_document(&document);
+    let mut compile_issues = direct_structural_issues(&document);
     // 编译有错 → 把错误清单和当前 JSON 发回云端修 1 次（受调用预算约束）。
     if !compile_issues.is_empty() && calls < MAX_DIRECT_CALLS {
         let repair_input = make_direct_input(
+            root,
             &profile,
             &job,
             &selected,
@@ -205,14 +223,20 @@ pub(crate) fn run_exam_direct(
             &image_pages,
             Some((&document, &compile_issues)),
         );
-        match run_llm_gateway(root, job_id, DIRECT_COMMAND_NAME, &repair_input, api_key.as_deref()) {
+        match run_llm_gateway(
+            root,
+            job_id,
+            DIRECT_COMMAND_NAME,
+            &repair_input,
+            api_key.as_deref(),
+        ) {
             Ok(repaired) => {
                 calls += 1;
                 raw = repaired;
                 match normalize_direct_output(root, &raw, &identity) {
                     Ok(next) => {
                         document = next;
-                        compile_issues = compile_document(&document);
+                        compile_issues = direct_structural_issues(&document);
                     }
                     Err(error) => {
                         // 修复回合的产物无法归一化：保留上一份（结构可用的那一份）。
@@ -260,7 +284,11 @@ pub(crate) fn run_exam_direct(
         // 编辑器问题列表据此逐条展示，不再只躺在诊断文件里。
         attach_compile_issues(&mut document, &compile_issues);
     }
-    let fidelity = assess_passage_fidelity(&mut document, &page_texts, &mut warnings);
+    let fidelity = if identity.listening {
+        None
+    } else {
+        assess_passage_fidelity(&mut document, &page_texts, &mut warnings)
+    };
     Ok(DirectExamOutcome {
         document,
         calls,
@@ -298,6 +326,12 @@ fn run_truncated_chunks(
     api_key: Option<&str>,
     calls: &mut usize,
 ) -> CommandResult<Value> {
+    let answer_start = page_texts
+        .iter()
+        .filter(|(_, text)| text.starts_with("SUPPLEMENTARY ANSWER KEY"))
+        .map(|(n, _)| *n)
+        .min()
+        .unwrap_or(usize::MAX);
     let total_pages = page_texts
         .iter()
         .map(|(index, _)| *index)
@@ -310,6 +344,7 @@ fn run_truncated_chunks(
                 .filter_map(|page| page.get("pageIndex").and_then(Value::as_u64))
                 .filter_map(|index| usize::try_from(index).ok()),
         )
+        .filter(|n| *n < answer_start)
         .max()
         .unwrap_or(1)
         .max(1);
@@ -320,13 +355,10 @@ fn run_truncated_chunks(
             return Err("cloud_direct_chunk_budget_exhausted".to_string());
         }
         let end = (start + chunk_size - 1).min(total_pages);
-        let chunk_texts: Vec<(usize, String)> = page_texts
-            .iter()
-            .filter(|(index, _)| *index >= start && *index <= end)
-            .cloned()
-            .collect();
-        let chunk_images = restrict_image_pages(image_pages, start, end);
+        let (chunk_texts, chunk_images) =
+            chunk_evidence(page_texts, image_pages, start, end, answer_start);
         let mut input = make_direct_input(
+            root,
             profile,
             job,
             profile_id,
@@ -340,13 +372,37 @@ fn run_truncated_chunks(
             "The output was truncated, so the paper is converted in page chunks. \
 This request covers pages {start}-{end} of the original PDF. Convert ONLY the \
 questions whose numbers are printed on these pages; include the passage only if \
-it is printed on these pages. Question numbers stay global."
+it is printed on these pages. Question numbers stay global. Supplementary ANSWER KEY evidence is shared in every chunk; use its answers for this chunk only."
         ));
         let output = run_llm_gateway(root, job_id, DIRECT_COMMAND_NAME, &input, api_key)?;
         *calls += 1;
         chunks.push(output);
     }
     Ok(merge_direct_chunks(chunks))
+}
+
+fn chunk_evidence(
+    texts: &[(usize, String)],
+    images: &Value,
+    start: usize,
+    end: usize,
+    answer_start: usize,
+) -> (Vec<(usize, String)>, Value) {
+    let texts = texts
+        .iter()
+        .filter(|(n, _)| (*n >= start && *n <= end) || *n >= answer_start)
+        .cloned()
+        .collect();
+    let mut selected = images.clone();
+    if let Some(pages) = selected["pages"].as_array_mut() {
+        pages.retain(|p| {
+            p["pageIndex"].as_u64().is_some_and(|n| {
+                let n = n as usize;
+                (n >= start && n <= end) || n >= answer_start
+            })
+        });
+    }
+    (texts, selected)
 }
 
 /// 拼接分块直出结果：题组 / 槽位 / 答案按题号合并，正文取内容最多的一份。
@@ -414,10 +470,20 @@ fn merge_direct_chunks(chunks: Vec<Value>) -> Value {
         if let Some(groups) = chunk.get("taskGroups").and_then(Value::as_array) {
             task_groups.extend(groups.iter().cloned());
         }
-        for (key, value) in chunk.get("answerSlots").and_then(Value::as_object).into_iter().flatten() {
+        for (key, value) in chunk
+            .get("answerSlots")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+        {
             answer_slots.insert(key.clone(), value.clone());
         }
-        for (key, value) in chunk.get("answerKey").and_then(Value::as_object).into_iter().flatten() {
+        for (key, value) in chunk
+            .get("answerKey")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+        {
             answer_key.insert(key.clone(), value.clone());
         }
         if let Some(items) = chunk.get("warnings").and_then(Value::as_array) {
@@ -444,13 +510,17 @@ fn merge_direct_chunks(chunks: Vec<Value>) -> Value {
     }
     if passage_sources > 1 {
         warnings.push(
-            "cloud_direct_chunked_passage:多个页段都返回了正文，已取节点数最多的一份，请人工核对".to_string(),
+            "cloud_direct_chunked_passage:多个页段都返回了正文，已取节点数最多的一份，请人工核对"
+                .to_string(),
         );
     }
     merged.insert("taskGroups".to_string(), Value::Array(task_groups));
     merged.insert("answerSlots".to_string(), Value::Object(answer_slots));
     merged.insert("answerKey".to_string(), Value::Object(answer_key));
-    merged.insert("warnings".to_string(), Value::Array(warnings.into_iter().map(Value::String).collect()));
+    merged.insert(
+        "warnings".to_string(),
+        Value::Array(warnings.into_iter().map(Value::String).collect()),
+    );
     Value::Object(merged)
 }
 
@@ -475,9 +545,21 @@ fn collect_chunk_ids(value: &Value, ids: &mut std::collections::BTreeSet<String>
                 }
             }
             for key in [
-                "children", "items", "rows", "cells", "caption", "steps", "content",
-                "instructions", "stimulus", "prompt", "title", "options",
-                "taskGroups", "responseGroups", "optionBank",
+                "children",
+                "items",
+                "rows",
+                "cells",
+                "caption",
+                "steps",
+                "content",
+                "instructions",
+                "stimulus",
+                "prompt",
+                "title",
+                "options",
+                "taskGroups",
+                "responseGroups",
+                "optionBank",
             ] {
                 if let Some(child) = map.get(key) {
                     collect_chunk_ids(child, ids);
@@ -497,7 +579,13 @@ fn rewrite_chunk_references(value: &mut Value, map: &std::collections::BTreeMap<
             }
         }
         Value::Object(fields) => {
-            for key in ["taskId", "responseGroupId", "optionBankId", "optionId", "id"] {
+            for key in [
+                "taskId",
+                "responseGroupId",
+                "optionBankId",
+                "optionId",
+                "id",
+            ] {
                 if key == "id" && fields.get("type").and_then(Value::as_str).is_none() {
                     continue;
                 }
@@ -515,9 +603,21 @@ fn rewrite_chunk_references(value: &mut Value, map: &std::collections::BTreeMap<
                 }
             }
             for key in [
-                "children", "items", "rows", "cells", "caption", "steps", "content",
-                "instructions", "stimulus", "prompt", "title", "options",
-                "taskGroups", "responseGroups", "optionBank",
+                "children",
+                "items",
+                "rows",
+                "cells",
+                "caption",
+                "steps",
+                "content",
+                "instructions",
+                "stimulus",
+                "prompt",
+                "title",
+                "options",
+                "taskGroups",
+                "responseGroups",
+                "optionBank",
             ] {
                 if let Some(child) = fields.get_mut(key) {
                     rewrite_chunk_references(child, map);
@@ -559,10 +659,16 @@ fn redirect_passage_hosts(
         if slot.get("hostType").and_then(Value::as_str) != Some("passage_paragraph") {
             continue;
         }
-        let Some(host) = slot.get("hostNodeId").and_then(Value::as_str).map(str::to_string) else {
+        let Some(host) = slot
+            .get("hostNodeId")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+        else {
             continue;
         };
-        let Some(label) = own_labels.get(&host) else { continue };
+        let Some(label) = own_labels.get(&host) else {
+            continue;
+        };
         if let Some(target) = source_labels.get(label) {
             slot["hostNodeId"] = json!(target);
         }
@@ -589,12 +695,10 @@ fn restrict_image_pages(extraction: &Value, start: usize, end: usize) -> Value {
 /// 本地识别的任何结论都不参与（证据面纪律，与云端候选链一致）。
 fn pdf_page_text_layers(pdf_path: &std::path::Path) -> Vec<(usize, String)> {
     let path = pdf_path.to_path_buf();
-    let pages = std::panic::catch_unwind(move || {
-        pdf_extract::extract_text_by_pages(&path).ok()
-    })
-    .ok()
-    .flatten()
-    .unwrap_or_default();
+    let pages = std::panic::catch_unwind(move || pdf_extract::extract_text_by_pages(&path).ok())
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     pages
         .into_iter()
         .enumerate()
@@ -613,8 +717,24 @@ fn pdf_page_text_layers(pdf_path: &std::path::Path) -> Vec<(usize, String)> {
 const SPARSE_TEXT_PAGE_CHARS: usize = 200;
 
 fn page_needs_visual_evidence(text: &str) -> bool {
-    let text = text.to_ascii_lowercase().split_whitespace().collect::<Vec<_>>().join(" ");
-    ["label the map", "label the plan", "label the diagram", "map below", "plan below", "diagram below", "graph below", "chart below", "map on the"].iter().any(|needle| text.contains(needle))
+    let text = text
+        .to_ascii_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    [
+        "label the map",
+        "label the plan",
+        "label the diagram",
+        "map below",
+        "plan below",
+        "diagram below",
+        "graph below",
+        "chart below",
+        "map on the",
+    ]
+    .iter()
+    .any(|needle| text.contains(needle))
 }
 
 fn select_image_pages(extraction: &Value, page_texts: &[(usize, String)]) -> Value {
@@ -635,9 +755,12 @@ fn select_image_pages(extraction: &Value, page_texts: &[(usize, String)]) -> Val
                         .is_none_or(|chars| *chars < SPARSE_TEXT_PAGE_CHARS)
                 });
             let visual = page.get("requiresVisual").and_then(Value::as_bool) == Some(true)
-                || index.and_then(|i| usize::try_from(i).ok()).and_then(|i| page_texts.iter().find(|(n,_)| *n==i))
-                    .is_some_and(|(_,text)| page_needs_visual_evidence(text));
-            (sparse || visual) && crate::parser::image_count_from_extraction(&json!({"pages":[page]})) > 0
+                || index
+                    .and_then(|i| usize::try_from(i).ok())
+                    .and_then(|i| page_texts.iter().find(|(n, _)| *n == i))
+                    .is_some_and(|(_, text)| page_needs_visual_evidence(text));
+            (sparse || visual)
+                && crate::parser::image_count_from_extraction(&json!({"pages":[page]})) > 0
         });
     }
     next
@@ -653,14 +776,12 @@ pub(crate) struct DirectIdentity {
     source_file_id: String,
     source_document_id: String,
     generated_at: String,
+    listening: bool,
 }
 
 impl DirectIdentity {
-    fn new(job: &crate::ImportJob, source: &crate::SourceFile, _root: &std::path::Path) -> Self {
-        let category = job
-            .category
-            .clone()
-            .unwrap_or_else(|| "P1".to_string());
+    fn new(job: &crate::ImportJob, source: &crate::SourceFile, root: &std::path::Path) -> Self {
+        let category = job.category.clone().unwrap_or_else(|| "P1".to_string());
         // examId 与本地管线同一约定（`ielts_grammar::exam_value`）：发布路径安全
         // 且同一 job 稳定。
         let exam_id = format!(
@@ -669,6 +790,7 @@ impl DirectIdentity {
             &job.job_id[job.job_id.len().saturating_sub(8)..]
         );
         Self {
+            listening: is_listening(root, &job.job_id),
             job_id: job.job_id.clone(),
             exam: json!({
                 "examId": exam_id,
@@ -691,6 +813,7 @@ impl DirectIdentity {
 /// taskPresentationRules + 范例。**不传** `localNodeTargets` / `sourceParagraphs`。
 #[allow(clippy::too_many_arguments)]
 fn make_direct_input(
+    root: &std::path::Path,
     profile: &Value,
     job: &crate::ImportJob,
     profile_id: &str,
@@ -734,12 +857,26 @@ fn make_direct_input(
             .map(|(name, document)| json!({"name": name, "document": document}))
             .collect::<Vec<_>>(),
     });
+    if is_listening(root, &job.job_id) {
+        input["modality"] = json!("listening");
+        input["example"] = serde_json::from_str(LISTENING_EXAMPLE).unwrap();
+        input["examples"] = json!([]);
+        input["taskPresentationRules"] = json!(""); // The listening system contains the complete modality-specific table.
+        input["outputContract"]["topLevelKeys"] = json!([
+            "meta",
+            "parts",
+            "taskGroups",
+            "answerSlots",
+            "answerKey",
+            "warnings"
+        ]);
+    }
     if let Some((document, issues)) = repair {
         // 修复回合：错误清单 + 当前 JSON 一起发回，要求只修结构、保持内容。
         input["repair"] = json!({
             "instruction": "The previous output failed the exam compiler. Fix ONLY the listed \
-structural problems in the JSON below and return the COMPLETE corrected exam. Keep all content \
-(passage text, questions, options, answers) unchanged unless a listed problem requires it.",
+        structural problems in the JSON below and return the COMPLETE corrected exam. Keep all content \
+        (passage text, questions, options, answers) unchanged unless a listed problem requires it.",
             "compilerIssues": issues.iter().map(|issue| json!({
                 "code": issue.code,
                 "targetId": issue.target_id,
@@ -764,8 +901,15 @@ fn direct_profile_payload(profile: &Value, profile_id: &str) -> Value {
             "timeoutMs".to_string(),
             json!(configured.max(DIRECT_DEFAULT_TIMEOUT_MS)),
         );
-        if object.get("maxOutputTokens").and_then(Value::as_u64).is_none() {
-            object.insert("maxOutputTokens".to_string(), json!(DIRECT_MAX_OUTPUT_TOKENS));
+        if object
+            .get("maxOutputTokens")
+            .and_then(Value::as_u64)
+            .is_none()
+        {
+            object.insert(
+                "maxOutputTokens".to_string(),
+                json!(DIRECT_MAX_OUTPUT_TOKENS),
+            );
         }
     }
     payload
@@ -774,6 +918,107 @@ fn direct_profile_payload(profile: &Value, profile_id: &str) -> Value {
 /// 供网关注入使用的直出 system prompt（契约唯一来源）。
 pub(crate) fn direct_system_prompt() -> &'static str {
     DIRECT_SYSTEM_PROMPT
+}
+
+fn append_answer_evidence(
+    root: &std::path::Path,
+    job: &crate::ImportJob,
+    texts: &mut Vec<(usize, String)>,
+    images: &mut Value,
+) -> CommandResult<()> {
+    if !images["pages"].is_array() {
+        images["pages"] = json!([]);
+    }
+    let dir = crate::util::job_dir(root, &job.job_id);
+    let mut index = texts.iter().map(|(n, _)| *n).max().unwrap_or(0) + 1;
+    for source in job.source_files.iter().filter(|s| s.role == "AnswerKey") {
+        let path = dir.join("uploads").join(&source.stored_name);
+        let ext = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        match ext.as_str() {
+            "txt" | "md" => {
+                let text =
+                    std::fs::read_to_string(&path).map_err(|e| format!("answer_key_read:{e}"))?;
+                texts.push((
+                    index,
+                    format!(
+                        "SUPPLEMENTARY ANSWER KEY — {}\n{text}",
+                        source.original_name
+                    ),
+                ));
+                index += 1;
+            }
+            "pdf" => {
+                let answer_text = pdf_page_text_layers(&path);
+                let cache = dir.join("cache").join(format!("answer-{}", source.file_id));
+                std::fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
+                let extraction = crate::parser::extract_pdf_images_for_vision(
+                    &job.job_id,
+                    &path,
+                    &cache.join("pages.json"),
+                    &cache.join("assets"),
+                )?;
+                let selected = select_image_pages(&extraction, &answer_text);
+                let count = extraction["pages"]
+                    .as_array()
+                    .map(Vec::len)
+                    .unwrap_or(answer_text.len());
+                for (n, text) in answer_text {
+                    texts.push((
+                        index + n - 1,
+                        format!(
+                            "SUPPLEMENTARY ANSWER KEY — {} page {n}\n{text}",
+                            source.original_name
+                        ),
+                    ));
+                }
+                for page in selected["pages"].as_array().into_iter().flatten() {
+                    let n = index + page["pageIndex"].as_u64().unwrap_or(1) as usize - 1;
+                    if !texts.iter().any(|(i, _)| *i == n) {
+                        texts.push((
+                            n,
+                            format!(
+                                "SUPPLEMENTARY ANSWER KEY — {} (image page)",
+                                source.original_name
+                            ),
+                        ));
+                    }
+
+                    let mut page = page.clone();
+                    page["pageIndex"] =
+                        json!(index + page["pageIndex"].as_u64().unwrap_or(1) as usize - 1);
+                    images["pages"].as_array_mut().unwrap().push(page);
+                }
+                index += count.max(1);
+            }
+            "png" | "jpg" | "jpeg" => {
+                texts.push((
+                    index,
+                    format!(
+                        "SUPPLEMENTARY ANSWER KEY — {} (image)",
+                        source.original_name
+                    ),
+                ));
+                images["pages"].as_array_mut().unwrap().push(json!({"pageIndex":index,"images":[{"path":path,"mimeType":if ext=="png" {"image/png"} else {"image/jpeg"}}]}));
+                index += 1;
+            }
+            _ => return Err(format!("answer_key_unsupported:{ext}")),
+        }
+    }
+    Ok(())
+}
+
+fn is_listening(root: &std::path::Path, job_id: &str) -> bool {
+    matches!(
+        crate::library::migration::draft_modality(root, job_id),
+        crate::schema::ielts_authoring_v2::ExamModalityV2::Listening
+    )
+}
+pub(crate) fn listening_system_prompt() -> &'static str {
+    LISTENING_SYSTEM
 }
 
 /// 模型 raw warnings → 文档 audit.notes（编辑器与发布记录里可见）。
@@ -797,7 +1042,11 @@ fn document_warnings(document: &Value) -> Vec<String> {
 
 /// taskType 枚举别名归一枚举（模型可能用驼峰 / 连字符写法）。
 fn normalize_task_type(value: &Value) -> Option<&'static str> {
-    let raw = value.as_str()?.trim().to_ascii_lowercase().replace(['-', ' '], "_");
+    let raw = value
+        .as_str()?
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['-', ' '], "_");
     Some(match raw.as_str() {
         "single_choice" => "single_choice",
         "multiple_choice" => "multiple_choice",
@@ -833,7 +1082,9 @@ fn collect_node_ids(value: &Value, ids: &mut std::collections::BTreeSet<String>)
             if let Some(id) = map.get("id").and_then(Value::as_str) {
                 ids.insert(id.to_string());
             }
-            for key in ["children", "items", "rows", "cells", "caption", "steps", "content"] {
+            for key in [
+                "children", "items", "rows", "cells", "caption", "steps", "content",
+            ] {
                 if let Some(child) = map.get(key) {
                     collect_node_ids(child, ids);
                 }
@@ -844,7 +1095,11 @@ fn collect_node_ids(value: &Value, ids: &mut std::collections::BTreeSet<String>)
 }
 
 /// 给缺失 id 的内容节点补一个确定性的、全局唯一的 id。
-fn fill_missing_node_ids(value: &mut Value, used: &mut std::collections::BTreeSet<String>, prefix: &str) {
+fn fill_missing_node_ids(
+    value: &mut Value,
+    used: &mut std::collections::BTreeSet<String>,
+    prefix: &str,
+) {
     match value {
         Value::Array(items) => {
             for item in items.iter_mut() {
@@ -905,8 +1160,18 @@ fn drop_asset_nodes(value: &mut Value, dropped: &mut Vec<String>) {
         }
         Value::Object(map) => {
             for key in [
-                "children", "items", "rows", "cells", "caption", "steps", "content",
-                "instructions", "stimulus", "prompt", "title", "options",
+                "children",
+                "items",
+                "rows",
+                "cells",
+                "caption",
+                "steps",
+                "content",
+                "instructions",
+                "stimulus",
+                "prompt",
+                "title",
+                "options",
             ] {
                 if let Some(child) = map.get_mut(key) {
                     drop_asset_nodes(child, dropped);
@@ -939,7 +1204,18 @@ fn find_slot_host(value: &Value, slot_id: &str) -> Option<String> {
                 {
                     return map.get("id").and_then(Value::as_str).map(str::to_string);
                 }
-                for key in ["children", "items", "rows", "cells", "steps", "content"] {
+                for key in [
+                    "children",
+                    "items",
+                    "rows",
+                    "cells",
+                    "steps",
+                    "content",
+                    "stimulus",
+                    "instructions",
+                    "responseGroups",
+                    "prompt",
+                ] {
                     if let Some(child) = map.get(key) {
                         if let Some(found) = walk(child, slot_id) {
                             return Some(found);
@@ -967,20 +1243,27 @@ pub(crate) fn normalize_direct_output(
     raw: &Value,
     identity: &DirectIdentity,
 ) -> CommandResult<Value> {
+    let mut safe_raw = raw.clone();
+    if identity.listening {
+        strip_model_media(&mut safe_raw);
+        wrap_list_item_inlines(&mut safe_raw);
+    }
+    let raw = &safe_raw;
     let task_groups = raw
         .get("taskGroups")
         .and_then(Value::as_array)
         .filter(|groups| !groups.is_empty())
         .cloned()
         .ok_or_else(|| "cloud_direct_no_task_groups".to_string())?;
-    let passage = raw
-        .get("passage")
-        .cloned()
-        .unwrap_or(Value::Null);
+    let passage = if identity.listening {
+        json!({"content":[]})
+    } else {
+        raw.get("passage").cloned().unwrap_or(Value::Null)
+    };
     let passage_content = passage
         .get("content")
         .and_then(Value::as_array)
-        .filter(|content| !content.is_empty())
+        .filter(|content| identity.listening || !content.is_empty())
         .cloned()
         .ok_or_else(|| "cloud_direct_no_passage".to_string())?;
     // 只补不拒：`answerSlots` 为空不再是回退理由——方案只允许「无题组 /
@@ -1046,7 +1329,10 @@ pub(crate) fn normalize_direct_output(
                 }
             }
         }
-        if let Some(responses) = object.get_mut("responseGroups").and_then(Value::as_array_mut) {
+        if let Some(responses) = object
+            .get_mut("responseGroups")
+            .and_then(Value::as_array_mut)
+        {
             for response in responses.iter_mut() {
                 for key in ["prompt"] {
                     if let Some(nodes) = response.get_mut(key) {
@@ -1095,7 +1381,10 @@ pub(crate) fn normalize_direct_output(
                 }
             }
         }
-        if let Some(responses) = object.get_mut("responseGroups").and_then(Value::as_array_mut) {
+        if let Some(responses) = object
+            .get_mut("responseGroups")
+            .and_then(Value::as_array_mut)
+        {
             for response in responses.iter_mut() {
                 if let Some(nodes) = response.get_mut("prompt") {
                     let mut nodes_value = std::mem::replace(nodes, Value::Array(Vec::new()));
@@ -1105,7 +1394,8 @@ pub(crate) fn normalize_direct_output(
                 if let Some(options) = response.get_mut("options").and_then(Value::as_array_mut) {
                     for option in options.iter_mut() {
                         if let Some(content) = option.get_mut("content") {
-                            let mut content_value = std::mem::replace(content, Value::Array(Vec::new()));
+                            let mut content_value =
+                                std::mem::replace(content, Value::Array(Vec::new()));
                             fill_missing_node_ids(&mut content_value, &mut used_ids, &task_id_hint);
                             *content = content_value;
                         }
@@ -1127,7 +1417,9 @@ pub(crate) fn normalize_direct_output(
     let mut paragraph_map = Map::new();
     if let Some(map) = passage.get("paragraphMap").and_then(Value::as_object) {
         for (label, node_id) in map {
-            let Some(node_id) = node_id.as_str() else { continue };
+            let Some(node_id) = node_id.as_str() else {
+                continue;
+            };
             if paragraph_ids.contains(node_id) {
                 paragraph_map.insert(label.clone(), json!(node_id));
             }
@@ -1137,7 +1429,12 @@ pub(crate) fn normalize_direct_output(
     if let Some(content) = passage.get_mut("content").and_then(Value::as_array_mut) {
         let label_of: std::collections::BTreeMap<String, String> = paragraph_map
             .iter()
-            .map(|(label, node_id)| (node_id.as_str().unwrap_or_default().to_string(), label.clone()))
+            .map(|(label, node_id)| {
+                (
+                    node_id.as_str().unwrap_or_default().to_string(),
+                    label.clone(),
+                )
+            })
             .collect();
         for node in content.iter_mut() {
             if node.get("type").and_then(Value::as_str) != Some("paragraph") {
@@ -1160,7 +1457,10 @@ pub(crate) fn normalize_direct_output(
             .cloned()
             .unwrap_or_default()
             .into_iter()
-            .chain(std::iter::once(("paragraphMap".to_string(), paragraph_map.clone())))
+            .chain(std::iter::once((
+                "paragraphMap".to_string(),
+                paragraph_map.clone(),
+            )))
             .collect::<Map<String, Value>>(),
     );
     let _ = passage_content;
@@ -1194,7 +1494,13 @@ pub(crate) fn normalize_direct_output(
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
-            .flat_map(|response| response.get("slotIds").and_then(Value::as_array).into_iter().flatten())
+            .flat_map(|response| {
+                response
+                    .get("slotIds")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+            })
             .filter_map(Value::as_str)
             .filter_map(|slot_id| {
                 answer_slots
@@ -1251,8 +1557,9 @@ pub(crate) fn normalize_direct_output(
             let slot_count = (slot_ids.len().max(1)) as u32;
             let default_scoring = if unordered_set {
                 "per_slot_ielts_normalized"
-            } else if crate::ielts_grammar::instruction_signature::is_completion_task(&parse_task_type(&task_type))
-            {
+            } else if crate::ielts_grammar::instruction_signature::is_completion_task(
+                &parse_task_type(&task_type),
+            ) {
                 "per_slot_ielts_normalized"
             } else {
                 "per_slot_binary"
@@ -1263,8 +1570,12 @@ pub(crate) fn normalize_direct_output(
             object
                 .entry("responseGroupId".to_string())
                 .or_insert_with(|| json!(format!("{task_id}-rg-{}", position + 1)));
-            object.entry("kind".to_string()).or_insert_with(|| json!(response_kind));
-            object.entry("slotIds".to_string()).or_insert_with(|| json!(slot_ids));
+            object
+                .entry("kind".to_string())
+                .or_insert_with(|| json!(response_kind));
+            object
+                .entry("slotIds".to_string())
+                .or_insert_with(|| json!(slot_ids));
             let default_cardinality = if unordered_set {
                 json!({"min": slot_count, "max": slot_count, "exact": slot_count})
             } else {
@@ -1334,12 +1645,13 @@ pub(crate) fn normalize_direct_output(
             responses.push(Value::Object(std::mem::take(object)));
         }
         // instructionSignature：后端派生，不采信模型直接给出的签名。
-        let signature_result = crate::ielts_grammar::instruction_signature::infer_instruction_signature(
-            &instruction_text_value,
-            &parse_number_expression(&display_range),
-            Some(&task_type),
-            Vec::new(),
-        );
+        let signature_result =
+            crate::ielts_grammar::instruction_signature::infer_instruction_signature(
+                &instruction_text_value,
+                &parse_number_expression(&display_range),
+                Some(&task_type),
+                Vec::new(),
+            );
         let mut next = Map::new();
         for key in [
             "taskId",
@@ -1382,11 +1694,7 @@ pub(crate) fn normalize_direct_output(
             .get("questionNumber")
             .and_then(Value::as_u64)
             .and_then(|number| u32::try_from(number).ok())
-            .or_else(|| {
-                key.trim_start_matches(['q', 'Q'])
-                    .parse::<u32>()
-                    .ok()
-            })
+            .or_else(|| key.trim_start_matches(['q', 'Q']).parse::<u32>().ok())
             .unwrap_or_default();
         // 该槽位所属题组（按 slotIds 归属）；找不到时按 short_answer 的默认规则补字段。
         let task_type = normalized_groups
@@ -1397,10 +1705,21 @@ pub(crate) fn normalize_direct_output(
                     .and_then(Value::as_array)
                     .into_iter()
                     .flatten()
-                    .flat_map(|response| response.get("slotIds").and_then(Value::as_array).into_iter().flatten())
+                    .flat_map(|response| {
+                        response
+                            .get("slotIds")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                    })
                     .any(|slot_id| slot_id.as_str() == Some(key.as_str()))
             })
-            .and_then(|group| group.get("taskType").and_then(Value::as_str).map(str::to_string))
+            .and_then(|group| {
+                group
+                    .get("taskType")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
             .unwrap_or_else(|| "short_answer".to_string());
         let rule = crate::schema::task_presentation::rule_for(&parse_task_type(&task_type), false);
         let object = slot
@@ -1411,12 +1730,16 @@ pub(crate) fn normalize_direct_output(
         object
             .entry("displayLabel".to_string())
             .or_insert_with(|| json!(question_number.to_string()));
-        object
-            .entry("hostType".to_string())
-            .or_insert_with(|| json!(crate::schema::task_presentation::wire_name(&rule.host_types[0])));
-        object
-            .entry("interaction".to_string())
-            .or_insert_with(|| json!(crate::schema::task_presentation::wire_name(&rule.interaction)));
+        object.entry("hostType".to_string()).or_insert_with(|| {
+            json!(crate::schema::task_presentation::wire_name(
+                &rule.host_types[0]
+            ))
+        });
+        object.entry("interaction".to_string()).or_insert_with(|| {
+            json!(crate::schema::task_presentation::wire_name(
+                &rule.interaction
+            ))
+        });
         // 运行时切片只接受 scoring 槽位；其余参与类型对直出产物没有意义。
         object.insert("participation".to_string(), json!("scoring"));
         object
@@ -1427,25 +1750,36 @@ pub(crate) fn normalize_direct_output(
             .or_insert_with(|| json!([]));
         // hostNodeId 缺失或指向不存在的节点时尽量自愈：行内答案槽 → 所在容器；
         // 否则 → 所属响应组的第一个 prompt 段落。
+        let invalid_list_host = object.get("hostType").and_then(Value::as_str) == Some("list_item");
+        if invalid_list_host {
+            if let Some(host) = find_slot_host(&Value::Array(normalized_groups.clone()), key) {
+                object.insert("hostNodeId".into(), json!(host));
+                object.insert("hostType".into(), json!("paragraph"));
+            }
+        }
         let host_missing = object
             .get("hostNodeId")
             .and_then(Value::as_str)
             .map(|host| !used_ids.contains(host))
             .unwrap_or(true);
-        let is_passage_host = object
-            .get("hostType")
-            .and_then(Value::as_str)
-            == Some("passage_paragraph");
+        let is_passage_host =
+            object.get("hostType").and_then(Value::as_str) == Some("passage_paragraph");
         if host_missing && !is_passage_host {
-            let resolved = find_slot_host(&Value::Array(normalized_groups.clone()), key)
-                .or_else(|| {
+            let resolved =
+                find_slot_host(&Value::Array(normalized_groups.clone()), key).or_else(|| {
                     let group = normalized_groups.iter().find(|group| {
                         group
                             .get("responseGroups")
                             .and_then(Value::as_array)
                             .into_iter()
                             .flatten()
-                            .flat_map(|response| response.get("slotIds").and_then(Value::as_array).into_iter().flatten())
+                            .flat_map(|response| {
+                                response
+                                    .get("slotIds")
+                                    .and_then(Value::as_array)
+                                    .into_iter()
+                                    .flatten()
+                            })
                             .any(|slot_id| slot_id.as_str() == Some(key.as_str()))
                     })?;
                     group
@@ -1502,15 +1836,20 @@ pub(crate) fn normalize_direct_output(
         if let Some(object) = entry.as_object_mut() {
             match object.get("kind").and_then(Value::as_str) {
                 Some("option") => {
+                    object.entry("assignment".to_string()).or_insert_with(|| {
+                        json!(slot_assignment
+                            .get(key)
+                            .cloned()
+                            .unwrap_or_else(|| "per_slot".to_string()))
+                    });
                     object
-                        .entry("assignment".to_string())
-                        .or_insert_with(|| {
-                            json!(slot_assignment.get(key).cloned().unwrap_or_else(|| "per_slot".to_string()))
-                        });
-                    object.entry("labels".to_string()).or_insert_with(|| json!([]));
+                        .entry("labels".to_string())
+                        .or_insert_with(|| json!([]));
                 }
                 Some("text") => {
-                    object.entry("values".to_string()).or_insert_with(|| json!([]));
+                    object
+                        .entry("values".to_string())
+                        .or_insert_with(|| json!([]));
                 }
                 _ => {
                     object.insert("kind".to_string(), json!("unresolved"));
@@ -1543,7 +1882,13 @@ pub(crate) fn normalize_direct_output(
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
-            .flat_map(|response| response.get("slotIds").and_then(Value::as_array).into_iter().flatten())
+            .flat_map(|response| {
+                response
+                    .get("slotIds")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+            })
             .filter_map(Value::as_str)
             .map(str::to_string)
             .collect();
@@ -1571,8 +1916,7 @@ pub(crate) fn normalize_direct_output(
         // 内容），编译器的集合题答案策略会把它暴露成待修问题。
         for (index, slot_id) in slot_ids.iter().enumerate() {
             let Some(label) = unioned.get(index).cloned() else {
-                normalized_answer_key
-                    .insert(slot_id.clone(), json!({"kind": "unresolved"}));
+                normalized_answer_key.insert(slot_id.clone(), json!({"kind": "unresolved"}));
                 continue;
             };
             let entry = normalized_answer_key
@@ -1595,7 +1939,7 @@ pub(crate) fn normalize_direct_output(
     notes.extend(model_warnings.iter().cloned());
     if !dropped_asset_nodes.is_empty() {
         notes.push(format!(
-            "cloud_direct_figures_dropped:{}（直出链不登记图片资产）",
+            "cloud_direct_figures_dropped:{}（模型图片引用未采信；听力图示由后端从原卷登记）",
             dropped_asset_nodes.join(",")
         ));
     }
@@ -1607,16 +1951,34 @@ pub(crate) fn normalize_direct_output(
         notes.push(format!("cloud_direct_meta_title:{title}"));
     }
     let mut document = Map::new();
-    document.insert("schemaVersion".to_string(), json!(IELTS_AUTHORING_IR_V2_SCHEMA_VERSION));
+    document.insert(
+        "schemaVersion".to_string(),
+        json!(IELTS_AUTHORING_IR_V2_SCHEMA_VERSION),
+    );
     document.insert("jobId".to_string(), json!(identity.job_id));
     document.insert("exam".to_string(), identity.exam.clone());
-    document.insert("modality".to_string(), json!("reading"));
-    document.insert("passage".to_string(), passage);
+    document.insert(
+        "modality".to_string(),
+        json!(if identity.listening {
+            "listening"
+        } else {
+            "reading"
+        }),
+    );
+    if !identity.listening {
+        document.insert("passage".to_string(), passage);
+    }
     document.insert("taskGroups".to_string(), Value::Array(normalized_groups));
     document.insert("answerSlots".to_string(), Value::Object(normalized_slots));
-    document.insert("answerKey".to_string(), Value::Object(normalized_answer_key));
+    document.insert(
+        "answerKey".to_string(),
+        Value::Object(normalized_answer_key),
+    );
     document.insert("assets".to_string(), json!([]));
-    document.insert("sourceDocumentId".to_string(), json!(identity.source_document_id));
+    document.insert(
+        "sourceDocumentId".to_string(),
+        json!(identity.source_document_id),
+    );
     document.insert("quality".to_string(), json!({}));
     document.insert(
         "audit".to_string(),
@@ -1630,10 +1992,266 @@ pub(crate) fn normalize_direct_output(
         }),
     );
     let mut document = Value::Object(document);
+    if identity.listening {
+        normalize_listening_structure(&mut document, raw);
+        attach_listening_figures(root, &identity.job_id, &mut document)?;
+    }
     // 质量报告用同一套质量管线重算（占位块不冒充结论）。
     crate::authoring_v2_commands::refresh_quality_report(root, &identity.job_id, &mut document)
         .map_err(|error| format!("cloud_direct_quality_refresh:{error}"))?;
     Ok(document)
+}
+
+// list_item is a layout node, not a runtime answer host. Keep its inline content
+// verbatim inside a paragraph, so completion blanks can bind to a legal host.
+fn wrap_list_item_inlines(value: &mut Value) {
+    match value {
+        Value::Array(items) => {
+            for child in items {
+                wrap_list_item_inlines(child)
+            }
+        }
+        Value::Object(object) => {
+            if object.get("type").and_then(Value::as_str) == Some("list_item") {
+                let inline = object
+                    .get("children")
+                    .and_then(Value::as_array)
+                    .is_some_and(|children| {
+                        !children.is_empty()
+                            && children
+                                .iter()
+                                .all(|c| matches!(c["type"].as_str(), Some("text" | "answer_slot")))
+                    });
+                if inline {
+                    let id = format!(
+                        "{}-paragraph",
+                        object
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("list-item")
+                    );
+                    let children = object.remove("children").unwrap();
+                    object.insert(
+                        "children".into(),
+                        json!([{"type":"paragraph","id":id,"children":children}]),
+                    );
+                }
+            }
+            for child in object.values_mut() {
+                wrap_list_item_inlines(child)
+            }
+        }
+        _ => {}
+    }
+}
+
+fn strip_model_media(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            for key in [
+                "media",
+                "assets",
+                "cue",
+                "cues",
+                "transcript",
+                "playbackPolicy",
+            ] {
+                object.remove(key);
+            }
+            for child in object.values_mut() {
+                strip_model_media(child);
+            }
+        }
+        Value::Array(array) => {
+            for child in array {
+                strip_model_media(child);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn attach_listening_figures(
+    root: &std::path::Path,
+    job_id: &str,
+    document: &mut Value,
+) -> CommandResult<()> {
+    use sha2::{Digest, Sha256};
+    let visual_groups: Vec<usize> = document["taskGroups"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .filter(|(_, g)| {
+            matches!(
+                g["taskType"].as_str(),
+                Some("plan_map_label_completion" | "diagram_label_completion")
+            )
+        })
+        .map(|(i, _)| i)
+        .collect();
+    if visual_groups.is_empty() {
+        return Ok(());
+    }
+    let job = load_job(root, job_id)?;
+    let (_, path) = crate::auto_pipeline::main_source_for_cloud(root, &job)?;
+    let texts = pdf_page_text_layers(&path);
+    let extraction = crate::auto_pipeline::main_pdf_vision_extraction(root, &job)?.0;
+    let dir = crate::util::job_dir(root, job_id);
+    for index in visual_groups {
+        let start = document["taskGroups"][index]["displayRange"]["start"]
+            .as_u64()
+            .unwrap_or(0);
+        let page_index = texts
+            .iter()
+            .find(|(_, text)| {
+                let words: Vec<_> = text
+                    .split(|c: char| !c.is_ascii_alphanumeric())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                words.windows(2).any(|pair| {
+                    pair[0].eq_ignore_ascii_case("questions")
+                        && pair[1].parse::<u64>().ok() == Some(start)
+                })
+            })
+            .map(|(n, _)| *n)
+            .or_else(|| {
+                let pages: Vec<_> = texts
+                    .iter()
+                    .filter(|(_, t)| page_needs_visual_evidence(t))
+                    .collect();
+                (pages.len() == 1).then(|| pages[0].0)
+            });
+        let image = page_index
+            .and_then(|n| {
+                extraction["pages"]
+                    .as_array()?
+                    .iter()
+                    .find(|p| p["pageIndex"].as_u64() == Some(n as u64))
+            })
+            .and_then(|p| p["images"].as_array())
+            .and_then(|images| {
+                images
+                    .iter()
+                    .find(|i| i["path"].as_str().is_some_and(|p| p.contains("render")))
+            });
+        if let Some(image) = image {
+            let path = std::path::PathBuf::from(
+                image["path"]
+                    .as_str()
+                    .ok_or("listening_figure_path_missing")?,
+            );
+            let real = std::fs::canonicalize(&path).map_err(|e| e.to_string())?;
+            let real_dir = std::fs::canonicalize(&dir).map_err(|e| e.to_string())?;
+            if !real.starts_with(&real_dir) {
+                return Err("listening_figure_outside_job".into());
+            }
+            let bytes = std::fs::read(&real).map_err(|e| e.to_string())?;
+            let hash = format!("{:x}", Sha256::digest(&bytes));
+            let asset_id = format!("listening-page-{}", &hash[..16]);
+            let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("png");
+            let relative = format!("assets/{asset_id}.{ext}");
+            std::fs::create_dir_all(dir.join("assets")).map_err(|e| e.to_string())?;
+            std::fs::write(dir.join(&relative), &bytes).map_err(|e| e.to_string())?;
+            if !document["assets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|a| a["assetId"] == asset_id)
+            {
+                document["assets"].as_array_mut().unwrap().push(json!({"assetId":asset_id,"kind":"raster_image","mime":image["mimeType"].as_str().unwrap_or("image/png"),"relativePath":relative,"sha256":hash,"byteLength":bytes.len(),"extractionMode":"page_crop"}));
+            }
+            let group = &mut document["taskGroups"][index];
+            if !group["stimulus"].is_array() {
+                group["stimulus"] = json!([]);
+            }
+            let id = format!(
+                "{}-page-figure",
+                group["taskId"].as_str().unwrap_or("group")
+            );
+            group["stimulus"].as_array_mut().unwrap().push(json!({"type":"figure","id":id,"assetId":asset_id,"sourceAnchors":[],"provenanceStatus":"source","display":{"widthPercent":100}}));
+            document["audit"]["notes"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!(format!(
+                    "listening_visual_full_page:page {}，地图/图示采用原卷整页图，请核对；尚未裁剪",
+                    page_index.unwrap_or(0)
+                )));
+        } else {
+            let task_id = document["taskGroups"][index]["taskId"].clone();
+            document["audit"]["notes"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!(format!(
+                    "listening_visual_missing:{task_id}，未能定位原卷图示，补齐前不可发布"
+                )));
+        }
+    }
+    Ok(())
+}
+
+fn normalize_listening_structure(document: &mut Value, raw: &Value) {
+    let slots = document["answerSlots"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    let mut part_numbers = std::collections::BTreeMap::<u64, Vec<u64>>::new();
+    for slot in slots.values() {
+        if let Some(n) = slot["questionNumber"].as_u64().filter(|n| *n > 0) {
+            part_numbers.entry((n - 1) / 10 + 1).or_default().push(n);
+        }
+    }
+    let mut parts = Vec::new();
+    for (ordinal, mut numbers) in part_numbers {
+        numbers.sort_unstable();
+        numbers.dedup();
+        let task_ids: Vec<Value> = document["taskGroups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|g| {
+                g["responseGroups"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|r| r["slotIds"].as_array().into_iter().flatten())
+                    .filter_map(Value::as_str)
+                    .any(|id| {
+                        slots
+                            .get(id)
+                            .and_then(|s| s["questionNumber"].as_u64())
+                            .is_some_and(|n| numbers.contains(&n))
+                    })
+            })
+            .map(|g| g["taskId"].clone())
+            .collect();
+        let label = raw["parts"]
+            .as_array()
+            .and_then(|parts| parts.get(ordinal as usize - 1))
+            .and_then(|p| p["displayLabel"].as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("SECTION {ordinal}"));
+        parts.push(json!({"partId":format!("part-{ordinal}"),"displayLabel":label,"expectedQuestionNumbers":numbers,"taskIds":task_ids,"sourceAnchors":[]}));
+    }
+    let complete = parts.len() == 4
+        && parts.iter().enumerate().all(|(i, p)| {
+            p["expectedQuestionNumbers"]
+                == json!(((i as u64 * 10 + 1)..=(i as u64 * 10 + 10)).collect::<Vec<_>>())
+        });
+    document["listening"] = json!({"scope":if complete {"complete_exam"} else {"partial_practice"},"parts":parts,"playbackPolicy":{
+        "mode":"practice","autoplay":false,"allowPause":true,"allowSeek":true,"allowReplay":true,
+        "refreshBehavior":"resume_from_snapshot","crashRecoveryBehavior":"resume_from_snapshot","showCurrentTime":true,"showDuration":true
+    }});
+}
+
+// Missing managed audio is a binding prerequisite, never something the model may repair.
+// The unfiltered compiler remains the authority for preview/export/publish.
+fn direct_structural_issues(document: &Value) -> Vec<CompilerIssueV2> {
+    compile_document(document)
+        .into_iter()
+        .filter(|i| !(document["modality"] == "listening" && i.code == "LISTENING_MEDIA_MISSING"))
+        .collect()
 }
 
 /// 题型 wire name → `TaskTypeV2`。
@@ -1666,9 +2284,7 @@ fn range_from_numbers(numbers: &[u32]) -> Value {
     if numbers.is_empty() {
         return json!({"kind": "range", "start": 1, "end": 1});
     }
-    let contiguous = numbers
-        .windows(2)
-        .all(|pair| pair[1] == pair[0] + 1);
+    let contiguous = numbers.windows(2).all(|pair| pair[1] == pair[0] + 1);
     if contiguous {
         json!({"kind": "range", "start": numbers[0], "end": numbers[numbers.len() - 1]})
     } else {
@@ -1751,7 +2367,9 @@ fn assess_passage_fidelity(
     warnings: &mut Vec<String>,
 ) -> Option<Value> {
     if page_texts.is_empty() {
-        warnings.push("cloud_direct_fidelity_skipped:扫描件无文字层，保真度检查跳过，请人工核对".to_string());
+        warnings.push(
+            "cloud_direct_fidelity_skipped:扫描件无文字层，保真度检查跳过，请人工核对".to_string(),
+        );
         return None;
     }
     let pdf_words: std::collections::BTreeSet<String> = page_texts
@@ -1828,7 +2446,9 @@ fn assess_passage_fidelity(
             for node_id in &flagged {
                 let detail = paragraphs
                     .iter()
-                    .find(|entry| entry.get("nodeId").and_then(Value::as_str) == Some(node_id.as_str()))
+                    .find(|entry| {
+                        entry.get("nodeId").and_then(Value::as_str) == Some(node_id.as_str())
+                    })
                     .cloned()
                     .unwrap_or(Value::Null);
                 issues.push(json!({
@@ -1880,47 +2500,90 @@ pub(crate) fn write_direct_canonical(
 }
 
 pub(crate) fn write_direct_canonical_leased(
-    root: &std::path::Path, job_id: &str, document: &Value, worker_id: &str,
+    root: &std::path::Path,
+    job_id: &str,
+    document: &Value,
+    worker_id: &str,
 ) -> CommandResult<i64> {
     write_direct_canonical_inner(root, job_id, document, Some(worker_id))
 }
 
-fn check_direct_lease(conn: &rusqlite::Connection, job_id: &str, worker_id: Option<&str>) -> CommandResult<()> {
+fn check_direct_lease(
+    conn: &rusqlite::Connection,
+    job_id: &str,
+    worker_id: Option<&str>,
+) -> CommandResult<()> {
     if let Some(worker) = worker_id {
-        let valid: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM processing_jobs_v2 WHERE id=?1 AND lease_owner=?2
+        let valid: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM processing_jobs_v2 WHERE id=?1 AND lease_owner=?2
              AND lease_expires_at>=?3 AND cancel_requested_at IS NULL
              AND stage IN ('running','local_recognition','cloud_recognition','reconciling'))",
-            rusqlite::params![job_id, worker, chrono::Utc::now().to_rfc3339()], |row| row.get(0)
-        ).map_err(|e| format!("cloud_direct_lease_check:{e}"))?;
-        if !valid { return Err("processing_lease_lost".to_string()); }
+                rusqlite::params![job_id, worker, chrono::Utc::now().to_rfc3339()],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("cloud_direct_lease_check:{e}"))?;
+        if !valid {
+            return Err("processing_lease_lost".to_string());
+        }
     }
     Ok(())
 }
 
 fn write_direct_canonical_inner(
-    root: &std::path::Path, job_id: &str, document: &Value, worker_id: Option<&str>,
+    root: &std::path::Path,
+    job_id: &str,
+    document: &Value,
+    worker_id: Option<&str>,
 ) -> CommandResult<i64> {
-    let request_id = format!("cloud-direct:{job_id}:{}", chrono::Utc::now().timestamp_millis());
+    let mut bound_document = document.clone();
+    if document["modality"] == "listening" {
+        let bindings = crate::listening_audio::store::list_bindings(root, job_id)?;
+        crate::listening_audio::canonical_media::apply_bindings_to_authoring(
+            &mut bound_document,
+            &bindings,
+        );
+    }
+    let document = &bound_document;
+    let request_id = format!(
+        "cloud-direct:{job_id}:{}",
+        chrono::Utc::now().timestamp_millis()
+    );
     let mut last_conflict = None;
     for _attempt in 0..3 {
         let mut conn = crate::library::repository::open_library_connection(root)?;
         let Some((current, current_version)) =
             crate::library::repository::get_canonical_ds(&conn, job_id)?
         else {
-            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            let tx = conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
                 .map_err(|e| format!("cloud_direct_seed_tx:{e}"))?;
             check_direct_lease(&tx, job_id, worker_id)?;
-            if !crate::library::repository::seed_canonical_ds(&tx, job_id, &document.to_string(), "action_required")? {
+            if !crate::library::repository::seed_canonical_ds(
+                &tx,
+                job_id,
+                &document.to_string(),
+                "action_required",
+            )? {
                 return Err("cloud_direct_canonical_not_seeded".to_string());
             }
-            tx.commit().map_err(|e| format!("cloud_direct_seed_commit:{e}"))?;
+            tx.commit()
+                .map_err(|e| format!("cloud_direct_seed_commit:{e}"))?;
             return Ok(1);
         };
         let mut merged = document.clone();
         // 资源清单是后端/用户身份，不随直出替换。
         if let Some(assets) = current.get("assets") {
-            merged["assets"] = assets.clone();
+            let mut combined = assets.as_array().cloned().unwrap_or_default();
+            for asset in document["assets"].as_array().into_iter().flatten() {
+                if !combined
+                    .iter()
+                    .any(|old| old["assetId"] == asset["assetId"])
+                {
+                    combined.push(asset.clone());
+                }
+            }
+            merged["assets"] = json!(combined);
         }
         if let (Some(current_audit), Some(audit)) = (
             current.get("audit").and_then(Value::as_object),
@@ -1937,7 +2600,10 @@ fn write_direct_canonical_inner(
             audit.insert("source".to_string(), json!("cloud_direct"));
             // 新内容未经人工确认：verified 不继承（旧稿的确认不覆盖新稿）。
             audit.insert("humanVerified".to_string(), json!(false));
-            audit.insert("updatedAt".to_string(), json!(chrono::Utc::now().to_rfc3339()));
+            audit.insert(
+                "updatedAt".to_string(),
+                json!(chrono::Utc::now().to_rfc3339()),
+            );
         }
         let command = json!({
             "op": "replaceAuthoringDocument",
@@ -2027,14 +2693,30 @@ mod tests {
 
     #[test]
     fn direct_images_only_cover_scanned_sparse_or_explicit_visual_pages() {
-        let extraction=json!({"pages":(1..=4).map(|n|json!({"pageIndex":n,"images":[{"path":"page.png"}]})).collect::<Vec<_>>()});
-        let text=vec![(1,"ordinary readable text ".repeat(30)),(3,"Answer Key".into()),(4,format!("Label the map below. {}","question text ".repeat(30)))];
-        let selected=select_image_pages(&extraction,&text);
-        assert_eq!(selected["pages"].as_array().unwrap().iter().map(|p|p["pageIndex"].as_u64().unwrap()).collect::<Vec<_>>(),vec![2,3,4]);
+        let extraction = json!({"pages":(1..=4).map(|n|json!({"pageIndex":n,"images":[{"path":"page.png"}]})).collect::<Vec<_>>()});
+        let text = vec![
+            (1, "ordinary readable text ".repeat(30)),
+            (3, "Answer Key".into()),
+            (
+                4,
+                format!("Label the map below. {}", "question text ".repeat(30)),
+            ),
+        ];
+        let selected = select_image_pages(&extraction, &text);
+        assert_eq!(
+            selected["pages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| p["pageIndex"].as_u64().unwrap())
+                .collect::<Vec<_>>(),
+            vec![2, 3, 4]
+        );
     }
 
     fn identity() -> DirectIdentity {
         DirectIdentity {
+            listening: false,
             job_id: "import-20261014000000-abcd1234".to_string(),
             exam: json!({
                 "examId": "p1-abcd1234",
@@ -2047,6 +2729,94 @@ mod tests {
             source_document_id: "document-import-20261014000000-abcd1234".to_string(),
             generated_at: "2026-10-14T00:00:00Z".to_string(),
         }
+    }
+
+    #[test]
+    fn listening_direct_discards_model_media_and_derives_parts_without_a_passage() {
+        let root = temp_root("listening-normalize");
+        let mut raw: Value = serde_json::from_str(LISTENING_EXAMPLE).unwrap();
+        raw["assets"] = json!([{"assetId":"invented"}]);
+        raw["parts"] = json!([{"media":{"assetId":"invented"}}]);
+        raw["playbackPolicy"] = json!({"mode":"exam"});
+        let mut identity = identity();
+        identity.listening = true;
+        let document = normalize_direct_output(&root, &raw, &identity).unwrap();
+        assert!(document.get("passage").is_none());
+        assert_eq!(document["modality"], "listening");
+        assert_eq!(
+            document["listening"]["parts"][0]["expectedQuestionNumbers"],
+            json!((1..=9).collect::<Vec<_>>())
+        );
+        assert_eq!(
+            document["listening"]["parts"][0]["displayLabel"],
+            "SECTION 1"
+        );
+        assert!(document["listening"]["parts"][0].get("media").is_none());
+        assert_eq!(document["listening"]["playbackPolicy"]["mode"], "practice");
+        assert!(document["assets"].as_array().unwrap().is_empty());
+        assert!(
+            direct_structural_issues(&document).is_empty(),
+            "{:?}",
+            direct_structural_issues(&document)
+        );
+        assert!(compile_document(&document)
+            .iter()
+            .all(|i| i.code == "LISTENING_MEDIA_MISSING"));
+    }
+
+    #[test]
+    fn supplementary_answer_text_is_added_to_the_initial_evidence() {
+        let root = temp_root("listening-answer-evidence");
+        let job = crate::job_store::make_job(crate::CreateJobInput::default());
+        crate::job_store::save_job(&root, &job).unwrap();
+        let file = root.join("answers.txt");
+        std::fs::write(&file, "1 river\n2 bridge").unwrap();
+        crate::job_commands::stage_source_file(
+            &root,
+            &job.job_id,
+            file.to_str().unwrap(),
+            "AnswerKey",
+        )
+        .unwrap();
+        let job = load_job(&root, &job.job_id).unwrap();
+        let mut texts = vec![(1, "Questions 1-2".into())];
+        let mut images = json!({"pages":[]});
+        append_answer_evidence(&root, &job, &mut texts, &mut images).unwrap();
+        assert_eq!(texts[1].0, 2);
+        assert!(texts[1].1.contains("SUPPLEMENTARY ANSWER KEY"));
+        assert!(texts[1].1.contains("1 river"));
+        assert_eq!(images["pages"], json!([]));
+    }
+
+    #[test]
+    fn truncated_question_chunks_keep_supplementary_answer_text_and_images() {
+        let texts = vec![
+            (1, "question one".into()),
+            (2, "question two".into()),
+            (3, "question three".into()),
+            (4, "SUPPLEMENTARY ANSWER KEY".into()),
+        ];
+        let images = json!({"pages":[{"pageIndex":1},{"pageIndex":3},{"pageIndex":4}]});
+        let (first, selected) = chunk_evidence(&texts, &images, 1, 2, 4);
+        assert_eq!(
+            first.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
+            vec![1, 2, 4]
+        );
+        assert_eq!(selected["pages"], json!([{"pageIndex":1},{"pageIndex":4}]));
+    }
+
+    #[test]
+    fn listening_note_list_blanks_gain_a_legal_host_without_losing_text() {
+        let mut notes = json!({"stimulus":[{"type":"bullet_list","id":"notes","items":[{"type":"list_item","id":"note-31","children":[{"type":"text","id":"note-label","text":"Cost of room: "},{"type":"answer_slot","id":"blank-31","slotId":"q31","displayLabel":"31","inline":true}]}]}]});
+        wrap_list_item_inlines(&mut notes);
+        assert_eq!(
+            find_slot_host(&notes, "q31").as_deref(),
+            Some("note-31-paragraph")
+        );
+        assert_eq!(
+            notes["stimulus"][0]["items"][0]["children"][0]["children"][0]["text"],
+            "Cost of room: "
+        );
     }
 
     fn paragraph(id: &str, label: Option<&str>, text: &str) -> Value {
@@ -2137,9 +2907,15 @@ mod tests {
         assert_eq!(response["allowOptionReuse"], json!(true));
         assert_eq!(response["sourceAnchors"], json!([]));
         assert!(document["taskGroups"][0]["instructionSignature"].is_object());
-        assert_eq!(document["taskGroups"][0]["reviewState"], json!("unreviewed"));
+        assert_eq!(
+            document["taskGroups"][0]["reviewState"],
+            json!("unreviewed")
+        );
         // 槽位：participation 收敛为 scoring，锚点补齐。
-        assert_eq!(document["answerSlots"]["q1"]["participation"], json!("scoring"));
+        assert_eq!(
+            document["answerSlots"]["q1"]["participation"],
+            json!("scoring")
+        );
         assert_eq!(document["answerSlots"]["q1"]["sourceAnchors"], json!([]));
         assert_eq!(document["answerSlots"]["q1"]["confidence"], json!(0.9));
         // 编译通过（唯一编译器）。
@@ -2165,13 +2941,16 @@ mod tests {
     fn missing_answer_key_entries_become_unresolved_not_rejections() {
         let root = temp_root("unresolved");
         let mut raw = minimal_raw();
-        raw["answerKey"] = json!({"q1": {"kind": "option", "labels": ["TRUE"], "assignment": "per_slot"}});
+        raw["answerKey"] =
+            json!({"q1": {"kind": "option", "labels": ["TRUE"], "assignment": "per_slot"}});
         let document = normalize_direct_output(&root, &raw, &identity()).unwrap();
         assert_eq!(document["answerKey"]["q2"]["kind"], json!("unresolved"));
         // 未解析答案不再让编译器失败（学生端按未作答计 0 分）。
         let issues = compile_document(&document);
         assert!(
-            !issues.iter().any(|issue| issue.code == "RUNTIME_ANSWER_UNRESOLVED"),
+            !issues
+                .iter()
+                .any(|issue| issue.code == "RUNTIME_ANSWER_UNRESOLVED"),
             "未解析答案不得作为编译阻断: {issues:?}"
         );
         let _ = std::fs::remove_dir_all(root);
@@ -2215,7 +2994,10 @@ mod tests {
                 }
             }
         }
-        let page_texts = vec![(1usize, "Paragraph A text about pearls. Paragraph B text about shells.".to_string())];
+        let page_texts = vec![(
+            1usize,
+            "Paragraph A text about pearls. Paragraph B text about shells.".to_string(),
+        )];
         let mut warnings = Vec::new();
         let report = assess_passage_fidelity(&mut document, &page_texts, &mut warnings)
             .expect("有文字层时必须产出报告");
@@ -2225,9 +3007,11 @@ mod tests {
         assert_eq!(report["overallCoverage"].as_f64().unwrap() < 1.0, true);
         // 低覆盖段落入质量报告（warning 级）。
         let issues = document["quality"]["issues"].as_array().unwrap();
-        assert!(issues.iter().any(|issue| issue["code"] == json!("CLOUD_DIRECT_FIDELITY_LOW")
-            && issue["severity"] == json!("warning")
-            && issue["targetId"] == json!("passage-paragraph-B")));
+        assert!(issues
+            .iter()
+            .any(|issue| issue["code"] == json!("CLOUD_DIRECT_FIDELITY_LOW")
+                && issue["severity"] == json!("warning")
+                && issue["targetId"] == json!("passage-paragraph-B")));
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -2322,7 +3106,10 @@ mod tests {
 
     #[test]
     fn range_from_numbers_prefers_range_for_contiguous_numbers() {
-        assert_eq!(range_from_numbers(&[1, 2, 3]), json!({"kind": "range", "start": 1, "end": 3}));
+        assert_eq!(
+            range_from_numbers(&[1, 2, 3]),
+            json!({"kind": "range", "start": 1, "end": 3})
+        );
         assert_eq!(
             range_from_numbers(&[1, 3]),
             json!({"kind": "set", "values": [1, 3]})
@@ -2352,23 +3139,32 @@ mod tests {
         let (sender, receiver) = mpsc::channel();
         thread::spawn(move || {
             for (body, status) in replies {
-                let Ok((mut stream, _)) = listener.accept() else { return };
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
                 let mut buffer = [0u8; 8192];
                 let mut raw = String::new();
                 // 读满 content-length（请求体可能远大于 8KB）。
                 loop {
-                    let Ok(read) = stream.read(&mut buffer) else { break };
-                    if read == 0 { break }
+                    let Ok(read) = stream.read(&mut buffer) else {
+                        break;
+                    };
+                    if read == 0 {
+                        break;
+                    }
                     raw.push_str(&String::from_utf8_lossy(&buffer[..read]));
                     if let Some(length) = raw.split("\r\n\r\n").nth(1).map(|body| body.len()) {
                         let declared = raw
                             .lines()
                             .find_map(|line| {
                                 let (name, value) = line.split_once(':')?;
-                                name.eq_ignore_ascii_case("content-length").then(|| value.trim().to_string())
+                                name.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().to_string())
                             })
                             .and_then(|value| value.parse::<usize>().ok());
-                        if declared.is_some_and(|declared| length >= declared) { break }
+                        if declared.is_some_and(|declared| length >= declared) {
+                            break;
+                        }
                     }
                 }
                 let _ = sender.send(raw.clone());
@@ -2380,10 +3176,17 @@ mod tests {
                 let _ = stream.flush();
             }
         });
-        ControlledService { base_url: format!("http://127.0.0.1:{}/v1", address.port()), requests: receiver }
+        ControlledService {
+            base_url: format!("http://127.0.0.1:{}/v1", address.port()),
+            requests: receiver,
+        }
     }
 
-    fn direct_exam_with_prompt(prompt: &str, finish_reason: &str, question_numbers: &[u32]) -> String {
+    fn direct_exam_with_prompt(
+        prompt: &str,
+        finish_reason: &str,
+        question_numbers: &[u32],
+    ) -> String {
         let mut slots = serde_json::Map::new();
         let mut key = serde_json::Map::new();
         let mut responses = Vec::new();
@@ -2453,7 +3256,8 @@ mod tests {
         let dir = crate::util::job_dir(root, &job.job_id);
         std::fs::create_dir_all(dir.join("uploads")).unwrap();
         std::fs::copy(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../fixtures/parser/{fixture}")),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(format!("../fixtures/parser/{fixture}")),
             dir.join("uploads/fixture.pdf"),
         )
         .unwrap();
@@ -2508,26 +3312,47 @@ mod tests {
         // 调用与编译。
         assert_eq!(outcome.calls, 1);
         assert!(!outcome.chunked);
-        assert!(outcome.compile_issues.is_empty(), "{:?}", outcome.compile_issues);
+        assert!(
+            outcome.compile_issues.is_empty(),
+            "{:?}",
+            outcome.compile_issues
+        );
         // 身份与产物。
         assert_eq!(outcome.document["audit"]["source"], json!("cloud_direct"));
         assert_eq!(outcome.document["jobId"], json!(job.job_id));
         assert_eq!(outcome.document["modality"], json!("reading"));
-        assert_eq!(outcome.document["answerKey"]["q1"]["labels"][0], json!("TRUE"));
+        assert_eq!(
+            outcome.document["answerKey"]["q1"]["labels"][0],
+            json!("TRUE")
+        );
         // 落盘是 write_direct_result 的职责（调度器在可用性判定后调用）。
         write_direct_result(&root, &job.job_id, &outcome).unwrap();
         let job_dir = crate::util::job_dir(&root, &job.job_id);
-        assert!(job_dir.join(crate::authoring_v2_commands::AUTHORING_V2_SHADOW_FILE).is_file());
+        assert!(job_dir
+            .join(crate::authoring_v2_commands::AUTHORING_V2_SHADOW_FILE)
+            .is_file());
         assert!(job_dir.join(DIRECT_RESULT_FILE).is_file());
         let recorded: Value = crate::util::read_json(&job_dir.join(DIRECT_RESULT_FILE)).unwrap();
         assert_eq!(recorded["calls"], json!(1));
         // 证据面纪律：请求带每页文字层与契约，不带本地节点目标。
-        let request = service.requests.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert!(request.contains("=== PAGE"), "request must carry per-page text layers");
+        let request = service
+            .requests
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        assert!(
+            request.contains("=== PAGE"),
+            "request must carry per-page text layers"
+        );
         assert!(request.contains("You convert ONE IELTS Reading test PDF"));
         assert!(request.contains("TASK PRESENTATION RULES"));
-        assert!(!request.contains("sourceParagraphs"), "direct chain must not send local targets");
-        assert!(!request.contains("localNodeTargets"), "direct chain must not send local targets");
+        assert!(
+            !request.contains("sourceParagraphs"),
+            "direct chain must not send local targets"
+        );
+        assert!(
+            !request.contains("localNodeTargets"),
+            "direct chain must not send local targets"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -2537,18 +3362,28 @@ mod tests {
         crate::util::ensure_app_dirs(&root).unwrap();
         // 第一份：两个题组共用 taskId ⇒ RUNTIME_TASK_ID_DUPLICATE（编译错）。
         let duplicated = {
-            let mut value: Value =
-                serde_json::from_str(&direct_exam_with_prompt("Pearls are formed inside oysters.", "stop", &[1, 2])).unwrap();
-            let mut exam: Value = serde_json::from_str(value["choices"][0]["message"]["content"].as_str().unwrap()).unwrap();
+            let mut value: Value = serde_json::from_str(&direct_exam_with_prompt(
+                "Pearls are formed inside oysters.",
+                "stop",
+                &[1, 2],
+            ))
+            .unwrap();
+            let mut exam: Value =
+                serde_json::from_str(value["choices"][0]["message"]["content"].as_str().unwrap())
+                    .unwrap();
             let mut groups = exam["taskGroups"].as_array().unwrap().clone();
             groups.push(groups[0].clone());
             exam["taskGroups"] = json!(groups);
-            value["choices"][0]["message"]["content"] = json!(serde_json::to_string(&exam).unwrap());
+            value["choices"][0]["message"]["content"] =
+                json!(serde_json::to_string(&exam).unwrap());
             value.to_string()
         };
         let service = controlled_service(vec![
             (duplicated, 200),
-            (direct_exam_with_prompt("Pearls are formed inside oysters.", "stop", &[1, 2]), 200),
+            (
+                direct_exam_with_prompt("Pearls are formed inside oysters.", "stop", &[1, 2]),
+                200,
+            ),
         ]);
         let job = direct_job_with_fixture(&root);
         let profile_id = controlled_profile(&root, &service.base_url);
@@ -2557,12 +3392,28 @@ mod tests {
             .expect("repair round must recover");
 
         assert_eq!(outcome.calls, 2, "编译错必须带错误清单修正好一次");
-        assert!(outcome.compile_issues.is_empty(), "{:?}", outcome.compile_issues);
-        let first = service.requests.recv_timeout(Duration::from_secs(5)).unwrap();
-        let second = service.requests.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(
+            outcome.compile_issues.is_empty(),
+            "{:?}",
+            outcome.compile_issues
+        );
+        let first = service
+            .requests
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        let second = service
+            .requests
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
         assert!(second.contains("REPAIR ROUND"), "修复回合必须带修复指令");
-        assert!(second.contains("RUNTIME_TASK_ID_DUPLICATE"), "修复回合必须带编译错误清单");
-        assert!(second.contains("CURRENT OUTPUT TO FIX"), "修复回合必须带当前 JSON");
+        assert!(
+            second.contains("RUNTIME_TASK_ID_DUPLICATE"),
+            "修复回合必须带编译错误清单"
+        );
+        assert!(
+            second.contains("CURRENT OUTPUT TO FIX"),
+            "修复回合必须带当前 JSON"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -2573,8 +3424,14 @@ mod tests {
         crate::util::ensure_app_dirs(&root).unwrap();
         let service = controlled_service(vec![
             (direct_exam_with_prompt("Pearls.", "length", &[1, 2]), 200),
-            (direct_exam_with_prompt("Pearls are formed inside oysters.", "stop", &[1, 2]), 200),
-            (direct_exam_with_prompt("Pearls are formed inside oysters.", "stop", &[3, 4]), 200),
+            (
+                direct_exam_with_prompt("Pearls are formed inside oysters.", "stop", &[1, 2]),
+                200,
+            ),
+            (
+                direct_exam_with_prompt("Pearls are formed inside oysters.", "stop", &[3, 4]),
+                200,
+            ),
         ]);
         let job = direct_job_with_named_fixture(&root, "chunked-reading-evidence.pdf");
         let profile_id = controlled_profile(&root, &service.base_url);
@@ -2585,9 +3442,16 @@ mod tests {
         assert!(outcome.chunked);
         // 被截断的首次请求 + 两块 = 3 次（≤3 次/份，含截断那次）。
         assert_eq!(outcome.calls, 3, "截断后按页段分块重试一次（两块）");
-        assert!(outcome.compile_issues.is_empty(), "{:?}", outcome.compile_issues);
+        assert!(
+            outcome.compile_issues.is_empty(),
+            "{:?}",
+            outcome.compile_issues
+        );
         // 两块按题号拼接：槽位合并，正文取节点数最多的一份。
-        assert_eq!(outcome.document["answerSlots"].as_object().unwrap().len(), 4);
+        assert_eq!(
+            outcome.document["answerSlots"].as_object().unwrap().len(),
+            4
+        );
         // 块间 id 不重号：两块都从 group-1 开始，合并后不得有重复 taskId。
         let task_ids: Vec<&str> = outcome.document["taskGroups"]
             .as_array()
@@ -2596,10 +3460,23 @@ mod tests {
             .filter_map(|group| group["taskId"].as_str())
             .collect();
         let unique: std::collections::BTreeSet<&&str> = task_ids.iter().collect();
-        assert_eq!(task_ids.len(), unique.len(), "块间 taskId 必须唯一: {task_ids:?}");
-        let first = service.requests.recv_timeout(Duration::from_secs(5)).unwrap();
-        let chunk_a = service.requests.recv_timeout(Duration::from_secs(5)).unwrap();
-        let chunk_b = service.requests.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(
+            task_ids.len(),
+            unique.len(),
+            "块间 taskId 必须唯一: {task_ids:?}"
+        );
+        let first = service
+            .requests
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        let chunk_a = service
+            .requests
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        let chunk_b = service
+            .requests
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
         assert!(!first.contains("page chunks"), "首次请求不带分块说明");
         assert!(chunk_a.contains("page chunks") && chunk_b.contains("page chunks"));
         let _ = std::fs::remove_dir_all(root);
@@ -2650,8 +3527,14 @@ mod tests {
         assert_eq!(task_ids, vec!["group-1", "chunk1-group-1"], "{task_ids:?}");
         // 段前主机：chunk_a 的 q1 指向正文块自己的节点；chunk_b 的 q2 主机被
         // 重定向到正文块里同标签（B）的真实节点，而不是被丢弃的副本。
-        assert_eq!(merged["answerSlots"]["q1"]["hostNodeId"], json!("passage-paragraph-A"));
-        assert_eq!(merged["answerSlots"]["q2"]["hostNodeId"], json!("passage-paragraph-B"));
+        assert_eq!(
+            merged["answerSlots"]["q1"]["hostNodeId"],
+            json!("passage-paragraph-A")
+        );
+        assert_eq!(
+            merged["answerSlots"]["q2"]["hostNodeId"],
+            json!("passage-paragraph-B")
+        );
         // 合并结果可以归一化并编译（不再有重复 taskId）。
         let root = temp_root("merge-normalize");
         let document = normalize_direct_output(&root, &merged, &identity()).unwrap();
@@ -2666,20 +3549,43 @@ mod tests {
         let root = temp_root("stale-worker");
         crate::util::ensure_app_dirs(&root).unwrap();
         let conn = open_library_connection(&root).unwrap();
-        upsert_item_shell(&conn, &UpsertItemInput { id: "j", modality: "reading", title: "t", status: "processing", source_asset_id: None }).unwrap();
+        upsert_item_shell(
+            &conn,
+            &UpsertItemInput {
+                id: "j",
+                modality: "reading",
+                title: "t",
+                status: "processing",
+                source_asset_id: None,
+            },
+        )
+        .unwrap();
         crate::processing::queue::enqueue(&conn, "j", "j", "a", &Value::Null).unwrap();
-        crate::processing::queue::claim_next(&conn, "new-worker").unwrap().unwrap();
-        let document = normalize_direct_output(&root, &json!({
-            "passage": {"content": [paragraph("p", None, "text")]},
-            "taskGroups": [{"taskId":"g", "taskType":"short_answer", "questions":[]}],
-            "answerSlots": {}, "answerKey": {}
-        }), &identity()).unwrap();
-        assert_eq!(write_direct_canonical_leased(&root,"j",&document,"old-worker").unwrap_err(), "processing_lease_lost");
-        assert!(get_canonical_ds(&conn,"j").unwrap().is_none());
-        write_direct_canonical_leased(&root,"j",&document,"new-worker").unwrap();
-        let before = get_canonical_ds(&conn,"j").unwrap();
-        assert_eq!(write_direct_canonical_leased(&root,"j",&document,"old-worker").unwrap_err(), "processing_lease_lost");
-        assert_eq!(get_canonical_ds(&conn,"j").unwrap(), before);
+        crate::processing::queue::claim_next(&conn, "new-worker")
+            .unwrap()
+            .unwrap();
+        let document = normalize_direct_output(
+            &root,
+            &json!({
+                "passage": {"content": [paragraph("p", None, "text")]},
+                "taskGroups": [{"taskId":"g", "taskType":"short_answer", "questions":[]}],
+                "answerSlots": {}, "answerKey": {}
+            }),
+            &identity(),
+        )
+        .unwrap();
+        assert_eq!(
+            write_direct_canonical_leased(&root, "j", &document, "old-worker").unwrap_err(),
+            "processing_lease_lost"
+        );
+        assert!(get_canonical_ds(&conn, "j").unwrap().is_none());
+        write_direct_canonical_leased(&root, "j", &document, "new-worker").unwrap();
+        let before = get_canonical_ds(&conn, "j").unwrap();
+        assert_eq!(
+            write_direct_canonical_leased(&root, "j", &document, "old-worker").unwrap_err(),
+            "processing_lease_lost"
+        );
+        assert_eq!(get_canonical_ds(&conn, "j").unwrap(), before);
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -2691,23 +3597,67 @@ mod tests {
             let mut document = normalize_direct_output(&root, &example, &identity()).unwrap();
             let quality = crate::ielts_grammar::quality::evaluate_quality(&document, None);
             for issue in quality["issues"].as_array().unwrap() {
-                assert!(!matches!(issue["code"].as_str().unwrap(), "PHYSICAL_SHADOW_MISSING" | "SOURCE_QUESTION_COVERAGE_UNDETERMINED" | "PROVENANCE_MISSING" | "INSTRUCTION_PROVENANCE_MISSING" | "INSTRUCTION_SIGNATURE_EVIDENCE_MISSING"), "{name}: {issue}");
+                assert!(
+                    !matches!(
+                        issue["code"].as_str().unwrap(),
+                        "PHYSICAL_SHADOW_MISSING"
+                            | "SOURCE_QUESTION_COVERAGE_UNDETERMINED"
+                            | "PROVENANCE_MISSING"
+                            | "INSTRUCTION_PROVENANCE_MISSING"
+                            | "INSTRUCTION_SIGNATURE_EVIDENCE_MISSING"
+                    ),
+                    "{name}: {issue}"
+                );
             }
             document["quality"] = quality;
-            let gate = crate::authoring_v2_commands::check_publish_preflight(&root, &identity().job_id, 1, &document);
-            assert!(gate["warnings"].as_array().unwrap().len() < 10, "{name}: {gate}");
-            assert!(!gate["warnings"].as_array().unwrap().iter().any(|w| w["code"].as_str().unwrap().starts_with("SOURCE_REVIEW") || w["code"].as_str().unwrap().starts_with("RECOGNITION_CHOICE")));
-            let first = document["answerKey"].as_object().unwrap().keys().next().unwrap().clone();
+            let gate = crate::authoring_v2_commands::check_publish_preflight(
+                &root,
+                &identity().job_id,
+                1,
+                &document,
+            );
+            assert!(
+                gate["warnings"].as_array().unwrap().len() < 10,
+                "{name}: {gate}"
+            );
+            assert!(!gate["warnings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|w| w["code"].as_str().unwrap().starts_with("SOURCE_REVIEW")
+                    || w["code"]
+                        .as_str()
+                        .unwrap()
+                        .starts_with("RECOGNITION_CHOICE")));
+            let first = document["answerKey"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .next()
+                .unwrap()
+                .clone();
             document["answerKey"][&first] = json!({"kind":"unresolved"});
-            let gate = crate::authoring_v2_commands::check_publish_preflight(&root, &identity().job_id, 1, &document);
-            assert!(gate["warnings"].as_array().unwrap().iter().any(|w| w["code"] == "ANSWER_MISSING"));
+            let gate = crate::authoring_v2_commands::check_publish_preflight(
+                &root,
+                &identity().job_id,
+                1,
+                &document,
+            );
+            assert!(gate["warnings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|w| w["code"] == "ANSWER_MISSING"));
         }
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
     fn re_recognition_replaces_the_canonical_document() {
-        use crate::library::repository::{get_canonical_ds, open_library_connection, seed_canonical_ds, upsert_item_shell, UpsertItemInput};
+        use crate::library::repository::{
+            get_canonical_ds, open_library_connection, seed_canonical_ds, upsert_item_shell,
+            UpsertItemInput,
+        };
         let root = temp_root("e2e-replace");
         crate::util::ensure_app_dirs(&root).unwrap();
         let job = direct_job_with_fixture(&root);
@@ -2724,18 +3674,27 @@ mod tests {
             },
         )
         .unwrap();
-        let old: Value = serde_json::from_str(
-            &direct_exam_with_prompt("Old passage text.", "stop", &[9, 10]),
-        )
+        let old: Value = serde_json::from_str(&direct_exam_with_prompt(
+            "Old passage text.",
+            "stop",
+            &[9, 10],
+        ))
         .unwrap();
         let old_exam: Value =
-            serde_json::from_str(old["choices"][0]["message"]["content"].as_str().unwrap()).unwrap();
+            serde_json::from_str(old["choices"][0]["message"]["content"].as_str().unwrap())
+                .unwrap();
         let mut old_document = old_exam;
         old_document["audit"] = json!({
             "revision": 0, "source": "auto_extract", "humanVerified": false,
             "llmUsed": false, "updatedAt": "2026-10-14T00:00:00Z", "notes": []
         });
-        seed_canonical_ds(&conn, &job.job_id, &old_document.to_string(), "action_required").unwrap();
+        seed_canonical_ds(
+            &conn,
+            &job.job_id,
+            &old_document.to_string(),
+            "action_required",
+        )
+        .unwrap();
         drop(conn);
         // 2) 直出稿替换。
         let service = controlled_service(vec![(
@@ -2743,8 +3702,8 @@ mod tests {
             200,
         )]);
         let profile_id = controlled_profile(&root, &service.base_url);
-        let outcome =
-            run_exam_direct(&root, &job.job_id, Some(&profile_id)).expect("direct chain must succeed");
+        let outcome = run_exam_direct(&root, &job.job_id, Some(&profile_id))
+            .expect("direct chain must succeed");
         let version = write_direct_canonical(&root, &job.job_id, &outcome.document)
             .expect("replace must succeed");
         // 3) 权威稿必须是新直出稿，而不是旧稿。
@@ -2752,8 +3711,16 @@ mod tests {
         let (ds, current) = get_canonical_ds(&conn, &job.job_id).unwrap().unwrap();
         assert_eq!(current, version);
         assert_eq!(ds["audit"]["source"], json!("cloud_direct"));
-        assert_eq!(ds["audit"]["revision"], json!(1), "revision 必须在旧稿上进位");
-        assert_eq!(ds["audit"]["humanVerified"], json!(false), "新内容不继承旧确认");
+        assert_eq!(
+            ds["audit"]["revision"],
+            json!(1),
+            "revision 必须在旧稿上进位"
+        );
+        assert_eq!(
+            ds["audit"]["humanVerified"],
+            json!(false),
+            "新内容不继承旧确认"
+        );
         assert_eq!(
             ds["answerSlots"].as_object().unwrap().len(),
             2,
@@ -2776,7 +3743,8 @@ mod tests {
                 "answerKey": {},
                 "warnings": []
             })).unwrap()}, "finish_reason": "stop"}],
-            "usage": {"total_tokens": 50}}).to_string(),
+            "usage": {"total_tokens": 50}})
+            .to_string(),
             200,
         )]);
         let job = direct_job_with_fixture(&root);
@@ -2806,14 +3774,23 @@ mod tests {
         let job = direct_job_with_fixture(&root);
         let profile_id = controlled_profile(&root, &service.base_url);
 
-        let outcome = run_exam_direct(&root, &job.job_id, Some(&profile_id))
-            .expect("格式重试一次后必须成功");
+        let outcome =
+            run_exam_direct(&root, &job.job_id, Some(&profile_id)).expect("格式重试一次后必须成功");
 
         // 失败的首次请求 + 成功的重试 = 2 次真实 HTTP 调用（预算据此封顶）。
         assert_eq!(outcome.calls, 2, "解析失败重试恰好一次");
-        assert_eq!(outcome.document["answerKey"]["q1"]["labels"][0], json!("TRUE"));
-        let first = service.requests.recv_timeout(Duration::from_secs(5)).unwrap();
-        let retry = service.requests.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(
+            outcome.document["answerKey"]["q1"]["labels"][0],
+            json!("TRUE")
+        );
+        let first = service
+            .requests
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        let retry = service
+            .requests
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
         assert!(!first.contains("FORMAT NOTE"), "首次请求不带格式说明");
         assert!(retry.contains("FORMAT NOTE"), "重试必须带格式纠正说明");
         let _ = std::fs::remove_dir_all(root);
@@ -2893,20 +3870,26 @@ mod tests {
     #[test]
     fn choose_two_defaults_follow_compiler_set_policy_and_cardinality() {
         let root = temp_root("normalize-choose-two");
-        let document =
-            normalize_direct_output(&root, &choose_two_raw(), &identity()).expect("choose-TWO 必须能归一化");
+        let document = normalize_direct_output(&root, &choose_two_raw(), &identity())
+            .expect("choose-TWO 必须能归一化");
         let response = &document["taskGroups"][0]["responseGroups"][0];
         // 集合题缺省：编译器硬规则（与契约的 exact_set 写法冲突时以编译器为准，
         // 见归一化处注释）——scoringPolicy=per_slot_ielts_normalized；
         // cardinality min/max/exact = 槽位数（要选的字母数）。
         assert_eq!(response["assignment"], json!("unordered_set"));
-        assert_eq!(response["scoringPolicy"], json!("per_slot_ielts_normalized"));
+        assert_eq!(
+            response["scoringPolicy"],
+            json!("per_slot_ielts_normalized")
+        );
         assert_eq!(response["cardinality"]["min"], json!(2));
         assert_eq!(response["cardinality"]["max"], json!(2));
         assert_eq!(response["cardinality"]["exact"], json!(2));
         // 每个槽位一条集合答案（assignment 与 labels 保真）。
         assert_eq!(document["answerKey"]["q1"]["labels"][0], json!("A"));
-        assert_eq!(document["answerKey"]["q1"]["assignment"], json!("unordered_set"));
+        assert_eq!(
+            document["answerKey"]["q1"]["assignment"],
+            json!("unordered_set")
+        );
         assert_eq!(document["answerKey"]["q2"]["labels"][0], json!("D"));
         // 编译通过：选项数（5）> 槽位数（2），答案键策略满足。
         let issues = compile_document(&document);
@@ -2928,7 +3911,10 @@ mod tests {
         assert_eq!(document["answerKey"]["q1"]["labels"], json!(["A"]));
         assert_eq!(document["answerKey"]["q2"]["labels"], json!(["D"]));
         let response = &document["taskGroups"][0]["responseGroups"][0];
-        assert_eq!(response["scoringPolicy"], json!("per_slot_ielts_normalized"));
+        assert_eq!(
+            response["scoringPolicy"],
+            json!("per_slot_ielts_normalized")
+        );
         let issues = compile_document(&document);
         assert!(issues.is_empty(), "{issues:?}");
         let _ = std::fs::remove_dir_all(root);
@@ -3003,7 +3989,10 @@ mod tests {
         let crate::listening_source_v1::CompiledExamSourceV2::Reading(source) = compiled else {
             panic!("阅读稿必须编译出阅读契约");
         };
-        assert_eq!(source.question_order, vec!["q1".to_string(), "q2".to_string()]);
+        assert_eq!(
+            source.question_order,
+            vec!["q1".to_string(), "q2".to_string()]
+        );
         assert_eq!(source.question_display_map["q1"], "1");
         assert_eq!(source.question_display_map["q2"], "2");
         let _ = std::fs::remove_dir_all(root);
@@ -3060,8 +4049,12 @@ mod real_model_tests {
 
     /// 用量总计（`llm-token-usage-total.json` 是 camelCase：promptTokens /
     /// completionTokens / cacheHitTokens…）。返回 (prompt, completion, cacheHit, calls)。
-    fn usage_totals(job_dir: &std::path::Path) -> (Option<u64>, Option<u64>, Option<u64>, Option<u64>) {
-        let Ok(value) = crate::util::read_json::<Value>(&job_dir.join("llm-token-usage-total.json")) else {
+    fn usage_totals(
+        job_dir: &std::path::Path,
+    ) -> (Option<u64>, Option<u64>, Option<u64>, Option<u64>) {
+        let Ok(value) =
+            crate::util::read_json::<Value>(&job_dir.join("llm-token-usage-total.json"))
+        else {
             return (None, None, None, None);
         };
         let read = |key: &str| value.get(key).and_then(Value::as_u64);
@@ -3071,6 +4064,151 @@ mod real_model_tests {
             read("cacheHitTokens"),
             read("callCount"),
         )
+    }
+
+    #[test]
+    #[ignore = "Explicit real DeepSeek listening command acceptance; needs private PDF and saved credential"]
+    fn real_deepseek_listening_direct_vol7_t9() {
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
+        let pdf = repo.join("fixtures/golden/private-real/listening-vol7-t9.pdf");
+        assert!(pdf.is_file(), "private fixture required");
+        let real_root = real_app_root().expect("real application configuration required");
+        let mut profiles =
+            crate::util::read_json::<Vec<Value>>(&real_root.join("config/llm-profiles.json"))
+                .unwrap();
+        let profile_id = profiles
+            .iter()
+            .find(|p| {
+                p["baseUrl"]
+                    .as_str()
+                    .is_some_and(|s| s.contains("deepseek"))
+            })
+            .expect("DeepSeek profile required")["profileId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        for p in &mut profiles {
+            if let Some(o) = p.as_object_mut() {
+                o.remove("apiKey");
+                o.remove("api_key");
+            }
+        }
+        let root =
+            std::env::temp_dir().join(format!("pdf2test-listening-live-{}", uuid::Uuid::new_v4()));
+        crate::util::ensure_app_dirs(&root).unwrap();
+        crate::llm_profiles::save_profiles(&root, &profiles).unwrap();
+        assert!(
+            crate::llm_profiles::load_llm_api_key(&root, &profile_id).is_some(),
+            "saved credential required"
+        );
+        let job = crate::job_store::make_job(crate::CreateJobInput {
+            title: Some("listening-vol7-t9".into()),
+            llm_profile_id: Some(profile_id.clone()),
+            ..Default::default()
+        });
+        crate::job_store::save_job(&root, &job).unwrap();
+        crate::job_commands::stage_source_file(
+            &root,
+            &job.job_id,
+            pdf.to_str().unwrap(),
+            "MainQuestion",
+        )
+        .unwrap();
+        let conn = crate::library::repository::open_library_connection(&root).unwrap();
+        crate::library::repository::upsert_item_shell(
+            &conn,
+            &crate::library::repository::UpsertItemInput {
+                id: &job.job_id,
+                modality: "listening",
+                title: "listening-vol7-t9",
+                status: "processing",
+                source_asset_id: None,
+            },
+        )
+        .unwrap();
+        drop(conn);
+        let started = std::time::Instant::now();
+        let outcome =
+            run_exam_direct(&root, &job.job_id, Some(&profile_id)).expect("live listening direct");
+        let actual_issues = compile_document(&outcome.document);
+        // Synthetic media is confined to this compile probe; never persisted into the draft.
+        let media_fixture = crate::test_support::complete_listening_exam();
+        let mut probe: crate::schema::IeltsAuthoringIRV2 =
+            serde_json::from_value(outcome.document.clone()).unwrap();
+        probe.assets = media_fixture.assets.clone();
+        for (part, fixture) in probe
+            .listening
+            .as_mut()
+            .unwrap()
+            .parts
+            .iter_mut()
+            .zip(media_fixture.listening.as_ref().unwrap().parts.iter())
+        {
+            part.media = fixture.media.clone();
+        }
+        let probe_issues = crate::listening_source_v1::compile_exam_source_v2(&probe)
+            .err()
+            .unwrap_or_default();
+        let dir = crate::util::job_dir(&root, &job.job_id);
+        let calls: Vec<Value> = std::fs::read_to_string(dir.join("llm-calls.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|s| serde_json::from_str(s).unwrap())
+            .collect();
+        let report = json!({"evidenceLevel":"command-real-provider","fixture":"listening-vol7-t9.pdf","jobRoot":dir,"elapsedMs":started.elapsed().as_millis(),"calls":calls,"parts":outcome.document["listening"]["parts"],"taskGroups":outcome.document["taskGroups"],"slotCount":outcome.document["answerSlots"].as_object().unwrap().len(),"unresolvedAnswers":outcome.document["answerKey"].as_object().unwrap().values().filter(|v|v["kind"]=="unresolved").count(),"structuralIssues":outcome.compile_issues,"actualCompilerIssues":actual_issues,"syntheticMediaCompileProbeIssues":probe_issues,"productAcceptance":"pending real audio and answer samples; synthetic compile probe is not product evidence"});
+        crate::util::write_json(
+            &repo.join("artifacts/qa/listening-direct-real.json"),
+            &report,
+        )
+        .unwrap();
+        assert_eq!(report["parts"].as_array().unwrap().len(), 4);
+        assert_eq!(report["slotCount"], 40);
+        assert_eq!(report["unresolvedAnswers"], 40);
+        assert!(
+            outcome.compile_issues.is_empty(),
+            "{:?}",
+            outcome.compile_issues
+        );
+        assert!(
+            probe_issues.is_empty(),
+            "synthetic-media structural compile probe: {probe_issues:?}"
+        );
+        assert_eq!(
+            actual_issues.len(),
+            4,
+            "formal compiler must honestly require four real audio bindings"
+        );
+        assert!(actual_issues
+            .iter()
+            .all(|i| i.code == "LISTENING_MEDIA_MISSING"));
+        let golden: Value =
+            crate::util::read_json(&repo.join("fixtures/golden/metadata/listening-vol7-t9.json"))
+                .unwrap();
+        let groups = outcome.document["taskGroups"].as_array().unwrap();
+        assert_eq!(groups.len(), 8);
+        for (actual, expected) in groups
+            .iter()
+            .zip(golden["expected"]["taskGroups"].as_array().unwrap())
+        {
+            assert_eq!(actual["taskType"], expected["kind"]);
+            assert_eq!(actual["displayRange"]["start"], expected["displayRange"][0]);
+            assert_eq!(actual["displayRange"]["end"], expected["displayRange"][1]);
+        }
+        let provider_calls: Vec<_> = calls.iter().filter(|c| c["providerCall"] == true).collect();
+        assert!(!provider_calls.is_empty());
+        assert!(
+            provider_calls.iter().all(|c| c["requestBytes"]
+                .as_u64()
+                .is_some_and(|b| b > 0 && b <= 60000)),
+            "wire size must remain <=60KB"
+        );
+        assert!(
+            provider_calls.iter().all(|c| c["imageCount"] == 0),
+            "ordinary text pages must not carry images"
+        );
+        write_direct_result(&root, &job.job_id, &outcome).unwrap();
     }
 
     /// 真实模型直出：5 份样本 PDF 各一次，逐份记录指标并落盘汇总。
@@ -3162,7 +4300,9 @@ mod real_model_tests {
             let stored_name = "source.pdf";
             std::fs::copy(&source_path, job_dir.join("uploads").join(stored_name))
                 .expect("copy sample pdf");
-            let size_bytes = std::fs::metadata(&source_path).map(|meta| meta.len()).unwrap_or(0);
+            let size_bytes = std::fs::metadata(&source_path)
+                .map(|meta| meta.len())
+                .unwrap_or(0);
             let mut job = job;
             job.source_files = vec![crate::SourceFile {
                 file_id: "src-1".to_string(),
@@ -3177,9 +4317,11 @@ mod real_model_tests {
             crate::job_store::save_job(&root, &job).expect("save job with source");
 
             let started = std::time::Instant::now();
-            let outcome = crate::cloud_direct::run_exam_direct(&root, &job.job_id, Some(&profile_id));
+            let outcome =
+                crate::cloud_direct::run_exam_direct(&root, &job.job_id, Some(&profile_id));
             let elapsed_ms = started.elapsed().as_millis() as u64;
-            let (prompt_tokens, completion_tokens, cache_hit_tokens, call_count) = usage_totals(&job_dir);
+            let (prompt_tokens, completion_tokens, cache_hit_tokens, call_count) =
+                usage_totals(&job_dir);
             let usage = json!({
                 "promptTokens": prompt_tokens,
                 "completionTokens": completion_tokens,
@@ -3250,6 +4392,9 @@ mod real_model_tests {
         crate::util::write_json(&path, &summary).expect("write real-model report");
         println!("[real-model] report: {}", path.display());
         let _ = std::fs::remove_dir_all(&root);
-        assert!(succeeded > 0, "至少一份样本必须成功（否则是链路/配置问题，不是模型波动）");
+        assert!(
+            succeeded > 0,
+            "至少一份样本必须成功（否则是链路/配置问题，不是模型波动）"
+        );
     }
 }

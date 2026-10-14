@@ -31,6 +31,7 @@ export interface PickedPath {
   name: string;
   sizeBytes: number;
   titleHint?: string;
+  answerFiles?: string[];
   textContent?: string;
   binaryContentBase64?: string;
   parsedDocumentIr?: DocumentIr;
@@ -279,4 +280,12 @@ export async function chooseExportDirectory(): Promise<string | null> {
   const backend = await import("../services/devFallbackBackend");
   const fallback = await backend.devFallbackInvoke<string | null>("choose_export_dir");
   return fallback ?? "local://exports";
+}
+
+/** Optional printed listening answer evidence, staged before recognition starts. */
+export async function chooseAnswerFiles(): Promise<string[]> {
+  if (!isTauriRuntime()) return [];
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({ multiple: true, directory: false, filters: [{ name: "答案文件", extensions: ["pdf", "png", "jpg", "jpeg", "txt", "md"] }] });
+  return selected ? (Array.isArray(selected) ? selected : [selected]) : [];
 }

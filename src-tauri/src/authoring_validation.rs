@@ -510,21 +510,40 @@ pub(crate) fn publish_verdict(
                 reason,
             ),
         }
-        let unresolved_answers = authoring
-            .get("answerKey")
-            .and_then(Value::as_object)
-            .into_iter()
-            .flatten()
-            .filter(|(_, value)| value.get("kind").and_then(Value::as_str) == Some("unresolved"))
-            .map(|(slot_id, _)| slot_id.clone())
-            .collect::<Vec<_>>();
+        let listening = authoring["modality"] == "listening";
+        if listening {
+            fn has_registered_visual(node: &Value, assets: &Value) -> bool {
+                match node {
+                    Value::Array(nodes) => nodes.iter().any(|n|has_registered_visual(n,assets)),
+                    Value::Object(object) => {
+                        let registered = matches!(object.get("type").and_then(Value::as_str),Some("figure"|"image"|"diagram"))
+                            && object.get("assetId").and_then(Value::as_str).is_some_and(|id|assets.as_array().into_iter().flatten().any(|a|a["assetId"].as_str()==Some(id)));
+                        registered || object.values().any(|n|has_registered_visual(n,assets))
+                    }
+                    _ => false
+                }
+            }
+            for group in authoring["taskGroups"].as_array().into_iter().flatten() {
+                if matches!(group["taskType"].as_str(),Some("plan_map_label_completion"|"diagram_label_completion")) && !has_registered_visual(&group["stimulus"],&authoring["assets"]) {
+                    builder.block("LISTENING_VISUAL_MISSING", "Assets", group["taskId"].as_str().map(str::to_string), "原卷地图/图示尚未补齐");
+                }
+            }
+        }
+        let unresolved_answers: Vec<String> = authoring["answerSlots"].as_object().into_iter().flatten().filter_map(|(id,_)| {
+            let key = &authoring["answerKey"][id];
+            let resolved = match key["kind"].as_str() {
+                Some("text") => key["values"].as_array().is_some_and(|v| !v.is_empty() && v.iter().all(|s| s.as_str().is_some_and(|s| !s.trim().is_empty()))),
+                Some("option") => key["labels"].as_array().is_some_and(|v| !v.is_empty() && v.iter().all(|s| s.as_str().is_some_and(|s| !s.trim().is_empty()))),
+                _ => false,
+            };
+            (!resolved).then(|| id.clone())
+        }).collect();
         for slot_id in unresolved_answers {
-            builder.warn(
-                "ANSWER_MISSING",
-                "AnswerKey",
-                uncoded_target(&slot_id),
-                format!("{slot_id} 还没有答案"),
-            );
+            if listening {
+                builder.block("LISTENING_ANSWER_KEY_UNRESOLVED", "AnswerKey", uncoded_target(&slot_id), format!("{slot_id} 还没有答案，学生端无法加载"));
+            } else {
+                builder.warn("ANSWER_MISSING", "AnswerKey", uncoded_target(&slot_id), format!("{slot_id} 还没有答案"));
+            }
         }
         for issue in unresolved_blocking_issues(authoring) {
             builder.warn(
@@ -908,6 +927,20 @@ pub(crate) fn apply_publish_verdict(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn listening_requires_resolved_answers_even_with_valid_managed_media() {
+        let root=std::env::temp_dir().join(format!("listening-answer-gate-{}",uuid::Uuid::new_v4()));
+        crate::util::ensure_app_dirs(&root).unwrap();
+        let mut authoring=serde_json::to_value(crate::test_support::complete_listening_exam()).unwrap();
+        let job_id=authoring["jobId"].as_str().unwrap().to_string();
+        authoring["answerKey"]["q1"]=json!({"kind":"unresolved"});
+        authoring["answerKey"].as_object_mut().unwrap().remove("q2");
+        authoring["answerKey"]["q3"]=json!({"kind":"text","values":[],"normalization":"ielts_default"});
+        let verdict=publish_verdict(&root,&job_id,&authoring,Some(1),PublishScope::CanonicalDirect).to_value();
+        let blockers:Vec<_>=verdict["reasons"].as_array().unwrap().iter().filter(|r|r["code"]=="LISTENING_ANSWER_KEY_UNRESOLVED").collect();
+        assert!(blockers.len()>=3,"{verdict}");
+    }
 
     fn error_issue(layer: &str, message: &str) -> Value {
         json!({

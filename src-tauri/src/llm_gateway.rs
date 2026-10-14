@@ -2524,7 +2524,7 @@ fn run_openai_compatible_generate_exam_direct_llm(
         return Err("exam_direct_no_evidence".to_string());
     }
     let mut messages = vec![
-        json!({"role":"system", "content":crate::cloud_direct::direct_system_prompt()}),
+        json!({"role":"system", "content":if input["modality"] == "listening" {crate::cloud_direct::listening_system_prompt()} else {crate::cloud_direct::direct_system_prompt()}}),
         json!({"role":"user", "content":content})
     ];
     let tail = exam_direct_tail(input);
@@ -2584,6 +2584,10 @@ ONE COMPLETE STANDARD EXAMPLE (guidance only, do not copy its content):\n\
 Return the single JSON object described in the system prompt (meta, passage, taskGroups, \
 answerSlots, answerKey, warnings). JSON only, no Markdown, no code fences."
     );
+    if input["modality"] == "listening" {
+        prompt = prompt.replace("IELTS Reading", "IELTS Listening").replace("meta, passage, taskGroups", "meta, parts, taskGroups");
+        prompt.push_str("\nSupplementary ANSWER KEY pages, if supplied below, are printed answer evidence. Without such evidence every answer must be unresolved. Never guess from questions.");
+    }
     prompt
 }
 

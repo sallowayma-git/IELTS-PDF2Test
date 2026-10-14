@@ -514,12 +514,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     let pipeline_mode = crate::pipeline_settings::pipeline_mode_for_job(&root, &job.progress);
     let direct_first = launch_cloud
         && pipeline_mode == crate::pipeline_settings::PipelineMode::Direct
-        && direct_source_supported
-        && job
-            .progress
-            .get("modality")
-            .and_then(Value::as_str)
-            != Some("listening");
+        && direct_source_supported;
 
     // ── 本地识别（阻塞线程池；持 local permit）───────────────────────
     // 直出链一次都不跑本地解析，**不需要** local permit：先放行，避免 120–240s
@@ -1791,7 +1786,7 @@ async fn try_cloud_direct(
         Err(error) => return direct_fallback(app, state, job_id, &error).await,
     };
     // 结构完全不可用的产物不会到这里（归一化阶段已判 Err）；编译有问题也保留并标注。
-    if outcome.document.pointer("/passage/content").and_then(Value::as_array).is_none_or(|content| content.is_empty())
+    if (outcome.document["modality"] != "listening" && outcome.document.pointer("/passage/content").and_then(Value::as_array).is_none_or(|content| content.is_empty()))
         || outcome.document.get("taskGroups").and_then(Value::as_array).is_none_or(|groups| groups.is_empty())
     {
         return direct_fallback(app, state, job_id, "cloud_direct_outcome_unusable").await;
@@ -1803,8 +1798,9 @@ async fn try_cloud_direct(
         let job_id = job_id.to_string();
         move || {
             crate::cloud_direct::write_direct_result(&root, &job_id, &outcome)?;
-            crate::cloud_direct::write_direct_canonical_leased(&root, &job_id, &outcome.document, &worker_id)
-                .map(|_| true)
+            crate::cloud_direct::write_direct_canonical_leased(&root, &job_id, &outcome.document, &worker_id)?;
+            crate::listening_audio::canonical_media::sync_item_audio_media(&root, &job_id)?;
+            Ok(true)
         }
     })
     .await

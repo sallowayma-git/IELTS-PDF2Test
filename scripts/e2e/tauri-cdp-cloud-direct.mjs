@@ -436,8 +436,11 @@ async function runRound(label, { offline }) {
       check("每份云端调用 ≤3 次", matched.every(item => (item.directResult?.calls ?? 99) <= 3), matched.map(item => ({ pdf: item.pdf, calls: item.directResult?.calls })));
       check("每份编译问题为空", matched.every(item => (item.directResult?.compileIssues ?? []).length === 0), matched.map(item => ({ pdf: item.pdf, issues: item.directResult?.compileIssues })));
       // 答案一致率：分母 = Atlas 全部题号（缺题按不一致计）。
-      check("每份答案一致率 ≥0.95（分母=Atlas 全部题号）", matched.every(item => (item.consistency?.rate ?? 0) >= 0.95), matched.map(item => ({ pdf: item.pdf, rate: item.consistency?.rate, matched: item.consistency?.matched, total: item.consistency?.total, missing: item.consistency?.missing })));
+      check("每份答案全部一致（分母=Atlas 全部题号）", matched.every(item => item.consistency?.matched === item.consistency?.total && item.consistency?.total > 0), matched.map(item => ({ pdf: item.pdf, rate: item.consistency?.rate, matched: item.consistency?.matched, total: item.consistency?.total, missing: item.consistency?.missing })));
       check("每份题数与 Atlas 印出的题号数一致", matched.every(item => item.consistency?.documentSlots === item.consistency?.total && item.consistency?.total > 0), matched.map(item => ({ pdf: item.pdf, documentSlots: item.consistency?.documentSlots, atlas: item.consistency?.total })));
+      check("五份答案66/66", matched.reduce((n,i)=>n+(i.consistency?.matched??0),0)===66 && matched.reduce((n,i)=>n+(i.consistency?.total??0),0)===66, matched.map(i=>i.consistency));
+      const directCalls = item => (item.calls ?? []).filter(c => c.commandName === "generate_exam_direct" && c.providerCall === true);
+      check("每次直出请求体≤350000B", matched.every(item => directCalls(item).length > 0 && directCalls(item).every(c => c.requestBytes > 0 && c.requestBytes <= 350000)), matched.map(item => ({pdf:item.pdf, calls:directCalls(item).map(c=>({requestBytes:c.requestBytes,imageCount:c.imageCount,segments:c.segments}))})));
       // 正文覆盖率：正文与 PDF 文字层的词级覆盖（保真度报告），≥0.95。
       check("每份正文覆盖率 ≥0.95（与 PDF 文字层对照）", matched.every(item => (item.fidelity?.overallCoverage ?? 0) >= 0.95), matched.map(item => ({ pdf: item.pdf, coverage: item.fidelity?.overallCoverage ?? null, flagged: item.fidelity?.flaggedParagraphIds ?? null })));
       check("每份段落图无悬挂条目（段落图可空，但不能指向不存在的节点）", matched.every(item => (item.danglingParagraphMap ?? []).length === 0), matched.map(item => ({ pdf: item.pdf, paragraphs: item.paragraphCount, mapped: item.paragraphMapCount, dangling: item.danglingParagraphMap ?? [] })));
@@ -510,7 +513,7 @@ watchdog.unref?.();
 // 两轮都跑；**任何一轮抛错也必须写出 report**——修前失败只留在终端里，
 // 报告目录里没有 report.json，读者无从判断跑到哪一步、错在哪。
 try {
-  for (const [label, offline] of [["online-direct", false], ["offline-local", true]]) {
+  for (const [label, offline] of (process.argv.includes("--online-only") ? [["online-direct", false]] : [["online-direct", false], ["offline-local", true]])) {
     try {
       await runRound(label, { offline });
     } catch (error) {

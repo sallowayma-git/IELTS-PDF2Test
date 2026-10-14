@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
-import { chooseAudioFiles, chooseAudioFolder, listenForFileDrops } from "../../api/desktopDialogs";
+import { chooseAnswerFiles, chooseAudioFiles, chooseAudioFolder, listenForFileDrops } from "../../api/desktopDialogs";
 import { listListeningAudioFolder, probeListeningAudioFiles } from "../../api/listeningAudioClient";
 import {
   addAudioEntries,
@@ -31,6 +31,7 @@ export function ListeningAudioDialog({
   onDecide: (decision: ListeningImportDecision) => void;
   onCancel: () => void;
 }) {
+  const [answerFiles, setAnswerFiles] = useState<string[]>([]);
   const [entries, setEntries] = useState<AudioEntry[]>([]);
   const [hovering, setHovering] = useState(false);
   const [notice, setNotice] = useState<string>();
@@ -171,6 +172,11 @@ export function ListeningAudioDialog({
           {notices.map((item) => (
             <p key={item.kind} className={item.kind === "blocked" ? "error-text" : "drawer-hint"}>{item.message}</p>
           ))}
+          <div className="button-row">
+            <button className="ghost" data-testid="listening-answer-pick" onClick={() => chooseAnswerFiles().then(setAnswerFiles)}>附加答案文件（可选）</button>
+            {answerFiles.length > 0 && <button className="ghost" onClick={() => setAnswerFiles([])}>清除答案文件</button>}
+          </div>
+          <p className="drawer-hint">{answerFiles.length ? answerFiles.map(path => path.split(/[\\/]/).pop()).join("、") : "没有答案时将保留为待填，补齐后才能发布。"}</p>
           {notice ? <p className="drawer-hint">{notice}</p> : null}
         </div>
 
@@ -178,14 +184,14 @@ export function ListeningAudioDialog({
           <button className="ghost" data-testid="listening-switch-reading" onClick={() => onDecide(readingDecision())}>
             这是阅读题
           </button>
-          <button className="ghost" data-testid="listening-audio-later" onClick={() => onDecide(addAudioLaterDecision())}>
+          <button className="ghost" data-testid="listening-audio-later" onClick={() => onDecide({ ...addAudioLaterDecision(), answerFiles })}>
             稍后添加音频
           </button>
           <button
             className="primary"
             data-testid="listening-confirm"
             disabled={!entries.length}
-            onClick={() => onDecide(listeningDecision(entries))}
+            onClick={() => onDecide({ ...listeningDecision(entries), answerFiles })}
           >
             确认听力并导入
           </button>

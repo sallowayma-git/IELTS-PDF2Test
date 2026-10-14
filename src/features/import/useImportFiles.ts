@@ -63,8 +63,8 @@ export function useImportFiles(onRowsChanged: () => void) {
       } else {
         const plan = splitImportPlan(files, options.decisions);
         if (plan.reading.length) await enqueue(plan.reading, "reading");
-        for (const { file, audio } of plan.listening) {
-          const [item] = await enqueue([file], "listening");
+        for (const { file, audio, answerFiles } of plan.listening) {
+          const [item] = await enqueue([{ ...file, answerFiles }], "listening");
           if (!item) continue;
           rejected.push(...await bindListeningAssignments(item.id, item.title, audio, async (itemId, partOrdinal, path) => {
             setStageMessage(`正在保存「${item.title}」的 Part ${partOrdinal} 音频`);

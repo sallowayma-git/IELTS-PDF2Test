@@ -652,6 +652,7 @@ mod tests {
                     name: file.name.clone(),
                     size_bytes: file.size_bytes,
                     title_hint: Some(file.title_hint.clone()),
+                answer_files: vec![],
                 })
                 .collect(),
             cloud_enabled: Some(false),

@@ -29,6 +29,8 @@ pub(crate) struct ImportFileInput {
     pub size_bytes: u64,
     #[serde(default)]
     pub title_hint: Option<String>,
+    #[serde(default)]
+    pub answer_files: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -138,6 +140,13 @@ pub(crate) fn import_files_at_root(
             .map_err(|error| format!("import_cloud_token_budget_save:{error}"))?;
             // 2. 文件落地：staging + hash 全部同步完成（数据库事务外，计划 §12.2）。
             crate::job_commands::stage_source_file(root, &job_id, &file.path, "MainQuestion")?;
+            for answer in &file.answer_files {
+                let extension = std::path::Path::new(answer).extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
+                if !["pdf","png","jpg","jpeg","txt","md"].contains(&extension.as_str()) { return Err("答案文件支持 PDF、PNG、JPEG、TXT、MD".into()); }
+                let size = std::fs::metadata(answer).map_err(|e| e.to_string())?.len();
+                if size > MAX_IMPORT_FILE_BYTES { return Err("答案文件超过导入上限".into()); }
+                crate::job_commands::stage_source_file(root, &job_id, answer, "AnswerKey")?;
+            }
             Ok(())
         })();
         if let Err(error) = staged {
@@ -348,6 +357,7 @@ mod tests {
                 name: "sample.pdf".to_string(),
                 size_bytes: 13,
                 title_hint: None,
+                answer_files: vec![],
             }],
             cloud_enabled: Some(false),
             cloud_profile_id: None,
@@ -379,6 +389,7 @@ mod tests {
                 name: "paper.pdf".to_string(),
                 size_bytes: 13,
                 title_hint: None,
+                answer_files: vec![],
             }],
             cloud_enabled: Some(false),
             cloud_profile_id: None,
@@ -488,6 +499,7 @@ mod tests {
                 name: "paper.pdf".to_string(),
                 size_bytes: 13,
                 title_hint: None,
+                answer_files: vec![],
             }],
             cloud_enabled: Some(false),
             cloud_profile_id: None,
@@ -515,6 +527,7 @@ mod tests {
                 name: "missing-source.pdf".to_string(),
                 size_bytes: 0,
                 title_hint: None,
+                answer_files: vec![],
             }],
             cloud_enabled: Some(false),
             cloud_profile_id: None,

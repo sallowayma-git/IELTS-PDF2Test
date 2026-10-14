@@ -30,6 +30,7 @@ export interface ListeningImportDecision {
   modality: ImportModalityChoice;
   /** Empty means "add audio later": the item is created but is not audio-ready. */
   audio: AudioAssignment[];
+  answerFiles?: string[];
 }
 
 export const AUDIO_EXTENSIONS = ["mp3", "m4a", "wav"] as const;
@@ -245,6 +246,7 @@ export function listeningCandidates<F extends { path: string }>(
 export interface ListeningImportEntry<F> {
   file: F;
   audio: AudioAssignment[];
+  answerFiles?: string[];
 }
 
 /**
@@ -260,7 +262,7 @@ export function splitImportPlan<F extends { path: string }>(
   const listening: ListeningImportEntry<F>[] = [];
   for (const file of files) {
     const decision = decisions[file.path];
-    if (decision?.modality === "listening") listening.push({ file, audio: decision.audio });
+    if (decision?.modality === "listening") listening.push({ file, audio: decision.audio, answerFiles: decision.answerFiles });
     else reading.push(file);
   }
   return { reading, listening };
