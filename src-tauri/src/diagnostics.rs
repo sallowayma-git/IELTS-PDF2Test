@@ -28,3 +28,21 @@ pub(crate) fn write_diagnostics_settings(
     write_json(&diagnostics_settings_path(root), settings)?;
     Ok(settings.clone())
 }
+
+/// Keep crash location/backtrace without recording document text or credentials.
+pub(crate) fn install_worker_panic_log(root: PathBuf) {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let thread = std::thread::current();
+        let record = serde_json::json!({
+            "occurredAt": chrono::Utc::now().to_rfc3339(),
+            "thread": thread.name().unwrap_or("unnamed"),
+            "location": info.location().map(|location| format!("{}:{}", location.file(), location.line())),
+            "backtrace": std::backtrace::Backtrace::force_capture().to_string(),
+        });
+        if let Ok(line) = serde_json::to_string(&record) {
+            let _ = crate::util::append_text(&root.join("logs").join("worker-panics.jsonl"), &format!("{line}\n"));
+        }
+        previous(info);
+    }));
+}

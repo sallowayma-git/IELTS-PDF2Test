@@ -44,6 +44,10 @@ pub(crate) struct ImportFilesInput {
     pub modality: Option<String>,
     #[serde(default)]
     pub cloud_token_budget: Option<u64>,
+    /// `direct` (default) or `legacy`: the recognition chain snapshot at import
+    /// time (cloud-direct plan §2). Jobs keep the mode they were queued with.
+    #[serde(default)]
+    pub pipeline_mode: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -84,6 +88,8 @@ pub(crate) fn import_files_at_root(
     let cloud_enabled = input.cloud_enabled.unwrap_or(false);
     let modality = normalize_import_modality(input.modality.as_deref())?;
     let cloud_token_budget = normalize_cloud_token_budget(input.cloud_token_budget)?;
+    // 导入时把流水线模式快照进 job progress：切换设置不改变已在处理中的作业链路。
+    let pipeline_mode = normalize_import_pipeline_mode(input.pipeline_mode.as_deref())?;
     let mut created = Vec::new();
     let mut rejected = Vec::new();
 
@@ -155,6 +161,7 @@ pub(crate) fn import_files_at_root(
             input.cloud_profile_id.as_deref(),
             cloud_token_budget,
             modality,
+            pipeline_mode,
         );
         if let Err(error) = queue_result {
             // G1/A4-F01：queue 失败必须补偿——磁盘 job 目录（含 staged 文件）
@@ -219,6 +226,7 @@ fn queue_import(
     cloud_profile_id: Option<&str>,
     cloud_token_budget: u64,
     modality: &str,
+    pipeline_mode: &str,
 ) -> CommandResult<()> {
     let conn = open_library_connection(root)?;
     let transaction =
@@ -245,7 +253,8 @@ fn queue_import(
             "fileName": file_name,
             "cloudProfileId": cloud_profile_id,
             "cloudTokenBudget": cloud_token_budget,
-            "modality": modality
+            "modality": modality,
+            "pipelineMode": pipeline_mode
         }),
     )?;
     transaction.commit().map_err(|error| error.to_string())?;
@@ -259,6 +268,21 @@ pub(crate) fn normalize_import_modality(modality: Option<&str>) -> CommandResult
         None | Some("reading") => Ok("reading"),
         Some("listening") => Ok("listening"),
         Some(other) => Err(format!("import_modality_unsupported:{other}")),
+    }
+}
+
+/// 导入入参的流水线模式归一：无法识别时**不猜**，直接拒绝这次导入
+/// （模式决定整条识别链，猜错比报错危险）。
+pub(crate) fn normalize_import_pipeline_mode(mode: Option<&str>) -> CommandResult<&'static str> {
+    match mode.map(str::trim).filter(|value| !value.is_empty()) {
+        None => Ok(crate::pipeline_settings::PIPELINE_MODE_DIRECT),
+        Some(crate::pipeline_settings::PIPELINE_MODE_DIRECT) => {
+            Ok(crate::pipeline_settings::PIPELINE_MODE_DIRECT)
+        }
+        Some(crate::pipeline_settings::PIPELINE_MODE_LEGACY) => {
+            Ok(crate::pipeline_settings::PIPELINE_MODE_LEGACY)
+        }
+        Some(other) => Err(format!("import_pipeline_mode_unsupported:{other}")),
     }
 }
 
@@ -329,6 +353,7 @@ mod tests {
             cloud_profile_id: None,
             modality: None,
             cloud_token_budget: None,
+            pipeline_mode: None,
         };
         let result = import_files_at_root(&root, input).unwrap();
         assert!(
@@ -359,6 +384,7 @@ mod tests {
             cloud_profile_id: None,
             modality: modality.map(str::to_string),
             cloud_token_budget: None,
+            pipeline_mode: None,
         };
         let result = import_files_at_root(root, input).unwrap();
         assert_eq!(
@@ -467,6 +493,7 @@ mod tests {
             cloud_profile_id: None,
             modality: Some("writing".to_string()),
             cloud_token_budget: None,
+            pipeline_mode: None,
         };
         assert!(import_files_at_root(&root, input).is_err());
         let _ = fs::remove_dir_all(&root);
@@ -493,6 +520,7 @@ mod tests {
             cloud_profile_id: None,
             modality: None,
             cloud_token_budget: None,
+            pipeline_mode: None,
         };
         let result = import_files_at_root(&root, input).unwrap();
         assert!(result.created.is_empty());

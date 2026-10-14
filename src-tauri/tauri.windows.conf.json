@@ -1,8 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
     "resources": [
       "../sidecars",
+      "resources/cloud-direct",
       "lib/pdfium-windows/pdfium.dll"
     ]
   }

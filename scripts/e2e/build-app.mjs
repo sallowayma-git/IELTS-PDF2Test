@@ -31,9 +31,20 @@ import {
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const exePath = path.join(repoRoot, "src-tauri", "target", "debug", "ielts-author-studio.exe");
 const skipFrontend = process.argv.includes("--no-frontend");
+// `--manifest-only`：前端与 exe 已由调用方构建（本机 Windows 上 Node 的
+// `spawnSync` 无法创建子进程 —— EBUSY/EINVAL，见本文件顶部说明），本模式只做
+// 「快照输入哈希 → 写清单」两件事，不碰 dist、不跑任何子进程。
+const manifestOnly = process.argv.includes("--manifest-only");
 
 const nodeBinDir = path.dirname(process.execPath);
 const env = { ...process.env, PATH: `${nodeBinDir}${path.delimiter}${process.env.PATH ?? ""}` };
+
+// Windows 上 `shell: true` 走 cmd.exe，而 cmd 只认 `npm.cmd` / `npx.cmd`：
+// 裸写 `npm` / `npx` 在「只有 shell 脚本、没有 .cmd 垫片」的 Node 发行版
+// （例如本机托管运行时目录）里会直接 spawn 失败（exit=null），且日志为空。
+const isWindows = process.platform === "win32";
+const npmBin = isWindows ? "npm.cmd" : "npm";
+const npxBin = isWindows ? "npx.cmd" : "npx";
 
 /** 跑一条命令，日志落盘，**显式检查退出码**（不接管道，避免管道吞掉退出码）。 */
 function run(label, command, args, logFile) {
@@ -72,6 +83,28 @@ console.log(
     `backend=${inputsAtBuildStart.backend.hash.slice(0, 12)}(${inputsAtBuildStart.backend.fileCount})`
 );
 
+// ── 0.4 `--manifest-only`：直接产清单并退出 ──
+if (manifestOnly) {
+  if (!fs.existsSync(exePath)) {
+    console.error(`[build] exe 未产出：${exePath}`);
+    process.exit(1);
+  }
+  const manifest = buildManifest({
+    root: repoRoot,
+    exePath,
+    inputsAtBuildStart,
+    extra: { manifestOnly: true },
+  });
+  const manifestFile = saveManifest(repoRoot, manifest);
+  console.log(`[build] exe=${manifest.exePath} sha256=${manifest.exeSha256}`);
+  console.log(
+    `[build] manifest frontendInputs=${manifest.frontendInputs.hash.slice(0, 12)} ` +
+      `dist=${manifest.dist.hash.slice(0, 12)} backendInputs=${manifest.backendInputs.hash.slice(0, 12)}`
+  );
+  console.log(`[build] manifest written: ${manifestFile}`);
+  process.exit(0);
+}
+
 // ── 0.5 让 vite 的 `emptyDir` 无事可做 ──
 // 本机安全删除护栏对**单回合的批量删除**有配额（约 50 个文件）。一次完整 vite 构建会产出
 // 50+ 个 assets，`emptyDir(dist/assets)` 就会撞配额并让构建失败；更糟的是失败前它已经
@@ -98,7 +131,7 @@ if (!skipFrontend && fs.existsSync(distDir)) {
 
 // ── 1. 前端：tsc --noEmit && vite build ──
 if (!skipFrontend) {
-  const fe = run("frontend", "npm", ["run", "build"], path.join(logDir, "frontend.log"));
+  const fe = run("frontend", npmBin, ["run", "build"], path.join(logDir, "frontend.log"));
   if (!fe.ok) process.exit(1);
 }
 
@@ -114,7 +147,7 @@ fs.mkdirSync(logDir, { recursive: true });
 fs.writeFileSync(overrideConfig, JSON.stringify({ build: { beforeBuildCommand: "" } }, null, 2));
 const exe = run(
   "tauri",
-  "npx",
+  npxBin,
   ["tauri", "build", "--debug", "--no-bundle", "--config", overrideConfig],
   path.join(logDir, "tauri.log")
 );

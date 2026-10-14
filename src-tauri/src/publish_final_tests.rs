@@ -247,78 +247,60 @@ fn ready_item_publishes_normally_even_when_the_override_is_sent() {
 }
 
 #[test]
-fn forced_publish_of_a_quality_blocked_item_records_the_override_and_keeps_the_verdict() {
-    let root = temp_root("publish-forced-blocked");
+/// P2 门禁收敛：质量未就绪（review_required）但**编译通过**的题稿，
+/// 严格模式直接发布——不再需要放行，`forced` 恒为 false；质量事实作为
+/// 警告随 verdict 带走，审计里分不清「用户确认过什么」的问题随之消失。
+fn quality_blocked_but_compilable_item_publishes_without_override_and_reports_warnings() {
+    let root = temp_root("publish-quality-warned");
     ensure_app_dirs(&root).unwrap();
     let item = seed_item(&root, "final-blocked", false, |_| {});
-    // 非清理条目缺 physical shadow ⇒ 与今天一样判为 review_required（门禁 Blocked）。
+    // 非清理条目缺 physical shadow ⇒ 质量如实判为 review_required（P2 起是警告不是阻断）。
     fs::remove_file(job_dir(&root, &item).join(DOCUMENT_V2_SHADOW_FILE)).unwrap();
 
-    // 不带 override 的严格发布仍按原样被门禁拒绝。
-    let strict = publish(&root, &[&item], None).unwrap_err();
-    assert!(strict.contains("authoring_v2_export_blocked"), "{strict}");
-    assert!(
-        publish_records(&root, &item).is_empty(),
-        "被拒的严格发布不得留下发布记录"
-    );
-
-    let result = publish(&root, &[&item], force_now()).expect("forced publish must succeed");
+    let result = publish(&root, &[&item], None).expect("编译通过的题稿必须能严格发布");
     let outcome = outcome_for(&result, &item);
-    assert_eq!(outcome["forced"], json!(true), "{outcome}");
+    assert_eq!(outcome["forced"], json!(false), "{outcome}");
     assert_eq!(outcome["studentLoadable"], json!(true));
 
     let manifest = manifest(&root);
     let entry = &manifest["final-blocked"];
     assert!(
         entry.is_object(),
-        "可编译的强制发布题必须进学生清单：{manifest}"
+        "编译通过的题必须进学生清单：{manifest}"
     );
-    let override_ = &entry["publishOverride"];
-    assert_eq!(override_["forced"], json!(true));
-    assert_eq!(
-        override_["verdict"]["status"],
-        json!("blocked"),
-        "门禁结论必须原样保留"
+    assert!(
+        entry.get("publishOverride").is_none(),
+        "没有任何东西被放行：清单条目不得带 publishOverride"
     );
-    assert_eq!(override_["verdict"]["ready"], json!(false));
-    assert!(override_["confirmedAt"]
-        .as_str()
-        .is_some_and(|value| !value.is_empty()));
-    assert!(override_["reasons"]
-        .as_array()
-        .is_some_and(|reasons| !reasons.is_empty()));
     let forced_items = manifest["_meta"]["forcedItems"]
         .as_array()
         .expect("_meta.forcedItems");
-    assert!(forced_items
-        .iter()
-        .any(|item_meta| item_meta["examId"] == json!("final-blocked")));
+    assert!(forced_items.is_empty(), "{forced_items:?}");
 
     let records = publish_records(&root, &item);
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].forced, 1);
+    assert_eq!(records[0].forced, 0);
     assert_eq!(records[0].student_loadable, 1);
-    assert_eq!(records[0].verdict["status"], json!("blocked"));
+    assert_eq!(records[0].verdict["status"], json!("ready"));
+    // 质量事实不丢失：作为警告随 verdict 记录。
     assert!(records[0]
-        .reasons
+        .verdict["warnings"]
         .as_array()
-        .is_some_and(|reasons| !reasons.is_empty()));
-    assert_eq!(records[0].status, "published_forced");
-    assert_eq!(item_status(&root, &item), "published_forced");
+        .is_some_and(|warnings| warnings
+            .iter()
+            .any(|warning| warning["code"] == json!("QUALITY_NOT_READY"))));
+    assert_eq!(records[0].status, "published");
+    assert_eq!(item_status(&root, &item), "published");
 
     let receipt = snapshot_receipts(&root)
         .into_iter()
         .find(|receipt| receipt["examId"] == json!("final-blocked"))
         .expect("snapshot receipt");
-    assert_eq!(receipt["publishOverride"]["forced"], json!(true));
-    assert_eq!(
-        receipt["publishOverride"]["verdict"]["status"],
-        json!("blocked")
-    );
+    assert!(receipt.get("publishOverride").is_none());
     assert_eq!(
         receipt["reviewRequired"],
         json!(true),
-        "reviewRequired 必须如实"
+        "reviewRequired 必须如实：稿子确实还需要人工过目"
     );
     let _ = fs::remove_dir_all(root);
 }
@@ -813,8 +795,18 @@ fn non_purged_item_with_a_missing_shadow_behaves_exactly_as_today() {
         .iter()
         .any(|issue| issue["code"] == "PHYSICAL_SHADOW_MISSING"));
     assert!(crate::library::final_version::ensure_source_available(&root, &item).is_ok());
-    let error = publish(&root, &[&item], None).unwrap_err();
-    assert!(error.contains("authoring_v2_export_blocked"), "{error}");
+    // P2 门禁收敛：review_required（缺 shadow 的如实结论）不再是发布阻断——
+    // 编译通过的题稿严格模式即可发布，质量事实作为警告记录。
+    let result = publish(&root, &[&item], None).expect("编译通过的题稿必须能严格发布");
+    let outcome = outcome_for(&result, &item);
+    assert_eq!(outcome["forced"], json!(false), "{outcome}");
+    let records = publish_records(&root, &item);
+    assert_eq!(records[0].verdict["status"], json!("ready"));
+    assert!(records[0].verdict["warnings"]
+        .as_array()
+        .is_some_and(|warnings| warnings
+            .iter()
+            .any(|warning| warning["code"] == json!("QUALITY_NOT_READY"))));
     let _ = fs::remove_dir_all(root);
 }
 

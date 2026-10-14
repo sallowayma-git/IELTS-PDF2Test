@@ -42,5 +42,7 @@ symphonia = { version = "0.6.0", default-features = false, features = ["aac", "i
 opt-level = "z"
 lto = true
 codegen-units = 1
-panic = "abort"
+# The scheduler handles blocking-worker panics as failed jobs. Aborting here
+# bypasses those boundaries and closes the entire app in production only.
+panic = "unwind"
 strip = true

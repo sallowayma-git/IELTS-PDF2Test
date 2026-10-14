@@ -534,6 +534,8 @@ pub enum RevisionSourceV2 {
     User,
     Migration,
     CloudCandidateAdoption,
+    /// 云端直出主链：一次调用整份写入（cloud-direct 方案 §2.1）。
+    CloudDirect,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

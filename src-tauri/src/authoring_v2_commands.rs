@@ -444,6 +444,112 @@ pub(crate) fn explicitly_handled_issue_targets(
 /// 别名只会长出一条无用的公开面。
 pub(crate) use crate::authoring_validation::unresolved_blocking_issues;
 
+/// 学生预览的**唯一**编译入口（P2 门禁收敛）。
+///
+/// 预览此前在 TS 侧另做一份编译/校验（`buildReadingSourceV2FromAuthoring` /
+/// `validateReadingExamSourceV2`），与 Rust 编译器各说各话： Rust 修过的漏到 TS，
+/// 用户照旧看到 `RUNTIME_OPTION_BANK_MISSING` 这类 preview 民办错误。现在预览直接
+/// 调同一个 Rust 编译器（发布用的那个），「预览能看」与「学生端能加载」从此是
+/// 同一个判定。
+///
+/// 输入是编辑器当前的**内存草稿**（可能含未保存修改）：用户要预览的就是它。
+pub(crate) fn compile_authoring_preview_core(authoring: &Value) -> Value {
+    let typed = match serde_json::from_value::<IeltsAuthoringIRV2>(authoring.clone()) {
+        Ok(typed) => typed,
+        Err(error) => {
+            return json!({
+                "schemaVersion": "PreviewCompileV1",
+                "ok": false,
+                "issues": [{
+                    "code": "AUTHORING_SCHEMA_INVALID",
+                    "targetId": "exam",
+                    "message": error.to_string()
+                }],
+                "summary": Value::Null
+            });
+        }
+    };
+    match crate::listening_source_v1::compile_exam_source_v2(&typed) {
+        Err(issues) => json!({
+            "schemaVersion": "PreviewCompileV1",
+            "ok": false,
+            "issues": issues.iter().map(|issue| json!({
+                "code": issue.code, "targetId": issue.target_id, "message": issue.message
+            })).collect::<Vec<_>>(),
+            "summary": Value::Null
+        }),
+        Ok(compiled) => {
+            // answerKeyIssues 恒为空：编译通过即答案键类型一致（Rust 编译器逐槽位
+            // 校验 interaction↔kind），老前端形状的这个字段没有内容可装。
+            let (modality, task_groups, slots, assets, answered_slots, listening_parts) =
+                match &compiled {
+                    crate::listening_source_v1::CompiledExamSourceV2::Reading(source) => {
+                        let answered = source
+                            .answer_key
+                            .values()
+                            .filter(|value| match value {
+                                crate::schema::ielts_authoring_v2::AnswerValueV2::Text { values, .. } => {
+                                    values.iter().any(|entry| !entry.trim().is_empty())
+                                }
+                                crate::schema::ielts_authoring_v2::AnswerValueV2::Option { labels, .. } => {
+                                    !labels.is_empty()
+                                }
+                                crate::schema::ielts_authoring_v2::AnswerValueV2::Unresolved => false,
+                            })
+                            .count();
+                        (
+                            "reading",
+                            source.task_groups.len(),
+                            source.answer_slots.len(),
+                            source.assets.assets.len(),
+                            answered,
+                            0usize,
+                        )
+                    }
+                    crate::listening_source_v1::CompiledExamSourceV2::Listening(source) => {
+                        let answered = source
+                            .answer_key
+                            .values()
+                            .filter(|value| match value {
+                                crate::schema::ielts_authoring_v2::AnswerValueV2::Text { values, .. } => {
+                                    values.iter().any(|entry| !entry.trim().is_empty())
+                                }
+                                crate::schema::ielts_authoring_v2::AnswerValueV2::Option { labels, .. } => {
+                                    !labels.is_empty()
+                                }
+                                crate::schema::ielts_authoring_v2::AnswerValueV2::Unresolved => false,
+                            })
+                            .count();
+                        (
+                            "listening",
+                            source.task_groups.len(),
+                            source.answer_slots.len(),
+                            source.assets.assets.len(),
+                            answered,
+                            source.parts.len(),
+                        )
+                    }
+                };
+            json!({
+                "schemaVersion": "PreviewCompileV1",
+                "ok": true,
+                "issues": [],
+                // 编译通过即答案键类型一致（Rust 编译器已逐槽位校验 interaction↔kind），
+                // 因此 answerKeyIssues 恒为空；字段保留以兼容既有前端形状。
+                "summary": {
+                    "modality": modality,
+                    "taskGroups": task_groups,
+                    "slots": slots,
+                    "assets": assets,
+                    "answeredSlots": answered_slots,
+                    "listeningParts": listening_parts,
+                    "answerKeyIssues": []
+                }
+            })
+        }
+    }
+}
+
 /// M1 typed preflight（计划 §13.3/§13.4）：只检查**当前** canonical DS 与当前 blocker。
 /// 与 [`validate_authoring_v2_publish_readiness`] 的差别（均为有意移除）：
 /// - 不扫描历史 authoring/pipeline JSON 的 fallback/partial 字符串；
@@ -456,6 +562,10 @@ pub(crate) fn check_publish_preflight(
     edit_version: u64,
     authoring_value: &Value,
 ) -> Value {
+    // P2 门禁收敛：**唯一硬门禁是编译通过**（`publish_verdict` 的
+    // SCHEMA_INVALID / COMPILE_FAILED）。其余（质量就绪度、答案未填、阻断性问题、
+    // 未人工确认、保真度低）全部是警告——在编辑器问题列表与发布对话框展示，
+    // 不阻断预览、不阻断发布。
     let mut blockers: Vec<Value> = Vec::new();
     let mut warnings: Vec<Value> = Vec::new();
 
@@ -469,73 +579,8 @@ pub(crate) fn check_publish_preflight(
         }));
     }
 
-    let quality = authoring_value
-        .get("quality")
-        .cloned()
-        .unwrap_or(Value::Null);
-    let state = quality
-        .get("state")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
-    if state != "ready" {
-        blockers.push(json!({
-            "code": "QUALITY_NOT_READY",
-            "targetId": null,
-            "userMessage": "这道题还有未确认的内容，处理完界面里列出的问题后可以发布。",
-            "action": "open_workspace",
-            "internal": format!("quality_state={state}")
-        }));
-    }
-    let hard_failures = quality
-        .get("hardFailures")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    for failure in hard_failures.iter().take(20) {
-        blockers.push(json!({
-            "code": "QUALITY_HARD_FAILURE",
-            "targetId": null,
-            "userMessage": "这道题存在必须修复的内容缺陷。",
-            "action": "open_workspace",
-            "internal": failure
-        }));
-    }
-    let unresolved_answers = authoring_value
-        .get("answerKey")
-        .and_then(Value::as_object)
-        .into_iter()
-        .flat_map(|answers| answers.iter())
-        .filter(|(_, value)| value.get("kind").and_then(Value::as_str) == Some("unresolved"))
-        .map(|(slot_id, _)| slot_id.clone())
-        .collect::<Vec<_>>();
-    for slot_id in unresolved_answers.iter().take(20) {
-        blockers.push(json!({
-            "code": "ANSWER_MISSING",
-            "targetId": slot_id,
-            "userMessage": "这道题还有答案没有填写。",
-            "action": "open_workspace"
-        }));
-    }
-    let unresolved_blockers = unresolved_blocking_issues(authoring_value);
-    for issue in unresolved_blockers.iter().take(20) {
-        blockers.push(json!({
-            "code": "ISSUE_UNRESOLVED",
-            "targetId": issue.get("targetId").cloned().unwrap_or(Value::Null),
-            "userMessage": issue.get("message").cloned().unwrap_or_else(|| Value::String(
-                "这道题有需要处理的问题。".to_string()
-            )),
-            "action": "open_workspace",
-            "internal": issue.get("issueId").cloned().unwrap_or(Value::Null)
-        }));
-    }
-    if blockers.len() >= 20 {
-        warnings.push(
-            json!({ "code": "BLOCKER_LIST_TRUNCATED", "message": "问题较多，仅显示前 20 条。" }),
-        );
-    }
-
-    // `passed` 不再由这份展示用清单自己算：结论只来自 `publish_verdict`。
-    // 清单仍然负责把"为什么"写给用户看，但它**不是**判据。
+    // `passed` 由 `publish_verdict` 独家计算（判据唯一入口）；这份清单只负责
+    // 把"为什么"写给用户看，它本身不是判据。
     let verdict = crate::authoring_validation::publish_verdict(
         root,
         job_id,
@@ -543,29 +588,49 @@ pub(crate) fn check_publish_preflight(
         Some(edit_version.min(i64::MAX as u64) as i64),
         crate::authoring_validation::PublishScope::CanonicalDirect,
     );
-    if !verdict.is_ready() {
-        for reason in verdict.reasons() {
-            if blockers
-                .iter()
-                .any(|item| item.get("code").and_then(Value::as_str) == Some(reason.code))
-            {
-                continue;
-            }
-            blockers.push(json!({
-                "code": reason.code,
-                "targetId": reason.target,
-                "userMessage": reason.message,
-                "action": "open_workspace",
-                "layer": reason.layer
-            }));
+    for reason in verdict.reasons() {
+        blockers.push(json!({
+            "code": reason.code,
+            "targetId": reason.target,
+            "userMessage": reason.message,
+            "action": "open_workspace",
+            "layer": reason.layer
+        }));
+    }
+    // 判据给出的警告（答案未填、质量未就绪、未人工确认……）逐条转成展示用 warnings。
+    for reason in verdict.warnings() {
+        warnings.push(json!({
+            "code": reason.code,
+            "targetId": reason.target,
+            "message": reason.message
+        }));
+    }
+    // Preserve actual targets, but show repeated warning codes as one actionable
+    // summary on direct drafts. Local drafts retain their established reporting.
+    let quality_issues = authoring_value.pointer("/quality/issues").and_then(Value::as_array);
+    for issue in quality_issues.into_iter().flatten().filter(|issue| issue["severity"] == "warning") {
+        let warning = json!({
+            "code": issue.get("code").cloned().unwrap_or(json!("QUALITY_WARNING")),
+            "targetId": issue.get("targetId").cloned().unwrap_or(Value::Null),
+            "message": issue.get("message").cloned().unwrap_or(json!("这道题有一条提示需要核对。"))
+        });
+        if !warnings.iter().any(|existing| existing["code"] == warning["code"] && existing["targetId"] == warning["targetId"]) {
+            warnings.push(warning);
         }
-        if blockers.is_empty() {
-            blockers.push(json!({
-                "code": "PUBLISH_VERDICT_BLOCKED",
-                "targetId": Value::Null,
-                "userMessage": "这道题暂时不能发布。",
-                "action": "open_workspace"
-            }));
+    }
+    if crate::ielts_grammar::quality::is_cloud_direct(authoring_value) {
+        let mut grouped = std::collections::BTreeMap::<String, Vec<Value>>::new();
+        for warning in warnings.drain(..) {
+            grouped.entry(warning["code"].as_str().unwrap_or("QUALITY_WARNING").to_string()).or_default().push(warning);
+        }
+        for entries in grouped.into_values() {
+            let mut summary = entries[0].clone();
+            if entries.len() > 1 {
+                summary["message"] = json!(format!("{}（共 {} 处，见问题列表）", summary["message"].as_str().unwrap_or("请核对"), entries.len()));
+                summary["targetIds"] = json!(entries.iter().filter_map(|item| item["targetId"].as_str()).collect::<Vec<_>>());
+                summary["items"] = json!(entries);
+            }
+            warnings.push(summary);
         }
     }
 
@@ -3527,9 +3592,9 @@ fn parse_number_array(value: Option<&Value>) -> CommandResult<Vec<u64>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_patch, expand_question_expression, explicitly_handled_issue_targets,
-        export_authoring_v2_core, materialize_authoring_assets, physical_shadow_matches_authoring,
-        preserve_issue_resolutions, resolve_authoring_asset_preview_core,
+        apply_patch, compile_authoring_preview_core, expand_question_expression,
+        explicitly_handled_issue_targets, export_authoring_v2_core, materialize_authoring_assets,
+        physical_shadow_matches_authoring, preserve_issue_resolutions, resolve_authoring_asset_preview_core,
         stamp_published_audit_revision, unresolved_blocking_issues,
         validate_authoring_v2_publish_readiness, AUTHORING_V2_SHADOW_FILE,
     };
@@ -4040,6 +4105,70 @@ mod tests {
         assert!(resolve_authoring_asset_preview_core(&root, job_id, "missing").is_err());
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn preview_compile_uses_the_single_rust_compiler() {
+        // P2：预览判定 = 发布判定（同一个 Rust 编译器）。这里直接验命令层：
+        // 合法题稿 → ok + 概要；结构非法 → ok=false + 可定位问题。
+        let authoring: Value = serde_json::from_str(include_str!(
+            "../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
+        ))
+        .unwrap();
+        let result = compile_authoring_preview_core(&authoring);
+        assert_eq!(result["ok"], json!(true), "{result}");
+        let summary = &result["summary"];
+        assert!(summary["taskGroups"].as_u64().unwrap() > 0, "{summary}");
+        assert!(summary["slots"].as_u64().unwrap() > 0, "{summary}");
+        assert_eq!(summary["answerKeyIssues"], json!([]));
+        assert_eq!(result["issues"], json!([]));
+
+        let mut broken = authoring;
+        broken["passage"] = json!(null);
+        let failed = compile_authoring_preview_core(&broken);
+        assert_eq!(failed["ok"], json!(false), "{failed}");
+        assert_eq!(failed["issues"][0]["code"], json!("RUNTIME_PASSAGE_MISSING"));
+        assert!(
+            failed["issues"][0]["message"].as_str().is_some_and(|m| !m.is_empty()),
+            "问题必须可定位"
+        );
+    }
+
+    #[test]
+    fn preview_compile_reports_unresolved_answers_without_blocking_render() {
+        // 逐题位（per_slot）的未解析答案：编译通过，预览照常渲染——
+        // 「能看」与「要不要补答案」是两个问题（学生端按未作答计分）。
+        let mut authoring: Value = serde_json::from_str(include_str!(
+            "../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
+        ))
+        .unwrap();
+        // 把唯一的集合题（choose TWO）降级成逐题单选，隔离出 per_slot 语义。
+        authoring["taskGroups"][0]["responseGroups"][0]["assignment"] = json!("per_slot");
+        for value in authoring["answerKey"].as_object_mut().unwrap().values_mut() {
+            *value = json!({"kind": "unresolved"});
+        }
+        let result = compile_authoring_preview_core(&authoring);
+        assert_eq!(result["ok"], json!(true), "{result}");
+        assert_eq!(result["summary"]["answeredSlots"], json!(0));
+    }
+
+    #[test]
+    fn preview_compile_keeps_unordered_set_answer_policy_strict() {
+        // 集合题（choose TWO）的答案键策略是编译器的既有硬语义：每个槽位必须
+        // 带恰好一个选项标签，未解析答案不能让预览渲染（与发布判定同一结论）。
+        let mut authoring: Value = serde_json::from_str(include_str!(
+            "../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
+        ))
+        .unwrap();
+        for value in authoring["answerKey"].as_object_mut().unwrap().values_mut() {
+            *value = json!({"kind": "unresolved"});
+        }
+        let result = compile_authoring_preview_core(&authoring);
+        assert_eq!(result["ok"], json!(false), "{result}");
+        assert_eq!(
+            result["issues"][0]["code"],
+            json!("RUNTIME_ANSWER_KEY_POLICY_INVALID")
+        );
     }
 
     #[test]

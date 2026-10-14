@@ -11,7 +11,7 @@ pub(crate) mod answer_key;
 mod completion;
 mod diagram;
 mod evidence;
-mod instruction_signature;
+pub(crate) mod instruction_signature;
 pub(crate) mod instruction_zone;
 pub(crate) mod issue_codes;
 // Listening part boundaries (SECTION/PART 1–4).
@@ -659,6 +659,19 @@ fn build_passage(
     anchors.extend(passage_preamble_anchors(physical_lines, &passage_pages));
     let anchors = valid_anchors(&anchors);
     let mut content = reading::passage_nodes_with_layout(title, &passage_lines, anchors.clone(), recover_pdf_layout);
+    // The physical shadow can contain only passage pages. The recovered local
+    // instruction zones remain source evidence even when those pages are absent.
+    let mut instruction_parts = fallback_lines.iter().map(|line| line.text.as_str()).collect::<Vec<_>>();
+    instruction_parts.extend(v1_authoring.get("groups").and_then(Value::as_array).into_iter().flatten()
+        .flat_map(|group| group.get("instruction").and_then(Value::as_array).into_iter().flatten())
+        .filter_map(Value::as_str));
+    for group in split.get("questionGroupCandidates").and_then(Value::as_array).into_iter().flatten() {
+        if let Some(text) = group.get("instructionText").and_then(Value::as_str) { instruction_parts.push(text); }
+        instruction_parts.extend(group.get("sectionEvidence").and_then(Value::as_array).into_iter().flatten()
+            .filter_map(|evidence| evidence.get("textPreview").and_then(Value::as_str)));
+    }
+    let instructions = instruction_parts.join(" ");
+    reading::derive_declared_paragraph_labels(&mut content, &instructions);
     let paragraph_map = reading::paragraph_map_from_nodes(&content);
     for asset in assets.iter().filter(|asset| {
         asset.get("kind").and_then(Value::as_str) == Some("raster_image")
@@ -1310,10 +1323,17 @@ fn build_responses_and_slots(
                 slot_anchor = source_anchor.unwrap_or(anchor.clone());
             }
         }
+        // A heading response describes a target paragraph; it is a different
+        // content node from that paragraph and must not reuse its identity.
+        let prompt_id = if matches!(task_type, TaskTypeV2::MatchingHeadings) {
+            format!("{task_id}-prompt-{number}")
+        } else {
+            host_id.clone()
+        };
         let mut children = Vec::new();
         if !prompt_text.is_empty() {
             children.push(text_node(
-                &format!("{host_id}-text"),
+                &format!("{prompt_id}-text"),
                 &prompt_text,
                 prompt_anchors
                     .first()
@@ -1333,7 +1353,7 @@ fn build_responses_and_slots(
             Vec::new()
         } else {
             vec![paragraph_node(
-                &host_id,
+                &prompt_id,
                 if prompt_text.is_empty() {
                     "[prompt pending review]"
                 } else {
@@ -2954,6 +2974,29 @@ mod tests {
     }
 
     #[test]
+    fn paragraph_labels_use_recovered_instructions_without_physical_question_pages() {
+        let v1 = json!({
+            "schemaVersion":"ReadingAuthoringIRV1",
+            "groups":[{"groupId":"group-1", "instruction":["The reading passage has ten paragraphs labelled A–J."],
+                "questionRange":[1,1], "questions":[{"id":"q1", "displayNumber":"1", "prompt":"First statement", "interaction":{"options":[]}}]}],
+            "answerKey":{"q1":"A"},
+            "passage":{"htmlBlocks": (0..10).map(|i| json!({"blockId":format!("p{i}"), "html":format!("Body paragraph number {i}.")})).collect::<Vec<_>>()}
+        });
+        let split = json!({"questionGroupCandidates":[{
+            "groupId":"group-1", "heading":"Questions 1-1", "questionRange":[1,1], "kindHint":"matching_information",
+            "instructionText":"Which paragraph contains the following information? Write the correct letter A-J.",
+            "sectionEvidence":[{"blockId":"h", "textPreview":"Which paragraph contains the following information? Write the correct letter A-J.","pageIndex":1},
+                {"blockId":"q1","textPreview":"1 First statement", "pageIndex":1}]
+        }], "passageCandidates":[]});
+        let value = build_authoring_v2_shadow(&job(), &v1, &split, None, None).unwrap();
+        assert_eq!(value["passage"]["paragraphMap"].as_object().unwrap().len(), 10);
+        assert!(value["passage"]["content"].as_array().unwrap().iter().filter(|n| n["type"] == "paragraph").all(|n| n["provenanceStatus"] == "derived"));
+        assert_eq!(value["quality"]["issues"].as_array().unwrap().iter().filter(|issue| issue["code"] == "PARAGRAPH_LABELS_DERIVED").count(), 1);
+        let preview = crate::authoring_v2_commands::compile_authoring_preview_core(&value);
+        assert_eq!(preview["ok"], true, "{preview}");
+    }
+
+    #[test]
     fn matching_information_uses_each_slot_and_real_paragraph_map() {
         let questions = (1..=2)
             .map(|number| {
@@ -3053,6 +3096,11 @@ mod tests {
         let value = build_authoring_v2_shadow(&job(), &v1, &split, None, None).unwrap();
         let group = &value["taskGroups"][0];
         assert_eq!(group["responseGroups"].as_array().unwrap().len(), 1);
+        for prompt in group["responseGroups"][0]["prompt"].as_array().unwrap() {
+            let prompt_id = prompt["id"].as_str().unwrap();
+            assert!(!value["passage"]["paragraphMap"].as_object().unwrap().values()
+                .any(|host| host.as_str() == Some(prompt_id)), "heading prompt duplicates passage host {prompt_id}");
+        }
         assert_eq!(
             group.pointer("/responseGroups/0/slotIds"),
             Some(&json!(["q14", "q15"]))

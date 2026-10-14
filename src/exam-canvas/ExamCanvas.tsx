@@ -74,6 +74,7 @@ interface AnswerDragController {
 }
 
 const AnswerDragContext = createContext<AnswerDragController | null>(null);
+const PassageContentContext = createContext(false);
 
 const assetPreviewCache = new Map<string, Promise<AuthoringAssetPreview | undefined>>();
 
@@ -117,6 +118,12 @@ function ToolButton({ label, disabled, onClick, children }: {
 
 /** 作者模式的选项增删：不再用悬浮工具条，而是贴在选项本身上、悬停才出现——
  *  删除是选项行末尾的 ×，添加是选项列表下方的一行轻量入口。排序见 {@link OptionDragHandle}。 */
+function optionSourceEditable(canvas: ExamCanvasProps, taskId: string, responseGroupId: string): boolean {
+  const task = canvas.authoring.taskGroups.find(task => task.taskId === taskId);
+  const response = task?.responseGroups.find(response => response.responseGroupId === responseGroupId);
+  return task?.taskType !== "matching_information" || response?.options !== undefined || response?.optionBankRef !== undefined;
+}
+
 function OptionDeleteButton({ canvas, taskId, responseGroupId, option, count }: {
   canvas: ExamCanvasProps;
   taskId: string;
@@ -124,7 +131,7 @@ function OptionDeleteButton({ canvas, taskId, responseGroupId, option, count }: 
   option: OptionV2;
   count: number;
 }) {
-  if (canvas.mode !== "author" || !canvas.onStructureAction || count <= 1) return null;
+  if (canvas.mode !== "author" || !canvas.onStructureAction || count <= 1 || !optionSourceEditable(canvas, taskId, responseGroupId)) return null;
   return <button
     type="button"
     className="v2-option-delete"
@@ -145,7 +152,7 @@ function OptionAddButton({ canvas, taskId, responseGroupId, options }: {
   responseGroupId: string;
   options: OptionV2[];
 }) {
-  if (canvas.mode !== "author" || !canvas.onStructureAction) return null;
+  if (canvas.mode !== "author" || !canvas.onStructureAction || !optionSourceEditable(canvas, taskId, responseGroupId)) return null;
   return <button
     type="button"
     className={`v2-option-add${options.length ? "" : " is-empty"}`}
@@ -201,7 +208,7 @@ function OptionDragHandle({ canvas, taskId, responseGroupId, options, index }: {
   index: number;
 }) {
   const beginDrag = useContext(OptionDragContext);
-  if (canvas.mode !== "author" || !canvas.onStructureAction || !beginDrag) return null;
+  if (canvas.mode !== "author" || !canvas.onStructureAction || !beginDrag || !optionSourceEditable(canvas, taskId, responseGroupId)) return null;
   const option = options[index];
   const move = (beforeOptionId: string | undefined) => canvas.onStructureAction?.({ type: "option.move", taskId, responseGroupId, optionId: option.optionId, beforeOptionId });
   return <span
@@ -416,6 +423,7 @@ function VisualAssetNode({ node, canvas, select }: {
 
 function ContentNodes({ nodes, canvas }: { nodes: ContentNodeV2[] | undefined; canvas: ExamCanvasProps }): ReactNode {
   const canvasState = useContext(CanvasAnswersContext);
+  const inPassage = useContext(PassageContentContext);
   if (!nodes?.length) return null;
   return nodes.map((node) => {
     const selected = canvas.selectedId === node.id;
@@ -433,7 +441,7 @@ function ContentNodes({ nodes, canvas }: { nodes: ContentNodeV2[] | undefined; c
         return <br key={node.id} />;
       case "paragraph": {
         const targetSlots = Object.values(canvas.authoring.answerSlots).filter((slot) =>
-          slot.interaction === "dragdrop" && slot.hostType === "passage_paragraph" && slot.hostNodeId === node.id,
+          inPassage && slot.interaction === "dragdrop" && slot.hostType === "passage_paragraph" && slot.hostNodeId === node.id,
         );
         const label = node.paragraphLabel ?? paragraphLabelFor(canvas.authoring, node.id);
         return <Fragment key={node.id}>
@@ -1007,7 +1015,7 @@ export function ExamCanvas(props: ExamCanvasProps) {
       <>
         <main id="left" className="reading-pane passage-pane pane v2-passage-pane">
           <article className="reading-html passage-html v2-passage-content" aria-label={runtime.title}>
-            <ContentNodes nodes={runtime.passage} canvas={props} />
+            <PassageContentContext.Provider value={true}><ContentNodes nodes={runtime.passage} canvas={props} /></PassageContentContext.Provider>
           </article>
         </main>
         <div id="divider" {...dividerProps} />

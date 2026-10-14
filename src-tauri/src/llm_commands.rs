@@ -195,9 +195,12 @@ pub(crate) fn test_llm_profile_core(root: &Path, profile_id: &str) -> CommandRes
         "group": {"groupId": "test", "kind": "short_answer", "instruction": ["Return JSON only."], "questions": []}
     });
     let api_key = load_llm_api_key(root, profile_id);
+    // A connection test has its own budget; an old failed test must not disable
+    // every later test, including tests of another service or corrected key.
+    let test_job_id = format!("profile-test-{}", Uuid::new_v4().simple());
     let result = run_llm_gateway(
         root,
-        "profile-test",
+        &test_job_id,
         "test_profile",
         &input,
         api_key.as_deref(),

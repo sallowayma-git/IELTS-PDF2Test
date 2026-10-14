@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   AnswerSlotV2,
   AnswerValueV2,
@@ -12,6 +12,7 @@ import type {
 } from "../../types";
 import type { TextNodeV2 } from "../../types/content-doc-v2";
 import { compilePreviewSource, describePreviewPublishLimitation } from "./studentPreview";
+import { buildReadingInteractionModelV2, buildRuntimeViewModelV2 } from "../../services/runtimeViewModelV2";
 
 // 证据层级：pure unit。断言学生预览的编译闸门——它决定「能不能显示预览」以及
 // 「编译失败时用户能不能定位到具体题目」，而不是题面排版。
@@ -119,180 +120,105 @@ function makeDs(input: {
   };
 }
 
-describe("compilePreviewSource — 编译闸门", () => {
-  it("没有草稿时不给预览", () => {
-    expect(compilePreviewSource(undefined)).toBeUndefined();
+// 证据层级：pure unit + IPC 委托。P2 起预览不再有 TS 民办编译器：
+// `compilePreviewSource` 只负责把当前草稿交给 Rust `compile_authoring_preview`
+// 并翻译其结果——「能不能预览」的判定完全来自产品发布时用的那个编译器。
+vi.mock("../../api/tauriCommands", () => ({ command: vi.fn() }));
+
+import { command } from "../../api/tauriCommands";
+
+const commandMock = vi.mocked(command);
+
+function rustOk(summary: Record<string, unknown> = {}) {
+  return {
+    schemaVersion: "PreviewCompileV1",
+    ok: true,
+    issues: [],
+    summary: {
+      modality: "reading",
+      taskGroups: 1,
+      slots: 1,
+      assets: 0,
+      answeredSlots: 1,
+      listeningParts: 0,
+      answerKeyIssues: [],
+      ...summary
+    }
+  };
+}
+
+describe("compilePreviewSource — Rust 编译闸门（P2 单一编译器）", () => {
+  it("没有草稿时不调用编译、不给预览", async () => {
+    commandMock.mockReset();
+    await expect(compilePreviewSource(undefined)).resolves.toBeUndefined();
+    expect(commandMock).not.toHaveBeenCalled();
   });
 
-  it("空题组草稿可以编译（预览显示 0 个题组，而不是报错）", () => {
-    const result = compilePreviewSource(makeDs({ taskGroups: [] }));
+  it("把当前草稿原样交给 Rust 编译命令", async () => {
+    commandMock.mockReset();
+    commandMock.mockResolvedValue(rustOk());
+    const ds = makeDs({ taskGroups: [] });
+    const result = await compilePreviewSource(ds);
+    expect(commandMock).toHaveBeenCalledWith("compile_authoring_preview", { authoring: ds });
     expect(result?.ok).toBe(true);
-    if (result?.ok) {
-      expect(result.summary).toEqual({
-        modality: "reading",
-        taskGroups: 0,
-        slots: 0,
-        assets: 0,
-        answeredSlots: 0,
-        listeningParts: 0,
-        answerKeyIssues: []
-      });
-    }
   });
 
-  it("选择题没有可解析的选项来源时编译失败，并给出可定位的 responseGroupId", () => {
-    const ds = makeDs({
-      taskGroups: [
-        task({
-          taskId: "task-1",
-          taskType: "single_choice",
-          responseGroups: [group({ responseGroupId: "rg-1", kind: "choice", slotIds: ["q1"] })]
-        })
+  it("编译通过：概要来自 Rust（题组/答案位/资源/已答）", async () => {
+    commandMock.mockReset();
+    commandMock.mockResolvedValue(rustOk({ taskGroups: 3, slots: 13, assets: 2, answeredSlots: 11 }));
+    const result = await compilePreviewSource(makeDs({ taskGroups: [] }));
+    expect(result?.ok).toBe(true);
+    if (!result?.ok) throw new Error("expected ok");
+    expect(result.summary).toMatchObject({
+      modality: "reading",
+      taskGroups: 3,
+      slots: 13,
+      assets: 2,
+      answeredSlots: 11,
+      listeningParts: 0
+    });
+    expect(result.summary.answerKeyIssues).toEqual([]);
+  });
+
+  it("编译失败：不渲染预览，给出第一条可定位问题", async () => {
+    commandMock.mockReset();
+    commandMock.mockResolvedValue({
+      schemaVersion: "PreviewCompileV1",
+      ok: false,
+      issues: [
+        { code: "RUNTIME_PASSAGE_MISSING", targetId: "exam", message: "passage missing" },
+        { code: "RUNTIME_OPTION_BANK_MISSING", targetId: "group-2", message: "bank missing" }
       ],
-      answerSlots: { q1: slot("q1", 1) },
-      answerKey: { q1: { kind: "option", labels: ["A"], assignment: "per_slot" } }
+      summary: null
     });
-    const result = compilePreviewSource(ds);
+    const result = await compilePreviewSource(makeDs({ taskGroups: [] }));
     expect(result?.ok).toBe(false);
-    if (result && !result.ok) {
-      expect(result.issue.code).toBe("RUNTIME_OPTION_BANK_MISSING");
-      expect(result.issue.targetId).toBe("rg-1");
-    }
+    if (result?.ok !== false) throw new Error("expected failure");
+    expect(result.issue.code).toBe("RUNTIME_PASSAGE_MISSING");
+    expect(result.issue.targetId).toBe("exam");
   });
 
-  it("答案位没有被任何题组引用时编译失败，并定位到该答案位", () => {
-    const ds = makeDs({
-      taskGroups: [],
-      answerSlots: { q9: slot("q9", 9) },
-      answerKey: { q9: { kind: "option", labels: ["A"], assignment: "per_slot" } }
-    });
-    const result = compilePreviewSource(ds);
+  it("命令抛错（非编译问题）也收敛成可定位失败，不把用户挂在等待里", async () => {
+    commandMock.mockReset();
+    commandMock.mockRejectedValue(new Error("ipc down"));
+    const result = await compilePreviewSource(makeDs({ taskGroups: [] }));
     expect(result?.ok).toBe(false);
-    if (result && !result.ok) {
-      expect(result.issue.code).toBe("RUNTIME_SLOT_UNASSIGNED");
-      expect(result.issue.targetId).toBe("q9");
-    }
+    if (result?.ok !== false) throw new Error("expected failure");
+    expect(result.issue.code).toBe("PREVIEW_COMPILE_FAILED");
+    expect(result.issue.message).toContain("ipc down");
   });
 
-  it("合法草稿编译通过，并统计题组/答案位/已作答数", () => {
-    const ds = makeDs({
-      taskGroups: [
-        task({
-          taskId: "task-1",
-          taskType: "single_choice",
-          responseGroups: [group({ responseGroupId: "rg-1", kind: "choice", slotIds: ["q1"], optionBankRef: "bank-1" })],
-          optionBank: { optionBankId: "bank-1", allowReuse: false, options: [option("o-a", "A", "alpha"), option("o-b", "B", "beta")] }
-        } as Partial<TaskGroupV2> & Pick<TaskGroupV2, "taskId" | "taskType" | "responseGroups">)
-      ],
-      answerSlots: { q1: slot("q1", 1) },
-      answerKey: { q1: { kind: "option", labels: ["A"], assignment: "per_slot" } }
-    });
-    const result = compilePreviewSource(ds);
-    expect(result?.ok, JSON.stringify(result)).toBe(true);
-    if (result?.ok) {
-      expect(result.summary.taskGroups).toBe(1);
-      expect(result.summary.slots).toBe(1);
-      expect(result.summary.answeredSlots).toBe(1);
-      expect(result.compiled.modality).toBe("reading");
-      if (result.compiled.modality === "reading") expect(result.compiled.reading.answerKey.q1).toBeTruthy();
-    }
+  it("听力稿按稿件自身 modality 编译（由 Rust 分派），Section 数进概要", async () => {
+    commandMock.mockReset();
+    commandMock.mockResolvedValue(rustOk({ modality: "listening", listeningParts: 4, assets: 4 }));
+    const result = await compilePreviewSource(makeDs({ taskGroups: [], modality: "listening" }));
+    expect(result?.ok).toBe(true);
+    if (!result?.ok) throw new Error("expected ok");
+    expect(result.summary.modality).toBe("listening");
+    expect(result.summary.listeningParts).toBe(4);
   });
 });
 
-describe("compilePreviewSource — 答案键类型与槽位交互的一致性（与真实学生端同一判定）", () => {
-  // 这是本轮真实夹具暴露出的问题：T/F/NG 这类选项型槽位，答案键却被写成 text。
-  // 真实学生端（reading_runtime_v2.rs）会判 RUNTIME_CHOICE_SLOT_ANSWER_NOT_OPTION
-  // 并让整份提交失败，发布门禁也记成 RUNTIME_COMPILER_FAILED。
-  // 而题面照样渲染 —— 预览必须把「能看」和「能提交」分开说，不能显示假完成。
-  it("选项型槽位配文本型答案键：预览仍可渲染，但必须报出该答案位", () => {
-    const ds = makeDs({
-      taskGroups: [
-        task({
-          taskId: "task-1",
-          taskType: "true_false_not_given",
-          responseGroups: [group({ responseGroupId: "rg-1", kind: "choice", slotIds: ["q1"], optionBankRef: "bank-1" })],
-          optionBank: {
-            optionBankId: "bank-1",
-            allowReuse: false,
-            options: [option("o-t", "TRUE", "TRUE"), option("o-f", "FALSE", "FALSE")]
-          }
-        } as Partial<TaskGroupV2> & Pick<TaskGroupV2, "taskId" | "taskType" | "responseGroups">)
-      ],
-      answerSlots: { q1: slot("q1", 1) },
-      answerKey: { q1: { kind: "text", values: ["TRUE"], normalization: "ielts_default" } }
-    });
-    const result = compilePreviewSource(ds);
-    // 关键：不是编译失败——题面照样能画出来。
-    expect(result?.ok, JSON.stringify(result)).toBe(true);
-    if (result?.ok) {
-      expect(result.summary.answerKeyIssues).toHaveLength(1);
-      expect(result.summary.answerKeyIssues[0].code).toBe("RUNTIME_CHOICE_SLOT_ANSWER_NOT_OPTION");
-      expect(result.summary.answerKeyIssues[0].targetId).toBe("q1");
-    }
-  });
-
-  it("选项型槽位配选项型答案键：不报问题", () => {
-    const ds = makeDs({
-      taskGroups: [
-        task({
-          taskId: "task-1",
-          taskType: "true_false_not_given",
-          responseGroups: [group({ responseGroupId: "rg-1", kind: "choice", slotIds: ["q1"], optionBankRef: "bank-1" })],
-          optionBank: {
-            optionBankId: "bank-1",
-            allowReuse: false,
-            options: [option("o-t", "TRUE", "TRUE"), option("o-f", "FALSE", "FALSE")]
-          }
-        } as Partial<TaskGroupV2> & Pick<TaskGroupV2, "taskId" | "taskType" | "responseGroups">)
-      ],
-      answerSlots: { q1: slot("q1", 1) },
-      answerKey: { q1: { kind: "option", labels: ["TRUE"], assignment: "per_slot" } }
-    });
-    const result = compilePreviewSource(ds);
-    expect(result?.ok, JSON.stringify(result)).toBe(true);
-    if (result?.ok) expect(result.summary.answerKeyIssues).toEqual([]);
-  });
-
-  it("答案未填（unresolved）不算类型不匹配——那属于另一类问题", () => {
-    const ds = makeDs({
-      taskGroups: [
-        task({
-          taskId: "task-1",
-          taskType: "true_false_not_given",
-          responseGroups: [group({ responseGroupId: "rg-1", kind: "choice", slotIds: ["q1"], optionBankRef: "bank-1" })],
-          optionBank: {
-            optionBankId: "bank-1",
-            allowReuse: false,
-            options: [option("o-t", "TRUE", "TRUE"), option("o-f", "FALSE", "FALSE")]
-          }
-        } as Partial<TaskGroupV2> & Pick<TaskGroupV2, "taskId" | "taskType" | "responseGroups">)
-      ],
-      answerSlots: { q1: slot("q1", 1) },
-      answerKey: { q1: { kind: "unresolved" } }
-    });
-    const result = compilePreviewSource(ds);
-    expect(result?.ok, JSON.stringify(result)).toBe(true);
-    if (result?.ok) expect(result.summary.answerKeyIssues).toEqual([]);
-  });
-
-  it("文本型槽位配文本型答案键：不报问题", () => {
-    const textSlot: AnswerSlotV2 = { ...slot("q1", 1), interaction: "text" };
-    const ds = makeDs({
-      taskGroups: [
-        task({
-          taskId: "task-1",
-          taskType: "table_completion",
-          responseGroups: [group({ responseGroupId: "rg-1", kind: "text_entry", slotIds: ["q1"] })]
-        })
-      ],
-      answerSlots: { q1: textSlot },
-      answerKey: { q1: { kind: "text", values: ["maps"], normalization: "ielts_default" } }
-    });
-    const result = compilePreviewSource(ds);
-    expect(result?.ok, JSON.stringify(result)).toBe(true);
-    if (result?.ok) expect(result.summary.answerKeyIssues).toEqual([]);
-  });
-});
 
 describe("describePreviewPublishLimitation — 预览与发布的差距", () => {
   it("有未保存修改时是 warning，并点明发布用的是已保存内容（**不带版本号**）", () => {
@@ -414,50 +340,3 @@ function listeningDs(ordinals: number[]): IeltsAuthoringIRV2 {
   };
   return makeDs({ taskGroups, answerSlots, answerKey, modality: "listening", listening, assets });
 }
-
-describe("compilePreviewSource — 听力稿按听力契约编译", () => {
-  it("四个 Section 各带音频的听力稿可以预览，并如实汇报 Section 数与音频数", () => {
-    const result = compilePreviewSource(listeningDs([1, 2, 3, 4]));
-    expect(result?.ok, JSON.stringify(result)).toBe(true);
-    if (result?.ok) {
-      expect(result.summary.modality).toBe("listening");
-      expect(result.summary.listeningParts).toBe(4);
-      expect(result.summary.assets).toBe(4);
-    }
-  });
-
-  it("某个 Section 没有音频时预览编译失败，并定位到那个 Section", () => {
-    const ds = listeningDs([1, 2, 3, 4]);
-    ds.listening!.parts[2].media = undefined;
-    const result = compilePreviewSource(ds);
-    expect(result?.ok).toBe(false);
-    if (result && !result.ok) {
-      expect(result.issue.code).toBe("LISTENING_MEDIA_MISSING");
-      expect(result.issue.targetId).toBe("part-3");
-    }
-  });
-
-  it("Section 指向的音频不在资源清单里时预览编译失败，并定位到那个音频", () => {
-    const ds = listeningDs([1, 2]);
-    ds.assets = ds.assets.slice(0, 1);
-    const result = compilePreviewSource(ds);
-    expect(result?.ok).toBe(false);
-    if (result && !result.ok) {
-      expect(result.issue.code).toBe("ASSET_REFERENCE_MISSING");
-      expect(result.issue.targetId).toBe(audioAsset(2).assetId);
-    }
-  });
-
-  it("答案形式与题目不匹配的听力稿也如实报出来（和学生端提交阶段一致）", () => {
-    const ds = listeningDs([1]);
-    ds.answerKey.q1 = { kind: "option", labels: ["A"], assignment: "per_slot" };
-    const result = compilePreviewSource(ds);
-    expect(result?.ok, JSON.stringify(result)).toBe(true);
-    if (result?.ok) {
-      expect(result.summary.answerKeyIssues.map((item) => item.code)).toEqual([
-        "RUNTIME_TEXT_SLOT_ANSWER_NOT_TEXT"
-      ]);
-      expect(result.summary.answerKeyIssues[0].targetId).toBe("q1");
-    }
-  });
-});

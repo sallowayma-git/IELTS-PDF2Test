@@ -658,6 +658,7 @@ mod tests {
             cloud_profile_id: None,
             modality: None,
             cloud_token_budget: None,
+            pipeline_mode: None,
         };
         let result = import_files_at_root(&root, input).unwrap();
         // 立刻还原环境变量：后面的断言失败也不该把钩子留给别的测试。

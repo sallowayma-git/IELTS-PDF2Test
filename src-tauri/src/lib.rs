@@ -51,6 +51,7 @@ mod authoring_validation;
 mod auto_pipeline;
 mod cleanup;
 mod cloud_adoption;
+mod cloud_direct;
 mod cloud_repair;
 mod cloud_selection;
 #[cfg(test)]
@@ -83,6 +84,7 @@ mod parser;
 mod pdf_facts_shadow;
 mod pdf_geometry;
 mod pdf_ingest;
+mod pipeline_settings;
 mod preview_commands;
 mod processing;
 #[cfg(test)]
@@ -941,6 +943,16 @@ async fn automation_source_files() -> CommandResult<Option<Vec<job_commands::Pic
 // ── M1：Workspace API（library/commands.rs 的薄壳，计划 §5.3 命令收敛）──
 
 #[tauri::command]
+fn get_app_build_info() -> Value {
+    json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "revision": env!("PDF2TEST_BUILD_REVISION"),
+        "dirty": env!("PDF2TEST_BUILD_DIRTY") == "true",
+        "builtAtUnix": env!("PDF2TEST_BUILD_TIME").parse::<u64>().unwrap_or(0),
+    })
+}
+
+#[tauri::command]
 async fn get_workspace_item(item_id: String, app: AppHandle) -> CommandResult<Value> {
     let root = app_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -1344,6 +1356,13 @@ async fn resolve_authoring_asset_preview(
     resolve_authoring_asset_preview_core(&root, &job_id, &asset_id)
 }
 
+/// 学生预览编译（P2）：当前草稿过同一个 Rust 编译器，预览与发布同一判定。
+#[tauri::command]
+async fn compile_authoring_preview(authoring: Value, app: AppHandle) -> CommandResult<Value> {
+    let _ = app_root(&app)?;
+    Ok(authoring_v2_commands::compile_authoring_preview_core(&authoring))
+}
+
 #[tauri::command]
 async fn export_authoring_v2(input: Value, app: AppHandle) -> CommandResult<Value> {
     let root = app_root(&app)?;
@@ -1381,6 +1400,24 @@ async fn save_diagnostics_settings(
     app: AppHandle,
 ) -> CommandResult<DiagnosticsSettings> {
     job_commands::save_diagnostics_settings_core(settings, app).await
+}
+
+/// 读取流水线模式（`direct` 默认 / `legacy` 旧链）。设置页用来展示与切换。
+#[tauri::command]
+async fn get_pipeline_settings(app: AppHandle) -> CommandResult<pipeline_settings::PipelineSettingsV1> {
+    let root = app_root(&app)?;
+    pipeline_settings::load_pipeline_settings(&root)
+}
+
+#[tauri::command]
+async fn save_pipeline_settings(
+    settings: pipeline_settings::PipelineSettingsV1,
+    app: AppHandle,
+) -> CommandResult<pipeline_settings::PipelineSettingsV1> {
+    let root = app_root(&app)?;
+    ensure_app_dirs(&root)?;
+    pipeline_settings::save_pipeline_settings(&root, &settings)?;
+    pipeline_settings::load_pipeline_settings(&root)
 }
 
 #[tauri::command]
@@ -1778,6 +1815,7 @@ pub fn run() {
         .setup(|app| {
             let root = app_root(app.handle()).map_err(Box::<dyn std::error::Error>::from)?;
             ensure_app_dirs(&root).map_err(Box::<dyn std::error::Error>::from)?;
+            diagnostics::install_worker_panic_log(root.clone());
             // 初始化题库 DB schema + 首次启动迁移既有 job 数据（幂等，失败不阻断启动）。
             let _ = library_commands::migrate_existing_into_library(&root);
             // M2：托管调度状态并启动调度循环（含启动恢复）。
@@ -1813,6 +1851,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             create_import_job,
+            get_app_build_info,
             get_workspace_item,
             apply_editor_commands,
             list_library_items,
@@ -1858,12 +1897,15 @@ pub fn run() {
             get_authoring_v2,
             get_publish_preflight,
             resolve_authoring_asset_preview,
+            compile_authoring_preview,
             export_authoring_v2,
             render_group_html,
             list_llm_profiles,
             run_environment_preflight,
             get_diagnostics_settings,
             save_diagnostics_settings,
+            get_pipeline_settings,
+            save_pipeline_settings,
             get_job_artifact_status,
             save_llm_profile,
             delete_llm_profile,
@@ -8249,11 +8291,13 @@ Answers
 
     #[test]
     fn export_core_publish_gate_failure_writes_no_export_or_cleanup() {
+        // P2 门禁收敛：未人工确认已降为警告（不再阻断导出），所以这条测试改用
+        // **真正的硬门禁**来钉「门禁失败 → 不写产物、不做清理」这条不变量：
+        // 题号不连续是 V1 校验错误（VALIDATION_ERROR），属编译/结构类硬阻断。
         let root = temp_test_root();
         let (job, mut ir) = make_publishable_fixture(&root);
-        if let Some(audit) = ir.get_mut("audit").and_then(Value::as_object_mut) {
-            audit.insert("humanVerified".to_string(), json!(false));
-        }
+        // 清掉试卷身份：V1 校验的 error 级判据（$.exam.examId 必填）。
+        ir["exam"]["examId"] = json!("");
         write_json(&job_dir(&root, &job.job_id).join("authoring-ir.json"), &ir).unwrap();
         let out_dir = root.join("blocked-export");
 
@@ -8265,8 +8309,8 @@ Answers
         )
         .unwrap_err();
 
-        assert!(error.contains("export_validation_failed"));
-        assert!(error.contains("$.audit.humanVerified"));
+        assert!(error.contains("export_validation_failed"), "{error}");
+        assert!(error.contains("$.exam.examId"), "{error}");
         assert!(!out_dir.exists());
         let job_path = job_dir(&root, &job.job_id);
         assert!(!job_path.join("cleanup-summary.json").exists());

@@ -79,8 +79,12 @@ export function describeBatchPublishOutcome(outcome: PublishBatchOutcome): strin
 }
 
 /**
- * 一次点击发布：请求里总是带着放行确认（`confirmedAt` = 点击时间）。
- * 后端照常计算门禁；只有结论确实不是 Ready 时这份确认才被使用并记录为放行。
+ * 一次点击发布（P2 门禁收敛）。
+ *
+ * 前端**不再**永远带 `force`：发布判定收敛为「编译通过 = 可发布」，其余（答案未填、
+ * 低置信、保真度低、未人工确认）是编辑器与发布对话框里展示的警告。放行确认
+ * （`force`）随伪装一起去掉——它此前的唯一效果是让每次发布都被后端记成「用户放行」，
+ * 门禁结论被悄悄覆盖，审计里分不清用户到底确认过什么。
  */
 export async function publishItems(
   itemIds: string[], destination: string,
@@ -89,8 +93,7 @@ export async function publishItems(
   if (!itemIds.length) return { destination, succeeded: [], failed: [] };
   onProgress?.(0, itemIds.length, itemIds[0]);
   try {
-    const force = { confirmedAt: new Date().toISOString(), acknowledgedReasons: [] as string[] };
-    const result = await command<PublishBatchOutcome>("publish_items", { input: { itemIds, destination, force } });
+    const result = await command<PublishBatchOutcome>("publish_items", { input: { itemIds, destination } });
     onProgress?.(itemIds.length, itemIds.length, "");
     return result;
   } catch (error) {

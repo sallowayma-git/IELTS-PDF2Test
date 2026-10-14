@@ -8,6 +8,7 @@ import type {
 } from "../types/ielts-authoring-v2";
 import type { ContentNodeV2, DiagramHotspotV2 } from "../types/content-doc-v2";
 import type { AssetDescriptorV2 } from "../types/schema-common-v2";
+import { paragraphMapIssues, taskGroupsWithParagraphOptions } from "./paragraphOptionsV2";
 import {
   READING_ATTEMPT_V2_SCHEMA_VERSION,
   READING_EXAM_SOURCE_V2_SCHEMA_VERSION,
@@ -212,6 +213,7 @@ export function validateReadingExamSourceV2(source: ReadingExamSourceV2): Readin
     issues.push(issue("RUNTIME_ANSWER_KEY_MISMATCH", source.examId, "answerKey must contain exactly every answer slot."));
   }
   const taskIds = new Set<string>();
+  issues.push(...paragraphMapIssues(source.passage.content, source.passage.paragraphMap));
   const responseIds = new Set<string>();
   const assigned = new Set<string>();
   for (const task of source.taskGroups) {
@@ -692,6 +694,7 @@ export function buildReadingSourceV2FromAuthoring(authoring: IeltsAuthoringIRV2)
     }
   };
   normalizeRuntimeHotspots(source);
+  source.taskGroups = taskGroupsWithParagraphOptions(source.taskGroups, source.passage.content, source.passage.paragraphMap);
   assertReadingExamSourceV2(source);
   return source;
 }

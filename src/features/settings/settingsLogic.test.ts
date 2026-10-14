@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { cloudShouldBeEnabledAfterSave, hasCloudConnection } from "./settingsLogic";
+import { cloudShouldBeEnabledAfterSave, describePipelineMode, hasCloudConnection, normalizePipelineMode } from "./settingsLogic";
 import { DEFAULT_APP_SETTINGS, readAppSettings } from "./appSettings";
 
 describe("保存有效密钥即启用云端", () => {
@@ -44,5 +44,20 @@ describe("导入抽屉的云端提示", () => {
     expect(hasCloudConnection([{ profileId: "profile-local-placeholder", enabled: true }])).toBe(false);
     expect(hasCloudConnection([{ profileId: "p1", enabled: false }])).toBe(false);
     expect(hasCloudConnection([{ profileId: "p1", enabled: true }])).toBe(true);
+  });
+});
+
+describe("流水线模式", () => {
+  it("默认 direct；无法识别的值不把界面卡死", () => {
+    expect(normalizePipelineMode(undefined)).toBe("direct");
+    expect(normalizePipelineMode("cloud")).toBe("direct");
+    expect(normalizePipelineMode("")).toBe("direct");
+    expect(normalizePipelineMode("legacy")).toBe("legacy");
+    expect(normalizePipelineMode("direct")).toBe("direct");
+  });
+  it("两种模式都有可读说明，且互不相同", () => {
+    expect(describePipelineMode("direct")).toContain("直出");
+    expect(describePipelineMode("legacy")).toContain("本地");
+    expect(describePipelineMode("direct")).not.toBe(describePipelineMode("legacy"));
   });
 });

@@ -124,6 +124,21 @@ fn display_message_for(job: &queue::ProcessingJobRow) -> String {
     if let Some(code) = job.last_error_code.as_deref() {
         return display_message(&job.stage, Some(code));
     }
+    // 直出失败已回退本地链：如实说明原因与现状（只在识别阶段显示，终态后让位）。
+    if matches!(job.stage.as_str(), STAGE_LOCAL_RECOGNITION | STAGE_CLOUD_RECOGNITION) {
+        if let Some(reason) = job
+            .progress
+            .get("cloudDirectFallback")
+            .and_then(Value::as_str)
+        {
+            return format!("云端直出失败（{reason}），已改用本地识别");
+        }
+    }
+    // 直出链（pipelineMode=direct）没有本地首稿阶段：如实说「云端直出中」，
+    // 不得借用本地识别的文案。
+    if job.stage == STAGE_CLOUD_RECOGNITION && job.local_status == "not_run" {
+        return "云端正在直出整份题稿，暂不进行修改".to_string();
+    }
     // 本地稿尚未形成（本地识别仍在跑、cloud_status 已并行推进到 queued/running）
     // 时，如实说明本地进度，不得谎称「本地识别完成」。
     if job.stage == STAGE_CLOUD_RECOGNITION && job.local_status != "succeeded" {
@@ -355,6 +370,11 @@ pub(crate) fn notify_item_content_changed(
     }
 }
 
+struct HeartbeatGuard(tauri::async_runtime::JoinHandle<()>);
+impl Drop for HeartbeatGuard {
+    fn drop(&mut self) { self.0.abort(); }
+}
+
 async fn run_job(app: AppHandle, state: Arc<ProcessingState>, job: queue::ProcessingJobRow) {
     let Some(worker_id) = job.lease_owner.clone() else {
         return;
@@ -373,7 +393,11 @@ async fn run_job(app: AppHandle, state: Arc<ProcessingState>, job: queue::Proces
         async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(30)).await;
-                let Ok(root) = app_root(&app) else { break };
+                let root = match app_root(&app) {
+                    Ok(root) => root,
+                    Err(error) => { eprintln!("[processing] heartbeat root unavailable for {job_id}: {error}; retrying"); continue; }
+                };
+                let log_job_id = job_id.clone();
                 let job_id = job_id.clone();
                 let worker_id = state.worker_id.clone();
                 let result = tauri::async_runtime::spawn_blocking(move || {
@@ -381,14 +405,19 @@ async fn run_job(app: AppHandle, state: Arc<ProcessingState>, job: queue::Proces
                     renew_lease(&conn, &job_id, &worker_id)
                 })
                 .await;
-                if !matches!(result, Ok(Ok(true))) {
-                    break;
+                match result {
+                    Ok(Ok(true)) => {},
+                    Ok(Ok(false)) => {
+                        eprintln!("[processing] heartbeat stopped for {}: lease lost or job terminal", log_job_id);
+                        break;
+                    }
+                    error => eprintln!("[processing] heartbeat renewal failed for {log_job_id}: {error:?}; retrying"),
                 }
             }
         }
     });
+    let _heartbeat_guard = HeartbeatGuard(heartbeat);
     run_job_inner(app, state, job).await;
-    heartbeat.abort();
 }
 
 async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::ProcessingJobRow) {
@@ -454,9 +483,52 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         .and_then(Value::as_str)
         .map(str::to_string);
     let cloud_will_run = cloud_enabled && cloud_source_supported;
+    // 直出链的证据面是「PDF 每页文字层 + 扫描页页图」（见 cloud_direct）：
+    // 只有 PDF 主源能走直出。DOCX 等来源**不尝试直出**——直接走既有云端
+    // 候选链（DOCX 用本地抽取原文作证据面，见 generate_cloud_reading_outline），
+    // 而不是让直出失败一次再回退（那会白跑一次判定并让回退日志误导用户）。
+    let direct_source_supported = job
+        .progress
+        .get("fileName")
+        .and_then(Value::as_str)
+        .map(|name| name.to_ascii_lowercase().ends_with(".pdf"))
+        .unwrap_or(false);
+
+    // 解析云端 profile 一次（与 `generate_cloud_reading_outline` 的回退逻辑一致）：
+    // 显式 `cloudProfileId` 优先，否则回退到 job 的 `active_llm_profile_id`；
+    // 同一解析值同时传给「拉取」与「reconcile」，避免拉取了却被 reconcile 当
+    // NO_PROFILE 丢弃（一致性约束 #4）。
+    let resolved_profile: Option<String> = cloud_profile_id.clone().or_else(|| {
+        crate::job_store::load_job(&root, &job_id)
+            .ok()
+            .and_then(|import_job| import_job.active_llm_profile_id)
+    });
+    // 是否真正拉取云端：需 cloud_will_run 且已解析出 profile（约束 #8：
+    // 无 profile 时不拉取，避免拉取后被 reconcile 当 NO_PROFILE 丢弃）。
+    let mut launch_cloud = cloud_will_run && resolved_profile.is_some();
+
+    // ── 云端直出主链（pipelineMode=direct）─────────────────────────────
+    // 与本地链**二选一**：不等本地首稿，一次调用整份题稿，成功直接写正式稿。
+    // 听力链不在本轮范围；无云端配置 / 网络失败 / 产物完全不可用 → 回退本地链
+    // （下面的 `launch_cloud = false` 让它与「无云端导入」走同一条现有路径）。
+    let pipeline_mode = crate::pipeline_settings::pipeline_mode_for_job(&root, &job.progress);
+    let direct_first = launch_cloud
+        && pipeline_mode == crate::pipeline_settings::PipelineMode::Direct
+        && direct_source_supported
+        && job
+            .progress
+            .get("modality")
+            .and_then(Value::as_str)
+            != Some("listening");
 
     // ── 本地识别（阻塞线程池；持 local permit）───────────────────────
-    let local_permit = state.local_permits.clone().acquire_owned().await;
+    // 直出链一次都不跑本地解析，**不需要** local permit：先放行，避免 120–240s
+    // 的云端直出把其它导入的本地识别串行化（B12）。回退本地链时在原地取回。
+    let mut local_permit = if direct_first {
+        None
+    } else {
+        Some(state.local_permits.clone().acquire_owned().await)
+    };
     let advanced = advance(
         &app,
         &state,
@@ -471,13 +543,13 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     .await;
     // G1 边界：带 durable 取消标记的行会被 advance 强制落 cancelled；
     // 以有效阶段为准，取消后不再继续识别流程。
-    if let Some((_, effective)) = &advanced {
+    if let Ok((_, effective)) = &advanced {
         if effective == queue::STAGE_CANCELLED {
             state.cancelled.write().await.remove(&job_id);
             return;
         }
     }
-    if advanced.is_none() {
+    if advanced.is_err() {
         return; // lease 丢失 / 已取消
     }
     let cancelled = state.cancelled.read().await.contains(&job_id);
@@ -486,18 +558,19 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         return;
     }
 
-    // 解析云端 profile 一次（与 `generate_cloud_reading_outline` 的回退逻辑一致）：
-    // 显式 `cloudProfileId` 优先，否则回退到 job 的 `active_llm_profile_id`；
-    // 同一解析值同时传给「拉取」与「reconcile」，避免拉取了却被 reconcile 当
-    // NO_PROFILE 丢弃（一致性约束 #4）。
-    let resolved_profile: Option<String> = cloud_profile_id.clone().or_else(|| {
-        crate::job_store::load_job(&root, &job_id)
-            .ok()
-            .and_then(|import_job| import_job.active_llm_profile_id)
-    });
-    // 是否真正拉取云端：需 cloud_will_run 且已解析出 profile（约束 #8：
-    // 无 profile 时不拉取，避免拉取后被 reconcile 当 NO_PROFILE 丢弃）。
-    let launch_cloud = cloud_will_run && resolved_profile.is_some();
+    if direct_first {
+        match try_cloud_direct(&app, &state, &root, &job_id, resolved_profile.as_deref()).await {
+            DirectAttempt::Completed => return,
+            DirectAttempt::Aborted => return,
+            DirectAttempt::Fallback(_reason) => {
+                // 原因已由 direct_fallback 翻译成用户可读文案并写进作业 progress
+                // （UI 可见），这里只做链切换：回退本地链，并取回本地识别名额
+                // （直出期间按 B12 放行了）。
+                launch_cloud = false;
+                local_permit = Some(state.local_permits.clone().acquire_owned().await);
+            }
+        }
+    }
 
     // 本地识别仍在跑时，先如实声明「云端排队」——但**不**提前把 stage 推进到
     // `cloud_recognition`（否则 progressPercent 会虚高到 70%）。改用 set_cloud_status
@@ -730,7 +803,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         // 这里是第一层保护（直接不跑）；`reconcile_batch` 内部的 `baseline_frozen` 判定是
         // 第二层——即便有人把这段前置判断改坏，核心也不会自动写入（有意做成双保险）。
         if freeze_error.is_some() {
-            advance(
+            let settled = advance(
                 &app,
                 &state,
                 &job_id,
@@ -742,7 +815,9 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                 freeze_error.as_deref(),
             )
             .await;
-            set_item_status_ready(&app, &job_id).await;
+            if matches!(settled, Ok((_, ref stage)) if stage == STAGE_READY_FOR_REVIEW) {
+                set_item_status_ready(&app, &job_id).await;
+            }
             return;
         }
         // 无云路径：**照常走完 reconcile**，让本地候选、原文核验、批次汇总全部落盘。
@@ -789,7 +864,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
             None,
         )
         .await
-        .is_some()
+        .is_ok()
         {
             set_item_status_ready(&app, &job_id).await;
         }
@@ -971,7 +1046,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                         passage_flags = plan.passage_flags.clone();
                         review_records = plan.review_records.clone();
                         needs_cloud_review = plan.needs_cloud_review.clone();
-                        if document_reasons.is_empty() && announced.is_some() {
+                        if document_reasons.is_empty() && announced.is_ok() {
                             let alignment = match &alignment_outcome {
                                 crate::reconcile::alignment::AlignmentOutcome::Assessed(report) => {
                                     Some(report.as_ref())
@@ -1095,7 +1170,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                 let candidate_adoption = Some(adoption_info.clone());
                 // 先把采纳判定写进批次行，再发内容变更通知：工作区同一次刷新即可拿到
                 // 新稿与非打断式提示。撤销入口仍等本轮修复终态后开放。
-                if announced.is_some() {
+                if announced.is_ok() {
                     let edit_version = adoption_result
                         .as_ref()
                         .map(|result| result.edit_version)
@@ -1130,7 +1205,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                         }
                     }
                 }
-                if announced.is_some() && !state.cancelled.read().await.contains(&job_id) {
+                if announced.is_ok() && !state.cancelled.read().await.contains(&job_id) {
                     if let Some(profile) = resolved_profile.as_deref() {
                         run_cloud_answer_page(
                             &root,
@@ -1146,7 +1221,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                 }
                 // 云端 permit 覆盖整段修复循环的模型调用（每个回合一次请求）。
                 let cloud_permit = state.cloud_permits.clone().acquire_owned().await;
-                let repair = if announced.is_none() {
+                let repair = if announced.is_err() {
                     Err("cloud_repair_lease_lost_before_start".to_string())
                 } else {
                     let adoption_for_repair_progress = candidate_adoption.clone();
@@ -1265,7 +1340,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                         repair_error = Some(error.clone());
                         // **终态必须落盘**。循环一开工就把批次行写成了 `running`，而这里
                         // 拿到 Err 的两种情形（`run_blocking` 的 join 失败 = 任务 panic，
-                        // 或 `announced.is_none()` = 开工前就丢了 lease）都发生在循环之外，
+                        // 或 `announced.is_err()` = 开工前就丢了 lease）都发生在循环之外，
                         // 循环自己没机会写终态。以前这里只设 `repair_status`，
                         // `repair_summary` 保持 None，下面那次 `write_batch_repair` 整块被
                         // 跳过 —— 批次行于是**永久停在 running**，而同一时刻 job 行已经是
@@ -1424,7 +1499,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         },
     )
     .await;
-    if advance_result.is_none() {
+    if advance_result.is_err() {
         // G1 对抗审计 P1-3：lease 丢失（如睡眠唤醒、心跳瞬断）时允许
         // 免 lease 终态收尾——local 已成功 + reclaim 守卫保证无人接手。
         let finalized = tauri::async_runtime::spawn_blocking({
@@ -1590,6 +1665,199 @@ fn repair_status_for_failed_cloud_fetch(
 ///
 /// 与 [`run_cycle_in_blocking_boundary`] 的区别：那个是识别周期的专用包装（带
 /// `RecognitionCycleReport` 语义），这里是通用的、带真实错误上抛的版本。
+/// 直出链一次尝试的结局。
+enum DirectAttempt {
+    /// 成功并已收口（正式稿已写、阶段已推进 ready_for_review）。
+    Completed,
+    /// 取消 / lease 丢失：调用方直接返回，不再做任何事。
+    Aborted,
+    /// 失败：调用方回退到现有本地链。原因已由 [`fallback_reason`] 翻译成用户
+    /// 可读文案并写进作业 progress（UI 可见），不只是日志。
+    Fallback(String),
+}
+
+/// 机器错误码 → 用户可读的回退原因（设置页/作业记录同源）。
+fn fallback_reason(error: &str) -> String {
+    let code = error.split(':').next().unwrap_or(error);
+    match code {
+        "NO_PROFILE" => "没有可用的云端配置".to_string(),
+        "cloud_direct_source_not_pdf" => "该文件类型暂不走直出链".to_string(),
+        "cloud_direct_no_evidence" => "原文件读不出文字层，也无法渲染页图".to_string(),
+        "llm_http_connect_failed" | "llm_http_timeout" | "llm_timeout_budget_exhausted" => {
+            "云端请求超时或网络不通".to_string()
+        }
+        "llm_output_truncated" => "云端输出被截断，分块重试仍失败".to_string(),
+        "llm_json_parse_failed" | "llm_empty_content" => "云端返回的不是合法题稿".to_string(),
+        "cloud_direct_write_failed" | "cloud_direct_canonical_not_seeded" => "题稿写入失败".to_string(),
+        _ => "云端直出未完成".to_string(),
+    }
+}
+
+/// 直出失败 → 回退本地链前的状态复位：
+/// - stage 推回 `local_recognition`（调用方随后的本地链会继续推进它）；
+/// - `cloud_status=failed`：如实状态，同时释放「云端校核锁」（否则本地识别期间
+///   用户被锁在编辑器外）；
+/// - 原因写进 `progress.cloudDirectFallback`：UI 显示「云端直出失败（原因），
+///   已改用本地识别」，作业记录里也能查到，不再只存在于日志。
+async fn direct_fallback(
+    app: &AppHandle,
+    state: &Arc<ProcessingState>,
+    job_id: &str,
+    error: &str,
+) -> DirectAttempt {
+    eprintln!("[processing] cloud direct fallback to local chain for {job_id}: {error}");
+    let reason = fallback_reason(error);
+    let _ = advance(
+        app,
+        state,
+        job_id,
+        STAGE_LOCAL_RECOGNITION,
+        Some("running"),
+        Some("failed"),
+        None,
+        None,
+        None,
+    )
+    .await;
+    let root = match app_root(app) {
+        Ok(root) => root,
+        Err(_) => return DirectAttempt::Fallback(reason),
+    };
+    let job_id_owned = job_id.to_string();
+    let reason_owned = reason.clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_library_connection(&root)?;
+        queue::record_cloud_direct_fallback(&conn, &job_id_owned, &reason_owned)
+    })
+    .await;
+    DirectAttempt::Fallback(reason)
+}
+
+/// 云端直出的调度器侧编排：推进阶段 → 持 cloud permit 调直出链 →
+/// 落盘 + 播种权威稿 + 收口；失败回退本地链。
+///
+/// 跳过（旁路）的旧链环节：reconcile / 冻结基线 / plan_adoption /
+/// adopt_cloud_primary / 修复循环 / 裁决 / 来源核验 / 独立答案页请求 /
+/// 云端校核锁——直出成功即终稿，不再与任何本地结果合并。
+async fn try_cloud_direct(
+    app: &AppHandle,
+    state: &Arc<ProcessingState>,
+    root: &std::path::Path,
+    job_id: &str,
+    profile_id: Option<&str>,
+) -> DirectAttempt {
+    // 阶段推进与本地链共用同一台状态机：queued → cloud_recognition(running)。
+    // local_status=not_run 如实说明「这条链没有本地首稿」。
+    let advanced = advance(
+        app,
+        state,
+        job_id,
+        STAGE_CLOUD_RECOGNITION,
+        Some("not_run"),
+        Some("running"),
+        None,
+        None,
+        None,
+    )
+    .await;
+    let Ok((_, effective)) = advanced else {
+        return DirectAttempt::Aborted; // lease 丢失 / 已取消
+    };
+    if effective == queue::STAGE_CANCELLED {
+        state.cancelled.write().await.remove(job_id);
+        return DirectAttempt::Aborted;
+    }
+    if state.cancelled.read().await.contains(job_id) {
+        finish_cancelled(app, state, job_id).await;
+        return DirectAttempt::Aborted;
+    }
+    // 受控并发：cloud permit 只覆盖模型调用本身。
+    let _cloud_permit = state.cloud_permits.clone().acquire_owned().await;
+    let root_owned = root.to_path_buf();
+    let job_id_owned = job_id.to_string();
+    let profile_owned = profile_id.map(str::to_string);
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        crate::cloud_direct::run_exam_direct(&root_owned, &job_id_owned, profile_owned.as_deref())
+    })
+    .await
+    .unwrap_or_else(|error| Err(format!("processing_join:{error}")));
+    drop(_cloud_permit);
+    if state.cancelled.read().await.contains(job_id) {
+        finish_cancelled(app, state, job_id).await;
+        return DirectAttempt::Aborted;
+    }
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(error) => return direct_fallback(app, state, job_id, &error).await,
+    };
+    // 结构完全不可用的产物不会到这里（归一化阶段已判 Err）；编译有问题也保留并标注。
+    if outcome.document.pointer("/passage/content").and_then(Value::as_array).is_none_or(|content| content.is_empty())
+        || outcome.document.get("taskGroups").and_then(Value::as_array).is_none_or(|groups| groups.is_empty())
+    {
+        return direct_fallback(app, state, job_id, "cloud_direct_outcome_unusable").await;
+    }
+    // 落盘：诊断记录 + 保真度 + 可播种的题稿影子。
+    let write_result = tauri::async_runtime::spawn_blocking({
+        let worker_id = state.worker_id.clone();
+        let root = root.to_path_buf();
+        let job_id = job_id.to_string();
+        move || {
+            crate::cloud_direct::write_direct_result(&root, &job_id, &outcome)?;
+            crate::cloud_direct::write_direct_canonical_leased(&root, &job_id, &outcome.document, &worker_id)
+                .map(|_| true)
+        }
+    })
+    .await
+    .unwrap_or_else(|error| Err(format!("processing_join:{error}")));
+    match write_result {
+        Ok(true) => {}
+        Ok(false) => {
+            return direct_fallback(app, state, job_id, "cloud_direct_canonical_not_seeded").await;
+        }
+        Err(error) => {
+            if error == "processing_lease_lost" { return DirectAttempt::Aborted; }
+            let error = format!("cloud_direct_write_failed:{error}");
+            return direct_fallback(app, state, job_id, &error).await;
+        }
+    }
+    // 清掉上一轮回退留下的原因，并通知前端「权威稿变了」（重新识别场景下
+    // 编辑器可能正开着旧稿）。
+    let (root, job_id_owned, app_owned) = (root.to_path_buf(), job_id.to_string(), app.clone());
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_library_connection(&root)?;
+        queue::clear_cloud_direct_fallback(&conn, &job_id_owned)?;
+        crate::processing::scheduler::notify_item_content_changed(&conn, &app_owned, &job_id_owned)?;
+        Ok::<(), String>(())
+    })
+    .await;
+    // 收口：可打开编辑 + ready_for_review。云端成功；reconcile 未跑（not_run）。
+    let settled = advance(
+        app,
+        state,
+        job_id,
+        STAGE_READY_FOR_REVIEW,
+        Some("not_run"),
+        Some("succeeded"),
+        Some("not_run"),
+        Some(0),
+        None,
+    )
+    .await;
+    match settled {
+        Ok((_, stage)) if stage == STAGE_READY_FOR_REVIEW => set_item_status_ready(app, job_id).await,
+        Ok(_) => return DirectAttempt::Aborted,
+        Err(error) => {
+            eprintln!("[processing] cloud direct finalization failed for {job_id}: {error}");
+            return DirectAttempt::Aborted;
+        }
+    }
+    if state.cancelled.read().await.contains(job_id) {
+        finish_cancelled(app, state, job_id).await;
+        return DirectAttempt::Aborted;
+    }
+    DirectAttempt::Completed
+}
+
 async fn run_blocking<T, F>(work: F) -> Result<T, String>
 where
     F: FnOnce() -> Result<T, String> + Send + 'static,
@@ -2022,6 +2290,38 @@ fn freeze_local_candidate_snapshot_for_attempt_with_baseline(
     Ok(base_edit_version)
 }
 
+fn retry_stage_write<T>(mut write: impl FnMut() -> Result<T, String>) -> Result<T, String> {
+    for attempt in 0..5 {
+        match write() {
+            Ok(value) => return Ok(value),
+            Err(error) if error == "processing_lease_lost" || attempt == 4 => return Err(error),
+            Err(error) => {
+                eprintln!("[processing] stage write attempt {} failed: {error}; retrying", attempt + 1);
+                std::thread::sleep(Duration::from_millis(100 * (attempt + 1)));
+            }
+        }
+    }
+    unreachable!()
+}
+
+fn persist_stage_with_retry(
+    conn: &rusqlite::Connection, job_id: &str, worker_id: &str, stage: &str,
+    local: Option<&str>, cloud: Option<&str>, reconcile: Option<&str>, actionable: Option<i64>, error: Option<&str>,
+) -> Result<(i64, String), String> {
+    retry_stage_write(|| {
+        if !renew_lease(conn, job_id, worker_id)? { return Err("processing_lease_lost".into()); }
+        advance_stage(conn, job_id, worker_id, stage, local, cloud, reconcile, actionable, error)?
+            .ok_or_else(|| "processing_lease_lost".to_string())
+    }).or_else(|error| {
+        if error == "processing_lease_lost" { return Err(error); }
+        eprintln!("[processing] advance failed for {job_id}: {error}");
+        retry_stage_write(|| advance_stage(conn, job_id, worker_id, STAGE_FAILED,
+            None, None, None, None, Some("PROCESSING_ADVANCE_FAILED"))?
+            .ok_or_else(|| "processing_lease_lost".to_string()))?;
+        Err(error)
+    })
+}
+
 async fn advance(
     app: &AppHandle,
     state: &Arc<ProcessingState>,
@@ -2032,8 +2332,8 @@ async fn advance(
     reconcile_status: Option<&str>,
     actionable_count: Option<i64>,
     last_error_code: Option<&str>,
-) -> Option<(i64, String)> {
-    let Ok(root) = app_root(app) else { return None };
+) -> Result<(i64, String), String> {
+    let root = app_root(app)?;
     let worker_id = state.worker_id.clone();
     let job_id_owned = job_id.to_string();
     let stage_owned = stage.to_string();
@@ -2043,25 +2343,13 @@ async fn advance(
     let error_owned = last_error_code.map(str::to_string);
     let result = tauri::async_runtime::spawn_blocking(move || {
         let conn = open_library_connection(&root)?;
-        // 先续租再推进：renew 失败说明 lease 已丢，不得提交。
-        if !renew_lease(&conn, &job_id_owned, &worker_id)? {
-            return Ok(None);
-        }
-        advance_stage(
-            &conn,
-            &job_id_owned,
-            &worker_id,
-            &stage_owned,
-            local_owned.as_deref(),
-            cloud_owned.as_deref(),
-            reconcile_owned.as_deref(),
-            actionable_count,
-            error_owned.as_deref(),
-        )
+        persist_stage_with_retry(&conn, &job_id_owned, &worker_id, &stage_owned,
+            local_owned.as_deref(), cloud_owned.as_deref(), reconcile_owned.as_deref(),
+            actionable_count, error_owned.as_deref())
     })
     .await;
     match result {
-        Ok(Ok(Some((seq, effective_stage)))) => {
+        Ok(Ok((seq, effective_stage))) => {
             // 发事件用最新行（advance 已带 event_seq+1）。
             if let Ok(root) = app_root(app) {
                 let app = app.clone();
@@ -2075,9 +2363,10 @@ async fn advance(
                 })
                 .await;
             }
-            Some((seq, effective_stage))
+            Ok((seq, effective_stage))
         }
-        _ => None,
+        Ok(Err(error)) => Err(error),
+        Err(error) => Err(format!("processing_join:{error}")),
     }
 }
 
@@ -2148,7 +2437,7 @@ async fn fail_job(app: &AppHandle, state: &Arc<ProcessingState>, job_id: &str, e
         .as_ref()
         .map(|(_, stage)| stage == queue::STAGE_CANCELLED)
         .unwrap_or(false);
-    if advanced.is_some() && !effective_cancelled {
+    if advanced.is_ok() && !effective_cancelled {
         if let Ok(root) = app_root(app) {
             let job_id = job_id.to_string();
             let _ = tauri::async_runtime::spawn_blocking(move || {
@@ -2214,7 +2503,7 @@ async fn fail_recognition_cycle(
         Some(failure.code()),
     )
     .await;
-    if advanced.is_none() {
+    if advanced.is_err() {
         // lease 丢失（休眠唤醒 / 心跳瞬断）：`advance` 拒绝提交。这里**不能**用
         // `finalize_ready_without_lease` 兜底——它的前提恰好就是 `local_status = succeeded`，
         // 在这条路径上必然成立，于是会把一次失败写成 `ready_for_review`，又是一次伪装成功。
@@ -2239,7 +2528,7 @@ async fn finish_cancelled(app: &AppHandle, state: &Arc<ProcessingState>, job_id:
         None,
     )
     .await;
-    if advanced.is_none() {
+    if advanced.is_err() {
         // G1 边界（复核 B）：lease 已丢（心跳瞬断/休眠唤醒）时 advance 无法
         // 提交。durable 取消标记仍在且 reclaim 守卫保证没有 worker 会接手，
         // 免 lease 收尾为 cancelled——取消不得只能靠重启兑现。
@@ -2335,6 +2624,33 @@ pub(crate) fn enqueue_processing_job(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn final_advance_failure_settles_failed_instead_of_cloud_recognition() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::library::schema::ensure_v2_schema(&conn).unwrap();
+        conn.execute("INSERT INTO library_items_v2 (id,modality,title,status,created_at,updated_at) VALUES ('j','reading','t','processing','now','now')", []).unwrap();
+        queue::enqueue(&conn, "j", "j", "a", &Value::Null).unwrap();
+        queue::claim_next(&conn, "w").unwrap().unwrap();
+        advance_stage(&conn, "j", "w", STAGE_CLOUD_RECOGNITION, None, None, None, None, None).unwrap();
+        conn.execute_batch("CREATE TRIGGER fail_ready BEFORE UPDATE OF stage ON processing_jobs_v2 WHEN NEW.stage='ready_for_review' BEGIN SELECT RAISE(FAIL, 'injected final advance failure'); END;").unwrap();
+        assert!(persist_stage_with_retry(&conn, "j", "w", STAGE_READY_FOR_REVIEW, None, None, None, None, None).is_err());
+        let row = get_job(&conn, "j").unwrap().unwrap();
+        assert_eq!(row.stage, STAGE_FAILED);
+        assert_eq!(row.last_error_code.as_deref(), Some("PROCESSING_ADVANCE_FAILED"));
+        assert!(row.lease_owner.is_none());
+    }
+
+    #[test]
+    fn stage_write_recovers_after_transient_busy() {
+        let mut attempts = 0;
+        let value = retry_stage_write(|| {
+            attempts += 1;
+            if attempts < 3 { Err("processing_lease_renew:database is locked".into()) } else { Ok(STAGE_READY_FOR_REVIEW) }
+        }).unwrap();
+        assert_eq!(value, STAGE_READY_FOR_REVIEW);
+        assert_eq!(attempts, 3);
+    }
+
 
     /// 生产并发编排契约的精简副本（仅供单测，生产代码在 `run_job_inner` 内联同一套
     /// 顺序）：1) 立刻并发 spawn 本地阻塞任务与云端 future（二者互不阻塞——云端 permit

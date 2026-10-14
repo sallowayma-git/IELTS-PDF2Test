@@ -46,6 +46,9 @@ struct LlmTokenUsageTotal {
     prompt_tokens: u64,
     #[serde(default)]
     completion_tokens: u64,
+    /// Provider-reported total without an input/output split.
+    #[serde(default)]
+    unattributed_tokens: u64,
     #[serde(default)]
     cache_hit_tokens: u64,
     #[serde(default)]
@@ -60,20 +63,27 @@ struct LlmTokenUsageTotal {
 
 impl LlmTokenUsageTotal {
     fn total_tokens(&self) -> u64 {
-        self.prompt_tokens.saturating_add(self.completion_tokens)
+        self.prompt_tokens
+            .saturating_add(self.completion_tokens)
+            .saturating_add(self.unattributed_tokens)
     }
 
     fn record(&mut self, usage: &Value) {
         self.call_count = self.call_count.saturating_add(1);
         let prompt = usage.get("prompt_tokens").and_then(Value::as_u64);
         let completion = usage.get("completion_tokens").and_then(Value::as_u64);
+        let reported_total = usage.get("total_tokens").and_then(Value::as_u64);
         if let Some(tokens) = prompt {
             self.prompt_tokens = self.prompt_tokens.saturating_add(tokens);
         }
         if let Some(tokens) = completion {
             self.completion_tokens = self.completion_tokens.saturating_add(tokens);
         }
-        if prompt.is_none() || completion.is_none() {
+        let split_total = prompt.unwrap_or(0).saturating_add(completion.unwrap_or(0));
+        self.unattributed_tokens = self.unattributed_tokens.saturating_add(
+            reported_total.unwrap_or(0).saturating_sub(split_total),
+        );
+        if reported_total.is_none() && (prompt.is_none() || completion.is_none()) {
             self.unknown_usage_calls = self.unknown_usage_calls.saturating_add(1);
         }
         let cache_hit = usage.get("prompt_cache_hit_tokens").and_then(Value::as_u64);
@@ -99,6 +109,7 @@ impl LlmTokenUsageTotal {
 /// before dispatch and drains it into the `llm-calls.jsonl` record afterwards.
 #[derive(Default)]
 struct LlmCallTrace {
+    command_name: String,
     attempts: Vec<Value>,
     request_bytes: u64,
     max_tokens: Option<u64>,
@@ -125,6 +136,9 @@ struct LlmCallTrace {
 
 thread_local! {
     static LLM_CALL_TRACE: RefCell<LlmCallTrace> = RefCell::new(LlmCallTrace::default());
+    // Operational repair state, separate from opt-in request/response diagnostics.
+    // The synchronous candidate caller consumes this on the same worker thread.
+    static REJECTED_CANDIDATE: RefCell<Option<(PathBuf, String, String, Value)>> = const { RefCell::new(None) };
 }
 
 #[cfg(test)]
@@ -259,6 +273,7 @@ fn normalized_usage_fields(usage: &Value) -> Value {
     json!({
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
+        "total_tokens": usage.get("total_tokens").and_then(Value::as_u64),
         "prompt_cache_hit_tokens": reported_hit,
         "prompt_cache_miss_tokens": reported_miss.or(derived_miss),
         "prompt_cache_miss_is_derived": reported_miss.is_none() && derived_miss.is_some(),
@@ -454,7 +469,9 @@ fn retained_usage_total(root: &Path, job_id: &str) -> CommandResult<LlmTokenUsag
     for line in content.lines().filter(|line| !line.trim().is_empty()) {
         let record: Value = serde_json::from_str(line)
             .map_err(|error| format!("llm_usage_log_parse_failed:{error}"))?;
-        if record.get("providerCall").and_then(Value::as_bool) == Some(false) {
+        if record.get("providerCall").and_then(Value::as_bool) == Some(false)
+            || record.get("usageAccounted").and_then(Value::as_bool) == Some(false)
+        {
             continue;
         }
         total.record(record.get("usage").unwrap_or(&Value::Null));
@@ -488,12 +505,10 @@ fn write_llm_token_usage_total(
 }
 
 fn budget_block_reason(total: &LlmTokenUsageTotal, budget: u64) -> Option<String> {
-    if total.unknown_usage_calls > 0 {
-        Some(format!(
-            "cloud_token_budget_usage_unavailable:{}:{};云端 token 用量无法确认，已停止后续请求以避免超出上限 {}。",
-            total.unknown_usage_calls, budget, budget
-        ))
-    } else if total.total_tokens() >= budget {
+    // 软上限（cloud-direct 方案 §2.3）：用量未知**不再锁死任务**——拿不到 usage 的
+    // 调用按请求体估算记账（见 `estimated_usage_fields`），估算值同样计入总量，
+    // 于是「未知」不再是不可观测的洞。只有达到设置上限才停止后续云端请求。
+    if total.total_tokens() >= budget {
         Some(format!(
             "cloud_token_budget_exceeded:{}:{};云端识别已停止：本次已使用 {} 个 token，达到设置上限 {}。可在设置中调高上限后重新导入。",
             total.total_tokens(), budget, total.total_tokens(), budget
@@ -503,6 +518,29 @@ fn budget_block_reason(total: &LlmTokenUsageTotal, budget: u64) -> Option<String
     }
 }
 
+/// 服务未返回 usage 时按请求体估算记账（约 4 字符/token 的粗口径）。
+/// 估算值带 `usageEstimated: true`，写入 llm-usage.jsonl 供对账区分实测与估算。
+fn estimated_usage_fields(trace: &LlmCallTrace) -> Value {
+    let prompt_tokens = trace
+        .estimated_input_tokens
+        .map(|tokens| tokens as u64)
+        .unwrap_or_else(|| trace.request_bytes.div_ceil(4));
+    let completion_tokens = trace
+        .raw_content
+        .as_deref()
+        .map(|content| (content.chars().count() as u64).div_ceil(4))
+        .unwrap_or_else(|| trace.response_bytes.div_ceil(4));
+    json!({
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens.saturating_add(completion_tokens),
+        "prompt_cache_hit_tokens": Value::Null,
+        "prompt_cache_miss_tokens": Value::Null,
+        "prompt_cache_miss_is_derived": false,
+        "usageEstimated": true
+    })
+}
+
 pub(crate) fn llm_usage_summary(root: &Path, job_id: &str) -> CommandResult<Value> {
     let budget = cloud_token_budget(root, job_id)?;
     let total = read_llm_token_usage_total(root, job_id)?;
@@ -510,6 +548,7 @@ pub(crate) fn llm_usage_summary(root: &Path, job_id: &str) -> CommandResult<Valu
         "tokenBudget": budget,
         "promptTokens": total.prompt_tokens,
         "completionTokens": total.completion_tokens,
+        "unattributedTokens": total.unattributed_tokens,
         "totalTokens": total.total_tokens(),
         "cacheHitTokens": total.cache_hit_tokens,
         "cacheMissTokens": total.cache_miss_tokens,
@@ -530,6 +569,19 @@ fn error_for_call_record(error: &str, raw_reply: Option<&str>, diagnostics: bool
         None => error.to_string(),
     };
     summary.chars().take(1000).collect()
+}
+
+/// Rejected requests and connection failures did not produce a completion.
+/// Timeouts and broken responses remain uncertain and still stop the budget.
+fn should_account_usage(trace: &LlmCallTrace) -> bool {
+    trace.usage.is_some() || trace.attempts.iter().any(|attempt| {
+        if let Some(status) = attempt.get("httpStatus").and_then(Value::as_u64) {
+            return (200..300).contains(&status);
+        }
+        let error = attempt.get("error").and_then(Value::as_str).unwrap_or("");
+        !error.starts_with("llm_http_connect_failed:")
+            && !error.starts_with("llm_http_client_failed:")
+    })
 }
 
 pub(crate) fn run_llm_gateway(
@@ -597,6 +649,8 @@ fn run_llm_gateway_with_diagnostics(
         write_json(&input_path, &redact_llm_input_for_cache(&request_input))?;
     }
     let _stale = take_trace();
+    with_trace(|trace| trace.command_name = command_name.to_string());
+    REJECTED_CANDIDATE.with(|candidate| *candidate.borrow_mut() = None);
     let started = std::time::Instant::now();
     let output = if let Some(reason) = blocked_reason.as_ref() {
         Err(reason.clone())
@@ -607,6 +661,17 @@ fn run_llm_gateway_with_diagnostics(
     // failure) lands in llm-calls.jsonl with latency, attempt metadata, sizes,
     // usage and errors. Full request/reply artifacts are opt-in diagnostics.
     let trace = take_trace();
+    if command_name == "generate_authoring_candidate" {
+        if let (Err(error), Some(raw)) = (&output, &trace.raw_content) {
+            if candidate_missing_field_pointer(error).is_some() {
+                if let Ok(value) = parse_llm_json_content(raw) {
+                    REJECTED_CANDIDATE.with(|candidate| {
+                        *candidate.borrow_mut() = Some((root.to_path_buf(), job_id.to_string(), error.clone(), value));
+                    });
+                }
+            }
+        }
+    }
     let rejected_path = match (&output, &trace.raw_content) {
         (Err(error), Some(raw)) if diagnostics => {
             let path = cache_dir.join(format!(
@@ -629,13 +694,30 @@ fn run_llm_gateway_with_diagnostics(
         _ => None,
     };
     let usage = trace.usage.clone().unwrap_or(Value::Null);
-    let usage_fields = normalized_usage_fields(&usage);
+    // 软上限记账：Provider 没给 usage 但请求确曾到达服务端（2xx）时，按请求体估算，
+    // 不再记「未知」——未知既不锁死任务，也不该让预算出现观测黑洞。
+    let usage_is_empty = usage
+        .get("total_tokens")
+        .and_then(Value::as_u64)
+        .is_none()
+        && usage.get("prompt_tokens").and_then(Value::as_u64).is_none()
+        && usage.get("completion_tokens").and_then(Value::as_u64).is_none();
+    let provider_succeeded = trace
+        .attempts
+        .iter()
+        .any(|attempt| attempt.get("httpStatus").and_then(Value::as_u64).is_some_and(|status| (200..300).contains(&status)));
+    let usage_fields = if usage_is_empty && provider_succeeded {
+        estimated_usage_fields(&trace)
+    } else {
+        normalized_usage_fields(&usage)
+    };
     let provider_call = blocked_reason.is_none();
+    let usage_accounted = provider_call && should_account_usage(&trace);
     let redacted_input = redact_llm_input_for_cache(&request_input);
     let input_bytes = json_value_size(Some(&redacted_input))?;
     let segments = call_segment_sizes(&request_input, &trace)?;
     let input_summary = summarize_llm_input(&request_input, step_index);
-    if provider_call {
+    if usage_accounted {
         usage_total.record(&usage_fields);
         write_llm_token_usage_total(root, job_id, &usage_total)?;
     }
@@ -647,6 +729,7 @@ fn run_llm_gateway_with_diagnostics(
         "jobId": job_id,
         "stepIndex": step_index,
         "providerCall": provider_call,
+        "usageAccounted": usage_accounted,
         "model": input.get("profile").and_then(|profile| profile.get("model")).cloned().unwrap_or(Value::Null),
         "ok": output.is_ok(),
         "latencyMs": started.elapsed().as_millis() as u64,
@@ -690,6 +773,7 @@ fn run_llm_gateway_with_diagnostics(
         "rejectedPath": rejected_path,
         "recordedAt": Utc::now().to_rfc3339()
     });
+    call_record["usageEstimated"] = usage_fields.get("usageEstimated").cloned().unwrap_or(json!(false));
     call_record["sourcePagesIncluded"] = request_input.pointer("/chunk/sourcePageMap").cloned().unwrap_or(Value::Null);
     call_record["sourcePageCount"] = request_input.pointer("/chunk/originalPageCount").cloned().unwrap_or(Value::Null);
     call_record["evidenceScope"] = request_input.pointer("/chunk/evidenceScope").cloned().unwrap_or(Value::Null);
@@ -700,6 +784,7 @@ fn run_llm_gateway_with_diagnostics(
         "jobId": job_id,
         "stepIndex": step_index,
         "providerCall": provider_call,
+        "usageAccounted": usage_accounted,
         "model": call_record.get("model").cloned().unwrap_or(Value::Null),
         "ok": call_record.get("ok").cloned().unwrap_or(json!(false)),
         "latencyMs": call_record.get("latencyMs").cloned().unwrap_or(json!(0)),
@@ -760,6 +845,9 @@ fn dispatch_llm_command(
         }
         "generate_authoring_candidate" => {
             run_openai_compatible_authoring_candidate_llm(root, job_id, input, api_key)
+        }
+        "generate_exam_direct" => {
+            run_openai_compatible_generate_exam_direct_llm(root, job_id, input, api_key)
         }
         "repair_authoring_step" => {
             run_openai_compatible_repair_step_llm(root, job_id, input, api_key)
@@ -1072,7 +1160,39 @@ fn balanced_json_end(content: &str, start: usize) -> Option<usize> {
     None
 }
 
+/// DeepSeek Flash defaults to high thinking, which can consume the entire
+/// output cap before emitting any JSON. Transcription needs the source text;
+/// source adjudication retains bounded thinking. Other providers are untouched.
+///
+/// 匹配用**包含/前缀**而不是全等：官方端点换个路径后缀（`/v1`、`/v1/chat`）或
+/// 模型家族带日期后缀（`deepseek-flash-20260101`）都仍然是同一个提供方，
+/// 精确字符串匹配会让这些配置静默丢掉「关思考」保护。
+fn apply_provider_task_defaults(profile: &Value, body: &mut Value, command: &str) {
+    let official = profile
+        .get("baseUrl")
+        .and_then(Value::as_str)
+        .and_then(|url| reqwest::Url::parse(url).ok())
+        .is_some_and(|url| {
+            url.host_str()
+                .is_some_and(|host| host == "api.deepseek.com" || host.ends_with(".deepseek.com"))
+        });
+    let flash_family = profile
+        .get("model")
+        .and_then(Value::as_str)
+        .is_some_and(|model| model.starts_with("deepseek-flash"));
+    if !official || !flash_family {
+        return;
+    }
+    let Some(body) = body.as_object_mut() else { return; };
+    if matches!(command, "generate_authoring_candidate" | "generate_exam_direct" | "extract_pdf_image_answers" | "transcribe_pdf_images" | "extract_group" | "classify_group" | "test_profile") {
+        body.entry("thinking").or_insert(json!({"type":"disabled"}));
+    } else if !command.is_empty() {
+        body.entry("reasoning_effort").or_insert(json!("low"));
+    }
+}
+
 fn openai_post(profile: &Value, api_key: Option<&str>, mut body: Value) -> CommandResult<Value> {
+    with_trace(|trace| apply_provider_task_defaults(profile, &mut body, &trace.command_name));
     if body.get("max_tokens").is_none() {
         body["max_tokens"] = json!(llm_max_output_tokens(profile));
     }
@@ -1301,11 +1421,18 @@ fn vision_prompt(input: &Value) -> String {
 }
 
 fn vision_answer_prompt(input: &Value) -> String {
-    format!(
+    let mut prompt = format!(
         "You are extracting the answer key from scanned/image-only IELTS Reading answer-page images.\nReturn JSON only. Do not return Markdown, explanations, HTML, JavaScript, or prose outside JSON.\nReturn exactly one JSON object with this shape: {{\"answers\":{{\"8\":\"answer text\",\"9\":\"answer text\"}},\"confidence\":0.0,\"warnings\":[],\"evidence\":[{{\"questionNumber\":\"8\",\"pageIndex\":1,\"quote\":\"short visible source text\"}}]}}.\nUse question number strings without q prefix. Normalize TRUE/FALSE/NOT GIVEN/YES/NO to uppercase. Uppercase A-Z option letters only when the printed answer is a single-letter option from a Latin-letter bank; preserve lowercase Roman labels such as i, iv, and viii exactly as printed. Multi-answer questions may use arrays. Do not invent answers; omit uncertain numbers and add a warning. Only use answers visibly printed on the supplied answer pages. answers must contain at least one entry and evidence at least one item: a reply without any answer is rejected and recorded as \"no answer key found\" — that is the honest outcome when the pages show no readable answer key, so never fill answers from anywhere else. Every emitted answer must have a non-empty visible quote and the one-based rendered image pageIndex where it appears.\nJob JSON: {}\nOutput contract JSON: {}",
         serde_json::to_string(input.get("job").unwrap_or(&Value::Null)).unwrap_or_default(),
         serde_json::to_string(input.get("outputContract").unwrap_or(&Value::Null)).unwrap_or_default()
-    )
+    );
+    let pages: Vec<u64> = input.get("pages").and_then(Value::as_array).into_iter().flatten()
+        .filter_map(|page| page.get("pageIndex").and_then(Value::as_u64)).collect();
+    prompt.push_str(&format!("\nSupplied ORIGINAL source page indexes: {pages:?}. evidence.pageIndex MUST use the Page N label shown before each image, NOT the attachment order. Never renumber selected pages starting at 1."));
+    if let Some(note) = input.get("repairNote").and_then(Value::as_str) {
+        prompt.push_str(&format!("\nYour previous answer-page reply was rejected: {note}. Return the complete answer JSON with corrected source page references, using only the supplied images."));
+    }
+    prompt
 }
 
 fn cloud_outline_prompt(input: &Value) -> String {
@@ -1835,7 +1962,20 @@ fn run_openai_compatible_vision_answer_llm(
     let content = openai_chat_content(&payload)?;
     let mut parsed = parse_llm_json_content(&content)?;
     validate_vision_answer_output(&mut parsed, profile, &payload)?;
+    validate_vision_answer_source_pages(&parsed, input)?;
     Ok(parsed)
+}
+
+fn validate_vision_answer_source_pages(output: &Value, input: &Value) -> CommandResult<()> {
+    let pages: std::collections::BTreeSet<u64> = input.get("pages").and_then(Value::as_array).into_iter().flatten()
+        .filter_map(|page| page.get("pageIndex").and_then(Value::as_u64)).collect();
+    for (index, evidence) in output.get("evidence").and_then(Value::as_array).into_iter().flatten().enumerate() {
+        let page = evidence.get("pageIndex").and_then(Value::as_u64).unwrap_or(0);
+        if !pages.contains(&page) {
+            return Err(format!("vision_answer_evidence_page_not_supplied:{index}:{page}:allowed={pages:?}"));
+        }
+    }
+    Ok(())
 }
 
 fn run_openai_compatible_cloud_outline_llm(
@@ -2288,6 +2428,171 @@ fn run_openai_compatible_authoring_candidate_llm(
     Ok(parsed)
 }
 
+/// 云端直出（cloud-direct P1）：一次调用把整份 PDF 转成完整题稿 JSON。
+///
+/// 证据面 = 每页文字层（`pageTexts`）+ 扫描页渲染图（`pages`，无文字层的页）；
+/// 契约 = 主线程验证过的直出 system prompt + taskPresentationRules + 范例。
+/// 与云端候选的关键区别：**不传** `sourceParagraphs` / `localNodeTargets`——
+/// 模型是唯一生产者，ID 全部自取，正文由它转录。
+fn run_openai_compatible_generate_exam_direct_llm(
+    root: &Path,
+    job_id: &str,
+    input: &Value,
+    api_key: Option<&str>,
+) -> CommandResult<Value> {
+    let profile = llm_profile(input);
+    let model = llm_model(profile).ok_or_else(|| "llm_profile_model_missing".to_string())?;
+    require_openai_compatible_provider(profile)?;
+    let mut content = vec![json!({"type": "text", "text": exam_direct_prompt(input)})];
+    // 每页文字层。
+    for page in input
+        .get("pageTexts")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let page_index = page.get("pageIndex").and_then(Value::as_u64).unwrap_or(0);
+        let text = page.get("text").and_then(Value::as_str).unwrap_or("");
+        content.push(json!({
+            "type": "text",
+            "text": format!("=== PAGE {page_index} (text layer) ===\n{text}")
+        }));
+    }
+    // 扫描页渲染图（有文字层的页不发图，控制成本）。
+    let image_count = append_pdf_images_to_content(root, job_id, &mut content, input)?;
+    let text_pages = input
+        .get("pageTexts")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    if text_pages == 0 && image_count == 0 {
+        return Err("exam_direct_no_evidence".to_string());
+    }
+    let mut body = json!({
+        "model": model,
+        "temperature": llm_temperature(profile),
+        "messages": [
+            {"role": "system", "content": crate::cloud_direct::direct_system_prompt()},
+            {"role": "user", "content": content}
+        ]
+    });
+    if llm_force_json(profile) {
+        body["response_format"] = json!({"type": "json_object"});
+    }
+    let payload = openai_post(profile, api_key, body)?;
+    let content = openai_chat_content(&payload)?;
+    let mut parsed = parse_llm_json_content(&content)?;
+    validate_exam_direct_output(&mut parsed)?;
+    Ok(parsed)
+}
+
+/// 直出请求的用户消息前缀：题型规则表 + 范例 + 输出契约要点。
+fn exam_direct_prompt(input: &Value) -> String {
+    let rules = input
+        .get("taskPresentationRules")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let example = input
+        .get("example")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let example_text = serde_json::to_string_pretty(&example).unwrap_or_default();
+    // 补充范例（TFNG/单选、表格/流程图填空）：每份独立成段，覆盖主范例没有的
+    // 题型与宿主差异（prompt 宿主 vs table_cell/flow_step 宿主）。
+    let extra_examples = input
+        .get("examples")
+        .and_then(Value::as_array)
+        .map(|examples| {
+            examples
+                .iter()
+                .skip(1)
+                .filter_map(|entry| {
+                    let name = entry.get("name").and_then(Value::as_str)?;
+                    let document = entry.get("document")?;
+                    let text = serde_json::to_string_pretty(document).ok()?;
+                    Some(format!("ADDITIONAL COMPLETE EXAMPLE — {name}:\n{text}"))
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        })
+        .unwrap_or_default();
+    let repair = input.get("repair");
+    let mut prompt = format!(
+        "Convert the ONE IELTS Reading test PDF below into one complete exam JSON object.\n\
+The original file is supplied per page: pages with a text layer arrive as \
+\"=== PAGE n (text layer) ===\"; scanned pages (for example the answer key) arrive as \
+images. Text layers lose layout, so reconstruct tables, flow-charts and word banks from context.\n\
+You are the only producer: nothing is merged with your output.\n\n\
+TASK PRESENTATION RULES (single source of truth for response kinds, hosts and option sources):\n\
+{rules}\n\n\
+ONE COMPLETE STANDARD EXAMPLE (guidance only, do not copy its content):\n\
+{example_text}\n\n\
+{extra_examples}\n\n\
+Return the single JSON object described in the system prompt (meta, passage, taskGroups, \
+answerSlots, answerKey, warnings). JSON only, no Markdown, no code fences."
+    );
+    if let Some(chunk_note) = input.get("chunkNote").and_then(Value::as_str) {
+        prompt.push_str(&format!("\n\n=== PAGE RANGE NOTE ===\n{chunk_note}"));
+    }
+    if let Some(json_note) = input.get("jsonNote").and_then(Value::as_str) {
+        prompt.push_str(&format!("\n\n=== FORMAT NOTE ===\n{json_note}"));
+    }
+    if let Some(repair) = repair {
+        let issues = serde_json::to_string_pretty(
+            repair.get("compilerIssues").unwrap_or(&Value::Null),
+        )
+        .unwrap_or_default();
+        let current = serde_json::to_string_pretty(
+            repair.get("currentOutput").unwrap_or(&Value::Null),
+        )
+        .unwrap_or_default();
+        let instruction = repair
+            .get("instruction")
+            .and_then(Value::as_str)
+            .unwrap_or("Fix the listed structural problems.");
+        prompt.push_str(&format!(
+            "\n\n=== REPAIR ROUND ===\n{instruction}\n\
+COMPILER ISSUES:\n{issues}\n\
+CURRENT OUTPUT TO FIX:\n{current}"
+        ));
+    }
+    prompt
+}
+
+/// 直出产物的形状收敛：**只补不拒**（方案：归一化不得以"拒收"为先）。
+///
+/// 顶层键缺失或类型不对手一律补默认值——空题组 / 空正文由后端归一化按
+/// 「无题组 / 无正文」判定回退，其余形状缺口（缺 meta、缺 answerKey……）
+/// 都是可补的默认值，不是拒收理由。内容级问题交给后端归一化与 Rust 编译
+/// 校验（修复回合）。
+fn validate_exam_direct_output(output: &mut Value) -> CommandResult<()> {
+    let Some(object) = output.as_object_mut() else {
+        return Err("exam_direct_output_not_object".to_string());
+    };
+    if !object.get("meta").is_some_and(Value::is_object) {
+        object.insert("meta".to_string(), json!({"title": "", "language": "en"}));
+    }
+    if !object.get("passage").is_some_and(Value::is_object) {
+        object.insert(
+            "passage".to_string(),
+            json!({"content": [], "paragraphMap": {}}),
+        );
+    }
+    if !object.get("taskGroups").is_some_and(Value::is_array) {
+        object.insert("taskGroups".to_string(), json!([]));
+    }
+    if !object.get("answerSlots").is_some_and(Value::is_object) {
+        object.insert("answerSlots".to_string(), json!({}));
+    }
+    if !object.get("answerKey").is_some_and(Value::is_object) {
+        object.insert("answerKey".to_string(), json!({}));
+    }
+    if !object.contains_key("warnings") {
+        object.insert("warnings".to_string(), json!([]));
+    }
+    Ok(())
+}
+
 fn validate_candidate_missing_fields_patch(
     output: Value,
     fields: &[Value],
@@ -2329,6 +2634,10 @@ pub(crate) fn candidate_missing_field_pointer(error: &str) -> Option<String> {
     };
     let index = |position: usize| parts.get(position).copied().filter(|value| value.parse::<u64>().is_ok());
     match code {
+        "cloud_authoring_output_content_node_field_missing" => {
+            let (location, field) = detail.rsplit_once(':')?;
+            location.starts_with('/').then(|| format!("{location}/{field}"))
+        }
         // /taskGroups 与 /answerSlots 整体缺失或为空不是「叶子字段缺失」——让模型用补丁补一整
         // 组题目没有意义，多半是它答非所问（返回了别的模式的应答）。这两种情况不进补丁流程，
         // 直接判定本次候选失败（最多整份重试一次），不在可补指针集合里。
@@ -2377,6 +2686,14 @@ pub(crate) fn read_rejected_authoring_candidate(
     job_id: &str,
     error: &str,
 ) -> CommandResult<Option<Value>> {
+    let retained = REJECTED_CANDIDATE.with(|candidate| {
+        candidate.borrow_mut().take().and_then(|(retained_root, retained_job, retained_error, value)| {
+            (retained_root == root && retained_job == job_id && retained_error == error).then_some(value)
+        })
+    });
+    if retained.is_some() {
+        return Ok(retained);
+    }
     let cache_dir = job_dir(root, job_id).join("cache").join("llm");
     let entries = match fs::read_dir(&cache_dir) {
         Ok(entries) => entries,
@@ -2543,7 +2860,7 @@ fn fill_candidate_structural_defaults(output: &mut Value) {
                     }
                     if wire_name(&rule.assignment) == "per_slot"
                         && map.get("assignment").and_then(Value::as_str) == Some("per_slot")
-                        && map.get("slotIds").and_then(Value::as_array).map(Vec::len) == Some(1)
+                        && map.get("slotIds").and_then(Value::as_array).is_some_and(|slots| !slots.is_empty())
                     {
                         map.entry("cardinality")
                             .or_insert(json!({"min":1,"max":1,"exact":1}));
@@ -2666,9 +2983,13 @@ fn validate_authoring_candidate_output_with_source_paragraphs(
         .unwrap_or_default();
     let mut output_node_ids = std::collections::BTreeSet::<String>::new();
     collect_authoring_candidate_node_ids(output, &mut output_node_ids);
-    let source_paragraph_ids = source_paragraphs
+    let mut source_paragraph_ids = source_paragraphs
         .map(candidate_source_paragraph_ids)
         .unwrap_or_default();
+    source_paragraph_ids.extend(crate::reconcile::candidate::canonical_passage_paragraph_ids(output));
+    if let Some(content) = output.pointer("/passage/content").and_then(Value::as_array) {
+        validate_candidate_nodes(content, "/passage/content")?;
+    }
     if slot_keys.is_empty() {
         return Err("cloud_authoring_output_answer_slots_empty".to_string());
     }
@@ -2699,14 +3020,14 @@ fn validate_authoring_candidate_output_with_source_paragraphs(
                 "cloud_authoring_output_group_instructions_missing:{index}"
             ));
         };
-        validate_candidate_nodes(instructions, &format!("{index}:instructions"))?;
+        validate_candidate_nodes(instructions, &format!("/taskGroups/{index}/instructions"))?;
         if let Some(stimulus) = group_object.get("stimulus") {
             let Some(stimulus) = stimulus.as_array() else {
                 return Err(format!(
                     "cloud_authoring_output_group_stimulus_invalid:{index}"
                 ));
             };
-            validate_candidate_nodes(stimulus, &format!("{index}:stimulus"))?;
+            validate_candidate_nodes(stimulus, &format!("/taskGroups/{index}/stimulus"))?;
         }
         if let Some(bank) = group_object
             .get("optionBank")
@@ -2769,7 +3090,7 @@ fn validate_authoring_candidate_output_with_source_paragraphs(
                         "cloud_authoring_output_response_group_prompt_invalid:{index}:{position}"
                     ));
                 };
-                validate_candidate_nodes(prompt, &format!("{index}:{position}:prompt"))?;
+                validate_candidate_nodes(prompt, &format!("/taskGroups/{index}/responseGroups/{position}/prompt"))?;
             }
             let Some(slot_ids) = response_object.get("slotIds").and_then(Value::as_array) else {
                 return Err(format!(
@@ -2989,13 +3310,26 @@ fn validate_candidate_nodes(nodes: &[Value], location: &str) -> CommandResult<()
         for field in ["type", "id"] {
             if non_empty_str(node_object.get(field)).is_none() {
                 return Err(format!(
-                    "cloud_authoring_output_content_node_field_missing:{location}:{position}:{field}"
+                    "cloud_authoring_output_content_node_field_missing:{location}/{position}:{field}"
                 ));
             }
         }
-        for child_key in ["children", "items", "rows", "cells", "caption"] {
+        let required = match node_object.get("type").and_then(Value::as_str) {
+            Some("doc" | "paragraph" | "heading" | "list_item" | "table_cell" | "figcaption" | "flow_step") => Some("children"),
+            Some("bullet_list" | "ordered_list") => Some("items"),
+            Some("table") => Some("rows"),
+            Some("table_row") => Some("cells"),
+            Some("flowchart") => Some("steps"),
+            _ => None,
+        };
+        if let Some(field) = required {
+            if !node_object.contains_key(field) || node_object.get(field) == Some(&Value::Null) {
+                return Err(format!("cloud_authoring_output_content_node_field_missing:{location}/{position}:{field}"));
+            }
+        }
+        for child_key in ["children", "items", "rows", "cells", "caption", "steps"] {
             if let Some(children) = node_object.get(child_key).and_then(Value::as_array) {
-                validate_candidate_nodes(children, &format!("{location}:{position}:{child_key}"))?;
+                validate_candidate_nodes(children, &format!("{location}/{position}/{child_key}"))?;
             }
         }
     }
@@ -3087,7 +3421,7 @@ fn validate_candidate_option_bank(bank: &Value, index: usize) -> CommandResult<(
                 "cloud_authoring_output_option_field_missing:{index}:{position}:content"
             ));
         };
-        validate_candidate_nodes(content, &format!("{index}:option:{position}"))?;
+        validate_candidate_nodes(content, &format!("/taskGroups/{index}/optionBank/options/{position}/content"))?;
     }
     Ok(())
 }
@@ -5535,6 +5869,30 @@ mod tests {
     }
 
     #[test]
+    fn candidate_repair_retains_partial_content_without_full_diagnostics() {
+        let mut candidate = crate::llm_suggestions::authoring_candidate_output_contract("reading")["shape"].clone();
+        candidate["taskGroups"][0].as_object_mut().unwrap().remove("taskId");
+        let (base_url, requests) = fake_llm_server(vec![
+            FakeReply::Respond(200, chat_body(&candidate.to_string(), "stop")),
+            FakeReply::Respond(200, chat_body(&json!({"missingFields":{"/taskGroups/0/taskId":"repaired-task"}}).to_string(), "stop")),
+        ]);
+        let job = fake_candidate_job(&base_url, "job-operational-candidate-repair");
+        let error = run_llm_gateway_with_diagnostics(&job.root, job.job_id, "generate_authoring_candidate", &job.input, None, false).unwrap_err();
+        assert_eq!(candidate_missing_field_pointer(&error).as_deref(), Some("/taskGroups/0/taskId"));
+        let partial = read_rejected_authoring_candidate(&job.root, job.job_id, &error).unwrap().expect("repair input must survive without diagnostics");
+        assert_eq!(partial, candidate);
+        let mut retry = job.input.clone();
+        retry["repairMissingFields"] = json!(["/taskGroups/0/taskId"]);
+        let supplement = run_llm_gateway_with_diagnostics(&job.root, job.job_id, "generate_authoring_candidate", &retry, None, false).unwrap();
+        let repaired = merge_authoring_candidate_supplement(partial, supplement, &retry).unwrap();
+        assert_eq!(repaired["taskGroups"][0]["taskId"], "repaired-task");
+        assert_eq!(repaired["taskGroups"][0]["responseGroups"][0]["prompt"], candidate["taskGroups"][0]["responseGroups"][0]["prompt"]);
+        assert_eq!(requests.try_iter().count(), 2);
+        let cache = job_dir(&job.root, job.job_id).join("cache").join("llm");
+        assert!(!cache.exists() || fs::read_dir(cache).unwrap().next().is_none());
+    }
+
+    #[test]
     fn candidate_retry_serialized_prefix_survives_dynamic_patch_tail() {
         let input = json!({
             "modality": "reading",
@@ -5774,6 +6132,80 @@ mod tests {
         assert_eq!(total.cache_hit_tokens, 1200);
         assert_eq!(total.cache_miss_tokens, 1417);
         assert_eq!(total.unknown_cache_usage_calls, 0);
+    }
+
+    #[test]
+    fn total_only_usage_allows_next_request_and_is_not_fabricated_as_prompt_usage() {
+        let response = json!({
+            "choices": [{"message": {"content": "not json"}, "finish_reason": "stop"}],
+            "usage": {"total_tokens": 1200}
+        }).to_string();
+        let (base_url, requests) = fake_llm_server(vec![
+            FakeReply::Respond(200, response.clone()), FakeReply::Respond(200, response),
+        ]);
+        let job = fake_candidate_job(&base_url, "job-total-only");
+        for _ in 0..2 {
+            let error = run_llm_gateway(&job.root, job.job_id, "generate_authoring_candidate", &job.input, None).unwrap_err();
+            assert!(!error.starts_with("cloud_token_budget"), "{error}");
+            requests.recv_timeout(Duration::from_secs(2)).expect("request must reach provider");
+        }
+        let summary = llm_usage_summary(&job.root, job.job_id).unwrap();
+        assert_eq!(summary["totalTokens"], 2400);
+        assert_eq!(summary["promptTokens"], 0);
+        assert_eq!(summary["completionTokens"], 0);
+        assert_eq!(summary["unattributedTokens"], 2400);
+        assert_eq!(summary["usageAvailable"], true);
+    }
+
+    #[test]
+    fn rejected_request_does_not_poison_the_following_request_budget() {
+        let (base_url, requests) = fake_llm_server(vec![
+            FakeReply::Respond(401, "invalid credentials".to_string()),
+            FakeReply::Respond(200, json!({
+                "choices": [{"message": {"content": "not json"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 30, "completion_tokens": 5}
+            }).to_string()),
+        ]);
+        let job = fake_candidate_job(&base_url, "job-rejected-usage");
+        for prefix in ["llm_http_401", "llm_json_parse_failed"] {
+            let error = run_llm_gateway(&job.root, job.job_id, "generate_authoring_candidate", &job.input, None).unwrap_err();
+            assert!(error.starts_with(prefix), "{error}");
+            requests.recv_timeout(Duration::from_secs(2)).unwrap();
+        }
+        let summary = llm_usage_summary(&job.root, job.job_id).unwrap();
+        assert_eq!(summary["totalTokens"], 35);
+        assert_eq!(summary["unknownUsageCalls"], 0);
+        assert_eq!(summary["callCount"], 1);
+    }
+
+    #[test]
+    fn uncertain_usage_no_longer_locks_the_budget_and_estimation_keeps_totals_visible() {
+        let mut total = LlmTokenUsageTotal::default();
+        total.record(&normalized_usage_fields(&json!({"prompt_tokens": 100, "total_tokens": 140})));
+        total.record(&normalized_usage_fields(&json!({"prompt_tokens": 30, "completion_tokens": 10, "total_tokens": 20})));
+        assert_eq!(total.total_tokens(), 180);
+        assert_eq!(total.unknown_usage_calls, 0);
+        // 软上限（cloud-direct §2.3）：用量未知不再锁死任务。
+        total.record(&Value::Null);
+        assert_eq!(total.unknown_usage_calls, 1);
+        assert!(budget_block_reason(&total, 300_000).is_none());
+        // 只有达到设置上限才停止后续请求。
+        assert!(budget_block_reason(&total, 100).unwrap().starts_with("cloud_token_budget_exceeded"));
+        // 按请求体估算记账：2xx 但无 usage 的调用得到可观测的估算值（约 4 字符/token）。
+        let estimated = estimated_usage_fields(&LlmCallTrace {
+            request_bytes: 40_000,
+            raw_content: Some("x".repeat(400)),
+            ..Default::default()
+        });
+        assert_eq!(estimated["prompt_tokens"], json!(10_000));
+        assert_eq!(estimated["completion_tokens"], json!(100));
+        assert_eq!(estimated["usageEstimated"], json!(true));
+        total.record(&estimated);
+        assert_eq!(total.total_tokens(), 180 + 10_100);
+        // 记账语义不变：拒绝/连接失败不计，超时与坏响应仍计。
+        let timed_out = LlmCallTrace { attempts: vec![json!({"httpStatus":200,"error":"llm_http_body_failed:timeout"})], ..Default::default() };
+        assert!(should_account_usage(&timed_out));
+        assert!(!should_account_usage(&LlmCallTrace::default()));
     }
 
     #[test]
@@ -6029,6 +6461,37 @@ mod tests {
         );
         let request = requests.recv_timeout(Duration::from_secs(3)).unwrap();
         assert!(request.contains("\"max_tokens\":"), "请求体缺少 max_tokens");
+    }
+
+    #[test]
+    fn deepseek_transcription_reserves_output_for_json_and_review_retains_low_thinking() {
+        let profile = json!({"baseUrl":"https://api.deepseek.com/v1","model":"deepseek-flash"});
+        let mut transcription = json!({"max_tokens":16384});
+        apply_provider_task_defaults(&profile, &mut transcription, "generate_authoring_candidate");
+        assert_eq!(transcription["thinking"], json!({"type":"disabled"}));
+        assert_eq!(transcription["max_tokens"], 16384);
+        let mut review = json!({});
+        apply_provider_task_defaults(&profile, &mut review, "repair_authoring_step");
+        assert_eq!(review["reasoning_effort"], "low");
+        assert!(review.get("thinking").is_none());
+        let mut explicit = json!({"thinking":{"type":"enabled"},"reasoning_effort":"high"});
+        apply_provider_task_defaults(&profile, &mut explicit, "generate_authoring_candidate");
+        assert_eq!(explicit["thinking"]["type"], "enabled");
+        let mut proxy = json!({});
+        apply_provider_task_defaults(&json!({"baseUrl":"https://api.deepseek.com.example/v1","model":"deepseek-flash"}), &mut proxy, "generate_authoring_candidate");
+        assert_eq!(proxy, json!({}));
+    }
+
+    #[test]
+    fn answer_evidence_uses_original_pages_not_attachment_ordinals() {
+        let input = json!({"pages":[{"pageIndex":5},{"pageIndex":6}],"repairNote":"page 1 was not supplied"});
+        let prompt = vision_answer_prompt(&input);
+        assert!(prompt.contains("[5, 6]"));
+        assert!(prompt.contains("NOT the attachment order"));
+        assert!(prompt.contains("page 1 was not supplied"));
+        assert!(validate_vision_answer_source_pages(&json!({"evidence":[{"pageIndex":1}]}), &input)
+            .unwrap_err().starts_with("vision_answer_evidence_page_not_supplied"));
+        validate_vision_answer_source_pages(&json!({"evidence":[{"pageIndex":5},{"pageIndex":6}]}), &input).unwrap();
     }
 
     /// 非超时的直传失败（供应商不收 PDF 附件）仍然回退到页图；回退也失败时，
@@ -6753,6 +7216,25 @@ mod tests {
         assert!(
             validate_authoring_candidate_output_for_chunk(&mut invalid, "reading", None).is_err()
         );
+    }
+
+    #[test]
+    fn per_slot_matching_defaults_cardinality_for_a_shared_multi_question_response() {
+        let mut candidate = json!({"taskGroups":[{"taskType":"matching_headings","responseGroups":[
+            {"slotIds":["q14","q15"],"assignment":"per_slot"}
+        ]}],"answerSlots":{}});
+        fill_candidate_structural_defaults(&mut candidate);
+        assert_eq!(candidate.pointer("/taskGroups/0/responseGroups/0/cardinality"), Some(&json!({"min":1,"max":1,"exact":1})));
+    }
+
+    #[test]
+    fn missing_flow_steps_are_a_targeted_content_patch_and_nested_steps_are_validated() {
+        let mut nodes = json!([{"type":"flowchart","id":"flow"}]);
+        let error = validate_candidate_nodes(nodes.as_array().unwrap(), "/taskGroups/0/stimulus").unwrap_err();
+        assert_eq!(candidate_missing_field_pointer(&error).as_deref(), Some("/taskGroups/0/stimulus/0/steps"));
+        nodes[0]["steps"] = json!([{"type":"flow_step","id":"step","children":[{"type":"text"}]}]);
+        let error = validate_candidate_nodes(nodes.as_array().unwrap(), "/taskGroups/0/stimulus").unwrap_err();
+        assert_eq!(candidate_missing_field_pointer(&error).as_deref(), Some("/taskGroups/0/stimulus/0/steps/0/children/0/id"));
     }
 
     #[test]

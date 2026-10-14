@@ -49,6 +49,31 @@ function headingDraft(answerKey: IeltsAuthoringIRV2["answerKey"] = {
 afterEach(cleanup);
 
 describe("task presentation in the authoring canvas", () => {
+  it("paragraph-map choices can be selected but cannot be edited as invented option-bank rows", () => {
+    const draft = headingDraft();
+    const task = draft.taskGroups[0];
+    task.taskType = "matching_information";
+    delete task.optionBank;
+    delete task.responseGroups[0].optionBankRef;
+    for (const slot of Object.values(draft.answerSlots)) { slot.hostType = "prompt"; slot.interaction = "radio"; }
+    const onAnswerChange = vi.fn();
+    const { container } = render(<ExamCanvas authoring={draft} mode="author" onAnswerChange={onAnswerChange} onStructureAction={vi.fn()} />);
+    const choice = container.querySelector<HTMLInputElement>('input[type="radio"][name="q14"][value="A"]')!;
+    expect(choice).not.toBeNull();
+    fireEvent.click(choice);
+    expect(onAnswerChange).toHaveBeenCalledWith("q14", { kind: "option", labels: ["A"], assignment: "per_slot" });
+    expect(container.querySelector('.v2-option-add,.v2-option-delete,.v2-option-drag-handle')).toBeNull();
+  });
+  it("keeps heading targets only in the passage when an old response prompt duplicates paragraph ids", () => {
+    const draft = headingDraft({ q14: { kind: "option", labels: ["i"], assignment: "per_slot" } });
+    draft.taskGroups[0].responseGroups[0].prompt = structuredClone(draft.passage!.content);
+    const { container } = render(<ExamCanvas authoring={draft} mode="student" />);
+    expect(container.querySelectorAll('[data-answer-drop-slot="q14"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-answer-drop-slot="q15"]')).toHaveLength(1);
+    expect(container.querySelectorAll('.v2-task-group [data-answer-drop-slot]')).toHaveLength(0);
+    expect(container.querySelector('[data-answer-drop-slot="q14"]')?.textContent).toContain("Drop heading here");
+    expect(container.querySelector('[data-answer-drop-slot="q14"]')?.textContent).not.toContain("First heading");
+  });
   it("places each heading target before its source paragraph and offers a shared Roman heading pool", () => {
     const { container } = render(<ExamCanvas authoring={headingDraft()} mode="author" onAnswerChange={vi.fn()} onStructureAction={vi.fn()} />);
     const targetA = container.querySelector('[data-answer-drop-slot="q14"]')!;

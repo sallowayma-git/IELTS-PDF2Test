@@ -311,9 +311,19 @@ pub(crate) struct PublishBlocker {
 /// 于是"没能执行"只能被压进"通过"。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PublishVerdict {
-    Ready { edit_version: Option<i64> },
-    Blocked { reasons: Vec<PublishBlocker> },
-    Undetermined { reasons: Vec<PublishBlocker> },
+    Ready {
+        edit_version: Option<i64>,
+        /// 不阻断发布的警告（答案未填、低置信、保真度低、未人工确认……）。
+        warnings: Vec<PublishBlocker>,
+    },
+    Blocked {
+        reasons: Vec<PublishBlocker>,
+        warnings: Vec<PublishBlocker>,
+    },
+    Undetermined {
+        reasons: Vec<PublishBlocker>,
+        warnings: Vec<PublishBlocker>,
+    },
 }
 
 impl PublishVerdict {
@@ -332,29 +342,38 @@ impl PublishVerdict {
     pub(crate) fn reasons(&self) -> &[PublishBlocker] {
         match self {
             Self::Ready { .. } => &[],
-            Self::Blocked { reasons } | Self::Undetermined { reasons } => reasons,
+            Self::Blocked { reasons, .. } | Self::Undetermined { reasons, .. } => reasons,
+        }
+    }
+
+    /// 不阻断发布的警告（编辑器问题列表与发布对话框展示，不影响判定）。
+    pub(crate) fn warnings(&self) -> &[PublishBlocker] {
+        match self {
+            Self::Ready { warnings, .. }
+            | Self::Blocked { warnings, .. }
+            | Self::Undetermined { warnings, .. } => warnings,
         }
     }
 
     pub(crate) fn to_value(&self) -> Value {
+        let map = |reason: &PublishBlocker| {
+            json!({
+                "code": reason.code,
+                "layer": reason.layer,
+                "target": reason.target,
+                "message": reason.message,
+            })
+        };
         json!({
             "schemaVersion": "PublishVerdictV1",
             "status": self.status(),
             "ready": self.is_ready(),
             "editVersion": match self {
-                Self::Ready { edit_version } => json!(edit_version),
+                Self::Ready { edit_version, .. } => json!(edit_version),
                 _ => Value::Null,
             },
-            "reasons": self
-                .reasons()
-                .iter()
-                .map(|reason| json!({
-                    "code": reason.code,
-                    "layer": reason.layer,
-                    "target": reason.target,
-                    "message": reason.message,
-                }))
-                .collect::<Vec<_>>(),
+            "reasons": self.reasons().iter().map(map).collect::<Vec<_>>(),
+            "warnings": self.warnings().iter().map(map).collect::<Vec<_>>(),
         })
     }
 }
@@ -363,6 +382,7 @@ impl PublishVerdict {
 struct PublishVerdictBuilder {
     blocked: Vec<PublishBlocker>,
     undetermined: Vec<PublishBlocker>,
+    warnings: Vec<PublishBlocker>,
 }
 
 impl PublishVerdictBuilder {
@@ -396,20 +416,44 @@ impl PublishVerdictBuilder {
         });
     }
 
+    /// 不阻断发布的警告：答案未填、低置信、保真度低、未人工确认……
+    /// P2 门禁收敛后，除了「编译通过」其余全部落在这里（编辑器/发布对话框展示）。
+    fn warn(
+        &mut self,
+        code: &'static str,
+        layer: &'static str,
+        target: impl Into<Option<String>>,
+        message: impl Into<String>,
+    ) {
+        self.warnings.push(PublishBlocker {
+            code,
+            layer,
+            target: target.into(),
+            message: message.into(),
+        });
+    }
+
     fn finish(mut self, edit_version: Option<i64>) -> PublishVerdict {
         if !self.blocked.is_empty() {
             // 有确凿阻断时，"能不能发"已经有答案了：报 Blocked（可操作性更好），
             // 但把"没能执行"的项**一并列出**，不隐藏。
             let mut reasons = std::mem::take(&mut self.blocked);
             reasons.extend(self.undetermined);
-            return PublishVerdict::Blocked { reasons };
+            return PublishVerdict::Blocked {
+                reasons,
+                warnings: self.warnings,
+            };
         }
         if !self.undetermined.is_empty() {
             return PublishVerdict::Undetermined {
                 reasons: self.undetermined,
+                warnings: self.warnings,
             };
         }
-        PublishVerdict::Ready { edit_version }
+        PublishVerdict::Ready {
+            edit_version,
+            warnings: self.warnings,
+        }
     }
 }
 
@@ -438,23 +482,28 @@ pub(crate) fn publish_verdict(
 ) -> PublishVerdict {
     let mut builder = PublishVerdictBuilder::default();
     let v2 = is_authoring_v2(authoring);
+    let cloud_direct = crate::ielts_grammar::quality::is_cloud_direct(authoring);
 
     if v2 {
         if let Err(error) = crate::authoring_v2_commands::validate_authoring(authoring) {
             builder.block("SCHEMA_INVALID", "AuthoringIR", None, error);
             return builder.finish(edit_version);
         }
-        // 质量就绪度：唯一规则在 `ielts_grammar::quality::quality_readiness`，
-        // 与被写入 `QualityReportV2.state` 的是同一份实现。
+        // P2 门禁收敛：**编译通过 = 可发布**。质量就绪度 / 答案闭合 / 阻断性问题
+        // 不再阻断，全部降为警告，在编辑器问题列表与发布对话框展示。
+        //
+        // 依据：这些判据保护的是「内容质量」，而它们此前的实际效果是「草案永远发不
+        // 出去」或「被 force 伪装绕过」；学生端真正会拒绝的是编译结果（结构非法），
+        // 那一层由下面唯一的 COMPILE_FAILED 硬门禁负责。
         match crate::ielts_grammar::quality::quality_readiness(authoring) {
             Ok(crate::ielts_grammar::quality::QualityReadiness::Ready) => {}
-            Ok(state) => builder.block(
+            Ok(state) => builder.warn(
                 "QUALITY_NOT_READY",
                 "QualityReportV2",
                 None,
                 format!("quality_state={}", state.as_str()),
             ),
-            Err(reason) => builder.undetermined(
+            Err(reason) => builder.warn(
                 "QUALITY_REPORT_UNAVAILABLE",
                 "QualityReportV2",
                 None,
@@ -465,12 +514,12 @@ pub(crate) fn publish_verdict(
             .get("answerKey")
             .and_then(Value::as_object)
             .into_iter()
-            .flat_map(|answers| answers.iter())
+            .flatten()
             .filter(|(_, value)| value.get("kind").and_then(Value::as_str) == Some("unresolved"))
             .map(|(slot_id, _)| slot_id.clone())
             .collect::<Vec<_>>();
         for slot_id in unresolved_answers {
-            builder.block(
+            builder.warn(
                 "ANSWER_MISSING",
                 "AnswerKey",
                 uncoded_target(&slot_id),
@@ -478,7 +527,7 @@ pub(crate) fn publish_verdict(
             );
         }
         for issue in unresolved_blocking_issues(authoring) {
-            builder.block(
+            builder.warn(
                 "ISSUE_UNRESOLVED",
                 "QualityReportV2",
                 issue
@@ -555,19 +604,21 @@ pub(crate) fn publish_verdict(
     // canonical 直通时派生文件不是事实源（既有设计，见 `authoring_v2_commands.rs`
     // 的 M1 typed-preflight 直通注释）。这不是"放行"，而是判据集合不同；
     // 两份范围各自的判据都会跑满。范围差异已在 NOTES 里逐条列出。
+    // 未人工确认：P2 起只是警告，且**两个范围都出**——修前只有 FullDerived
+    // （遗留文件导出）看得到，产品发布路径（canonical 直通）反而看不到。
+    if authoring
+        .pointer("/audit/humanVerified")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        builder.warn(
+            "HUMAN_VERIFICATION_REQUIRED",
+            "AuthoringIR",
+            Some("$.audit.humanVerified".to_string()),
+            "All questions must be human verified before publish",
+        );
+    }
     if scope == PublishScope::FullDerived {
-        if authoring
-            .pointer("/audit/humanVerified")
-            .and_then(Value::as_bool)
-            != Some(true)
-        {
-            builder.block(
-                "HUMAN_VERIFICATION_REQUIRED",
-                "AuthoringIR",
-                Some("$.audit.humanVerified".to_string()),
-                "All questions must be human verified before publish",
-            );
-        }
         if v2 {
             // 稿本身必须就是这道题。canonical 直通走的是"按 item_id 取稿"，
             // 稿与 id 的一致性由取出方式保证；文件派生来源没有这层保证，必须自己查。
@@ -620,7 +671,7 @@ pub(crate) fn publish_verdict(
 
     // Candidate differences are editor work, but must be settled before publication.
     // Both preflight and actual export read this same current-canonical decision list.
-    if v2 {
+    if v2 && !cloud_direct {
         let choices = (|| -> crate::CommandResult<Vec<Value>> {
             let conn = crate::library::repository::open_library_connection(root)?;
             let Some(batch) = crate::reconcile::store::load_latest_batch(&conn, job_id)? else {
@@ -651,7 +702,9 @@ pub(crate) fn publish_verdict(
                     } else {
                         "请先在题目区域确认答案页冲突"
                     };
-                    builder.block(
+                    // P2 门禁收敛：未选择的本地/云端差异是**内容质量**问题，
+                    // 降为警告（编译器才是唯一硬门禁）。
+                    builder.warn(
                         "RECOGNITION_CHOICE_UNRESOLVED",
                         "CloudReview",
                         task["targetIds"]
@@ -663,7 +716,7 @@ pub(crate) fn publish_verdict(
                     );
                 }
             }
-            Err(error) => builder.undetermined(
+            Err(error) => builder.warn(
                 "RECOGNITION_CHOICES_UNAVAILABLE",
                 "CloudReview",
                 None,
@@ -673,9 +726,11 @@ pub(crate) fn publish_verdict(
     }
 
     // 来源复核状态：两个范围都要（它是当前稿的事实，不是历史痕迹）。
+    if !cloud_direct {
     match crate::source_review::source_review_status_for_job(root, job_id) {
         Err(error) => {
-            builder.undetermined("SOURCE_REVIEW_UNAVAILABLE", "SourceReview", None, error)
+            // P2 门禁收敛：来源复核读不到不再是阻断——唯一硬门禁是编译。
+            builder.warn("SOURCE_REVIEW_UNAVAILABLE", "SourceReview", None, error)
         }
         Ok(source_review) => {
             if scope == PublishScope::FullDerived {
@@ -708,7 +763,8 @@ pub(crate) fn publish_verdict(
                 }
             }
             for issue in crate::source_review::source_review_issues(&source_review) {
-                builder.block(
+                // P2 门禁收敛：来源复核未处理是**内容质量**问题，降为警告。
+                builder.warn(
                     "SOURCE_REVIEW_ISSUE",
                     "SourceReview",
                     issue
@@ -724,6 +780,7 @@ pub(crate) fn publish_verdict(
             }
         }
     }
+    }
 
     // ── 必判的对等校验器：**没能执行 ≠ 通过** ────────────────────────────
     // 只有被显式要求（`EPIC8_NODE_VALIDATOR_DIAGNOSTICS` 为真）时它才是必判项；
@@ -734,7 +791,7 @@ pub(crate) fn publish_verdict(
         let source = reading_source(authoring);
         match crate::runtime_validation::validate_with_node_sidecar(root, job_id, &source) {
             Ok(_) => {}
-            Err(error) => builder.undetermined(
+            Err(error) => builder.warn(
                 "VALIDATOR_UNAVAILABLE",
                 "ReadingExamSourceV1",
                 None,
@@ -970,13 +1027,23 @@ mod tests {
         for entry in blocked_entries {
             assert_eq!(entry["status"], json!("blocked"), "{entry}");
             assert_eq!(entry["ready"], json!(false), "{entry}");
+            // P2：未解析答案降为警告；真正阻断的是结构编译错误
+            // （COMPILE_FAILED——学生端会拒绝的那种）。
             assert!(
                 entry["reasons"]
                     .as_array()
                     .into_iter()
                     .flatten()
-                    .any(|reason| reason["code"] == json!("ANSWER_MISSING")),
-                "each entrance must expose the unresolved answer blocker: {entry}"
+                    .any(|reason| reason["code"] == json!("COMPILE_FAILED")),
+                "each entrance must expose the compile blocker: {entry}"
+            );
+            assert!(
+                entry["warnings"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|warning| warning["code"] == json!("ANSWER_MISSING")),
+                "each entrance must expose the unresolved answer as a warning: {entry}"
             );
             assert_eq!(
                 verdict_semantics(entry),

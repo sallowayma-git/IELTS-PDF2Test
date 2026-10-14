@@ -128,6 +128,7 @@ pub(crate) fn compile_reading_source_v2(
         },
     };
     normalize_runtime_fixed_truth_option_content(&mut runtime.task_groups);
+    normalize_runtime_paragraph_options(&mut runtime);
     // The student runtime submits `hotspotId` verbatim and the server validates
     // it against the slot's accepted answer values. Producers may only bind
     // regions that already carry a submittable value, so the compiler rewrites
@@ -199,6 +200,42 @@ fn normalize_runtime_fixed_truth_option_content(task_groups: &mut [TaskGroupV2])
             if let Some(options) = response.options.as_mut() {
                 normalize_runtime_fixed_truth_options(options);
             }
+        }
+    }
+}
+
+/// Authoring matching-information tasks use paragraphMap as their option
+/// source. Materialize those printed labels for the exported runtime, whose
+/// option contract requires inline options or a bank. Never repair explicit
+/// bank references or infer paragraph letters absent from the source map.
+fn normalize_runtime_paragraph_options(source: &mut ReadingExamSourceV2) {
+    let Some(paragraphs) = source.passage.paragraph_map.as_ref().filter(|map| !map.is_empty()) else {
+        return;
+    };
+    for task in &mut source.task_groups {
+        if !matches!(task.task_type, TaskTypeV2::MatchingInformation) {
+            continue;
+        }
+        for response in &mut task.response_groups {
+            if !matches!(response.kind, ResponseGroupKindV2::Matching)
+                || response.options.is_some() || response.option_bank_ref.is_some()
+            {
+                continue;
+            }
+            response.options = Some(paragraphs.keys().map(|label| {
+                let option_id = format!("{}-paragraph-{label}", response.response_group_id);
+                OptionV2 {
+                    content: vec![ContentNodeV2::Text(TextNodeV2 {
+                        base: BaseContentNodeV2 {
+                            id: format!("{option_id}-text"), source_anchors: Vec::new(),
+                            provenance_status: ProvenanceStatusV2::Derived,
+                        },
+                        text: label.clone(), marks: None,
+                    })],
+                    option_id, label: label.clone(), source_anchors: Vec::new(),
+                    provenance_status: Some(ProvenanceStatusV2::Derived),
+                }
+            }).collect());
         }
     }
 }
@@ -326,21 +363,15 @@ pub(crate) fn validate_reading_source_v2(source: &ReadingExamSourceV2) -> Vec<Co
     // 槽位——后者会漏掉 composite / diagram_hotspot 等没有内容热点的槽位。
     for (slot_id, slot) in &source.answer_slots {
         let answer = source.answer_key.get(slot_id);
-        // 缺失的槽位已由上面的 `RUNTIME_ANSWER_KEY_MISMATCH` 精确报告；
-        // 未解析的答案要报「没有答案」，而不是误导性的「类型不一致」。
-        match answer {
-            None => continue,
-            Some(AnswerValueV2::Unresolved) => {
-                issues.push(compiler_issue(
-                    "RUNTIME_ANSWER_UNRESOLVED",
-                    // 注意归因：学生端遇到未解析答案会当成「未作答」计 0 分而**不会**拒绝，
-                    // 真正拦下它的是导出质量门（authoring_v2_export_blocked:unresolved_answers）。
-                    "This slot has no resolved answer; the export quality gate blocks an exam with unresolved answers.",
-                    slot_id,
-                ));
-                continue;
-            }
-            _ => {}
+        // 缺失的槽位已由上面的 `RUNTIME_ANSWER_KEY_MISMATCH` 精确报告。
+        //
+        // 未解析答案**不是**结构问题：学生端遇到它按「未作答」计 0 分而不会拒绝加载
+        // 或提交（见 `RUNTIME_ANSWER_UNRESOLVED` 的历史说明与 `export` 侧的
+        // `has_unresolved_answers`）。cloud-direct 门禁收敛后，「答案未填」是发布
+        // **警告**而不是编译阻断——在这里把它升级成编译失败会让没有答案页的 PDF
+        // 永远无法发布。答案闭合由发布链的警告列表负责呈现。
+        if let Some(AnswerValueV2::Unresolved) = answer {
+            continue;
         }
         let matches_interaction = match slot.interaction {
             InteractionV2::Text => matches!(answer, Some(AnswerValueV2::Text { .. })),
@@ -1474,6 +1505,37 @@ mod tests {
             .collect::<BTreeSet<_>>();
         assert!(!issue_codes.contains("RUNTIME_OPTION_BANK_MISSING"));
         assert!(issue_codes.is_empty(), "unexpected issues: {issue_codes:?}");
+    }
+
+    #[test]
+    fn matching_information_exports_source_paragraph_choices_but_missing_map_stays_blocked() {
+        let mut authoring = fixture();
+        authoring.passage.as_mut().unwrap().paragraph_map =
+            Some(BTreeMap::from([("A".to_string(), "passage-p1".to_string())]));
+        let task = &mut authoring.task_groups[0];
+        task.task_type = TaskTypeV2::MatchingInformation;
+        task.option_bank = None;
+        for response in &mut task.response_groups {
+            response.kind = ResponseGroupKindV2::Matching;
+            response.options = None;
+            response.option_bank_ref = None;
+            response.assignment = AssignmentV2::PerSlot;
+            response.cardinality = CardinalityV2 { min: 1, max: 1, exact: Some(1) };
+            response.scoring_policy = ResponseScoringPolicyV2::PerSlotBinary;
+            response.allow_option_reuse = true;
+        }
+        for (slot_id, slot) in &mut authoring.answer_slots {
+            slot.interaction = InteractionV2::Radio;
+            authoring.answer_key.insert(slot_id.clone(), option_answer(&["A"]));
+        }
+        let runtime = compile_reading_source_v2(&authoring).unwrap();
+        let options = runtime.task_groups[0].response_groups[0].options.as_ref().unwrap();
+        assert_eq!(options.iter().map(|option| option.label.as_str()).collect::<Vec<_>>(), vec!["A"]);
+        assert_eq!(text_from_content_nodes(&options[0].content), "A");
+        assert!(authoring.task_groups[0].response_groups[0].options.is_none());
+        authoring.passage.as_mut().unwrap().paragraph_map = None;
+        assert!(compile_reading_source_v2(&authoring).unwrap_err().iter()
+            .any(|issue| issue.code == "RUNTIME_OPTION_BANK_MISSING"));
     }
 
     #[test]

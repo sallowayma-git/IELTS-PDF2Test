@@ -22,7 +22,7 @@ import {
   type UserTaskActionV1,
   type UserTaskV1
 } from "./userTasks";
-import { compilePreviewSource, describePreviewPublishLimitation } from "./studentPreview";
+import { compilePreviewSource, describePreviewPublishLimitation, type PreviewCompileResult } from "./studentPreview";
 import { RecognitionPanel } from "./RecognitionPanel";
 import { useCanonicalEditor } from "./useCanonicalEditor";
 import { describeDeferredRemoteRefresh } from "./remoteVersion";
@@ -203,9 +203,21 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   }, [itemId, editor.noteRemoteVersion]);
 
   const localIssues = useMemo(() => deriveActionableIssues(editor.draft), [editor.draft]);
-  // 学生预览：先走产品真正使用的编译器校验当前草稿。编译失败就**不**渲染预览，
+  // 学生预览：当前草稿过 Rust 编译器（P2 单一编译入口）。编译失败就**不**渲染预览，
   // 而是给出可定位的问题，避免用户对着过期画面继续编辑。
-  const preview = useMemo(() => compilePreviewSource(editor.draft), [editor.draft]);
+  const [preview, setPreview] = useState<PreviewCompileResult | undefined>();
+  useEffect(() => {
+    let stopped = false;
+    // 草稿引用进闭包：连续编辑时只有最后一次编译结果可以落状态，
+    // 旧的异步返回不得覆盖新草稿的结论（预览永远跟着最新草稿走）。
+    const draft = editor.draft;
+    void compilePreviewSource(draft).then((result) => {
+      if (!stopped) setPreview(result);
+    });
+    return () => {
+      stopped = true;
+    };
+  }, [editor.draft]);
   // 学生预览发现的「答案形式与题目不匹配」也并进同一份清单（预览里不再另列一份）。
   const previewIssues = useMemo<ActionableIssueV1[]>(
     () => (preview?.ok ? preview.summary.answerKeyIssues : []).map((item) => ({
@@ -481,7 +493,15 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
       }
       // 一次点击即发布：不预检、不列阻断、不二次确认。点击本身就是确认。
       const outcome = await publishItem(itemId, destination);
-      const publishNotice = describePublishOutcome(outcome);
+      let publishNotice = describePublishOutcome(outcome);
+      // P2：编译通过即可发布，其余是警告。发布成功但还有未处理的提示
+      // （答案未填、保真度低、未人工确认……）时，如实在结果里指回问题列表。
+      if (outcome.ok) {
+        const gateWarnings = preflight?.warnings?.length ?? 0;
+        if (gateWarnings > 0) {
+          publishNotice += `（有 ${gateWarnings} 条待核对提示，见问题列表）`;
+        }
+      }
       setNotice(publishNotice);
       setPublishOutcome({ text: publishNotice, kind: publishOutcomeKind(outcome) });
       // 发布提交后原文件会被删除：刷新「原文件是否还在」，并重读题稿（状态与质量块已变）。
@@ -545,7 +565,9 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
                   ? llmUsage.unknownUsageCalls > 0
                     ? "云端用量信息缺失，已停止该试卷后续云端请求。"
                     : `本次云端用量 ${formatTokens(llmUsage.totalTokens)} / ${formatTokens(llmUsage.tokenBudget)} tokens，已达到上限，后续云端请求已停止。`
-                  : `本次云端用量 ${formatTokens(llmUsage.promptTokens)} 输入 + ${formatTokens(llmUsage.completionTokens)} 输出 / ${formatTokens(llmUsage.tokenBudget)} tokens${llmUsage.cacheUsageAvailable ? ` · 缓存命中 ${formatTokens(llmUsage.cacheHitTokens)}` : ""}`}
+                  : llmUsage.totalTokens > llmUsage.promptTokens + llmUsage.completionTokens
+                    ? `本次云端用量 ${formatTokens(llmUsage.totalTokens)} / ${formatTokens(llmUsage.tokenBudget)} tokens（服务商未提供完整输入/输出明细）`
+                    : `本次云端用量 ${formatTokens(llmUsage.promptTokens)} 输入 + ${formatTokens(llmUsage.completionTokens)} 输出 / ${formatTokens(llmUsage.tokenBudget)} tokens${llmUsage.cacheUsageAvailable ? ` · 缓存命中 ${formatTokens(llmUsage.cacheHitTokens)}` : ""}`}
               </small>
             ) : null}
           </div>

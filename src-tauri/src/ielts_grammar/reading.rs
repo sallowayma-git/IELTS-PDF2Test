@@ -46,7 +46,9 @@ pub(crate) fn passage_nodes_with_layout(
         let line_height = heights.get(heights.len() / 2).copied().unwrap_or(12.0);
         for (index, line) in lines.iter().enumerate() {
             let text = normalize_instruction_text(&line.text);
-            if text.is_empty() {
+            // PDF passage ranges may include the title line already represented by
+            // the heading above. It is not a body paragraph (or a derived label).
+            if text.is_empty() || text.eq_ignore_ascii_case(&normalize_instruction_text(title)) {
                 continue;
             }
             let continuation = recover_pdf_layout
@@ -142,6 +144,36 @@ fn append_wrapped_text(paragraph: &mut String, text: &str) {
         paragraph.push(' ');
     }
     paragraph.push_str(text);
+}
+
+/// Infer labels only from an explicit paragraph range and an exact paragraph count.
+/// Physical text and anchors are retained; the label assignment is derived evidence.
+pub(crate) fn derive_declared_paragraph_labels(nodes: &mut [Value], instructions: &str) -> bool {
+    if nodes.iter().any(|node| node.get("paragraphLabel").is_some()) { return false; }
+    let normalized = normalize_instruction_text(instructions).to_ascii_uppercase();
+    let mut ranges = std::collections::BTreeSet::new();
+    for (_, suffix) in normalized.match_indices("PARAGRAPHS").map(|(i, _)| (i, &normalized[i + "PARAGRAPHS".len()..])) {
+        let suffix = suffix.trim_start();
+        let suffix = suffix.strip_prefix("LABELLED").or_else(|| suffix.strip_prefix("LABELED")).unwrap_or(suffix).trim_start();
+        let mut chars = suffix.chars();
+        let Some(first) = chars.next().filter(char::is_ascii_uppercase) else { continue; };
+        let rest = chars.as_str().trim_start();
+        let Some(rest) = rest.strip_prefix('-') else { continue; };
+        let mut chars = rest.trim_start().chars();
+        let Some(last) = chars.next().filter(char::is_ascii_uppercase) else { continue; };
+        if chars.next().is_some_and(char::is_alphabetic) { continue; }
+        ranges.insert((first as u8, last as u8));
+    }
+    if ranges.len() != 1 { return false; }
+    let (first, last) = *ranges.iter().next().unwrap();
+    if first != b'A' || last < first { return false; }
+    let count = nodes.iter().filter(|node| node["type"] == "paragraph").count();
+    if count != usize::from(last - first + 1) { return false; }
+    for (index, node) in nodes.iter_mut().filter(|node| node["type"] == "paragraph").enumerate() {
+        node["paragraphLabel"] = json!((first + index as u8) as char);
+        node["provenanceStatus"] = json!("derived");
+    }
+    true
 }
 
 /// Build a stable label → real passage-node map. Empty maps stay empty so
@@ -272,7 +304,7 @@ fn paragraph_markers(
             if candidate.1.chars().next() == Some(expected) && candidate.1.len() == 1 {
                 run.push(candidate.clone());
                 expected = char::from_u32(expected as u32 + 1).unwrap_or(expected);
-                if expected > 'G' {
+                if expected > 'Z' {
                     break;
                 }
             } else {
@@ -299,7 +331,7 @@ fn paragraph_prefix(text: &str) -> Option<(String, String)> {
     let trimmed = text.trim();
     let mut chars = trimmed.chars();
     let label = chars.next()?;
-    if !matches!(label, 'A'..='G') {
+    if !matches!(label, 'A'..='Z') {
         return None;
     }
     let separator = chars.next()?;
@@ -535,6 +567,38 @@ mod tests {
             labelled[1]["children"][0]["text"],
             "The second paragraph has its own text."
         );
+    }
+
+    #[test]
+    fn flattened_prefixes_support_all_twenty_six_labels() {
+        let lines = (b'A'..=b'Z').map(|c| line(&format!("p-{c}"), &format!("{} The paragraph text.", c as char))).collect::<Vec<_>>();
+        let nodes = passage_nodes("Passage", &lines, vec![]);
+        let map = paragraph_map_from_nodes(&nodes);
+        assert_eq!(map.as_object().unwrap().len(), 26);
+        assert_eq!(map["H"], "passage-paragraph-H");
+        assert_eq!(map["Z"], "passage-paragraph-Z");
+    }
+
+    #[test]
+    fn pdf_title_is_not_counted_as_an_unlabelled_body_paragraph() {
+        let mut lines = vec![line("title", "Maori Fish Hooks")];
+        lines.extend((0..10).map(|i| line(&format!("p{i}"), "The paragraph text.")));
+        let mut nodes = passage_nodes_with_layout("Maori Fish Hooks", &lines, vec![], true);
+        assert!(derive_declared_paragraph_labels(&mut nodes, "ten paragraphs labelled A-J"));
+        assert_eq!(paragraph_map_from_nodes(&nodes).as_object().unwrap().len(), 10);
+        assert_eq!(nodes[0]["type"], "heading");
+    }
+
+    #[test]
+    fn declared_labels_require_exact_count_and_keep_real_node_ids() {
+        let lines = (0..10).map(|i| line(&format!("p{i}"), "The paragraph text.")).collect::<Vec<_>>();
+        let mut nodes = passage_nodes("Passage", &lines, vec![]);
+        assert!(!derive_declared_paragraph_labels(&mut nodes, "The passage has nine paragraphs labelled A–I."));
+        assert_eq!(paragraph_map_from_nodes(&nodes), json!({}));
+        assert!(derive_declared_paragraph_labels(&mut nodes, "The reading passage has ten paragraphs labelled A–J."));
+        assert_eq!(paragraph_map_from_nodes(&nodes)["J"], "passage-paragraph-10");
+        assert_eq!(nodes[1]["provenanceStatus"], "derived");
+        assert!(!derive_declared_paragraph_labels(&mut nodes, "paragraphs labelled A–J"));
     }
 
     #[test]

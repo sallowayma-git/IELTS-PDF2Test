@@ -9,8 +9,9 @@ import {
 } from "./publishClient";
 
 // 证据层级：pure unit（IPC 被 mock）。
-// 产品决策：点击「发布」即是确认。前端**一次点击**就发出带放行确认的请求，
-// 不做任何预检/阻断；放行是否真的被用到、门禁结论是什么，只以后端记录为准。
+// 产品决策（P2 门禁收敛）：点击「发布」即是确认，前端一次点击发出请求、不做预检阻断；
+// 发布判定收敛为「编译通过 = 可发布」，**不再带 force 伪装**——放行确认去掉后，
+// 后端记录里的 `forced` 只可能是真实放行，审计不再被每次发布污染。
 const { commandMock } = vi.hoisted(() => ({ commandMock: vi.fn() }));
 vi.mock("./tauriCommands", () => ({ command: commandMock }));
 
@@ -18,22 +19,18 @@ beforeEach(() => {
   commandMock.mockReset();
 });
 
-describe("publishItems — 一次点击发出带放行确认的请求", () => {
-  it("总是携带 force（confirmedAt = 点击时间），且只调用一次 publish_items", async () => {
+describe("publishItems — 一次点击发出请求（P2：无 force 伪装）", () => {
+  it("请求体只有 itemIds/destination：不再带 force 放行确认", async () => {
     commandMock.mockResolvedValue({ destination: "D:/nas", succeeded: [], failed: [] });
-    const before = Date.now();
     await publishItems(["a", "b"], "D:/nas");
     expect(commandMock).toHaveBeenCalledTimes(1);
     const [name, args] = commandMock.mock.calls[0];
     expect(name).toBe("publish_items");
     expect(args.input.itemIds).toEqual(["a", "b"]);
     expect(args.input.destination).toBe("D:/nas");
-    expect(args.input.force.acknowledgedReasons).toEqual([]);
-    const confirmed = Date.parse(args.input.force.confirmedAt);
-    expect(Number.isNaN(confirmed)).toBe(false);
-    expect(confirmed).toBeGreaterThanOrEqual(before - 1000);
-    // 旧的门禁开关不再存在：请求体里只有后端认识的字段（后端 deny_unknown_fields）。
-    expect(Object.keys(args.input).sort()).toEqual(["destination", "force", "itemIds"]);
+    expect(args.input.force).toBeUndefined();
+    // 请求体里只有后端认识的字段（后端 deny_unknown_fields）。
+    expect(Object.keys(args.input).sort()).toEqual(["destination", "itemIds"]);
   });
 
   it("单题发布同样一步到位，不先拉预检", async () => {

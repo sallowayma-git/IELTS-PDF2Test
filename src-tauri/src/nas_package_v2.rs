@@ -288,6 +288,15 @@ pub(crate) struct ForceOverride {
     pub acknowledged_reasons: Vec<String>,
 }
 
+
+/// 门禁类失败（编译未通过 / 结构非法）：P2 起 strict 发布里这是**条目级**可降级失败，
+/// 不是批次级环境故障。IO / 资产 / 清单 CAS 等错误不在此列，照旧中断整批。
+fn is_publish_gate_failure(error: &str) -> bool {
+    error.starts_with("authoring_v2_export_blocked:")
+        || error.starts_with("authoring_v2_export_compile_blocked:")
+        || error.starts_with("AUTHORING_SCHEMA_INVALID")
+}
+
 pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> CommandResult<Value> {
     use crate::library::repository::{get_canonical_ds, open_library_connection};
     if input.item_ids.is_empty() {
@@ -359,6 +368,8 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
         let mut exam_ids = BTreeSet::new();
         let mut loadable_exam_ids = BTreeSet::new();
         let mut forced_items = Vec::new();
+        // 被门禁挡下的条目（编译未通过）：本条失败，不影响批次其余条目。
+        let mut failed_items: Vec<Value> = Vec::new();
         for (index, (item_id, ds, version)) in snapshots.iter().enumerate() {
             // ── 导出 ──────────────────────────────────────────────────────
             // 导出自己的失败**一律中断整批**，放行也不例外。门禁不是 Ready 的稿在这里
@@ -366,7 +377,7 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
             // （编译不过、答案没闭合同理），所以走到 `?` 的只剩 IO 与安全类硬错误：
             // 资产缺失/越界、examId 路径不安全、目录不可写、清单 CAS、锁。把这类错误吞成
             // 「这条没发出去」，等于替用户接受环境故障——而他要的是「发布」。
-            let materialized = crate::authoring_v2_commands::export_authoring_snapshot_with_mode(
+            let materialized = match crate::authoring_v2_commands::export_authoring_snapshot_with_mode(
                 root,
                 crate::authoring_v2_commands::ExportAuthoringV2Input {
                     job_id: item_id.clone(),
@@ -376,7 +387,22 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
                     edit_version: Some(*version as u64),
                 },
                 &mode,
-            )?;
+            ) {
+                Ok(materialized) => materialized,
+                Err(error) if is_publish_gate_failure(&error) => {
+                    // P2 门禁收敛：strict 模式（前端不再带 force）下，编译不过的条目
+                    // 是**这条题自己的内容问题**——与「包检查失败」同级的可降级失败：
+                    // 这一条如实失败，整批照常发布，绝不静默吞掉也不中断批次。
+                    eprintln!("[publish] gate blocked {item_id}: {error}");
+                    failed_items.push(json!({
+                        "itemId": item_id,
+                        "ok": false,
+                        "message": "这道题还没达到发布条件：编译未通过。请在编辑器里处理列出的问题后重试。"
+                    }));
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
             let receipt = materialized.get("receipt").cloned().unwrap_or(Value::Null);
             let publish_override = receipt.get("publishOverride").cloned();
             let student_loadable = receipt
@@ -637,7 +663,8 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
         if let Err(error) = write_batch_state(&moved_resources, true) {
             eprintln!("[publish] batch committed state write failed: {error}");
         }
-        Ok(json!({"destination": input.destination, "succeeded": outcomes, "failed": []}))
+        let succeeded = outcomes;
+        Ok(json!({"destination": input.destination, "succeeded": succeeded, "failed": failed_items}))
     })();
     if result.is_err() {
         if manifest_committed {

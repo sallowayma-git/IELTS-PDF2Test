@@ -335,9 +335,11 @@ async function main() {
   session = await launchTauriAppCdp({
     exePath,
     runDir,
-    extraBrowserArgs: "--no-sandbox --disable-gpu",
+    extraBrowserArgs: process.argv.includes("--diagnostic-args") ? "--no-sandbox --disable-gpu" : "",
     appEnv: { EPIC8_ALLOW_PLAINTEXT_SECRET_FALLBACK: "1", IELTS_LLM_DIAGNOSTICS: "1" },
   });
+  report.browserArgs = session.browserArgs;
+  report.diagnosticRun = process.argv.includes("--diagnostic-args");
   await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, { timeoutMs: 40000, label: "library" });
   const prepassId = await importThroughUi();
   report.prepassItemId = prepassId;
@@ -427,13 +429,14 @@ async function main() {
   await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, { timeoutMs: 30000, label: "library-after-back" });
   await session.clickSelector(`[data-item-id="${itemId}"] .library-row-main`);
   await session.waitFor(`!!document.querySelector('[data-testid="exam-workspace"]')`, { timeoutMs: 40000, label: "workspace-reopen" });
+  await session.waitFor(`!!document.querySelector('[data-answer-drop-slot="' + ${JSON.stringify(slotId)} + '"]')`, { timeoutMs: 30000, label: "reopened-heading-target" });
   const reopened = await session.evaluate(`(() => {
     const target = document.querySelector('[data-answer-drop-slot="' + ${JSON.stringify(slotId)} + '"]');
     return target?.querySelector('.v2-answer-dropzone-value')?.textContent?.trim() ?? null;
   })()`);
   const reopenedItem = await workspace(itemId);
   const reopenedAnswer = reopenedItem.ds?.answerKey?.[slotId];
-  assert("answer-and-target-survive-workspace-reopen", reopenedAnswer?.labels?.includes(optionLabel) && reopened !== "Drop heading here", JSON.stringify({ slotId, optionLabel, reopened, reopenedAnswer, editVersion: reopenedItem.editVersion }));
+  assert("answer-and-target-survive-workspace-reopen", reopenedAnswer?.labels?.includes(optionLabel) && reopened === optionLabel, JSON.stringify({ slotId, optionLabel, reopened, reopenedAnswer, editVersion: reopenedItem.editVersion }));
 
   const beforeExport = reopenedItem.ds;
   const sourceReview = await invoke("resolve_source_review", {
