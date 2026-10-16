@@ -54,6 +54,7 @@ export type AuthoringNodeAttributeV2 = {
 };
 
 export type AuthoringPatchV2 =
+  | { op: "setExamCategory"; category: NonNullable<IeltsAuthoringIRV2["exam"]["category"]> }
   | { op: "replaceText"; nodeId: string; from: number; to: number; text: string; preserveProvenance?: boolean; restoreProvenanceStatus?: ProvenanceStatus }
   | { op: "setNodeAttrs"; nodeId: string; attrs: AuthoringNodeAttributeV2; removeAttrs?: Array<keyof AuthoringNodeAttributeV2>; preserveProvenance?: boolean; restoreProvenanceStatus?: ProvenanceStatus }
   | { op: "replaceContent"; target: AuthoringContentTargetV2; content: ContentNodeV2[]; preserveProvenance?: boolean; restoreProvenanceStatus?: ProvenanceStatus }

@@ -1529,6 +1529,19 @@ pub(crate) fn apply_patch(document: &mut Value, patch: &Value) -> CommandResult<
         .ok_or_else(|| "authoring_v2_patch_must_be_object".to_string())?;
     let op = required_string(object, "op")?;
     match op {
+        "setExamCategory" => {
+            if document.get("modality").and_then(Value::as_str).is_some_and(|v| v != "reading") {
+                return Err("AUTHORING_PATCH_READING_REQUIRED".to_string());
+            }
+            let category = required_string(object, "category")?;
+            if !matches!(category, "P1" | "P2" | "P3") {
+                return Err("AUTHORING_PATCH_CATEGORY_INVALID".to_string());
+            }
+            let exam = document.get_mut("exam").and_then(Value::as_object_mut)
+                .ok_or("AUTHORING_PATCH_EXAM_REQUIRED")?;
+            exam.insert("category".to_string(), json!(category));
+            Ok(())
+        }
         "replaceText" => replace_text(document, object),
         "setNodeAttrs" => set_node_attrs(document, object),
         "replaceContent" => replace_content(document, object),

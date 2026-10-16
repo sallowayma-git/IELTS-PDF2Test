@@ -354,8 +354,8 @@ pub(crate) fn prepare_content_change_notification(
 /// （`processingClient.ts` 的 `versions` 表）。若沿用上一次的序号，这次通知会被直接
 /// 丢弃——而且丢得毫无痕迹。推高是让这次通知「有资格」被消费。
 ///
-/// 返回 `Ok(false)` 表示该条目当前没有处理任务行（任务已清理 / 条目是手工新建的）。
-/// 这**不是**错误：没有任务行就没有处理状态可推，编辑器自己的保存结果已经能反映版本。
+/// 无处理任务行时使用独立的 content 版本时钟；前端仍经同一订阅与远端刷新机制，
+/// 但与处理队列序号分开去重，避免旧任务已清理的条目在其它窗口永远不刷新。
 pub(crate) fn notify_item_content_changed(
     conn: &rusqlite::Connection,
     app: &AppHandle,
@@ -366,7 +366,16 @@ pub(crate) fn notify_item_content_changed(
             emit_row(conn, app, &job);
             Ok(true)
         }
-        None => Ok(false),
+        None => {
+            let Some(version) = crate::library::repository::current_edit_version(conn, library_item_id)? else {
+                return Ok(false);
+            };
+            let _ = app.emit("processing://item-updated", serde_json::json!({
+                "libraryItemId": library_item_id, "stateVersion": version,
+                "editVersion": version, "versionKind": "content"
+            }));
+            Ok(true)
+        },
     }
 }
 

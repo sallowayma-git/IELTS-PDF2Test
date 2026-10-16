@@ -406,6 +406,11 @@ export function applyAuthoringV2Patches(authoring: IeltsAuthoringIRV2, patches: 
   const document = structuredClone(authoring);
   for (const patch of patches) {
     switch (patch.op) {
+      case "setExamCategory":
+        if (document.modality && document.modality !== "reading") throw new Error("AUTHORING_PATCH_READING_REQUIRED");
+        if (!["P1", "P2", "P3"].includes(patch.category)) throw new Error("AUTHORING_PATCH_CATEGORY_INVALID");
+        document.exam.category = patch.category;
+        break;
       case "replaceText": patchText(document, patch); break;
       case "setNodeAttrs": patchNodeAttrs(document, patch); break;
       case "replaceContent": patchReplaceContent(document, patch); break;
@@ -468,6 +473,7 @@ function responseGroup(authoring: IeltsAuthoringIRV2, taskId: string, responseGr
 
 export function inverseAuthoringPatch(authoring: IeltsAuthoringIRV2, patch: AuthoringPatchV2): AuthoringPatchV2 | undefined {
   switch (patch.op) {
+    case "setExamCategory": return { op: "setExamCategory", category: authoring.exam.category ?? "P1" };
     case "replaceText": {
       const node = findObjectById(authoring, patch.nodeId);
       if (!node || typeof node.text !== "string") return undefined;

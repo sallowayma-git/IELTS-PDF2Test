@@ -956,7 +956,13 @@ fn get_app_build_info() -> Value {
 async fn get_workspace_item(item_id: String, app: AppHandle) -> CommandResult<Value> {
     let root = app_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
-        library::commands::get_workspace_item_core(&root, &item_id)
+        let conn = library::repository::open_library_connection(&root)?;
+        let before = library::repository::current_edit_version(&conn, &item_id)?;
+        let result = library::commands::get_workspace_item_core(&root, &item_id)?;
+        if result.get("editVersion").and_then(Value::as_i64) > before {
+            let _ = processing::scheduler::notify_item_content_changed(&conn, &app, &item_id);
+        }
+        Ok(result)
     })
     .await
     .map_err(|error| format!("library_v2_join:{error}"))?
@@ -1004,7 +1010,18 @@ async fn list_library_items(include_deleted: Option<bool>, app: AppHandle) -> Co
     let root = app_root(&app)?;
     let include_deleted = include_deleted.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
-        library::commands::list_library_items_core(&root, include_deleted)
+        let conn = library::repository::open_library_connection(&root)?;
+        let before = library::repository::list_items(&conn, include_deleted)?.into_iter()
+            .map(|row| (row.id, row.current_edit_version)).collect::<std::collections::HashMap<_,_>>();
+        let result = library::commands::list_library_items_core(&root, include_deleted)?;
+        for row in result.as_array().into_iter().flatten() {
+            if let Some(id) = row.get("id").and_then(Value::as_str) {
+                if row.get("currentEditVersion").and_then(Value::as_i64) > before.get(id).copied() {
+                    let _ = processing::scheduler::notify_item_content_changed(&conn, &app, id);
+                }
+            }
+        }
+        Ok(result)
     })
     .await
     .map_err(|error| format!("library_v2_join:{error}"))?
@@ -1024,7 +1041,13 @@ async fn get_library_item_processing(item_id: String, app: AppHandle) -> Command
 async fn get_library_row(item_id: String, app: AppHandle) -> CommandResult<Value> {
     let root = app_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
-        library_commands::get_library_row_core(&root, &item_id)
+        let conn = library::repository::open_library_connection(&root)?;
+        let before = library::repository::current_edit_version(&conn, &item_id)?;
+        let result = library_commands::get_library_row_core(&root, &item_id)?;
+        if result.pointer("/item/currentEditVersion").and_then(Value::as_i64) > before {
+            let _ = processing::scheduler::notify_item_content_changed(&conn, &app, &item_id);
+        }
+        Ok(result)
     }).await.map_err(|error| format!("library_row_join:{error}"))?
 }
 
@@ -1801,7 +1824,14 @@ async fn set_library_item_part(
 ) -> CommandResult<bool> {
     let root = app_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
-        library::commands::set_library_item_part_core(&root, &item_id, label.as_deref())
+        let changed = library::commands::set_library_item_part_core(&root, &item_id, label.as_deref())?;
+        if changed {
+            let conn = library::repository::open_library_connection(&root)?;
+            // Same version notification as editor saves; dirty editors defer/recover
+            // through remoteVersion/conflictRecovery instead of losing local changes.
+            let _ = processing::scheduler::notify_item_content_changed(&conn, &app, &item_id);
+        }
+        Ok(changed)
     })
     .await
     .map_err(|error| error.to_string())?

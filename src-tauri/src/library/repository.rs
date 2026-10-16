@@ -98,6 +98,22 @@ pub(crate) fn set_item_part(
     Ok(affected > 0)
 }
 
+pub(crate) fn is_automatic_part_source(source: Option<&str>) -> bool {
+    source.is_some_and(|source| !matches!(source, "manual" | "none" | "canonical"))
+}
+
+/// Category history, rather than any human edit to the exam/title, determines
+/// whether an old automatic label may replace an import's default category.
+pub(crate) fn has_human_category_edit(conn: &Connection, item_id: &str) -> CommandResult<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM editor_journal_v1 j,
+           json_each(CASE WHEN json_valid(j.command_json) THEN j.command_json ELSE '{}' END, '$.commands') c
+         WHERE j.library_item_id=?1 AND j.edit_origin IN ('human','undo')
+           AND CASE WHEN c.type='object' THEN json_extract(c.value,'$.op')='setExamCategory' ELSE 0 END)",
+        [item_id], |row| row.get(0),
+    ).map_err(|error| format!("library_v2_category_history:{error}"))
+}
+
 /// 惰性回填 Part，仅当尚未判定过（`part_source IS NULL`）——绝不覆盖手动设置或已判定值，
 /// 以免与并发的手动设置竞争。返回是否写入。
 pub(crate) fn backfill_item_part(
@@ -347,6 +363,9 @@ pub(crate) enum EditOrigin {
     ListeningAudio,
     /// 将通过确定性资格门槛的完整云端首遍候选提升为正式稿。
     CloudCandidateAdoption,
+    /// One-time repair of a pre-existing automatically detected Part. No human
+    /// protection is acquired; the transaction still respects cloud review locks.
+    PartBackfill,
 }
 
 impl EditOrigin {
@@ -358,6 +377,7 @@ impl EditOrigin {
             EditOrigin::Undo => "undo",
             EditOrigin::ListeningAudio => "listening_audio",
             EditOrigin::CloudCandidateAdoption => "cloud_candidate_adoption",
+            EditOrigin::PartBackfill => "part_backfill",
         }
     }
 
@@ -598,6 +618,7 @@ impl EditFootprint {
             extend_with_context(document, &[task_id.to_string()], out);
         };
         match op {
+            "setExamCategory" => { targets.insert(format!("{TOP_FIELD_PREFIX}exam")); }
             // Trusted internal replacement only: compute its actual delta rather
             // than treating an unchanged sibling as an attempted overwrite.
             "replaceAuthoringDocument" => {
@@ -949,6 +970,9 @@ const MAX_CHANGE_ENTRY_BYTES: usize = 64 * 1024;
 fn capture_change_targets(commands: &[Value]) -> Vec<String> {
     let mut roots = BTreeSet::new();
     for command in commands {
+        if command.get("op").and_then(Value::as_str) == Some("setExamCategory") {
+            roots.insert(format!("{TOP_FIELD_PREFIX}exam"));
+        }
         let op = command
             .get("op")
             .and_then(Value::as_str)
@@ -1759,6 +1783,30 @@ fn cas_write_canonical(
             None => format!("ITEM_NOT_FOUND:{item_id}"),
         });
     }
+    // Reading category is canonical. Keep the list/filter projection in the same CAS
+    // transaction; listening Part 1–4 and writing Task 1/2 remain library-only labels.
+    if let Some(category) = ds.pointer("/exam/category").and_then(Value::as_str)
+        .filter(|v| matches!(*v, "P1" | "P2" | "P3"))
+    {
+        let (label, source): (Option<String>, Option<String>) = transaction.query_row(
+            "SELECT part_label, part_source FROM library_items_v2 WHERE id=?1", [item_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).map_err(|error| format!("library_v2_part_projection_read:{error}"))?;
+        // An unrelated save must not erase the old detector's only evidence
+        // before lazy backfill can repair a legacy default P1. An explicit human
+        // category patch overrides this below in the same transaction.
+        if is_automatic_part_source(source.as_deref())
+            && label.as_deref().is_some_and(|v| matches!(v, "P1" | "P2" | "P3") && v != category)
+            && !has_human_category_edit(transaction, item_id)?
+        {
+            return Ok(());
+        }
+        transaction.execute(
+            "UPDATE library_items_v2 SET part_source = COALESCE(part_source, 'canonical'),
+             part_label = ?2 WHERE id = ?1 AND modality = 'reading'",
+            params![item_id, category],
+        ).map_err(|error| format!("library_v2_part_projection:{error}"))?;
+    }
     Ok(())
 }
 
@@ -1848,7 +1896,9 @@ fn insert_journal_row(
     Ok(())
 }
 
-/// Human undo retains its existing bound. Cloud rows are pruned only after a
+/// Retain the latest human category record as historical backfill protection,
+/// in addition to the existing 200-row human undo bound (at most one extra row).
+/// Cloud rows are pruned only after a
 /// terminal run, never midway through a run when its original before values matter.
 fn prune_journal(transaction: &rusqlite::Transaction<'_>, item_id: &str) -> CommandResult<()> {
     transaction
@@ -1856,7 +1906,12 @@ fn prune_journal(transaction: &rusqlite::Transaction<'_>, item_id: &str) -> Comm
             "DELETE FROM editor_journal_v1 WHERE library_item_id = ?1
          AND edit_origin IN ('human','undo') AND id NOT IN (
            SELECT id FROM editor_journal_v1 WHERE library_item_id = ?1
-           AND edit_origin IN ('human','undo') ORDER BY id DESC LIMIT 200)",
+           AND edit_origin IN ('human','undo') ORDER BY id DESC LIMIT 200)
+         AND id IS NOT (
+           SELECT MAX(j.id) FROM editor_journal_v1 j,
+             json_each(CASE WHEN json_valid(j.command_json) THEN j.command_json ELSE '{}' END, '$.commands') c
+           WHERE j.library_item_id=?1 AND j.edit_origin IN ('human','undo')
+             AND CASE WHEN c.type='object' THEN json_extract(c.value,'$.op')='setExamCategory' ELSE 0 END)",
             [item_id],
         )
         .map_err(|error| format!("library_v2_journal_prune:{error}"))?;
@@ -2151,7 +2206,7 @@ pub(crate) fn apply_editor_commands_tx_with(
     // 云端校核期间锁定人工编辑。检查放在同一个 Immediate 事务内：
     // 前端的只读锁挡不住竞态，人工写入必须在提交点被后端兜底拒绝。机器来源
     // （云端采纳、修复、答案页识别、听力绑定）不受影响。
-    if origin.writes_human_protection()
+    if (origin.writes_human_protection() || origin == EditOrigin::PartBackfill)
         && crate::processing::queue::cloud_review_in_progress(&transaction, &input.item_id)?
     {
         return Err(format!("CLOUD_REVIEW_IN_PROGRESS:{}", input.item_id));
@@ -2205,6 +2260,9 @@ pub(crate) fn apply_editor_commands_tx_with(
         edit_status_for(&ds),
         &now,
     )?;
+    if origin.writes_human_protection() && input.commands.iter().any(|c| c.get("op").and_then(Value::as_str) == Some("setExamCategory")) {
+        set_item_part(&transaction, &input.item_id, ds.pointer("/exam/category").and_then(Value::as_str), Some("manual"))?;
+    }
     if let Some(title) = input.title.as_deref() {
         transaction
             .execute(

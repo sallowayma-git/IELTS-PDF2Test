@@ -207,7 +207,10 @@ pub(crate) fn run_exam_direct(
         Err(error) => return Err(error),
     };
 
-    let identity = DirectIdentity::new(&job, &source, root);
+    let mut identity = DirectIdentity::new(&job, &source, root);
+    // The source heading outranks question range and filename. Keep it alongside
+    // normalized slots for every normalization pass (including repair retries).
+    identity.part_evidence = json!({"pages": page_texts.iter().map(|(_, text)| text).collect::<Vec<_>>(), "filename": source.original_name});
     let mut document = normalize_direct_output(root, &raw, &identity)?;
     let mut compile_issues = direct_structural_issues(&document);
     // 编译有错 → 把错误清单和当前 JSON 发回云端修 1 次（受调用预算约束）。
@@ -777,6 +780,7 @@ pub(crate) struct DirectIdentity {
     source_document_id: String,
     generated_at: String,
     listening: bool,
+    part_evidence: Value,
 }
 
 impl DirectIdentity {
@@ -790,6 +794,7 @@ impl DirectIdentity {
             &job.job_id[job.job_id.len().saturating_sub(8)..]
         );
         Self {
+            part_evidence: Value::Null,
             listening: is_listening(root, &job.job_id),
             job_id: job.job_id.clone(),
             exam: json!({
@@ -1992,6 +1997,15 @@ pub(crate) fn normalize_direct_output(
         }),
     );
     let mut document = Value::Object(document);
+    if !identity.listening {
+        let title = format!("{} {}",
+            identity.exam.get("title").and_then(Value::as_str).unwrap_or_default(),
+            identity.part_evidence.get("filename").and_then(Value::as_str).unwrap_or_default());
+        let category = crate::library::part_detection::reading_part_from_document(
+            &title, &json!({"source": identity.part_evidence, "document": document})
+        ).map(|part| part.label).unwrap_or_else(|| "P1".to_string());
+        document["exam"]["category"] = json!(category);
+    }
     if identity.listening {
         normalize_listening_structure(&mut document, raw);
         attach_listening_figures(root, &identity.job_id, &mut document)?;
@@ -2716,6 +2730,7 @@ mod tests {
 
     fn identity() -> DirectIdentity {
         DirectIdentity {
+            part_evidence: Value::Null,
             listening: false,
             job_id: "import-20261014000000-abcd1234".to_string(),
             exam: json!({
@@ -2870,6 +2885,29 @@ mod tests {
             },
             "warnings": []
         })
+    }
+
+    #[test]
+    fn reading_direct_initializes_category_from_source_heading_range_and_filename() {
+        let root = temp_root("part-detection");
+        let raw = minimal_raw();
+        let mut id = identity();
+        id.part_evidence = json!(["READING PASSAGE 3"]);
+        let ds = normalize_direct_output(&root, &raw, &id).unwrap();
+        assert_eq!(ds["exam"]["category"], "P3");
+        assert_eq!(ds["exam"]["examId"], "p1-abcd1234");
+        id.part_evidence = Value::Null;
+        assert_eq!(normalize_direct_output(&root, &raw, &id).unwrap()["exam"]["category"], "P1");
+        let mut range_raw = raw.clone();
+        let replace_numbers = |value: &mut Value| {
+            let text = value.to_string().replace("q1", "q14").replace("q2", "q15")
+                .replace("\"questionNumber\":1", "\"questionNumber\":14")
+                .replace("\"questionNumber\":2", "\"questionNumber\":15");
+            *value = serde_json::from_str(&text).unwrap();
+        };
+        replace_numbers(&mut range_raw);
+        let ds = normalize_direct_output(&root, &range_raw, &id).unwrap();
+        assert_eq!(ds["exam"]["category"], "P2");
     }
 
     fn temp_root(name: &str) -> std::path::PathBuf {

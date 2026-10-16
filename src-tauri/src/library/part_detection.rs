@@ -53,6 +53,41 @@ pub(crate) struct PartDetectionInput<'a> {
     pub filename: &'a str,
 }
 
+/// Shared import/reset evidence reader for canonical nodes and physical source blocks.
+/// Never reads exam.category or examId as evidence (both are derived metadata).
+pub(crate) fn reading_part_from_document(filename: &str, document: &serde_json::Value) -> Option<DetectedPart> {
+    fn visit(value: &serde_json::Value, lines: &mut Vec<String>, numbers: &mut Vec<u32>) {
+        match value {
+            serde_json::Value::String(text) => lines.extend(text.lines().map(str::to_string)),
+            serde_json::Value::Array(items) => for item in items { visit(item, lines, numbers); },
+            serde_json::Value::Object(object) => for (key, value) in object {
+                if matches!(key.as_str(), "exam" | "audit" | "quality" | "category" | "examId" | "filename" | "originalName") { continue; }
+                if matches!(key.as_str(), "questionNumber" | "displayNumber" | "display_number") {
+                    if let Some(n) = value.as_u64().and_then(|n| u32::try_from(n).ok()) { numbers.push(n); }
+                }
+                if key == "answerKey" {
+                    if let Some(answers) = value.as_object() {
+                        numbers.extend(answers.keys().filter_map(|id| id.strip_prefix('q').unwrap_or(id).parse::<u32>().ok()));
+                    }
+                }
+                visit(value, lines, numbers);
+            },
+            _ => {},
+        }
+    }
+    let (mut lines, mut numbers) = (Vec::new(), Vec::new());
+    visit(document, &mut lines, &mut numbers);
+    detect_part(&PartDetectionInput { modality: "reading", manual_label: None, task_type: None,
+        source_lines: &lines, question_numbers: &numbers, filename })
+}
+
+pub(crate) fn import_reading_category(job: &crate::ImportJob, evidence: &serde_json::Value) -> String {
+    let names = std::iter::once(job.title.as_str())
+        .chain(job.source_files.iter().map(|source| source.original_name.as_str()))
+        .collect::<Vec<_>>().join(" ");
+    reading_part_from_document(&names, evidence).map(|p| p.label).unwrap_or_else(|| "P1".to_string())
+}
+
 /// 阅读题号 → Passage：1–13→1，14–26→2，27–40→3。范围外返回 `None`。
 fn reading_band(number: u32) -> Option<u32> {
     match number {
@@ -360,6 +395,14 @@ mod tests {
     #[test]
     fn no_signal_returns_none() {
         assert_eq!(detect(&input("reading", "untitled document", &[], &[])), None);
+    }
+
+    #[test]
+    fn filenames_are_not_content_headings_and_cannot_outrank_question_range() {
+        let document = serde_json::json!({"source":{"filename":"READING PASSAGE 1.pdf"},
+            "answerSlots":{"slot":{"questionNumber":14}}});
+        let part = reading_part_from_document("READING PASSAGE 1.pdf", &document).unwrap();
+        assert_eq!((part.label, part.source), ("P2".to_string(), PartSource::Range));
     }
 }
 

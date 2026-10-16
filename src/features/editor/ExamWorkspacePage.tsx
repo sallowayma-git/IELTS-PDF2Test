@@ -573,6 +573,22 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               </small>
             ) : null}
           </div>
+          {editor.draft && (!editor.draft.modality || editor.draft.modality === "reading") ? (
+            <div className="workspace-part-control">
+              <select
+                className="workspace-part-select"
+                aria-label="Part 归属"
+                data-testid="workspace-part-select"
+                value={editor.draft.exam.category}
+                disabled={cloudReviewing || editor.loading || editor.conflictRecovering}
+                onChange={(event) => {
+                  if (!cloudReviewing && !editor.loading && !editor.conflictRecovering) editor.applyPatch({ op: "setExamCategory", category: event.target.value as "P1" | "P2" | "P3" });
+                }}
+              >
+                {["P1", "P2", "P3"].map((part) => <option key={part} value={part}>{part}</option>)}
+              </select>
+            </div>
+          ) : null}
         </div>
 
         <div className="workspace-header-right">
@@ -652,13 +668,10 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
         </div>
       </header>
 
-      {/* 子栏对应基准 .sub-header-bar：左侧粗体 Part 名，中间说明，右侧模式切换。
-          Part 名：阅读稿显示 READING · Part 1（题稿 IR 里没有 passage 编号字段，
-          单题工作区一份稿就是一个 Part，固定 Part 1）；听力稿显示 LISTENING，
-          Part 切换信息在底部题号导航，子栏不再追加。 */}
+      {/* 阅读 Part 来自权威稿 category；听力切换信息在底部题号导航。 */}
       <div className="workspace-sub-header">
         <span className="workspace-sub-header-label">
-          {editor.draft?.modality === "listening" ? "LISTENING" : "READING · Part 1"}
+          {editor.draft?.modality === "listening" ? "LISTENING" : `READING · Part ${(editor.draft?.exam.category ?? "P1").slice(1)}`}
         </span>
         <div className="workspace-mode-toggle" role="tablist" aria-label="编辑与学生预览">
           <button

@@ -756,6 +756,7 @@ export function ExamCanvas(props: ExamCanvasProps) {
     : undefined;
   // 底部题号导航的数据（author 看 answerKey，student 看预览本地作答；都不写回题稿）。
   const navModel = useMemo(() => buildQuestionNavModel({
+    readingCategory: props.authoring.exam.category,
     mode: props.mode,
     taskGroups: runtime.taskGroups,
     questionDisplayMap: runtime.questionDisplayMap,
@@ -764,7 +765,7 @@ export function ExamCanvas(props: ExamCanvasProps) {
     studentAnswers,
     listeningParts: listeningPartViews,
     selectedPart: listening ? selectedPart : undefined
-  }), [props.mode, runtime, props.authoring.answerKey, studentAnswers, listeningPartViews, listening, selectedPart]);
+  }), [props.mode, runtime, props.authoring.exam.category, props.authoring.answerKey, studentAnswers, listeningPartViews, listening, selectedPart]);
   // 原文 | 题目 的可拖动分隔条（workspace.css 负责视觉，本组件只渲染元素）。
   const { dividerProps } = usePaneDivider(props.authoring.jobId);
   // ── 选项拖动会话（见 OptionDragSession）──

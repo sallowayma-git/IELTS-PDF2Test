@@ -33,6 +33,25 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("useCanonicalEditor 撤销栈上限", () => {
+  it("Part 修改可以撤销重做并通过自动保存批次提交，身份保持不变", async () => {
+    const ds = { ...sampleDs(), modality: "reading", exam: { title: "P1 title", category: "P1", examId: "p1-stable" } };
+    getWorkspaceItem.mockResolvedValue({ item: { title: "P1 title" }, ds, editVersion: 1, recentEdits: [] });
+    const { result } = renderHook(() => useCanonicalEditor("part-item"));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    act(() => result.current.applyPatch({ op: "setExamCategory", category: "P3" }));
+    expect(result.current.draft?.exam.category).toBe("P3");
+    act(() => result.current.undo());
+    expect(result.current.draft?.exam.category).toBe("P1");
+    act(() => result.current.redo());
+    expect(result.current.draft?.exam.category).toBe("P3");
+    expect(result.current.draft?.exam.examId).toBe("p1-stable");
+    await waitFor(() => expect(applyEditorCommands).toHaveBeenCalled());
+    expect(applyEditorCommands.mock.calls[0][0].commands).toEqual([
+      { op: "setExamCategory", category: "P3" },
+      { op: "setExamCategory", category: "P1" },
+      { op: "setExamCategory", category: "P3" },
+    ]);
+  });
   it("连续 12 次编辑后最多只能撤销 10 步，最早的两步被丢弃", async () => {
     getWorkspaceItem.mockResolvedValue({ item: { title: "T" }, ds: sampleDs(), editVersion: 1, recentEdits: [] });
     const { result } = renderHook(() => useCanonicalEditor("it-1"));

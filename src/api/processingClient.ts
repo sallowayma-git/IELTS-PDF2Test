@@ -95,8 +95,11 @@ export function acceptProcessingUpdate(
 ): ProcessingItemUpdate | undefined {
   const update = toItemUpdate(payload);
   if (!update) return undefined;
-  if ((versions.get(update.itemId) ?? -1) >= update.stateVersion) return undefined;
-  versions.set(update.itemId, update.stateVersion);
+  // Canonical-only notifications cover items whose processing row was cleaned up.
+  // Their edit-version clock must not poison the independent queue event clock.
+  const key = isRecord(payload) && payload.versionKind === "content" ? `content:${update.itemId}` : update.itemId;
+  if ((versions.get(key) ?? -1) >= update.stateVersion) return undefined;
+  versions.set(key, update.stateVersion);
   return update;
 }
 

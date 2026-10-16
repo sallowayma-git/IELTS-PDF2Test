@@ -511,6 +511,12 @@ pub(crate) fn build_authoring_v2_shadow_for_modality(
         authoring["listening"] = draft.structure;
     } else {
         authoring["passage"] = passage;
+        authoring["exam"]["category"] = json!(crate::library::part_detection::import_reading_category(
+            job, &json!({
+                "sourceLines": fallback_lines.iter().map(|line| line.text.as_str()).collect::<Vec<_>>(),
+                "document": authoring,
+            }),
+        ));
     }
     if !recognition_blockers.is_empty() {
         authoring["recognitionBlockers"] = json!(recognition_blockers);

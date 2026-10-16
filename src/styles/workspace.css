@@ -126,6 +126,30 @@
   flex: 1;
 }
 
+.workspace-part-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  margin-right: 16px;
+}
+
+.workspace-part-control .workspace-part-select {
+  width: 72px;
+  min-width: 0;
+  padding: 4px 8px;
+}
+
+.workspace-header-left .workspace-title {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.workspace-header-left .workspace-title small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .workspace-header-right {
   gap: 0;
   flex: 0 0 auto;
