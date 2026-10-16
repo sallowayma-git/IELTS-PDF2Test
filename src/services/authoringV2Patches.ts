@@ -173,7 +173,10 @@ function patchText(document: IeltsAuthoringIRV2, patch: Extract<AuthoringPatchV2
 function patchNodeAttrs(document: IeltsAuthoringIRV2, patch: Extract<AuthoringPatchV2, { op: "setNodeAttrs" }>): void {
   const node = findObjectById(document, patch.nodeId);
   if (!node) throw new Error(`AUTHORING_PATCH_NODE_NOT_FOUND:${patch.nodeId}`);
-  const allowed = new Set(["assetId", "rowSpan", "colSpan", "headerScope", "provenanceStatus", "align", "indentLevel", "level", "altText", "placeholder", "displayLabel", "inline", "label", "slotIds", "display", "crop"]);
+  const allowed = new Set(["assetId", "rowSpan", "colSpan", "headerScope", "provenanceStatus", "align", "indentLevel", "level", "fontScale", "altText", "placeholder", "displayLabel", "inline", "label", "slotIds", "display", "crop"]);
+  if ("fontScale" in patch.attrs && (node.type !== "heading" || ![0.9, 1, 1.15, 1.3, 1.5].includes(patch.attrs.fontScale as number))) {
+    throw new Error("AUTHORING_PATCH_FONT_SCALE_INVALID");
+  }
   for (const key of Object.keys(patch.attrs)) {
     if (!allowed.has(key)) throw new Error(`AUTHORING_PATCH_ATTR_NOT_ALLOWED:${key}`);
     node[key] = patch.attrs[key as keyof typeof patch.attrs];

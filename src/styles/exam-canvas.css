@@ -65,8 +65,8 @@
 
 /* ---------------- 原文与题面排版 ---------------- */
 .exam-canvas-v2 .v2-paragraph { margin: 0 0 13px; line-height: 1.55; }
-/* 基准 #left h2-h4：17px，20/8 外边距 */
-.exam-canvas-v2 .v2-heading { margin: 20px 0 8px; font-size: 17px; line-height: 1.4; }
+/* One step above body; author-set scale composes with student zoom. */
+.exam-canvas-v2 .v2-heading { margin: 1.2em 0 .8em; font-size: calc(1.15em * var(--node-font-scale, 1)); line-height: 1.4; }
 .exam-canvas-v2 .v2-list { margin: 0 0 13px 22px; line-height: 1.55; }
 .exam-canvas-v2 .v2-list li { margin: 0 0 4px; }
 .exam-canvas-v2 .v2-text.is-bold { font-weight: 700; }
@@ -76,12 +76,6 @@
 /* 题组：无卡片纸面（基准 .unified-group） */
 .exam-canvas-v2 .unified-group { min-width: 0; margin: 0 0 31px; }
 .exam-canvas-v2 .v2-task-header { min-width: 0; }
-.exam-canvas-v2 .v2-task-header h2 {
-  margin: 0 0 5px;
-  font-size: 16px;
-  font-weight: 700;
-  line-height: 1.45;
-}
 /* 基准 .question-instructions：margin 0 0 15px、行高 1.48 */
 .exam-canvas-v2 .v2-instruction { margin: 0 0 15px; line-height: 1.48; }
 .exam-canvas-v2 .v2-stimulus { min-width: 0; margin: 0; line-height: 1.55; }
@@ -214,7 +208,7 @@
   border: 1px solid var(--paper-line, #c9c9c9);
   border-radius: 0;
   padding: 2px 8px;
-  font-size: 0.9rem;
+  font-size: 0.9em;
 }
 
 /* 行内答案位 */
@@ -222,7 +216,7 @@
 
 /* 拖放题共用可拖选项池；投放框依照原段落、题行或摘要内容的位置渲染。 */
 .exam-canvas-v2 .v2-answer-option-pool { min-width: 0; margin: 14px 0 18px; }
-.exam-canvas-v2 .v2-answer-option-pool > h3 { margin: 0 0 8px; font-size: 0.95rem; }
+.exam-canvas-v2 .v2-answer-option-pool > h3 { margin: 0 0 8px; font-size: 0.95em; }
 .exam-canvas-v2 .v2-answer-option-list { display: flex; flex-wrap: wrap; gap: 7px; min-width: 0; }
 .exam-canvas-v2 .v2-answer-option {
   position: relative;
@@ -286,13 +280,13 @@
 .exam-canvas-v2 .v2-answer-target-editor select,
 .exam-canvas-v2 .v2-select-answer,
 .exam-canvas-v2 .v2-answer-slot-select select { max-width: 100%; font: inherit; }
-.exam-canvas-v2 .v2-passage-target-reference { color: #626d76; font-size: 0.88rem; }
+.exam-canvas-v2 .v2-passage-target-reference { color: #626d76; font-size: 0.88em; }
 .exam-canvas-v2 .v2-answer-dropzone.is-answer-dragging { opacity: 0.5; }
 .exam-canvas-v2 .v2-answer-option-pool.is-drop-hover { background: rgba(65, 143, 198, 0.08); }
 
 /* ---------------- 选项库 ---------------- */
 .exam-canvas-v2 .v2-option-bank { min-width: 0; margin: 14px 0; }
-.exam-canvas-v2 .v2-option-bank h4 { margin: 0 0 6px; font-size: 15px; font-weight: 700; }
+.exam-canvas-v2 .v2-option-bank h4 { margin: 0 0 6px; font-size: .9375em; font-weight: 700; }
 .exam-canvas-v2 .v2-option-bank ul { margin: 0; padding-left: 20px; }
 .exam-canvas-v2 .v2-option-bank li { margin: 6px 0; }
 
@@ -338,7 +332,7 @@
   border: 1px dashed #8f8f8f;
 }
 .exam-canvas-v2 .v2-asset-placeholder small { display: block; color: var(--paper-muted-ink, #565656); }
-.exam-canvas-v2 .v2-author-asset figcaption { margin-top: 7px; color: var(--paper-muted-ink, #565656); font-size: 0.9rem; text-align: center; }
+.exam-canvas-v2 .v2-author-asset figcaption { margin-top: 7px; color: var(--paper-muted-ink, #565656); font-size: 0.9em; text-align: center; }
 .exam-canvas-v2 .v2-canvas-hotspot {
   position: absolute;
   z-index: 2;
@@ -373,7 +367,7 @@
 .v2-matching-matrix thead th {
   padding: 0 3px 4px;
   text-align: center;
-  font-size: 0.9rem;
+  font-size: 0.9em;
   font-weight: 700;
 }
 
@@ -804,3 +798,18 @@
     grid-column: 1;
   }
 }
+
+
+/* Student text zoom applies to both independently scrolling panes. */
+.exam-canvas-v2.is-student { position: relative; }
+.exam-canvas-v2.is-student > .reading-pane { font-size: var(--student-font-size, 16px); }
+.exam-canvas-v2.is-student .reading-pane :is(input, select, textarea, button) { font: inherit; }
+.exam-canvas-v2.is-student .v2-choice-item { line-height: 1.5; }
+.exam-canvas-v2 .v2-editor-task-badge { display: inline-block; margin-bottom: .6em; padding: .15em .5em; border: 1px solid #ccd3da; border-radius: 4px; color: #626d76; background: #f3f5f7; font-size: 12px; line-height: 1.4; }
+.student-font-controls { display: inline-flex; gap: 3px; align-items: center; }
+.student-font-controls button { padding: 3px 8px; font: inherit; white-space: nowrap; }
+.student-font-controls button[aria-pressed="true"] { background: #e4edf5; box-shadow: inset 0 0 0 1px #418fc6; }
+.student-reading-toolbar { position: absolute; top: 0; right: 16px; z-index: 3; background: white; }
+.student-highlight-toolbar { z-index: 1000; display: flex; gap: 6px; padding: 6px; border: 1px solid #c4cbd2; border-radius: 5px; background: white; box-shadow: 0 2px 8px #0003; }
+.student-highlight-toolbar button { font: 14px Arial, sans-serif; padding: 4px 8px; }
+.exam-canvas-v2.is-student .hl { background: #ffeb80; color: inherit; }

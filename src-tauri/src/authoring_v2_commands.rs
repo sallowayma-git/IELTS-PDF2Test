@@ -1630,6 +1630,13 @@ fn set_node_attrs(document: &mut Value, patch: &Map<String, Value>) -> CommandRe
         .ok_or_else(|| "AUTHORING_PATCH_ATTRS_REQUIRED".to_string())?;
     let node = find_object_mut_by_id(document, node_id)
         .ok_or_else(|| format!("AUTHORING_PATCH_NODE_NOT_FOUND:{node_id}"))?;
+    if let Some(value) = attrs.get("fontScale") {
+        if node.get("type").and_then(Value::as_str) != Some("heading")
+            || !value.as_f64().map(|v| [0.9, 1.0, 1.15, 1.3, 1.5].contains(&v)).unwrap_or(false)
+        {
+            return Err("AUTHORING_PATCH_FONT_SCALE_INVALID".to_string());
+        }
+    }
     for (key, value) in attrs {
         if !is_safe_node_attribute(key) {
             return Err(format!("AUTHORING_PATCH_ATTR_NOT_ALLOWED:{key}"));
@@ -3483,6 +3490,7 @@ fn is_safe_node_attribute(key: &str) -> bool {
             | "align"
             | "indentLevel"
             | "level"
+            | "fontScale"
             | "altText"
             | "placeholder"
             | "displayLabel"
@@ -3663,6 +3671,22 @@ mod tests {
             }],
             "quality": {"issues": [{"issueId":"issue-1"}]}
         })
+    }
+
+    #[test]
+    fn font_scale_patch_accepts_finite_heading_sizes_and_removes_them() {
+        let mut document = json!({"children": [{
+            "type": "heading", "id": "heading", "level": 2,
+            "sourceAnchors": [], "provenanceStatus": "source", "children": []
+        }]});
+        apply_patch(&mut document, &json!({"op":"setNodeAttrs","nodeId":"heading","attrs":{"fontScale":1.5}})).unwrap();
+        assert_eq!(document["children"][0]["fontScale"], json!(1.5));
+        let persisted = serde_json::to_vec(&document).unwrap();
+        let mut reopened: Value = serde_json::from_slice(&persisted).unwrap();
+        assert_eq!(reopened["children"][0]["fontScale"], json!(1.5));
+        assert!(apply_patch(&mut reopened, &json!({"op":"setNodeAttrs","nodeId":"heading","attrs":{"fontScale":42}})).is_err());
+        apply_patch(&mut reopened, &json!({"op":"setNodeAttrs","nodeId":"heading","attrs":{},"removeAttrs":["fontScale"]})).unwrap();
+        assert!(reopened["children"][0].get("fontScale").is_none());
     }
 
     #[test]

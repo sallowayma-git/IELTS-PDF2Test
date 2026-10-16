@@ -1,5 +1,6 @@
 import { Plus, X, RotateCcw } from "lucide-react";
 import type { AuthoringPatchV2, ContentNodeV2, IeltsAuthoringIRV2 } from "../../types";
+import { FONT_SCALES_V2, type FontScaleV2 } from "../../types/content-doc-v2";
 import { locateContentNode } from "../../services/authoringV2Patches";
 
 type Rect = [number, number, number, number];
@@ -29,13 +30,22 @@ function RectFields({ value, onChange }: { value: Rect; onChange: (value: Rect) 
 export function SelectionInspector({ draft, selectedId, onPatch, onClose }: {
   draft: IeltsAuthoringIRV2; selectedId?: string; onPatch: (patch: AuthoringPatchV2) => void; onClose: () => void;
 }) {
-  const node = selectedId ? locateContentNode(draft, selectedId)?.node : undefined;
-  if (!node || !["figure", "diagram", "image", "table_cell"].includes(node.type)) return null;
+  const location = selectedId ? locateContentNode(draft, selectedId) : undefined;
+  // Text clicks enter inline editing; expose the containing heading's size too.
+  const parent = location?.parentId ? locateContentNode(draft, location.parentId)?.node : undefined;
+  const node = parent?.type === "heading" ? parent : location?.node;
+  if (!node || !["figure", "diagram", "image", "table_cell", "heading"].includes(node.type)) return null;
   const media = node.type === "figure" || node.type === "diagram" || node.type === "image" ? node : undefined;
   const hotspots = media && media.type !== "image" ? media.hotspots ?? [] : [];
   return <aside className="workspace-selection" aria-label="选中内容设置">
-    <header><strong>{media ? "图片与答案位置" : "单元格"}</strong>
+    <header><strong>{media ? "图片与答案位置" : node.type === "heading" ? "标题" : "单元格"}</strong>
       <button className="ghost small" title="关闭设置" aria-label="关闭设置" onClick={onClose}><X size={16} /></button></header>
+    {node.type === "heading" ? <label>字号<select aria-label="标题字号" value={node.fontScale ?? "default"} onChange={(event) => onPatch(event.target.value === "default"
+      ? { op: "setNodeAttrs", nodeId: node.id, attrs: {}, removeAttrs: ["fontScale"] }
+      : { op: "setNodeAttrs", nodeId: node.id, attrs: { fontScale: Number(event.target.value) as FontScaleV2 } })}>
+      <option value="default">默认</option>
+      {FONT_SCALES_V2.map((scale) => <option key={scale} value={scale}>{Math.round(scale * 100)}%</option>)}
+    </select></label> : null}
     {media ? <>
       <label>图片<select value={media.assetId} onChange={(event) => onPatch({ op: "setNodeAttrs", nodeId: media.id, attrs: { assetId: event.target.value } })}>
         {draft.assets.filter((asset) => asset.mime.startsWith("image/")).map((asset) => <option key={asset.assetId} value={asset.assetId}>{asset.altText || asset.assetId}</option>)}

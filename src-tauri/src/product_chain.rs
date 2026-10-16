@@ -934,7 +934,7 @@ fn dump_published_v2_visual_package_for_student_e2e() {
         ("v2-p2", "P2", "V2 Reading Part 2"),
         ("v2-p3", "P3", "V2 Reading Part 3"),
     ] {
-        dump_v2_visual_package_for_part(&nas_parent, exam_id, category, title);
+        dump_v2_visual_package_for_part(&nas_parent, exam_id, category, title, true);
     }
     let manifest =
         fs::read_to_string(nas_parent.join("manifest.js")).expect("published manifest must exist");
@@ -944,7 +944,13 @@ fn dump_published_v2_visual_package_for_student_e2e() {
     eprintln!("NAS e2e fixture written to {}", nas_parent.display());
 }
 
-fn dump_v2_visual_package_for_part(nas_parent: &Path, exam_id: &str, category: &str, title: &str) {
+fn dump_v2_visual_package_for_part(
+    nas_parent: &Path,
+    exam_id: &str,
+    category: &str,
+    title: &str,
+    include_scaled_heading: bool,
+) {
     let root = temp_root(&format!("nas-e2e-dump-{exam_id}"));
     ensure_app_dirs(&root).unwrap();
     let job = chain_job("NAS e2e visual dump");
@@ -980,6 +986,16 @@ fn dump_v2_visual_package_for_part(nas_parent: &Path, exam_id: &str, category: &
                 "sourceHash": "a".repeat(64)
             })
         });
+    // Opt in only for the student reading UX flow; other fixture callers keep
+    // the original passage content by passing false.
+    if include_scaled_heading {
+        authoring["passage"]["content"].as_array_mut().unwrap().insert(0, json!({
+            "type": "heading", "id": format!("{exam_id}-title"), "level": 2, "fontScale": 1.3,
+            "sourceAnchors": [], "provenanceStatus": "derived",
+            "children": [{"type": "text", "id": format!("{exam_id}-title-text"), "text": title,
+                "sourceAnchors": [], "provenanceStatus": "derived"}]
+        }));
+    }
     // 1x1 红色 PNG（CRC 已验证）：真实学生端 <img> 可解码的最小视觉资产。
     let png = build_e2e_png();
     let png_sha = {
@@ -1313,6 +1329,48 @@ fn readiness_keys_on_unresolved_blocking_issues_only() {
         "ready",
         "a warning must not make a document unpublishable"
     );
+}
+
+#[test]
+fn product_chain_font_scale_persists_through_canonical_save_undo_redo_and_preview() {
+    let root = temp_root("font-scale-canonical");
+    ensure_app_dirs(&root).unwrap();
+    let job = chain_job("Font scale");
+    save_job(&root, &job).unwrap();
+    let dir = job_dir(&root, &job.job_id);
+    ensure_job_dirs(&dir).unwrap();
+    let mut authoring: Value = serde_json::from_slice(
+        &fs::read(workspace_path(READY_AUTHORING_FIXTURE)).unwrap(),
+    ).unwrap();
+    authoring["jobId"] = json!(job.job_id);
+    authoring["passage"]["content"].as_array_mut().unwrap().insert(0, json!({
+        "type": "heading", "id": "font-scale-heading", "level": 2,
+        "sourceAnchors": [], "provenanceStatus": "derived",
+        "children": [{"type": "text", "id": "font-scale-text", "text": "Passage title",
+            "sourceAnchors": [], "provenanceStatus": "derived"}]
+    }));
+    write_json(&dir.join(AUTHORING_V2_SHADOW_FILE), &authoring).unwrap();
+    write_json(&dir.join(DOCUMENT_V2_SHADOW_FILE), &physical_shadow_for(&authoring)).unwrap();
+    crate::library::commands::get_workspace_item_core(&root, &job.job_id).unwrap();
+    for (base, command, expected) in [
+        (1, json!({"op":"setNodeAttrs","nodeId":"font-scale-heading","attrs":{"fontScale":1.3}}), json!(1.3)),
+        (2, json!({"op":"setNodeAttrs","nodeId":"font-scale-heading","attrs":{},"removeAttrs":["fontScale"]}), Value::Null),
+        (3, json!({"op":"setNodeAttrs","nodeId":"font-scale-heading","attrs":{"fontScale":1.3}}), json!(1.3)),
+    ] {
+        crate::library::commands::apply_editor_commands_core(&root,
+            crate::library::repository::ApplyEditorCommandsInput {
+                item_id: job.job_id.clone(), base_version: base, request_id: None,
+                commands: vec![command], title: None,
+            }).expect("canonical patch must save");
+        let reopened = crate::library::commands::get_workspace_item_core(&root, &job.job_id).unwrap();
+        let heading = reopened.pointer("/ds/passage/content/0").unwrap();
+        assert_eq!(heading.get("fontScale").unwrap_or(&Value::Null), &expected);
+    }
+    let reopened = crate::library::commands::get_workspace_item_core(&root, &job.job_id).unwrap();
+    let preview = crate::authoring_v2_commands::compile_authoring_preview_core(reopened.get("ds").unwrap());
+    assert_eq!(preview["ok"], json!(true));
+    assert_eq!(reopened.pointer("/ds/passage/content/0/fontScale"), Some(&json!(1.3)));
+    let _ = fs::remove_dir_all(&root);
 }
 
 /// M1（原 P2-T03/T04）验收：Workspace API 的 DB 链必须——

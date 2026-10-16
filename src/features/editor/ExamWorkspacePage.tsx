@@ -7,6 +7,7 @@ import { describePublishOutcome, publishItem, publishOutcomeKind, type PublishOu
 import { getWorkspaceItem } from "../../api/workspaceClient";
 import { SOURCE_PURGED_EXPLANATION, saveToLibrary, sourceActionsAvailable } from "./finalVersion";
 import { go, libraryPath, type LibraryIntent } from "../../app/router";
+import { StudentFontSizeControls, type StudentFontSize } from "../../exam-canvas/StudentReadingTools";
 import { ExamCanvas, type ExamCanvasStructureAction } from "../../exam-canvas/ExamCanvas";
 import { compileStructureAction } from "../../exam-canvas/structureActions";
 import { SelectionInspector } from "./SelectionInspector";
@@ -130,6 +131,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   // 窄窗（<980px）下两栏改为顶部 tab 切换，而不是把 passage 与 questions 堆成一长列。
   const [narrowPane, setNarrowPane] = useState<"passage" | "questions">("questions");
   // 编辑 / 学生预览。预览不是新页面，而是同一工作区里的另一个渲染模式。
+  const [studentFontSize, setStudentFontSize] = useState<StudentFontSize>("normal");
   const [mode, setMode] = useState<"edit" | "student">("edit");
   // 学生预览的作答状态重置令牌：草稿一变就重新挂载预览，避免把旧题面的作答带到新题面。
   const previewTokenRef = useRef(0);
@@ -676,6 +678,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
         </div>
         {/* 学生预览时说明区放修订提示与概要（原来在题面上方的通知带，data-testid 不变）；
             与已保存内容有差异时（level === "warning"）在行尾追加红色小标记，原因见 title。 */}
+        {mode === "student" ? <StudentFontSizeControls value={studentFontSize} onChange={setStudentFontSize} /> : null}
         <span className={`workspace-sub-header-meta${mode === "student" ? " is-preview" : ""}`}>
           {mode === "student" ? (
             <>
@@ -1035,7 +1038,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             ) : null}
             {preview?.ok ? (
               // key 绑草稿版本令牌：草稿一变，预览的作答状态整体重置。
-              <ExamCanvas key={`student-preview-${previewToken}`} authoring={editor.draft} mode="student" />
+              <ExamCanvas key={`student-preview-${previewToken}`} authoring={editor.draft} mode="student" studentFontSize={studentFontSize} />
             ) : null}
           </div>
         ) : null}

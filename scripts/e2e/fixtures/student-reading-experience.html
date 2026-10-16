@@ -1,0 +1,25 @@
+<!doctype html>
+<html><head><meta charset="UTF-8"><title>Student reading component verification</title>
+<style>body { margin:0; font:16px Arial,sans-serif; } #root > header {padding:8px;} .exam-canvas-v2 {height:calc(100vh - 50px);position:relative;} .workspace-selection {position:fixed;top:50px;right:30px;background:#eef2f6;padding:16px;z-index:5;}</style>
+</head><body><div id="root"></div><script type="module">
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import { ExamCanvas } from '/src/exam-canvas/ExamCanvas.tsx';
+import { SelectionInspector } from '/src/features/editor/SelectionInspector.tsx';
+import { applyAuthoringV2Patches } from '/src/services/authoringV2Patches.ts';
+import fixture from '/fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json';
+import '/src/styles/ielts-paper.css';
+import '/src/styles/exam-canvas.css';
+const source = structuredClone(fixture);
+source.passage.content.unshift({type:'heading',id:'title',level:2,children:[{type:'text',id:'title-text',text:'Reading passage title',sourceAnchors:[],provenanceStatus:'source'}],sourceAnchors:[],provenanceStatus:'source'});
+function App() {
+  const [draft,setDraft] = React.useState(source);
+  const [mode,setMode] = React.useState('author');
+  const [selected,setSelected] = React.useState('title-text');
+  return React.createElement(React.Fragment,null,
+    React.createElement('header',null,React.createElement('button',{id:'toggle-mode',onClick:()=>setMode(mode==='author'?'student':'author')},mode==='author'?'Student preview':'Author')),
+    React.createElement(ExamCanvas,{key:mode,authoring:draft,mode,onSelect:setSelected}),
+    mode==='author' && React.createElement(SelectionInspector,{draft,selectedId:selected,onPatch:(patch)=>setDraft(applyAuthoringV2Patches(draft,[patch])),onClose:()=>setSelected(undefined)}));
+}
+createRoot(document.getElementById('root')).render(React.createElement(App));
+</script></body></html>

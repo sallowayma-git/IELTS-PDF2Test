@@ -12,7 +12,7 @@
     },
     "ContentDocV2": {
       "path": "content-doc-v2.schema.json",
-      "sha256": "865f02f1cc669da44e5a69684ec2f69e41604c9bfea3c130892a0125e03fe0b3"
+      "sha256": "55d18bea6c1e39db300eda98d6d8c623515f4c7a4ecb0f3b0852cd827236b44d"
     },
     "IeltsAuthoringIRV2": {
       "path": "ielts-authoring-ir-v2.schema.json",

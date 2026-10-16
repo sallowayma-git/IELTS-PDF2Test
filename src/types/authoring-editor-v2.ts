@@ -41,6 +41,7 @@ export type AuthoringNodeAttributeV2 = {
   align?: "left" | "center" | "right" | "justify";
   indentLevel?: number;
   level?: number;
+  fontScale?: import("./content-doc-v2").FontScaleV2;
   altText?: string;
   placeholder?: string;
   displayLabel?: string;

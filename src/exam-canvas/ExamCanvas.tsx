@@ -1,4 +1,5 @@
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { StudentReadingTools } from "./StudentReadingTools";
 import { InlineTextEditor } from "./editors/InlineTextEditor";
 import { MatchingMatrix, matchingRowsFor } from "./renderers/MatchingMatrix";
 import { resolveAuthoringAssetPreview, type AuthoringAssetPreview } from "../api/tauriCommands";
@@ -31,6 +32,7 @@ export type ExamCanvasStructureAction =
 export interface ExamCanvasProps {
   authoring: IeltsAuthoringIRV2;
   mode: "student" | "author";
+  studentFontSize?: "normal" | "large" | "xlarge";
   selectedId?: string;
   onSelect?: (id: string) => void;
   onTextChange?: (node: Extract<ContentNodeV2, { type: "text" }>) => void;
@@ -334,7 +336,7 @@ function EditableTextNode({
 
 function nodeStyle(node: ContentNodeV2): CSSProperties | undefined {
   if (node.type === "paragraph") return node.align ? { textAlign: node.align } : undefined;
-  if (node.type === "heading") return undefined;
+  if (node.type === "heading") return { "--node-font-scale": node.fontScale ?? 1 } as CSSProperties;
   return undefined;
 }
 
@@ -451,7 +453,7 @@ function ContentNodes({ nodes, canvas }: { nodes: ContentNodeV2[] | undefined; c
       }
       case "heading": {
         const Heading = `h${Math.min(6, Math.max(1, node.level))}` as "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
-        return <Heading key={node.id} data-editor-id={node.id} className={`v2-heading${authorClass}${selectedClass}`} onClick={select}><ContentNodes nodes={node.children} canvas={canvas} /></Heading>;
+        return <Heading key={node.id} data-editor-id={node.id} className={`v2-heading${authorClass}${selectedClass}`} style={nodeStyle(node)} onClick={select}><ContentNodes nodes={node.children} canvas={canvas} /></Heading>;
       }
       case "bullet_list":
       case "ordered_list": {
@@ -696,6 +698,9 @@ function matrixHandled(
 }
 
 export function ExamCanvas(props: ExamCanvasProps) {
+  const readingRoot = useRef<HTMLDivElement>(null);
+  const [localFontSize, setLocalFontSize] = useState<"normal" | "large" | "xlarge">("normal");
+  const fontSize = props.studentFontSize ?? localFontSize;
   const runtime = useMemo(() => buildRuntimeViewModelV2(props.authoring), [props.authoring]);
   const interactionModel = useMemo(() => buildReadingInteractionModelV2(runtime), [runtime]);
   const [studentAnswers, setStudentAnswers] = useState<Record<string, string[]>>({});
@@ -1002,7 +1007,8 @@ export function ExamCanvas(props: ExamCanvasProps) {
   return <AnswerDragContext.Provider value={answerDrag}>
   <CanvasAnswersContext.Provider value={{ answers: canvasAnswers, setText, setOption }}>
     <OptionDragContext.Provider value={optionDrag}>
-    <div className={`exam-canvas-v2 ${props.mode === "author" ? "is-author" : "is-student"}${listening ? " is-listening" : ""}`} data-testid={`exam-canvas-v2-${props.mode}`} inert={props.locked || undefined}>
+    <div ref={readingRoot} style={props.mode === "student" ? { "--student-font-size": String({ normal: 16, large: 18, xlarge: 20 }[fontSize]) + "px" } as CSSProperties : undefined} className={`exam-canvas-v2 ${props.mode === "author" ? "is-author" : "is-student"}${listening ? " is-listening" : ""}`} data-testid={`exam-canvas-v2-${props.mode}`} inert={props.locked || undefined}>
+    {props.mode === "student" ? <StudentReadingTools root={readingRoot} fontSize={fontSize} onFontSizeChange={props.studentFontSize ? undefined : setLocalFontSize} /> : null}
     {!props.comparisonPreview && (listening ? (
       <ListeningHeader
         itemId={props.authoring.jobId}
@@ -1029,7 +1035,7 @@ export function ExamCanvas(props: ExamCanvasProps) {
         ) : null}
         {runtime.taskGroups.filter((task) => !shownTaskIds || shownTaskIds.has(task.taskId)).map((task) => <article key={task.taskId} className={`question-group unified-group v2-task-group${props.selectedId === task.taskId ? " is-selected" : ""}`} data-group-id={task.taskId} data-editor-id={task.taskId} onClick={() => props.mode === "author" && props.onSelect?.(task.taskId)}>
           {props.taskAdornment?.(task.taskId)}
-          <header className="v2-task-header"><h2>{taskTypeLabel(task.taskType)}</h2><div className="v2-instruction"><ContentNodes nodes={task.instructions} canvas={props} /></div></header>
+          <header className="v2-task-header">{props.mode === "author" ? <span className="v2-editor-task-badge">{taskTypeLabel(task.taskType)}</span> : null}<div className="v2-instruction"><ContentNodes nodes={task.instructions} canvas={props} /></div></header>
           {task.stimulus?.length ? <div className="v2-stimulus"><ContentNodes nodes={task.stimulus} canvas={props} /></div> : null}
           {(() => {
             // Matching 走矩阵版式：共享选项库 + 每行一个答案位（计划 §9.8）。
