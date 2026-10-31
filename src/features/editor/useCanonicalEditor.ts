@@ -136,6 +136,9 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
   const redoStack = useRef<HistoryEntry[]>([]);
   const timer = useRef<number | undefined>(undefined);
   const inFlight = useRef<Promise<void> | undefined>(undefined);
+  // An N+1 event during an N-based request may be ours OR another writer's.
+  // Hold it until the save result proves which; never guess from timing alone.
+  const saveNotificationRef = useRef<{ expected: number; received: boolean } | undefined>(undefined);
   /** 本轮冲突是否已经自动重放过一次（成功保存后复位）。只自动一次，避免与后台写入无限追逐。 */
   const autoRebaseTried = useRef(false);
   const recoveryKey = `${RECOVERY_KEY_PREFIX}${itemId}`;
@@ -176,6 +179,16 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
     setDeferredRemoteRefresh(undefined);
   }, []);
 
+  const deferRemoteVersion = useCallback((incoming: number | null | undefined) => {
+    const version = typeof incoming === "number" && Number.isFinite(incoming) ? incoming : undefined;
+    const previous = deferredRemoteRef.current;
+    const merged: DeferredRemoteRefresh = {
+      version: !previous ? version : version === undefined || previous.version === undefined ? undefined : Math.max(version, previous.version)
+    };
+    deferredRemoteRef.current = merged;
+    setDeferredRemoteRefresh(merged);
+  }, []);
+
   /**
    * 主动重拉：作废推迟记录并触发一次加载。
    *
@@ -194,10 +207,11 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
    * 界面会一直停在改动前的结论，直到用户下次手动刷新。
    */
   const applyDeferredRemoteRefreshAfterSave = useCallback(() => {
+    if (countUnsaved()) return;
     if (shouldApplyDeferredRemoteRefresh(deferredRemoteRef.current, versionRef.current)) {
       requestReload();
-    }
-  }, [requestReload]);
+    } else clearDeferredRemoteRefresh();
+  }, [requestReload, clearDeferredRemoteRefresh, countUnsaved]);
 
   /**
    * 把一次冲突重放的结果收进编辑器状态（自动重放与「重试保存」共用）。
@@ -257,21 +271,31 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
           setSaveState("saving");
           setSaveMessage(undefined);
           setSaveErrorDetail(undefined);
-          const result = await applyEditorCommands(batchRef.current);
-          setVersion(result.editVersion);
+          const notification = { expected: batchRef.current.baseVersion + 1, received: false };
+          saveNotificationRef.current = notification;
+          try {
+            const result = await applyEditorCommands(batchRef.current);
+            setVersion(result.editVersion);
+          } finally {
+            saveNotificationRef.current = undefined;
+            // Failure means the held event could be another writer's N+1.
+            if (notification.received && notification.expected > versionRef.current) deferRemoteVersion(notification.expected);
+          }
           batchRef.current = undefined;
           checkpoint();
         }
         autoRebaseTried.current = false;
         setSaveState("saved");
         setSaveErrorDetail(undefined);
+        applyDeferredRemoteRefreshAfterSave();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         // 云端校核锁不是保存失败：保留待保存队列、进入 locked 态（提示"暂缓保存"而非变红），
         // 解锁后由工作区补发。
         if (message.includes("CLOUD_REVIEW_IN_PROGRESS")) {
           setSaveState("locked");
-          setSaveMessage(undefined);
+          const partPending = [...(batchRef.current?.commands ?? []), ...pendingRef.current].some(patch => patch.op === "setExamCategory");
+          setSaveMessage(partPending ? "Part 修改尚未保存：云端正在处理。你的选择已保留，处理结束后会自动重试保存。" : undefined);
           setSaveErrorDetail(message);
           checkpoint();
           throw error;
@@ -322,7 +346,7 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
     // Start in a microtask so even an immediate failure clears the assigned promise.
     inFlight.current = Promise.resolve().then(run).finally(() => { inFlight.current = undefined; });
     return inFlight.current;
-  }, [itemId, checkpoint, adoptRebase]);
+  }, [itemId, checkpoint, adoptRebase, deferRemoteVersion, applyDeferredRemoteRefreshAfterSave, setVersion]);
 
   /**
    * 收到「权威稿版本推进」通知时的处置。
@@ -343,6 +367,8 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
       requestReload();
       return;
     }
+    const saving = saveNotificationRef.current;
+    if (saving && incoming === saving.expected) { saving.received = true; return; }
     const action = decideRemoteVersionAction({
       incoming,
       current: versionRef.current,
@@ -353,16 +379,8 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
       requestReload();
       return;
     }
-    const version = typeof incoming === "number" && Number.isFinite(incoming) ? incoming : undefined;
-    const previous = deferredRemoteRef.current;
-    // 连续推迟时保留**最大**版本号：后处理的一条通知版本可能更小，不能让它把
-    // 「更靠后的那次变更」这件事冲掉。
-    const merged: DeferredRemoteRefresh = {
-      version: version === undefined ? previous?.version : Math.max(version, previous?.version ?? version)
-    };
-    deferredRemoteRef.current = merged;
-    setDeferredRemoteRefresh(merged);
-  }, [countUnsaved, requestReload]);
+    deferRemoteVersion(incoming);
+  }, [countUnsaved, requestReload, deferRemoteVersion]);
 
   useEffect(() => {
     let cancelled = false;
@@ -423,9 +441,9 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
       // 保存排空后补读被推迟的远端变更（见 `noteRemoteVersion`）。放在这里而不是
       // `persist` 内部：`persist` 也被「刷新」「冲突恢复」调用，那些路径自己会读最新
       // 版本，再补一次就是多余往返。
-      void persist().then(applyDeferredRemoteRefreshAfterSave).catch(() => {});
+      void persist().catch(() => {});
     }, SAVE_DEBOUNCE_MS);
-  }, [persist, checkpoint, applyDeferredRemoteRefreshAfterSave]);
+  }, [persist, checkpoint]);
 
   const setTitle = useCallback((next: string) => {
     const trimmed = next.trim();

@@ -359,7 +359,9 @@
 .v2-matching-matrix { min-width: 0; margin: 12px 0; overflow-x: auto; }
 
 .v2-matching-matrix > table {
-  min-width: max-content;
+  width: 100%;
+  min-width: 30em;
+  font: inherit;
   border-collapse: separate;
   border-spacing: 0 4px;
 }
@@ -386,15 +388,17 @@
   vertical-align: middle;
 }
 
-.v2-matching-item-head { min-width: 220px; text-align: left; }
-.v2-matching-option-head { width: 44px; }
+.v2-matching-item-head { width: 100%; min-width: 14em; text-align: left; }
+.v2-matching-option-head { min-width: 2.4em; }
 .v2-matching-item { font-weight: 400; }
 .v2-matching-item .v2-slot-number { margin-right: 8px; font-weight: 700; color: var(--paper-ink, #111); }
 .v2-matching-prompt { overflow-wrap: anywhere; }
+.v2-matching-prompt .v2-paragraph { display: inline; margin: 0; }
 
 .v2-matching-cell { text-align: center; }
-.v2-matching-cell label { display: grid; place-items: center; margin: 0; }
-.v2-matching-cell input { width: 13px; height: 13px; margin: 0; }
+.v2-matching-cell label { display: grid; place-items: center; margin: 0; padding: .4em; cursor: pointer; }
+.v2-matching-cell input { width: 1em; height: 1em; margin: 0; accent-color: var(--exam-accent, #2b4c7e); }
+.v2-matching-cell:has(input:checked) { background: color-mix(in srgb, var(--exam-accent, #2b4c7e) 12%, transparent); }
 
 .v2-matching-matrix tr.is-selected { background: rgba(65, 143, 198, 0.06); }
 
@@ -809,7 +813,12 @@
 .student-font-controls { display: inline-flex; gap: 3px; align-items: center; }
 .student-font-controls button { padding: 3px 8px; font: inherit; white-space: nowrap; }
 .student-font-controls button[aria-pressed="true"] { background: #e4edf5; box-shadow: inset 0 0 0 1px #418fc6; }
-.student-reading-toolbar { position: absolute; top: 0; right: 16px; z-index: 3; background: white; }
+.student-reading-toolbar { position: absolute; top: 0; right: 16px; z-index: 3; display: flex; gap: 8px; background: var(--paper-panel, white); }
+.student-notes-panel { position: absolute; top: 40px; right: 16px; z-index: 4; width: min(360px, calc(100% - 32px)); background: var(--paper-panel, white); color: var(--paper-ink, #111); border: 1px solid #8f8f8f; border-radius: 4px; box-shadow: 0 2px 8px #0003; }
+.student-notes-panel header { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid #8f8f8f; }
+.student-notes-panel textarea { display: block; box-sizing: border-box; width: 100%; min-height: 220px; resize: vertical; border: 0; padding: 12px; font: inherit; background: transparent; color: inherit; }
+.student-notes-panel button { padding: 4px 12px; border: 1px solid #8f8f8f; border-radius: 3px; background: transparent; color: inherit; font-size: 13px; }
 .student-highlight-toolbar { z-index: 1000; display: flex; gap: 6px; padding: 6px; border: 1px solid #c4cbd2; border-radius: 5px; background: white; box-shadow: 0 2px 8px #0003; }
 .student-highlight-toolbar button { font: 14px Arial, sans-serif; padding: 4px 8px; }
-.exam-canvas-v2.is-student .hl { background: #ffeb80; color: inherit; }
+.exam-canvas-v2.is-student .hl { background: rgb(125, 74, 90); color: #fff; }
+.exam-canvas-v2.is-student .hl[data-hl-type="note"] { background: rgb(32, 76, 207); color: #fff; cursor: pointer; }

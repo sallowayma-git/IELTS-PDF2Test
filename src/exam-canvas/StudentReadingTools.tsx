@@ -15,12 +15,16 @@ export function StudentReadingTools({ root, fontSize, onFontSizeChange }: {
 }) {
   const rangeRef = useRef<Range | null>(null);
   const activeRef = useRef<HTMLElement | null>(null);
+  const noteAreaRef = useRef<HTMLTextAreaElement>(null);
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [noteText, setNoteText] = useState("");
+  useEffect(() => { if (notesOpen) noteAreaRef.current?.focus(); }, [notesOpen, noteText]);
   const [toolbar, setToolbar] = useState<{ top: number; left: number; canRemove: boolean }>();
   useEffect(() => {
     const container = root.current;
     if (!container) return;
     const pane = (node: Node) => (node.nodeType === Node.TEXT_NODE ? node.parentElement : node as Element)?.closest(".reading-pane");
-    const show = (rect: DOMRect, canRemove: boolean) => setToolbar({ top: Math.max(8, rect.top < 80 ? rect.bottom + 8 : rect.top - 42), left: Math.max(8, Math.min(rect.left, window.innerWidth - 240)), canRemove });
+    const show = (rect: DOMRect, canRemove: boolean) => setToolbar({ top: Math.max(8, rect.top < 80 ? rect.bottom + 8 : rect.top - 42), left: Math.max(8, Math.min(rect.left, window.innerWidth - 320)), canRemove });
     const selected = () => {
       const selection = window.getSelection();
       if (!selection?.rangeCount || selection.isCollapsed) return;
@@ -33,7 +37,7 @@ export function StudentReadingTools({ root, fontSize, onFontSizeChange }: {
     };
     const clicked = (event: MouseEvent) => {
       const target = event.target as Element;
-      if (target.closest(".student-highlight-toolbar")) return;
+      if (target.closest(".student-highlight-toolbar,.student-reading-toolbar,.student-notes-panel")) return;
       const highlight = target.closest<HTMLElement>(".hl");
       if (highlight && container.contains(highlight)) { activeRef.current = highlight; rangeRef.current = null; show(highlight.getBoundingClientRect(), true); }
       else if (window.getSelection()?.isCollapsed) setToolbar(undefined);
@@ -48,13 +52,32 @@ export function StudentReadingTools({ root, fontSize, onFontSizeChange }: {
       document.removeEventListener("click", clicked);
       container.removeEventListener("mouseup", selected);
       container.removeEventListener("scroll", hide, true);
+      // DOM decorations belong to this preview session, never to the author view.
+      container.querySelectorAll(".hl").forEach(el => el.replaceWith(...el.childNodes));
     };
   }, [root]);
   const finish = () => { window.getSelection()?.removeAllRanges(); rangeRef.current = null; activeRef.current = null; setToolbar(undefined); };
   return <>
-    {onFontSizeChange ? <div className="student-reading-toolbar"><StudentFontSizeControls value={fontSize} onChange={onFontSizeChange} /></div> : null}
+    <div className="student-reading-toolbar"><button type="button" aria-label="Note" aria-expanded={notesOpen} onClick={() => setNotesOpen(true)}>Note</button>{onFontSizeChange ? <StudentFontSizeControls value={fontSize} onChange={onFontSizeChange} /> : null}</div>
+    {notesOpen ? <aside className="student-notes-panel" aria-label="Notes"><header><strong>Notes</strong><button type="button" onClick={() => setNotesOpen(false)}>Close</button></header><textarea ref={noteAreaRef} aria-label="Notes" value={noteText} onChange={event => setNoteText(event.target.value)} /></aside> : null}
     {toolbar ? <div className="student-highlight-toolbar" role="toolbar" aria-label="Highlight selection" style={{ position: "fixed", top: toolbar.top, left: toolbar.left }} onPointerDown={(event) => event.preventDefault()}>
       <button type="button" disabled={!!activeRef.current} onClick={() => { if (rangeRef.current) wrapRangeTextWithHighlight(rangeRef.current, { kind: "highlight" }); finish(); }}>Highlight</button>
+      <button type="button" data-action="note" onClick={() => {
+        const active = activeRef.current;
+        let text = "";
+        if (active) {
+          text = active.textContent?.trim() ?? "";
+          active.dataset.kind = active.dataset.hlType = "note";
+          active.dataset.note = text;
+        } else if (rangeRef.current) {
+          const result = wrapRangeTextWithHighlight(rangeRef.current, { kind: "note", noteText: rangeRef.current.toString().trim() });
+          if (result.applied) text = result.text;
+        }
+        text = text.replace(/\s+/g, " ").trim();
+        if (text) setNoteText(previous => `${previous ? `${previous.trimEnd()}\n\n` : ""}> ${text}\n`);
+        setNotesOpen(true);
+        finish();
+      }}>Note</button>
       <button type="button" disabled={!toolbar.canRemove} onClick={() => {
         const range = rangeRef.current;
         const targets = activeRef.current ? [activeRef.current] : [...root.current!.querySelectorAll<HTMLElement>(".hl")].filter((el) => range?.intersectsNode(el));

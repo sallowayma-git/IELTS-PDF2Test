@@ -734,12 +734,13 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             className="ghost small"
             data-testid="workspace-cloud-review-stop"
             disabled={Boolean(busyAction)}
-            onClick={() => {
-              // cancel_requested_at 非空即解锁，且只停云端、保留当前正式稿（见 queue.rs 注释）。
+            onClick={() => void withBusy("stop-cloud", async () => {
+              // Unlock/retry only after the durable cancellation commits. An
+              // optimistic unlock races flush against the still-active lock.
+              await cancelProcessing(itemId);
               setCloudStopRequested(true);
-              void cancelProcessing(itemId).catch(() => {});
               setNotice("已请求停止云端校核，当前题稿保持不变。");
-            }}
+            })}
           >停止云端校核</button>
         </div>
       ) : null}

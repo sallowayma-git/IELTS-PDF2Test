@@ -49,6 +49,58 @@ function headingDraft(answerKey: IeltsAuthoringIRV2["answerKey"] = {
 afterEach(cleanup);
 
 describe("task presentation in the authoring canvas", () => {
+  function matrixDraft() {
+    const draft = headingDraft();
+    const task = draft.taskGroups[0]; task.taskType = "matching_information";
+    const response = task.responseGroups[0];
+    task.responseGroups = ["q14", "q15"].map((id, index) => ({ ...response, responseGroupId: `row-${id}`, slotIds: [id], prompt: [{ type: "text", id: `prompt-${id}`, text: `Information ${index + 1}`, sourceAnchors: [], provenanceStatus: "source" }] }));
+    for (const slot of Object.values(draft.answerSlots)) { slot.interaction = "radio"; slot.hostType = "prompt"; delete slot.hostNodeId; }
+    return draft;
+  }
+  it.each(["author", "student"] as const)("renders derived inline paragraph choices as a matrix in %s mode, without inventing editable options", mode => {
+    const draft = matrixDraft(); const task = draft.taskGroups[0];
+    delete task.optionBank; task.responseGroups.forEach(r => delete r.optionBankRef);
+    const before = JSON.stringify(draft); const onAnswerChange = vi.fn();
+    const { container } = render(<ExamCanvas authoring={draft} mode={mode} onAnswerChange={onAnswerChange} onStructureAction={vi.fn()} />);
+    expect(container.querySelectorAll('.v2-matching-matrix tbody tr')).toHaveLength(2);
+    expect([...container.querySelectorAll('.v2-matching-option-head')].map(el => el.textContent)).toEqual(["A", "B"]);
+    expect(container.querySelector('.v2-matching-item')?.textContent).toBe("14Information 1");
+    expect(container.querySelector('.v2-response-group,.v2-option-add,.v2-option-delete,.v2-option-drag-handle')).toBeNull();
+    fireEvent.click(container.querySelector('input[name="q14"][value="A"]')!);
+    if (mode === "author") expect(onAnswerChange).toHaveBeenCalledWith("q14", { kind: "option", labels: ["A"], assignment: "per_slot" });
+    else { expect(onAnswerChange).not.toHaveBeenCalled(); expect(container.querySelector<HTMLInputElement>('input[name="q14"][value="A"]')!.checked).toBe(true); }
+    expect(JSON.stringify(draft)).toBe(before);
+  });
+  it("accepts equal explicit inline sets in different order, preserves the first row order and author option controls", () => {
+    const draft = matrixDraft(); const task = draft.taskGroups[0];
+    delete task.optionBank;
+    task.responseGroups.forEach((r, index) => { delete r.optionBankRef; r.options = index ? [option('b', 'B'), option('a', 'A')] : [option('a', 'A'), option('b', 'B')]; });
+    const onStructureAction = vi.fn();
+    const { container } = render(<ExamCanvas authoring={draft} mode="author" onStructureAction={onStructureAction} />);
+    expect([...container.querySelectorAll('.v2-matching-option-head')].map(el => el.textContent)).toEqual(["A", "B"]);
+    expect(container.querySelectorAll('.v2-matrix-option-editor')).toHaveLength(2);
+    fireEvent.click(screen.getAllByRole('button', { name: '添加选项', hidden: true })[0]);
+    expect(onStructureAction).toHaveBeenCalledWith({ type: 'option.add', taskId: task.taskId, responseGroupId: 'row-q14', afterOptionId: 'b' });
+  });
+  it("uses the task option bank when matching rows omit optionBankRef", () => {
+    const draft = matrixDraft();
+    draft.taskGroups[0].responseGroups.forEach(row => delete row.optionBankRef);
+    const { container } = render(<ExamCanvas authoring={draft} mode="student" />);
+    expect(container.querySelectorAll('.v2-matching-matrix tbody tr')).toHaveLength(2);
+    expect(container.querySelectorAll('.v2-matching-option-head')).toHaveLength(2);
+  });
+  it.each(["different-id", "different-label", "dragdrop", "select", "multiple-slots", "unordered_set"])("keeps the response list for %s", reason => {
+    const draft = matrixDraft(); const task = draft.taskGroups[0];
+    task.responseGroups.forEach(r => { delete r.optionBankRef; r.options = [option('a', 'A'), option('b', 'B')]; });
+    if (reason === 'different-id') task.responseGroups[1].options![0].optionId = 'other-a';
+    if (reason === 'different-label') task.responseGroups[1].options![0].label = 'C';
+    if (reason === 'dragdrop' || reason === 'select') draft.answerSlots.q15.interaction = reason;
+    if (reason === 'multiple-slots') { task.responseGroups[0].slotIds.push('q15'); task.responseGroups.pop(); }
+    if (reason === 'unordered_set') task.responseGroups[1].assignment = 'unordered_set';
+    const { container } = render(<ExamCanvas authoring={draft} mode="student" />);
+    expect(container.querySelector('.v2-matching-matrix')).toBeNull();
+    expect(container.querySelector('.v2-response-group')).not.toBeNull();
+  });
   it("paragraph-map choices can be selected but cannot be edited as invented option-bank rows", () => {
     const draft = headingDraft();
     const task = draft.taskGroups[0];

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import fixture from "../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json";
 import type { AuthoringPatchV2, IeltsAuthoringIRV2 } from "../types";
 import { ExamCanvas } from "./ExamCanvas";
@@ -15,6 +15,54 @@ function draft(): IeltsAuthoringIRV2 {
   return result;
 }
 describe("student reading experience", () => {
+  it("opens Notes from the topbar, retains typed notes after Close, and clears them when leaving preview", () => {
+    const source = draft();
+    const before = JSON.stringify(source);
+    const onAnswerChange = vi.fn();
+    const { rerender } = render(<ExamCanvas authoring={source} mode="student" onAnswerChange={onAnswerChange} />);
+    fireEvent.click(screen.getByRole("button", { name: "Note" }));
+    const panel = screen.getByRole("complementary", { name: "Notes" });
+    fireEvent.change(within(panel).getByRole("textbox", { name: "Notes" }), { target: { value: "My notes" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("textbox", { name: "Notes" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Note" }));
+    expect((screen.getByRole("textbox", { name: "Notes" }) as HTMLTextAreaElement).value).toBe("My notes");
+    rerender(<ExamCanvas authoring={source} mode="author" onAnswerChange={onAnswerChange} />);
+    expect(screen.queryByRole("button", { name: "Note" })).toBeNull();
+    rerender(<ExamCanvas authoring={source} mode="student" onAnswerChange={onAnswerChange} />);
+    fireEvent.click(screen.getByRole("button", { name: "Note" }));
+    expect((screen.getByRole("textbox", { name: "Notes" }) as HTMLTextAreaElement).value).toBe("");
+    expect(onAnswerChange).not.toHaveBeenCalled();
+    expect(JSON.stringify(source)).toBe(before);
+  });
+  it.each([".v2-passage-pane .v2-text", ".v2-question-pane .v2-text"])("captures a selection Note in %s and promotes an existing highlight without persisting", selector => {
+    const source = draft();
+    const before = JSON.stringify(source);
+    const onAnswerChange = vi.fn();
+    const { container, rerender } = render(<ExamCanvas authoring={source} mode="student" onAnswerChange={onAnswerChange} />);
+    const node = container.querySelector(selector)!.firstChild!;
+    const range = document.createRange(); range.selectNodeContents(node);
+    range.getBoundingClientRect = () => ({ top: 140, left: 50, bottom: 160 } as DOMRect);
+    const selected = range.toString().replace(/\s+/g, " ").trim();
+    window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+    fireEvent(document, new Event("selectionchange"));
+    fireEvent.click(within(screen.getByRole("toolbar")).getByRole("button", { name: "Note" }));
+    const mark = container.querySelector<HTMLElement>('.hl[data-kind="note"][data-hl-type="note"]')!;
+    expect(mark.textContent).toBe(selected);
+    expect((screen.getByRole("textbox", { name: "Notes" }) as HTMLTextAreaElement).value).toBe(`> ${selected}\n`);
+    // Promotion reuses the existing DOM mark, and appends the same NAS quote format.
+    mark.dataset.kind = mark.dataset.hlType = "highlight";
+    mark.getBoundingClientRect = range.getBoundingClientRect;
+    fireEvent.click(mark);
+    fireEvent.click(within(screen.getByRole("toolbar")).getByRole("button", { name: "Note" }));
+    expect(mark.dataset.kind).toBe("note");
+    expect(container.querySelectorAll(".hl")).toHaveLength(1);
+    expect((screen.getByRole("textbox", { name: "Notes" }) as HTMLTextAreaElement).value).toBe(`> ${selected}\n\n> ${selected}\n`);
+    expect(onAnswerChange).not.toHaveBeenCalled();
+    expect(JSON.stringify(source)).toBe(before);
+    rerender(<ExamCanvas authoring={source} mode="author" />);
+    expect(container.querySelector(".hl")).toBeNull();
+  });
   it("hides editor task labels, preserves instructions, and exposes three zoom levels only in student mode", () => {
     const source = draft();
     const { container, rerender } = render(<ExamCanvas authoring={source} mode="student" />);

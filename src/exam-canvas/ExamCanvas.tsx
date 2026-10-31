@@ -687,13 +687,16 @@ function containsAnswerSlot(nodes: ContentNodeV2[] | undefined, slotIds?: Set<st
 /** 矩阵已经完整呈现该 task 时，不再重复渲染逐组列表。 */
 function matrixHandled(
   task: TaskGroupV2,
-  runtime: { questionDisplayMap: Record<string, string>; answerSlots: Record<string, { interaction?: string }> }
+  runtime: { questionDisplayMap: Record<string, string>; answerSlots: Record<string, { interaction?: string }> },
+  paragraphMap?: Record<string, string>
 ): boolean {
-  if (!task.optionBank?.options.length) return false;
   return matchingRowsFor(
     task.responseGroups,
     runtime.questionDisplayMap,
-    (slotId) => (runtime.answerSlots[slotId]?.interaction === "checkbox" ? "checkbox" : "radio")
+    (slotId) => runtime.answerSlots[slotId]?.interaction,
+    response => response.options?.length ? response.options : task.optionBank?.options ?? [],
+    task.taskType,
+    paragraphMap
   ).length > 0;
 }
 
@@ -1003,7 +1006,10 @@ export function ExamCanvas(props: ExamCanvasProps) {
   const optionRowProps = (option: OptionV2) => props.mode === "author" && props.onStructureAction
     ? { "data-option-row": "", "data-option-id": option.optionId }
     : {};
-  const optionsFor = (task: TaskGroupV2, response: ResponseGroupV2) => interactionModel.responseGroups[response.responseGroupId]?.options ?? task.optionBank?.options ?? [];
+  const optionsFor = (task: TaskGroupV2, response: ResponseGroupV2) => {
+    const options = interactionModel.responseGroups[response.responseGroupId]?.options;
+    return options?.length ? options : task.optionBank?.options ?? [];
+  };
 
   return <AnswerDragContext.Provider value={answerDrag}>
   <CanvasAnswersContext.Provider value={{ answers: canvasAnswers, setText, setOption }}>
@@ -1039,26 +1045,32 @@ export function ExamCanvas(props: ExamCanvasProps) {
           <header className="v2-task-header">{props.mode === "author" ? <span className="v2-editor-task-badge">{taskTypeLabel(task.taskType)}</span> : null}<div className="v2-instruction"><ContentNodes nodes={task.instructions} canvas={props} /></div></header>
           {task.stimulus?.length ? <div className="v2-stimulus"><ContentNodes nodes={task.stimulus} canvas={props} /></div> : null}
           {(() => {
-            // Matching 走矩阵版式：共享选项库 + 每行一个答案位（计划 §9.8）。
+            // Matching 矩阵：相同选项集合、每行一个 radio/checkbox 答案位。
             // 不符合矩阵前提的 matching（多答案位、unordered_set）继续走下面的逐组列表。
-            const bankOptions = (task as TaskGroupV2).optionBank?.options ?? [];
-            if (!bankOptions.length) return null;
             const rows = matchingRowsFor(
               task.responseGroups as ResponseGroupV2[],
               runtime.questionDisplayMap,
-              (slotId) => runtime.answerSlots[slotId]?.interaction === "checkbox" ? "checkbox" : "radio"
+              (slotId) => runtime.answerSlots[slotId]?.interaction,
+              response => optionsFor(task as TaskGroupV2, response),
+              task.taskType,
+              props.authoring.passage?.paragraphMap
             );
             if (!rows.length) return null;
-            return <MatchingMatrix
+            return <><MatchingMatrix
               rows={rows}
-              options={bankOptions}
+              options={optionsFor(task as TaskGroupV2, rows[0].responseGroup)}
               answers={canvasAnswers}
               selectedId={props.selectedId}
               interactive
               renderContent={(nodes) => nodes?.length ? <ContentNodes nodes={nodes} canvas={props} /> : null}
               onSelectOption={setOption}
               onSelectTarget={props.mode === "author" ? props.onSelect : undefined}
-            />;
+            />{props.mode === "author" ? rows.filter((row, index) => row.responseGroup.options?.length || index === 0).map(row => {
+              const response = row.responseGroup;
+              if (!optionSourceEditable(props, task.taskId, response.responseGroupId)) return null;
+              const options = optionsFor(task as TaskGroupV2, response);
+              return <details key={row.slotId} className="v2-matrix-option-editor"><summary>编辑选项 · {row.displayNumber}</summary><ol data-option-list="">{options.map((option, index) => <li key={option.optionId} {...optionRowProps(option)}><OptionDragHandle canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} index={index} /><strong>{option.label}</strong><ContentNodes nodes={option.content} canvas={props} /><OptionDeleteButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} option={option} count={options.length} /></li>)}</ol><OptionAddButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} /></details>;
+            }) : null}</>;
           })()}
           {task.responseGroups.map((response) => {
             const options = optionsFor(task as TaskGroupV2, response);
@@ -1067,7 +1079,7 @@ export function ExamCanvas(props: ExamCanvasProps) {
               ? <AnswerOptionPool key={`pool-${response.responseGroupId}`} canvas={props} task={task as TaskGroupV2} response={response} options={options} />
               : null;
           })}
-          {matrixHandled(task as TaskGroupV2, runtime) ? null : task.responseGroups.map((response) => {
+          {matrixHandled(task as TaskGroupV2, runtime, props.authoring.passage?.paragraphMap) ? null : task.responseGroups.map((response) => {
             const options = optionsFor(task as TaskGroupV2, response);
             const unordered = response.assignment === "unordered_set";
             // 学生端 ReadingExamV2Renderer 用 `cardinality.max` 作为共享选择的禁用阈值

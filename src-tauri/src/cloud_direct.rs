@@ -2586,6 +2586,24 @@ fn write_direct_canonical_inner(
             return Ok(1);
         };
         let mut merged = document.clone();
+        // setExamCategory protects the exam scope. A late direct result (or
+        // re-recognition) must preserve that scope just as repair writes do.
+        // The subsequent CAS rejects a human edit between this read and commit;
+        // on retry both the document and protection are read again.
+        if crate::library::repository::human_protected_targets(&conn, job_id, &current)?
+            .contains("$top:exam")
+        {
+            merged["exam"] = current["exam"].clone();
+        } else if let Some(item) = crate::library::repository::get_item(&conn, job_id)? {
+            // Pre-protection-library versions stored manual Part only in the
+            // projection. Respect that evidence even if lazy alignment is
+            // postponed by the running job's cloud lock.
+            if item.modality == "reading" && item.part_source.as_deref() == Some("manual") {
+                if let Some(part) = item.part_label.as_deref().filter(|part| matches!(*part, "P1" | "P2" | "P3")) {
+                    merged["exam"]["category"] = json!(part);
+                }
+            }
+        }
         // 资源清单是后端/用户身份，不随直出替换。
         if let Some(assets) = current.get("assets") {
             let mut combined = assets.as_array().cloned().unwrap_or_default();
@@ -2633,7 +2651,7 @@ fn write_direct_canonical_inner(
                 title: None,
             },
             // 复用 CloudCandidateAdoption：语义即「云端产物提升为正式稿」，
-            // 事务里它对人工保护的处理与直出替换需要的一致。
+            // 整稿替换在上面合并 exam 人工保护；事务继续负责 CAS 和 journal。
             crate::library::repository::EditOrigin::CloudCandidateAdoption,
             None,
             &|document, patch| {
@@ -3764,6 +3782,52 @@ mod tests {
             2,
             "必须是新直出稿的答案位，不是旧稿的"
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn re_recognition_preserves_human_exam_scope_but_replaces_machine_content() {
+        use crate::library::repository::*;
+        let root = temp_root("protected-part");
+        crate::util::ensure_app_dirs(&root).unwrap();
+        let id = identity();
+        let mut old = normalize_direct_output(&root, &minimal_raw(), &id).unwrap();
+        old["exam"]["category"] = json!("P1");
+        let mut conn = open_library_connection(&root).unwrap();
+        upsert_item_shell(&conn, &UpsertItemInput {
+            id: &id.job_id, modality: "reading", title: "Test", status: "action_required", source_asset_id: None,
+        }).unwrap();
+        seed_canonical_ds(&conn, &id.job_id, &old.to_string(), "action_required").unwrap();
+        apply_editor_commands_tx(&mut conn, &ApplyEditorCommandsInput {
+            item_id: id.job_id.clone(), base_version: 1, request_id: Some("manual-part".into()),
+            commands: vec![json!({"op":"setExamCategory","category":"P3"})], title: None,
+        }, &crate::authoring_v2_commands::apply_patch, &|_| Ok(())).unwrap();
+        let protection = human_protected_targets(&conn, &id.job_id, &old).unwrap();
+        assert!(protection.contains("$top:exam"));
+        let mut incoming = old.clone();
+        incoming["passage"]["content"][0]["children"][0]["text"] = json!("Replacement machine passage.");
+        let version = write_direct_canonical(&root, &id.job_id, &incoming).unwrap();
+        let (saved, saved_version) = get_canonical_ds(&conn, &id.job_id).unwrap().unwrap();
+        assert_eq!(saved_version, version);
+        assert_eq!(version, 3);
+        assert_eq!(saved["exam"]["category"], json!("P3"));
+        assert_eq!(saved["passage"]["content"][0]["children"][0]["text"], json!("Replacement machine passage."));
+        let projected: (String, String) = conn.query_row("SELECT part_label,part_source FROM library_items_v2 WHERE id=?1", [&id.job_id], |row| Ok((row.get(0)?,row.get(1)?))).unwrap();
+        assert_eq!(projected, ("P3".into(), "manual".into()));
+        assert_eq!(human_protected_targets(&conn, &id.job_id, &saved).unwrap(), protection);
+        let origin: String = conn.query_row("SELECT edit_origin FROM editor_journal_v1 WHERE library_item_id=?1 ORDER BY id DESC LIMIT 1", [&id.job_id], |row| row.get(0)).unwrap();
+        assert_eq!(origin, "cloud_candidate_adoption");
+        // No human protection on a separate item: ordinary machine Part changes still work.
+        let other = "unprotected-reading";
+        upsert_item_shell(&conn, &UpsertItemInput { id: other, modality: "reading", title: "Other", status: "action_required", source_asset_id: None }).unwrap();
+        seed_canonical_ds(&conn, other, &old.to_string(), "action_required").unwrap();
+        incoming["exam"]["category"] = json!("P2");
+        write_direct_canonical(&root, other, &incoming).unwrap();
+        assert_eq!(get_canonical_ds(&conn, other).unwrap().unwrap().0["exam"]["category"], json!("P2"));
+        // Legacy manual projection also survives before lazy alignment/protection migration.
+        set_item_part(&conn, other, Some("P3"), Some("manual")).unwrap();
+        write_direct_canonical(&root, other, &incoming).unwrap();
+        assert_eq!(get_canonical_ds(&conn, other).unwrap().unwrap().0["exam"]["category"], json!("P3"));
         let _ = std::fs::remove_dir_all(root);
     }
 
