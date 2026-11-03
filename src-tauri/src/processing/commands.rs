@@ -31,6 +31,10 @@ pub(crate) struct ImportFileInput {
     pub title_hint: Option<String>,
     #[serde(default)]
     pub answer_files: Vec<String>,
+    /// 阅读整套卷子：按 `READING PASSAGE n` 标题把这份 PDF 拆成多篇，各建一条条目。
+    /// 用户在导入抽屉里确认（默认勾选）；判不出两篇以上时照常整份导入。
+    #[serde(default)]
+    pub split_passages: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -96,24 +100,7 @@ pub(crate) fn import_files_at_root(
     let mut rejected = Vec::new();
 
     for file in input.files {
-        let title = file
-            .title_hint
-            .clone()
-            .filter(|hint| !hint.trim().is_empty())
-            .unwrap_or_else(|| file.name.trim_end_matches(['.', ' ']).to_string());
-        let title = {
-            let stem = file
-                .name
-                .rsplit_once('.')
-                .map(|(stem, _)| stem)
-                .unwrap_or(&file.name);
-            if title.trim().is_empty() {
-                stem.to_string()
-            } else {
-                title
-            }
-        };
-
+        let title = import_title(&file);
         if file.size_bytes > MAX_IMPORT_FILE_BYTES {
             rejected.push(ImportRejectedFile {
                 name: file.name.clone(),
@@ -121,9 +108,170 @@ pub(crate) fn import_files_at_root(
             });
             continue;
         }
+        let options = SourceImportOptions {
+            cloud_enabled,
+            cloud_profile_id: input.cloud_profile_id.as_deref(),
+            cloud_token_budget,
+            modality,
+            pipeline_mode,
+        };
+        if file.split_passages && modality == "reading" {
+            if let Some(parts) = stage_passage_split(root, &file, &title) {
+                for part in &parts {
+                    let source = SourceToImport {
+                        path: &part.path,
+                        name: &part.name,
+                        answer_files: &file.answer_files,
+                        part: Some(&part.part),
+                    };
+                    match import_one_source(root, &source, &part.title, &options) {
+                        Ok(item) => created.push(item),
+                        Err(reason) => rejected.push(ImportRejectedFile {
+                            name: part.name.clone(),
+                            reason,
+                        }),
+                    }
+                }
+                remove_split_parts(&parts);
+                continue;
+            }
+        }
+        let source = SourceToImport {
+            path: &file.path,
+            name: &file.name,
+            answer_files: &file.answer_files,
+            part: None,
+        };
+        match import_one_source(root, &source, &title, &options) {
+            Ok(item) => created.push(item),
+            Err(reason) => rejected.push(ImportRejectedFile {
+                name: file.name.clone(),
+                reason,
+            }),
+        }
+    }
+
+    Ok(ImportFilesResult { created, rejected })
+}
+
+fn import_title(file: &ImportFileInput) -> String {
+    let title = file
+        .title_hint
+        .clone()
+        .filter(|hint| !hint.trim().is_empty())
+        .unwrap_or_else(|| file.name.trim_end_matches(['.', ' ']).to_string());
+    let stem = file
+        .name
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(&file.name);
+    if title.trim().is_empty() {
+        stem.to_string()
+    } else {
+        title
+    }
+}
+
+struct SourceImportOptions<'a> {
+    cloud_enabled: bool,
+    cloud_profile_id: Option<&'a str>,
+    cloud_token_budget: u64,
+    modality: &'static str,
+    pipeline_mode: &'static str,
+}
+
+struct SourceToImport<'a> {
+    path: &'a str,
+    name: &'a str,
+    answer_files: &'a [String],
+    /// 拆分出来的篇章标签（P1/P2/P3），来自原文标题行；整份导入为 `None`。
+    part: Option<&'a str>,
+}
+
+/// 一篇拆出来的子 PDF（临时文件，入库后删除）。
+struct SplitPart {
+    path: String,
+    name: String,
+    title: String,
+    part: String,
+}
+
+/// 把整套阅读卷子拆成每篇一份子 PDF。判不出两篇以上、或子 PDF 写不出来时返回
+/// `None`，调用方照常整份导入——绝不因为拆分失败丢掉这份文件。
+fn stage_passage_split(
+    root: &std::path::Path,
+    file: &ImportFileInput,
+    title: &str,
+) -> Option<Vec<SplitPart>> {
+    let source = std::path::Path::new(&file.path);
+    let plan = super::pdf_split::plan_pdf_file(source);
+    if !plan.is_multi() {
+        return None;
+    }
+    let stem = file
+        .name
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(&file.name)
+        .to_string();
+    let dir = root.join("tmp").join("import-split");
+    if let Err(error) = std::fs::create_dir_all(&dir) {
+        eprintln!("[import] split: create temp dir failed: {error}");
+        return None;
+    }
+    // 没有标题提示时整份导入的标题带扩展名；拆出来的篇名不重复带「.pdf」。
+    let base_title = match title.len().checked_sub(4).and_then(|cut| title.get(cut..).map(|ext| (cut, ext))) {
+        Some((cut, ext)) if ext.eq_ignore_ascii_case(".pdf") => &title[..cut],
+        _ => title,
+    };
+    let mut parts = Vec::new();
+    for segment in &plan.segments {
+        let suffix = segment.label.replace(" · ", " ");
+        // 只去掉路径/保留字符，保留中文等原文件名（originalName 要给用户看）。
+        let name: String = format!("{stem} - {suffix}.pdf")
+            .chars()
+            .map(|ch| if ch.is_control() || "<>:\"/\\|?*".contains(ch) { '-' } else { ch })
+            .collect();
+        // 每篇一个独立临时目录：staging 以文件名作为 originalName，不能带随机前缀。
+        let part_dir = dir.join(uuid::Uuid::new_v4().simple().to_string());
+        let path = part_dir.join(&name);
+        let written = std::fs::create_dir_all(&part_dir)
+            .map_err(|error| error.to_string())
+            .and_then(|_| super::pdf_split::write_segment_pdf(source, &plan, segment, &path));
+        if let Err(error) = written {
+            eprintln!("[import] split: {} segment {} failed: {error}", file.name, segment.label);
+            remove_split_parts(&parts);
+            let _ = std::fs::remove_dir_all(&part_dir);
+            return None;
+        }
+        parts.push(SplitPart {
+            path: path.to_string_lossy().to_string(),
+            name,
+            title: format!("{base_title} · {}", segment.label),
+            part: format!("P{}", segment.passage),
+        });
+    }
+    Some(parts)
+}
+
+fn remove_split_parts(parts: &[SplitPart]) {
+    for part in parts {
+        if let Some(dir) = std::path::Path::new(&part.path).parent() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+}
+
+/// 一份源文件 → 一条条目：建 job → 文件落地 → library 外壳 → 入队。失败时补偿清理。
+fn import_one_source(
+    root: &std::path::Path,
+    file: &SourceToImport<'_>,
+    title: &str,
+    options: &SourceImportOptions<'_>,
+) -> Result<ImportCreatedItem, String> {
         // 1. 建 job（元数据落 job.json，与既有链共用）。
         let job = make_job(CreateJobInput {
-            title: Some(title.clone()),
+            title: Some(title.to_string()),
             category: None,
             frequency: None,
             tags: None,
@@ -131,16 +279,16 @@ pub(crate) fn import_files_at_root(
         });
         let job_id = job.job_id.clone();
         let staged = (|| -> CommandResult<()> {
-            save_job(&root, &job)?;
+            save_job(root, &job)?;
             let budget_path = crate::util::job_dir(root, &job_id).join(CLOUD_TOKEN_BUDGET_FILE);
             std::fs::write(
                 budget_path,
-                json!({"tokenBudget": cloud_token_budget}).to_string(),
+                json!({"tokenBudget": options.cloud_token_budget}).to_string(),
             )
             .map_err(|error| format!("import_cloud_token_budget_save:{error}"))?;
             // 2. 文件落地：staging + hash 全部同步完成（数据库事务外，计划 §12.2）。
-            crate::job_commands::stage_source_file(root, &job_id, &file.path, "MainQuestion")?;
-            for answer in &file.answer_files {
+            crate::job_commands::stage_source_file(root, &job_id, file.path, "MainQuestion")?;
+            for answer in file.answer_files {
                 let extension = std::path::Path::new(answer).extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
                 if !["pdf","png","jpg","jpeg","txt","md"].contains(&extension.as_str()) { return Err("答案文件支持 PDF、PNG、JPEG、TXT、MD".into()); }
                 let size = std::fs::metadata(answer).map_err(|e| e.to_string())?.len();
@@ -152,44 +300,34 @@ pub(crate) fn import_files_at_root(
         if let Err(error) = staged {
             // G1 边界：save_job/staging 失败同样会留下 job 壳（目录 + job.json），
             // 与 queue 失败同口径补偿清理，不留磁盘孤儿。
-            rejected.push(ImportRejectedFile {
-                name: file.name.clone(),
-                reason: error,
-            });
             compensate_failed_import(root, &job_id);
-            continue;
+            return Err(error);
         }
 
         // 3. 数据库：library 外壳 + 处理任务入队（两个独立短写，文件操作已在外完成）。
         let queue_result: CommandResult<()> = queue_import(
-            &root,
+            root,
             &job_id,
-            &title,
-            &file.name,
-            cloud_enabled,
-            input.cloud_profile_id.as_deref(),
-            cloud_token_budget,
-            modality,
-            pipeline_mode,
+            title,
+            file.name,
+            options.cloud_enabled,
+            options.cloud_profile_id,
+            options.cloud_token_budget,
+            options.modality,
+            options.pipeline_mode,
+            file.part,
         );
         if let Err(error) = queue_result {
             // G1/A4-F01：queue 失败必须补偿——磁盘 job 目录（含 staged 文件）
             // 与可能残留的 DB 行一并清除，不留「磁盘有 job、DB 无可见行」的孤儿；
             // 以 rejected 明确告知用户（原始文件未被移动或修改）。
-            rejected.push(ImportRejectedFile {
-                name: file.name.clone(),
-                reason: error,
-            });
             compensate_failed_import(root, &job_id);
-            continue;
+            return Err(error);
         }
-        created.push(ImportCreatedItem {
-            item_id: job_id,
-            title,
-        });
-    }
-
-    Ok(ImportFilesResult { created, rejected })
+    Ok(ImportCreatedItem {
+        item_id: job_id,
+        title: title.to_string(),
+    })
 }
 
 /// G1/A4-F01 补偿删除：queue_import 失败后清空本次导入的痕迹。
@@ -236,6 +374,7 @@ fn queue_import(
     cloud_token_budget: u64,
     modality: &str,
     pipeline_mode: &str,
+    part: Option<&str>,
 ) -> CommandResult<()> {
     let conn = open_library_connection(root)?;
     let transaction =
@@ -252,6 +391,9 @@ fn queue_import(
         },
     )?;
     set_item_status(&transaction, job_id, "processing")?;
+    if let Some(part) = part {
+        crate::library::repository::set_item_part(&transaction, job_id, Some(part), Some("content"))?;
+    }
     super::queue::enqueue(
         &transaction,
         job_id,
@@ -358,6 +500,7 @@ mod tests {
                 size_bytes: 13,
                 title_hint: None,
                 answer_files: vec![],
+                split_passages: false,
             }],
             cloud_enabled: Some(false),
             cloud_profile_id: None,
@@ -379,6 +522,160 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    /// 一份 PDF 里的整套阅读卷子 → 每篇一条条目；每条的子 PDF 只含本篇页 + 答案页。
+    #[test]
+    fn whole_test_pdf_splits_into_one_item_per_passage() {
+        let root = temp_root();
+        crate::util::ensure_app_dirs(&root).unwrap();
+        let source = root.join("剑桥 Test 1.pdf");
+        let bytes = super::super::pdf_split::minimal_text_pdf(&[
+            &["READING PASSAGE 1", "The history of glass"],
+            &["Questions 1-13"],
+            &["READING PASSAGE 2", "The wild horse"],
+            &["Questions 14-26"],
+            &["READING PASSAGE 3", "Memory and sleep"],
+            &["Answer Key", "1 TRUE"],
+        ]);
+        fs::write(&source, &bytes).unwrap();
+        let input = ImportFilesInput {
+            files: vec![ImportFileInput {
+                path: source.to_string_lossy().to_string(),
+                name: "剑桥 Test 1.pdf".to_string(),
+                size_bytes: bytes.len() as u64,
+                title_hint: None,
+                answer_files: vec![],
+                split_passages: true,
+            }],
+            cloud_enabled: Some(false),
+            cloud_profile_id: None,
+            modality: None,
+            cloud_token_budget: None,
+            pipeline_mode: None,
+        };
+        let result = import_files_at_root(&root, input).unwrap();
+        let reasons: Vec<_> = result.rejected.iter().map(|r| r.reason.clone()).collect();
+        if crate::pdf_geometry::pdfium_library_path().is_none() {
+            // 本机没有 pdfium：拆分必须安全退回整份导入，绝不丢文件。
+            assert_eq!(result.created.len(), 1, "rejected: {reasons:?}");
+            let _ = fs::remove_dir_all(&root);
+            return;
+        }
+        assert!(reasons.is_empty(), "rejected: {reasons:?}");
+        let titles: Vec<_> = result.created.iter().map(|item| item.title.clone()).collect();
+        assert_eq!(titles, ["剑桥 Test 1 · P1", "剑桥 Test 1 · P2", "剑桥 Test 1 · P3"]);
+        let expected_pages = [3usize, 3, 2]; // 本篇页 + 1 页答案
+        for (item, expected) in result.created.iter().zip(expected_pages) {
+            let job = crate::job_store::load_job(&root, &item.item_id).unwrap();
+            assert_eq!(job.source_files.len(), 1);
+            let staged = crate::util::job_dir(&root, &item.item_id)
+                .join("uploads")
+                .join(&job.source_files[0].stored_name);
+            assert!(job.source_files[0].original_name.starts_with("剑桥 Test 1 - P"));
+            let text = pdf_extract::extract_text_by_pages(&staged).unwrap();
+            assert_eq!(text.len(), expected, "{}", item.title);
+            assert!(text.last().unwrap().contains("Answer Key"));
+        }
+        // 临时子 PDF 已清理。
+        let leftovers = fs::read_dir(root.join("tmp").join("import-split"))
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        assert_eq!(leftovers, 0);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// 拆出来的第二篇走真实本地识别链：识别成 P2、题号从 14 开始，不混进第一篇。
+    #[test]
+    fn split_passage_runs_through_local_recognition_as_its_own_part() {
+        if crate::pdf_geometry::pdfium_library_path().is_none() {
+            return;
+        }
+        let root = temp_root();
+        crate::util::ensure_app_dirs(&root).unwrap();
+        let source = root.join("full.pdf");
+        let passage = |n: &'static str, title: &'static str| -> Vec<&'static str> {
+            vec![
+                n,
+                "You should spend about 20 minutes on this reading passage.",
+                title,
+                "A Glass has been made for thousands of years in many places.",
+                "B Early makers used sand, soda and lime heated in simple furnaces.",
+                "C Modern factories produce flat glass by floating it on molten tin.",
+            ]
+        };
+        let p1 = passage("READING PASSAGE 1", "The history of glass");
+        let p2 = passage("READING PASSAGE 2", "The wild horse");
+        let q1: Vec<&str> = vec![
+            "Questions 1-3",
+            "Do the following statements agree with the information given in Reading Passage 1?",
+            "Write TRUE if the statement agrees with the information",
+            "FALSE if the statement contradicts the information",
+            "NOT GIVEN if there is no information on this",
+            "1 Glass is a recent invention.",
+            "2 Early furnaces were simple.",
+            "3 Float glass uses molten tin.",
+        ];
+        let q2: Vec<&str> = vec![
+            "Questions 14-16",
+            "Do the following statements agree with the information given in Reading Passage 2?",
+            "Write TRUE if the statement agrees with the information",
+            "FALSE if the statement contradicts the information",
+            "NOT GIVEN if there is no information on this",
+            "14 Wild horses live in herds.",
+            "15 Horses were first tamed in Europe.",
+            "16 Wild horses are endangered.",
+        ];
+        let bytes = super::super::pdf_split::minimal_text_pdf(&[&p1, &q1, &p2, &q2]);
+        fs::write(&source, &bytes).unwrap();
+        let result = import_files_at_root(
+            &root,
+            ImportFilesInput {
+                files: vec![ImportFileInput {
+                    path: source.to_string_lossy().to_string(),
+                    name: "full.pdf".to_string(),
+                    size_bytes: bytes.len() as u64,
+                    title_hint: Some("Full".to_string()),
+                    answer_files: vec![],
+                    split_passages: true,
+                }],
+                cloud_enabled: Some(false),
+                cloud_profile_id: None,
+                modality: None,
+                cloud_token_budget: None,
+                pipeline_mode: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(result.created.len(), 2);
+        let second = &result.created[1].item_id;
+        crate::auto_pipeline::run_auto_pipeline_core(
+            &root,
+            second,
+            Some(crate::AutoPipelineInput {
+                execution_mode: Some("localOnly".to_string()),
+                target: Some("editableDraft".to_string()),
+                ..Default::default()
+            }),
+        )
+        .expect("local pipeline on a split passage");
+        let session = crate::authoring_v2_commands::get_authoring_v2_core(&root, second).unwrap();
+        let authoring = session.get("authoring").cloned().unwrap();
+        let text = authoring.to_string();
+        assert!(text.contains("wild horse") || text.contains("Wild horse") || text.contains("The wild horse"), "{text}");
+        assert!(!text.contains("Glass is a recent invention"), "第一篇的题不能混进第二篇");
+        let numbers: Vec<u64> = authoring
+            .get("answerSlots")
+            .and_then(Value::as_object)
+            .map(|slots| slots.values().filter_map(|slot| slot.get("questionNumber").and_then(Value::as_u64)).collect())
+            .unwrap_or_default();
+        assert_eq!(numbers.iter().min(), Some(&14), "{numbers:?}");
+        assert_eq!(authoring.pointer("/exam/category").and_then(Value::as_str), Some("P2"));
+        // 题库行在识别完成前就显示 P2（来自拆分时的原文标题），用户在主界面就能分辨篇章。
+        let conn = open_library_connection(&root).unwrap();
+        let row = crate::library::repository::get_item(&conn, second).unwrap().unwrap();
+        assert_eq!(row.part_label.as_deref(), Some("P2"));
+        let _ = fs::remove_dir_all(&root);
+    }
+
     fn import_one(root: &std::path::Path, modality: Option<&str>) -> String {
         crate::util::ensure_app_dirs(root).unwrap();
         let source = root.join("paper.pdf");
@@ -390,6 +687,7 @@ mod tests {
                 size_bytes: 13,
                 title_hint: None,
                 answer_files: vec![],
+                split_passages: false,
             }],
             cloud_enabled: Some(false),
             cloud_profile_id: None,
@@ -500,6 +798,7 @@ mod tests {
                 size_bytes: 13,
                 title_hint: None,
                 answer_files: vec![],
+                split_passages: false,
             }],
             cloud_enabled: Some(false),
             cloud_profile_id: None,
@@ -528,6 +827,7 @@ mod tests {
                 size_bytes: 0,
                 title_hint: None,
                 answer_files: vec![],
+                split_passages: false,
             }],
             cloud_enabled: Some(false),
             cloud_profile_id: None,

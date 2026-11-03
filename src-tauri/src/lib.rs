@@ -1201,6 +1201,17 @@ async fn import_files(
     Ok(processing::commands::import_files_result_to_value(result))
 }
 
+/// 导入抽屉的「整套卷子」预览：逐文件给出按 Passage 拆分的计划（两篇以上才有段）。
+#[tauri::command]
+async fn plan_import_split(paths: Vec<String>) -> CommandResult<Value> {
+    let previews = tauri::async_runtime::spawn_blocking(move || {
+        processing::pdf_split::preview_import_split(&paths)
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    serde_json::to_value(previews).map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 async fn cancel_processing(
     item_id: String,
@@ -1892,6 +1903,7 @@ pub fn run() {
             undo_cloud_repair,
             choose_cloud_comparison,
             import_files,
+            plan_import_split,
             listening_audio::commands::detect_import_modality,
             listening_audio::commands::bind_listening_audio,
             listening_audio::commands::bind_listening_audio_folder,

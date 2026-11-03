@@ -34,6 +34,39 @@ export type ImportModality = "reading" | "listening";
 export function importFiles(input: { files: PickedPath[]; cloudEnabled: boolean; cloudProfileId?: string; modality?: ImportModality; cloudTokenBudget: number; pipelineMode?: PipelineMode }) {
   return command<{ created: Array<{ itemId: string; title: string }>; rejected: Array<{ name: string; reason: string }> }>("import_files", { input });
 }
+/** 一份 PDF 里识别出的一篇（页号 1-based）。 */
+export interface ImportSplitSegment {
+  label: string;
+  test?: number | null;
+  passage: number;
+  pages: number[];
+  sharesStartPage: boolean;
+}
+/** `plan_import_split` 的逐文件预览：只有识别到两篇及以上时 `segments` 才非空。 */
+export interface ImportSplitPreview {
+  path: string;
+  pageCount: number;
+  segments: ImportSplitSegment[];
+  answerPages: number[];
+  unassignedPages: number[];
+}
+/** 整套卷子预览。非桌面环境（浏览器冒烟）没有 PDF 文本层可读，如实返回「不拆」。 */
+export async function planImportSplit(paths: string[]): Promise<ImportSplitPreview[]> {
+  if (!paths.length || !("__TAURI_INTERNALS__" in window)) return [];
+  return command<ImportSplitPreview[]>("plan_import_split", { paths });
+}
+/** 把页号压成「1–4、6」这种人话。 */
+export function formatPageRanges(pages: readonly number[]): string {
+  const sorted = [...new Set(pages)].sort((a, b) => a - b);
+  const ranges: string[] = [];
+  for (let index = 0; index < sorted.length; index += 1) {
+    const start = sorted[index];
+    let end = start;
+    while (sorted[index + 1] === end + 1) { end += 1; index += 1; }
+    ranges.push(start === end ? `${start}` : `${start}–${end}`);
+  }
+  return ranges.join("、");
+}
 /** 后端 `retry_processing` 的返回：`queued = false` 表示任务正在跑 / 已在排队，这次没有新入队。 */
 export function retryQueued(result: { queued?: boolean } | null | undefined): boolean {
   return result?.queued === true;

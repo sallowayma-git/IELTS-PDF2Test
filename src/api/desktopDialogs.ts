@@ -32,6 +32,8 @@ export interface PickedPath {
   sizeBytes: number;
   titleHint?: string;
   answerFiles?: string[];
+  /** 整套阅读卷子：后端按 READING PASSAGE 标题拆成多篇，各建一条（导入抽屉里确认）。 */
+  splitPassages?: boolean;
   textContent?: string;
   binaryContentBase64?: string;
   parsedDocumentIr?: DocumentIr;
