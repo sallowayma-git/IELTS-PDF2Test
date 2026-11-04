@@ -4,7 +4,7 @@ import { go } from "../../app/router";
 import { hasCloudConnection } from "../settings/settingsLogic";
 import { choosePdfFolderSources, chooseSourceFiles, type PickedPath } from "../../api/desktopDialogs";
 import { detectImportModality } from "../../api/listeningAudioClient";
-import { formatPageRanges, planImportSplit, type ImportSplitPreview } from "../../api/processingClient";
+import { formatPageRanges, planImportSplit, SPLIT_CONFIDENCE_LABEL, SPLIT_SIGNAL_LABEL, type ImportSplitPreview } from "../../api/processingClient";
 import type { ImportRejection } from "./useImportFiles";
 import { ListeningAudioDialog } from "./ListeningAudioDialog";
 import { listeningCandidates, type ListeningCandidate, type ListeningImportDecision } from "./listeningAudioPlan";
@@ -110,7 +110,8 @@ export function ImportDrawer({
     setChecking(false);
     if (plans.length) {
       setPendingCandidates(candidates);
-      setKeepWhole(new Set());
+      // 信号不够一致的文件默认不拆，用户核对后可以勾上。
+      setKeepWhole(new Set(plans.filter((plan) => !plan.defaultSplit).map((plan) => plan.path)));
       setSplitPlans(plans);
       return;
     }
@@ -199,24 +200,41 @@ export function ImportDrawer({
                       />
                       <span>
                         <strong className="file-name">{name}</strong>
-                        {split ? ` · 识别到 ${plan.segments.length} 篇，拆成 ${plan.segments.length} 条` : " · 不拆分，整份作为一条导入"}
+                        {split ? ` · 识别到 ${plan.segments.length} 篇，拆成 ${plan.segments.length} 条` : ` · 识别到 ${plan.segments.length} 篇 · 不拆分，整份作为一条导入`}
                       </span>
                     </label>
-                    {split ? (
-                      <ul className="split-plan-segments">
-                        {plan.segments.map((segment) => (
-                          <li key={`${segment.label}-${segment.pages[0]}`}>
+                    {!plan.defaultSplit ? (
+                      <p className="drawer-hint split-plan-warning" data-testid="import-split-weak">
+                        分篇信号不够一致，默认整份导入；核对下面的分篇后可以勾选拆分。
+                      </p>
+                    ) : null}
+                    <ul className="split-plan-segments">
+                      {plan.segments.map((segment) => (
+                        <li key={`${segment.label}-${segment.pages[0]}`} data-testid="import-split-segment">
+                          <div className="split-plan-segment-head">
                             <strong>{segment.label}</strong>
                             <span>第 {formatPageRanges(segment.pages)} 页</span>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                    {split && plan.answerPages.length ? (
-                      <p className="drawer-hint">答案页（第 {formatPageRanges(plan.answerPages)} 页）会附到每一篇。</p>
-                    ) : null}
+                            {segment.questionRange ? <span>题 {segment.questionRange[0]}–{segment.questionRange[1]}</span> : null}
+                            <span className={`split-confidence ${segment.confidence}`}>{SPLIT_CONFIDENCE_LABEL[segment.confidence]}</span>
+                          </div>
+                          <div className="split-plan-segment-meta">
+                            <span>依据：{segment.signals.map((signal) => SPLIT_SIGNAL_LABEL[signal] ?? signal).join("、") || "无"}</span>
+                            <span>
+                              {segment.answers.length
+                                ? `答案 ${segment.answers.length} 条（已从答案页按题号分出）`
+                                : segment.fallbackAnswerPages.length
+                                  ? `答案未能分出，附第 ${formatPageRanges(segment.fallbackAnswerPages)} 页答案页`
+                                  : "未找到答案"}
+                            </span>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                    {plan.warnings.map((warning) => (
+                      <p key={warning} className="drawer-hint split-plan-warning">{warning}</p>
+                    ))}
                     {split && plan.unassignedPages.length ? (
-                      <p className="drawer-hint">第 {formatPageRanges(plan.unassignedPages)} 页不属于任何一篇（封面、说明等），不会导入。</p>
+                      <p className="drawer-hint">第 {formatPageRanges(plan.unassignedPages)} 页不属于任何一篇（封面、说明、听力等），不会导入。</p>
                     ) : null}
                   </div>
                 );

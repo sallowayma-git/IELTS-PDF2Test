@@ -41,6 +41,15 @@ export interface ImportSplitSegment {
   passage: number;
   pages: number[];
   sharesStartPage: boolean;
+  /** 本篇题号范围 [起, 止]。 */
+  questionRange?: [number, number] | null;
+  /** 支持这个分界的信号：heading / instruction / layout / numbering / band / test。 */
+  signals: string[];
+  confidence: "high" | "medium" | "low";
+  /** 从答案页按题号分出、只属于本篇的答案。 */
+  answers: Array<{ number: number; text: string }>;
+  /** 答案没能分出时，附到本篇末尾的答案页。 */
+  fallbackAnswerPages: number[];
 }
 /** `plan_import_split` 的逐文件预览：只有识别到两篇及以上时 `segments` 才非空。 */
 export interface ImportSplitPreview {
@@ -49,7 +58,23 @@ export interface ImportSplitPreview {
   segments: ImportSplitSegment[];
   answerPages: number[];
   unassignedPages: number[];
+  /** 信号足够一致才默认拆分；否则默认整份导入，由用户决定。 */
+  defaultSplit: boolean;
+  warnings: string[];
 }
+export const SPLIT_SIGNAL_LABEL: Record<string, string> = {
+  heading: "篇章标题",
+  instruction: "说明行",
+  layout: "版式",
+  numbering: "题号接力",
+  band: "题号区间",
+  test: "套题切换"
+};
+export const SPLIT_CONFIDENCE_LABEL: Record<ImportSplitSegment["confidence"], string> = {
+  high: "把握高",
+  medium: "把握中",
+  low: "把握低"
+};
 /** 整套卷子预览。非桌面环境（浏览器冒烟）没有 PDF 文本层可读，如实返回「不拆」。 */
 export async function planImportSplit(paths: string[]): Promise<ImportSplitPreview[]> {
   if (!paths.length || !("__TAURI_INTERNALS__" in window)) return [];

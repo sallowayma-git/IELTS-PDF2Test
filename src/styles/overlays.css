@@ -72,9 +72,15 @@
 }
 .split-plan-toggle { display: flex; align-items: flex-start; gap: 8px; min-width: 0; cursor: pointer; }
 .split-plan-toggle span { min-width: 0; overflow-wrap: anywhere; }
-.split-plan-segments { display: grid; gap: 4px; margin: 0; padding: 0 0 0 24px; list-style: none; }
-.split-plan-segments li { display: flex; gap: 10px; justify-content: space-between; color: var(--muted); }
-.split-plan-segments strong { color: inherit; font-weight: 600; }
+.split-plan-segments { display: grid; gap: 6px; margin: 0; padding: 0 0 0 24px; list-style: none; }
+.split-plan-segments li { display: grid; gap: 2px; min-width: 0; color: var(--muted); }
+.split-plan-segment-head,
+.split-plan-segment-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; min-width: 0; }
+.split-plan-segment-meta { font-size: 0.9em; }
+.split-plan-segments strong { color: var(--text, inherit); font-weight: 600; }
+.split-confidence { padding: 0 6px; border-radius: 6px; border: 1px solid var(--line); }
+.split-confidence.low,
+.split-plan-warning { color: var(--danger); }
 
 /* 听力导入：音频拖放区与 Part 列表。 */
 .listening-dialog-scrim { z-index: 70; }

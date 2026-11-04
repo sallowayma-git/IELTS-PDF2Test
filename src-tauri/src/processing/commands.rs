@@ -123,6 +123,7 @@ pub(crate) fn import_files_at_root(
                         name: &part.name,
                         answer_files: &file.answer_files,
                         part: Some(&part.part),
+                        split_answers: part.answer_path.as_deref(),
                     };
                     match import_one_source(root, &source, &part.title, &options) {
                         Ok(item) => created.push(item),
@@ -141,6 +142,7 @@ pub(crate) fn import_files_at_root(
             name: &file.name,
             answer_files: &file.answer_files,
             part: None,
+            split_answers: None,
         };
         match import_one_source(root, &source, &title, &options) {
             Ok(item) => created.push(item),
@@ -186,6 +188,8 @@ struct SourceToImport<'a> {
     answer_files: &'a [String],
     /// 拆分出来的篇章标签（P1/P2/P3），来自原文标题行；整份导入为 `None`。
     part: Option<&'a str>,
+    /// 拆分时为本篇生成的答案文本（AnswerKey）。
+    split_answers: Option<&'a str>,
 }
 
 /// 一篇拆出来的子 PDF（临时文件，入库后删除）。
@@ -194,6 +198,8 @@ struct SplitPart {
     name: String,
     title: String,
     part: String,
+    /// 本篇分出来的答案文本（没能分出时为 `None`，答案页已附在子 PDF 里）。
+    answer_path: Option<String>,
 }
 
 /// 把整套阅读卷子拆成每篇一份子 PDF。判不出两篇以上、或子 PDF 写不出来时返回
@@ -235,9 +241,18 @@ fn stage_passage_split(
         // 每篇一个独立临时目录：staging 以文件名作为 originalName，不能带随机前缀。
         let part_dir = dir.join(uuid::Uuid::new_v4().simple().to_string());
         let path = part_dir.join(&name);
+        // 本篇自己的答案（从总答案页按题号分出来的），作为该条目的 AnswerKey 源文件。
+        let answer_path = segment.answer_text().map(|text| {
+            let answer_name = name.trim_end_matches(".pdf").to_string() + " 答案.txt";
+            (part_dir.join(answer_name), text)
+        });
         let written = std::fs::create_dir_all(&part_dir)
             .map_err(|error| error.to_string())
-            .and_then(|_| super::pdf_split::write_segment_pdf(source, &plan, segment, &path));
+            .and_then(|_| super::pdf_split::write_segment_pdf(source, &plan, segment, &path))
+            .and_then(|_| match &answer_path {
+                Some((answer, text)) => std::fs::write(answer, text).map_err(|error| format!("split_write_answers:{error}")),
+                None => Ok(()),
+            });
         if let Err(error) = written {
             eprintln!("[import] split: {} segment {} failed: {error}", file.name, segment.label);
             remove_split_parts(&parts);
@@ -249,6 +264,7 @@ fn stage_passage_split(
             name,
             title: format!("{base_title} · {}", segment.label),
             part: format!("P{}", segment.passage),
+            answer_path: answer_path.map(|(answer, _)| answer.to_string_lossy().to_string()),
         });
     }
     Some(parts)
@@ -294,6 +310,9 @@ fn import_one_source(
                 let size = std::fs::metadata(answer).map_err(|e| e.to_string())?.len();
                 if size > MAX_IMPORT_FILE_BYTES { return Err("答案文件超过导入上限".into()); }
                 crate::job_commands::stage_source_file(root, &job_id, answer, "AnswerKey")?;
+            }
+            if let Some(answers) = file.split_answers {
+                crate::job_commands::stage_source_file(root, &job_id, answers, "AnswerKey")?;
             }
             Ok(())
         })();
@@ -522,118 +541,59 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
-    /// 一份 PDF 里的整套阅读卷子 → 每篇一条条目；每条的子 PDF 只含本篇页 + 答案页。
-    #[test]
-    fn whole_test_pdf_splits_into_one_item_per_passage() {
-        let root = temp_root();
-        crate::util::ensure_app_dirs(&root).unwrap();
-        let source = root.join("剑桥 Test 1.pdf");
-        let bytes = super::super::pdf_split::minimal_text_pdf(&[
-            &["READING PASSAGE 1", "The history of glass"],
-            &["Questions 1-13"],
-            &["READING PASSAGE 2", "The wild horse"],
-            &["Questions 14-26"],
-            &["READING PASSAGE 3", "Memory and sleep"],
-            &["Answer Key", "1 TRUE"],
-        ]);
-        fs::write(&source, &bytes).unwrap();
-        let input = ImportFilesInput {
-            files: vec![ImportFileInput {
-                path: source.to_string_lossy().to_string(),
-                name: "剑桥 Test 1.pdf".to_string(),
-                size_bytes: bytes.len() as u64,
-                title_hint: None,
-                answer_files: vec![],
-                split_passages: true,
-            }],
-            cloud_enabled: Some(false),
-            cloud_profile_id: None,
-            modality: None,
-            cloud_token_budget: None,
-            pipeline_mode: None,
-        };
-        let result = import_files_at_root(&root, input).unwrap();
-        let reasons: Vec<_> = result.rejected.iter().map(|r| r.reason.clone()).collect();
-        if crate::pdf_geometry::pdfium_library_path().is_none() {
-            // 本机没有 pdfium：拆分必须安全退回整份导入，绝不丢文件。
-            assert_eq!(result.created.len(), 1, "rejected: {reasons:?}");
-            let _ = fs::remove_dir_all(&root);
-            return;
+    /// 整套卷子测试 PDF：每篇「正文页（标题 + 说明行 + 正文）→ 题目页」，末尾一页总答案
+    /// （先听力区再阅读区）。`statements` 给出每篇的题号起止。
+    fn whole_test_pdf(passages: &[(&str, u32, u32)]) -> Vec<u8> {
+        let mut pages: Vec<Vec<String>> = Vec::new();
+        for (index, (topic, first, last)) in passages.iter().enumerate() {
+            let n = index + 1;
+            let mut prose = vec![
+                format!("READING PASSAGE {n}"),
+                format!("You should spend about 20 minutes on Questions {first}-{last}, which are based on Reading Passage {n} below."),
+                format!("The story of {topic}"),
+            ];
+            prose.extend(super::super::pdf_split::prose_lines(topic));
+            pages.push(prose);
+            let mut questions = vec![
+                format!("Questions {first}-{last}"),
+                format!("Do the following statements agree with the information given in Reading Passage {n}?"),
+                "Write TRUE if the statement agrees with the information".to_string(),
+                "FALSE if the statement contradicts the information".to_string(),
+                "NOT GIVEN if there is no information on this".to_string(),
+            ];
+            for q in *first..=*last {
+                questions.push(format!("{q} The writer describes {topic} fact number {q} in the passage."));
+            }
+            pages.push(questions);
         }
-        assert!(reasons.is_empty(), "rejected: {reasons:?}");
-        let titles: Vec<_> = result.created.iter().map(|item| item.title.clone()).collect();
-        assert_eq!(titles, ["剑桥 Test 1 · P1", "剑桥 Test 1 · P2", "剑桥 Test 1 · P3"]);
-        let expected_pages = [3usize, 3, 2]; // 本篇页 + 1 页答案
-        for (item, expected) in result.created.iter().zip(expected_pages) {
-            let job = crate::job_store::load_job(&root, &item.item_id).unwrap();
-            assert_eq!(job.source_files.len(), 1);
-            let staged = crate::util::job_dir(&root, &item.item_id)
-                .join("uploads")
-                .join(&job.source_files[0].stored_name);
-            assert!(job.source_files[0].original_name.starts_with("剑桥 Test 1 - P"));
-            let text = pdf_extract::extract_text_by_pages(&staged).unwrap();
-            assert_eq!(text.len(), expected, "{}", item.title);
-            assert!(text.last().unwrap().contains("Answer Key"));
+        let mut key = vec!["Listening and Reading Answer Keys".to_string(), "LISTENING".to_string()];
+        for q in 1..=10 {
+            key.push(format!("{q} listening answer"));
         }
-        // 临时子 PDF 已清理。
-        let leftovers = fs::read_dir(root.join("tmp").join("import-split"))
-            .map(|entries| entries.count())
-            .unwrap_or(0);
-        assert_eq!(leftovers, 0);
-        let _ = fs::remove_dir_all(&root);
+        key.push("READING".to_string());
+        for (index, (_, first, last)) in passages.iter().enumerate() {
+            key.push(format!("Reading Passage {}, Questions {first}-{last}", index + 1));
+            for q in *first..=*last {
+                key.push(format!("{q} {}", ["TRUE", "FALSE", "NOT GIVEN"][(q % 3) as usize]));
+            }
+        }
+        pages.push(key);
+        let owned: Vec<Vec<&str>> = pages.iter().map(|p| p.iter().map(String::as_str).collect()).collect();
+        let refs: Vec<&[&str]> = owned.iter().map(Vec::as_slice).collect();
+        super::super::pdf_split::minimal_text_pdf(&refs)
     }
 
-    /// 拆出来的第二篇走真实本地识别链：识别成 P2、题号从 14 开始，不混进第一篇。
-    #[test]
-    fn split_passage_runs_through_local_recognition_as_its_own_part() {
-        if crate::pdf_geometry::pdfium_library_path().is_none() {
-            return;
-        }
-        let root = temp_root();
-        crate::util::ensure_app_dirs(&root).unwrap();
-        let source = root.join("full.pdf");
-        let passage = |n: &'static str, title: &'static str| -> Vec<&'static str> {
-            vec![
-                n,
-                "You should spend about 20 minutes on this reading passage.",
-                title,
-                "A Glass has been made for thousands of years in many places.",
-                "B Early makers used sand, soda and lime heated in simple furnaces.",
-                "C Modern factories produce flat glass by floating it on molten tin.",
-            ]
-        };
-        let p1 = passage("READING PASSAGE 1", "The history of glass");
-        let p2 = passage("READING PASSAGE 2", "The wild horse");
-        let q1: Vec<&str> = vec![
-            "Questions 1-3",
-            "Do the following statements agree with the information given in Reading Passage 1?",
-            "Write TRUE if the statement agrees with the information",
-            "FALSE if the statement contradicts the information",
-            "NOT GIVEN if there is no information on this",
-            "1 Glass is a recent invention.",
-            "2 Early furnaces were simple.",
-            "3 Float glass uses molten tin.",
-        ];
-        let q2: Vec<&str> = vec![
-            "Questions 14-16",
-            "Do the following statements agree with the information given in Reading Passage 2?",
-            "Write TRUE if the statement agrees with the information",
-            "FALSE if the statement contradicts the information",
-            "NOT GIVEN if there is no information on this",
-            "14 Wild horses live in herds.",
-            "15 Horses were first tamed in Europe.",
-            "16 Wild horses are endangered.",
-        ];
-        let bytes = super::super::pdf_split::minimal_text_pdf(&[&p1, &q1, &p2, &q2]);
-        fs::write(&source, &bytes).unwrap();
-        let result = import_files_at_root(
-            &root,
+    fn split_import(root: &std::path::Path, name: &str, bytes: &[u8], title_hint: Option<&str>) -> ImportFilesResult {
+        let source = root.join(name);
+        fs::write(&source, bytes).unwrap();
+        import_files_at_root(
+            root,
             ImportFilesInput {
                 files: vec![ImportFileInput {
                     path: source.to_string_lossy().to_string(),
-                    name: "full.pdf".to_string(),
+                    name: name.to_string(),
                     size_bytes: bytes.len() as u64,
-                    title_hint: Some("Full".to_string()),
+                    title_hint: title_hint.map(str::to_string),
                     answer_files: vec![],
                     split_passages: true,
                 }],
@@ -644,8 +604,64 @@ mod tests {
                 pipeline_mode: None,
             },
         )
-        .unwrap();
-        assert_eq!(result.created.len(), 2);
+        .unwrap()
+    }
+
+    /// 一份 PDF 里的整套阅读卷子 → 每篇一条条目；子 PDF 只含本篇页，
+    /// 答案按题号分开、作为各自的 AnswerKey 文本，听力区的答案不进来。
+    #[test]
+    fn whole_test_pdf_splits_into_one_item_per_passage() {
+        let root = temp_root();
+        crate::util::ensure_app_dirs(&root).unwrap();
+        let bytes = whole_test_pdf(&[("glass", 1, 13), ("horses", 14, 26), ("sleep", 27, 40)]);
+        let result = split_import(&root, "剑桥 Test 1.pdf", &bytes, None);
+        let reasons: Vec<_> = result.rejected.iter().map(|r| r.reason.clone()).collect();
+        if crate::pdf_geometry::pdfium_library_path().is_none() {
+            // 本机没有 pdfium：拆分必须安全退回整份导入，绝不丢文件。
+            assert_eq!(result.created.len(), 1, "rejected: {reasons:?}");
+            let _ = fs::remove_dir_all(&root);
+            return;
+        }
+        assert!(reasons.is_empty(), "rejected: {reasons:?}");
+        let titles: Vec<_> = result.created.iter().map(|item| item.title.clone()).collect();
+        assert_eq!(titles, ["剑桥 Test 1 · P1", "剑桥 Test 1 · P2", "剑桥 Test 1 · P3"]);
+        let ranges = [(1u32, 13u32), (14, 26), (27, 40)];
+        for (item, (first, last)) in result.created.iter().zip(ranges) {
+            let job = crate::job_store::load_job(&root, &item.item_id).unwrap();
+            let uploads = crate::util::job_dir(&root, &item.item_id).join("uploads");
+            let main = job.source_files.iter().find(|s| s.role == "MainQuestion").unwrap();
+            assert!(main.original_name.starts_with("剑桥 Test 1 - P"));
+            let text = pdf_extract::extract_text_by_pages(&uploads.join(&main.stored_name)).unwrap();
+            assert_eq!(text.len(), 2, "{}：子 PDF 只含本篇两页，不再附整页答案", item.title);
+            assert!(!text.iter().any(|page| page.contains("Answer Keys")));
+            let key = job.source_files.iter().find(|s| s.role == "AnswerKey").expect("本篇答案");
+            let answers = fs::read_to_string(uploads.join(&key.stored_name)).unwrap();
+            let numbers: Vec<u32> = answers
+                .lines()
+                .filter_map(|line| line.split_whitespace().next()?.parse().ok())
+                .collect();
+            assert_eq!(numbers, (first..=last).collect::<Vec<_>>(), "{}", item.title);
+            assert!(!answers.contains("listening"), "听力答案不能进阅读条目");
+        }
+        let leftovers = fs::read_dir(root.join("tmp").join("import-split"))
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        assert_eq!(leftovers, 0, "临时子 PDF / 答案文本已清理");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// 拆出来的第二篇走真实本地识别链：识别成 P2、题号从 14 开始、答案来自分出来的
+    /// 本篇答案，第一篇的题和答案都不混进来。
+    #[test]
+    fn split_passage_runs_through_local_recognition_as_its_own_part() {
+        if crate::pdf_geometry::pdfium_library_path().is_none() {
+            return;
+        }
+        let root = temp_root();
+        crate::util::ensure_app_dirs(&root).unwrap();
+        let bytes = whole_test_pdf(&[("glass", 1, 3), ("horses", 14, 16)]);
+        let result = split_import(&root, "full.pdf", &bytes, Some("Full"));
+        assert_eq!(result.created.len(), 2, "{:?}", result.rejected.iter().map(|r| &r.reason).collect::<Vec<_>>());
         let second = &result.created[1].item_id;
         crate::auto_pipeline::run_auto_pipeline_core(
             &root,
@@ -660,16 +676,19 @@ mod tests {
         let session = crate::authoring_v2_commands::get_authoring_v2_core(&root, second).unwrap();
         let authoring = session.get("authoring").cloned().unwrap();
         let text = authoring.to_string();
-        assert!(text.contains("wild horse") || text.contains("Wild horse") || text.contains("The wild horse"), "{text}");
-        assert!(!text.contains("Glass is a recent invention"), "第一篇的题不能混进第二篇");
-        let numbers: Vec<u64> = authoring
-            .get("answerSlots")
-            .and_then(Value::as_object)
-            .map(|slots| slots.values().filter_map(|slot| slot.get("questionNumber").and_then(Value::as_u64)).collect())
-            .unwrap_or_default();
-        assert_eq!(numbers.iter().min(), Some(&14), "{numbers:?}");
+        assert!(text.contains("horses"), "{text}");
+        assert!(!text.contains("glass fact number"), "第一篇的题不能混进第二篇");
+        let slots = authoring.get("answerSlots").and_then(Value::as_object).cloned().unwrap_or_default();
+        let mut numbers: Vec<u64> = slots.values().filter_map(|slot| slot.get("questionNumber").and_then(Value::as_u64)).collect();
+        numbers.sort_unstable();
+        assert_eq!(numbers, vec![14, 15, 16], "{text}");
+        // 答案来自本篇分出来的答案文本：14 % 3 = 2 → NOT GIVEN，15 → TRUE，16 → FALSE。
+        let key = authoring.get("answerKey").cloned().unwrap_or(Value::Null).to_string();
+        for expected in ["FALSE", "NOT GIVEN", "TRUE"] {
+            assert!(key.to_ascii_uppercase().contains(expected) || key.contains(&expected.to_ascii_lowercase()), "answerKey={key}");
+        }
+        assert!(!key.contains("listening"), "answerKey={key}");
         assert_eq!(authoring.pointer("/exam/category").and_then(Value::as_str), Some("P2"));
-        // 题库行在识别完成前就显示 P2（来自拆分时的原文标题），用户在主界面就能分辨篇章。
         let conn = open_library_connection(&root).unwrap();
         let row = crate::library::repository::get_item(&conn, second).unwrap().unwrap();
         assert_eq!(row.part_label.as_deref(), Some("P2"));

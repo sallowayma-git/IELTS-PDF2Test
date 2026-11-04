@@ -18,24 +18,31 @@ import { ImportDrawer } from "./ImportDrawer";
 const whole = { path: "/papers/Test 1.pdf", name: "Test 1.pdf", sizeBytes: 10 };
 const single = { path: "/papers/P2.pdf", name: "P2.pdf", sizeBytes: 10 };
 
+const answers = (first: number, last: number) =>
+  Array.from({ length: last - first + 1 }, (_, i) => ({ number: first + i, text: "TRUE" }));
+const segment = (passage: number, pages: number[], range: [number, number], extra: object = {}) => ({
+  label: `P${passage}`, passage, pages, sharesStartPage: false, questionRange: range,
+  signals: ["heading", "instruction", "numbering", "band"], confidence: "high", answers: answers(...range),
+  fallbackAnswerPages: [], ...extra
+});
+function plan(overrides: object = {}) {
+  return {
+    path: whole.path,
+    pageCount: 9,
+    segments: [segment(1, [1, 2, 3], [1, 13]), segment(2, [4, 5, 6], [14, 26]), segment(3, [7, 8], [27, 40])],
+    answerPages: [9],
+    unassignedPages: [],
+    defaultSplit: true,
+    warnings: [],
+    ...overrides
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.chooseSourceFiles.mockResolvedValue([whole, single]);
   mocks.detectImportModality.mockResolvedValue([]);
-  mocks.planImportSplit.mockResolvedValue([
-    {
-      path: whole.path,
-      pageCount: 9,
-      segments: [
-        { label: "P1", passage: 1, pages: [1, 2, 3], sharesStartPage: false },
-        { label: "P2", passage: 2, pages: [4, 5, 6], sharesStartPage: false },
-        { label: "P3", passage: 3, pages: [7, 8], sharesStartPage: false }
-      ],
-      answerPages: [9],
-      unassignedPages: []
-    },
-    { path: single.path, pageCount: 3, segments: [], answerPages: [], unassignedPages: [] }
-  ]);
+  mocks.planImportSplit.mockResolvedValue([plan(), { ...plan(), path: single.path, pageCount: 3, segments: [] }]);
 });
 afterEach(cleanup);
 
@@ -55,7 +62,9 @@ describe("ImportDrawer whole-test split", () => {
     expect(screen.getAllByTestId("import-split-file")).toHaveLength(1);
     expect(screen.getByText(/识别到 3 篇，拆成 3 条/)).toBeTruthy();
     expect(screen.getByText("第 1–3 页")).toBeTruthy();
-    expect(screen.getByText(/答案页（第 9 页）会附到每一篇/)).toBeTruthy();
+    expect(screen.getAllByText("答案 13 条（已从答案页按题号分出）")).toHaveLength(2);
+    expect(screen.getByText("题 14–26")).toBeTruthy();
+    expect(screen.getAllByText("依据：篇章标题、说明行、题号接力、题号区间")).toHaveLength(3);
     expect(screen.getByTestId("import-start").textContent).toBe("确认导入");
     expect(mocks.planImportSplit).toHaveBeenCalledWith([whole.path, single.path]);
 
@@ -73,6 +82,28 @@ describe("ImportDrawer whole-test split", () => {
     fireEvent.click(screen.getByTestId("import-start"));
     await waitFor(() => expect(onImport).toHaveBeenCalledTimes(1));
     expect(onImport.mock.calls[0][0]).toEqual([whole, single]);
+  });
+
+  it("defaults to whole import when the signals disagree, but lets the user opt in", async () => {
+    mocks.planImportSplit.mockResolvedValue([plan({
+      defaultSplit: false,
+      warnings: ["P3：标题写的是 Passage 3，题号范围却像另一篇，请核对。"],
+      segments: [
+        segment(1, [1, 2], [1, 13]),
+        segment(3, [3, 4], [14, 26], { confidence: "low", signals: ["heading"], answers: [], fallbackAnswerPages: [9] })
+      ]
+    })]);
+    const onImport = vi.fn();
+    await pickAndStart(onImport);
+    expect(screen.getByTestId("import-split-weak")).toBeTruthy();
+    expect(screen.getByText(/识别到 2 篇 · 不拆分/)).toBeTruthy();
+    expect(screen.getByText("把握低")).toBeTruthy();
+    expect(screen.getByText("答案未能分出，附第 9 页答案页")).toBeTruthy();
+    expect(screen.getByText(/题号范围却像另一篇/)).toBeTruthy();
+    fireEvent.click(screen.getByTestId("import-split-toggle"));
+    fireEvent.click(screen.getByTestId("import-start"));
+    await waitFor(() => expect(onImport).toHaveBeenCalledTimes(1));
+    expect(onImport.mock.calls[0][0]).toEqual([{ ...whole, splitPassages: true }, single]);
   });
 
   it("never plans a split for files the user confirms as listening", async () => {
