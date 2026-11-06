@@ -1,6 +1,6 @@
 //! 云端直出主链（cloud-direct 方案 §2.1 / P1）。
 //!
-//! 一次云端调用把整份 PDF 转成完整 `IeltsAuthoringIRV2` 题稿（原文 + 题组 + 答案），
+//! 云端把 PDF 中的每篇文章转成独立 `IeltsAuthoringIRV2` 题稿（原文 + 题组 + 答案），
 //! 确定性归一化（只补不拒）后用**唯一**的 Rust 编译器 `compile_reading_source_v2`
 //! 校验；有结构错误时带错误清单修 1 次。产物直接作为正式稿写入（`audit.source =
 //! cloud_direct`），不再走 reconcile / adoption / 修复循环 / 裁决。
@@ -17,6 +17,9 @@ use crate::llm_profiles::{find_profile, load_llm_api_key};
 use crate::reading_source_v2::CompilerIssueV2;
 use crate::schema::ielts_authoring_v2::IELTS_AUTHORING_IR_V2_SCHEMA_VERSION;
 use crate::CommandResult;
+
+mod multi;
+pub(crate) use multi::persist_direct_documents;
 
 /// 网关注册的直出命令名。
 pub(crate) const DIRECT_COMMAND_NAME: &str = "generate_exam_direct";
@@ -67,8 +70,9 @@ pub(crate) fn direct_examples() -> Vec<(&'static str, Value)> {
     .collect()
 }
 
-/// 云端调用预算：首次 1 次 + 截断分块重试 2 次（`finish_reason=length`）+
-/// 编译错误修复 1 次；分块用满时不再修复。验收标准为 ≤3 次/份。
+/// Initial conversion/format/structural repair allowance. Long reading PDFs use
+/// one cloud manifest plus one request per article instead; every request still
+/// passes through the shared per-job token budget and retained usage accounting.
 const MAX_DIRECT_CALLS: usize = 3;
 /// `finish_reason=length` 时的分块数（按页段对半切，每块仍产出完整结构）。
 const TRUNCATED_CHUNK_COUNT: usize = 2;
@@ -90,6 +94,10 @@ pub(crate) struct DirectExamOutcome {
     pub warnings: Vec<String>,
     /// 保真度报告（正文与 PDF 文字层 diff）；扫描件（无文字层）为 None。
     pub fidelity: Option<Value>,
+    /// Other independently editable documents from this source PDF.
+    pub additional_documents: Vec<DirectExamOutcome>,
+    /// Original 1-based question/answer pages used for this document.
+    pub source_pages: Vec<u32>,
 }
 
 /// 直出链路入口：证据面 → 调用 → 归一化 → 编译（+1 次修复）→ 可用性判定。
@@ -128,9 +136,8 @@ pub(crate) fn run_exam_direct(
         }
     };
     let mut image_pages = select_image_pages(&extraction, &page_texts);
-    if is_listening(root, job_id) {
-        append_answer_evidence(root, &job, &mut page_texts, &mut image_pages)?;
-    }
+    append_answer_evidence(root, &job, &mut page_texts, &mut image_pages)?;
+    let scoped = multi::restrict_saved_scope(root, job_id, &mut page_texts, &mut image_pages)?;
     if page_texts.is_empty() && crate::parser::image_count_from_extraction(&image_pages) == 0 {
         return Err("cloud_direct_no_evidence".to_string());
     }
@@ -189,6 +196,11 @@ pub(crate) fn run_exam_direct(
             // （首次 1 + 两块 2 = 3，修复回合随之让位）。
             chunked = true;
             calls += 1;
+            if !is_listening(root, job_id) {
+                return multi::run_truncated_documents(root, &job, &source, &profile, &selected,
+                    &upload_path, &page_texts, &image_pages, api_key.as_deref(), calls, &evidence_warnings, !scoped)
+                    .map_err(|error| format!("cloud_direct_batch_truncated:{error}"));
+            }
             let merged = run_truncated_chunks(
                 root,
                 job_id,
@@ -206,6 +218,16 @@ pub(crate) fn run_exam_direct(
         }
         Err(error) => return Err(error),
     };
+
+    if !is_listening(root, job_id) && raw.get("documents").is_some() {
+        // A scoped re-recognition owns exactly one item. Extra entries are kept
+        // out of this item instead of failing the whole re-recognition.
+        if scoped {
+            multi::keep_first_scoped_document(&mut raw);
+        }
+        return multi::finish_batch(root, &job, &source, &profile, &selected, &upload_path,
+            &page_texts, &image_pages, api_key.as_deref(), raw, calls, chunked, &evidence_warnings, !scoped);
+    }
 
     let mut identity = DirectIdentity::new(&job, &source, root);
     // The source heading outranks question range and filename. Keep it alongside
@@ -250,6 +272,7 @@ pub(crate) fn run_exam_direct(
                             compile_issues,
                             warnings: vec![format!("cloud_direct_repair_unusable:{error}")],
                             fidelity: None,
+                            additional_documents: Vec::new(), source_pages: Vec::new(),
                         });
                     }
                 }
@@ -265,6 +288,7 @@ pub(crate) fn run_exam_direct(
                     compile_issues,
                     warnings,
                     fidelity: None,
+                    additional_documents: Vec::new(), source_pages: Vec::new(),
                 });
             }
         }
@@ -299,6 +323,7 @@ pub(crate) fn run_exam_direct(
         compile_issues,
         warnings,
         fidelity,
+        additional_documents: Vec::new(), source_pages: Vec::new(),
     })
 }
 
@@ -772,6 +797,7 @@ fn select_image_pages(extraction: &Value, page_texts: &[(usize, String)]) -> Val
 /// 直出身份：模型无权填写的字段全部由这里给出（与本地管线同源的身份约定）。
 ///
 /// `source_file_id` 目前只服务于诊断输出（调用序列与可读性），字段保留但不进人判据。
+#[derive(Clone)]
 #[allow(dead_code)]
 pub(crate) struct DirectIdentity {
     job_id: String,
@@ -862,6 +888,10 @@ fn make_direct_input(
             .map(|(name, document)| json!({"name": name, "document": document}))
             .collect::<Vec<_>>(),
     });
+    if !is_listening(root, &job.job_id) {
+        input["outputContract"]["schema"] = json!("IeltsAuthoringIRV2-direct-batch");
+        input["outputContract"]["topLevelKeys"] = json!(["documents", "warnings"]);
+    }
     if is_listening(root, &job.job_id) {
         input["modality"] = json!("listening");
         input["example"] = serde_json::from_str(LISTENING_EXAMPLE).unwrap();
@@ -935,7 +965,9 @@ fn append_answer_evidence(
         images["pages"] = json!([]);
     }
     let dir = crate::util::job_dir(root, &job.job_id);
-    let mut index = texts.iter().map(|(n, _)| *n).max().unwrap_or(0) + 1;
+    let mut index = texts.iter().map(|(n, _)| *n)
+        .chain(images["pages"].as_array().into_iter().flatten().filter_map(|p| p["pageIndex"].as_u64()).map(|n| n as usize))
+        .max().unwrap_or(0) + 1;
     for source in job.source_files.iter().filter(|s| s.role == "AnswerKey") {
         let path = dir.join("uploads").join(&source.stored_name);
         let ext = path
@@ -1016,7 +1048,7 @@ fn append_answer_evidence(
     Ok(())
 }
 
-fn is_listening(root: &std::path::Path, job_id: &str) -> bool {
+pub(crate) fn is_listening(root: &std::path::Path, job_id: &str) -> bool {
     matches!(
         crate::library::migration::draft_modality(root, job_id),
         crate::schema::ielts_authoring_v2::ExamModalityV2::Listening
@@ -1254,10 +1286,14 @@ pub(crate) fn normalize_direct_output(
         wrap_list_item_inlines(&mut safe_raw);
     }
     let raw = &safe_raw;
+    // A reading article whose questions are not printed in the evidence is still
+    // an editable draft (the human adds questions); only "nothing at all" fails.
+    let has_passage_text = !identity.listening
+        && raw.pointer("/passage/content").and_then(Value::as_array).is_some_and(|content| !content.is_empty());
     let task_groups = raw
         .get("taskGroups")
         .and_then(Value::as_array)
-        .filter(|groups| !groups.is_empty())
+        .filter(|groups| !groups.is_empty() || has_passage_text)
         .cloned()
         .ok_or_else(|| "cloud_direct_no_task_groups".to_string())?;
     let passage = if identity.listening {
@@ -2705,6 +2741,9 @@ pub(crate) fn write_direct_result(
         })).collect::<Vec<_>>(),
         "warnings": outcome.warnings,
         "document": outcome.document,
+        "sourcePages": outcome.source_pages,
+        "documentCount": 1 + outcome.additional_documents.len(),
+        "additionalItemIds": outcome.additional_documents.iter().map(|doc| doc.document["jobId"].clone()).collect::<Vec<_>>(),
         "recordedAt": chrono::Utc::now().to_rfc3339()
     });
     crate::util::write_json(&dir.join(DIRECT_RESULT_FILE), &record)?;
@@ -3013,10 +3052,14 @@ mod tests {
     }
 
     #[test]
-    fn no_task_groups_is_unusable() {
+    fn no_task_groups_keeps_an_article_draft_but_nothing_at_all_is_unusable() {
         let root = temp_root("no-groups");
         let mut raw = minimal_raw();
         raw["taskGroups"] = json!([]);
+        // Loose ingest: an article without printed questions is an editable draft.
+        let draft = normalize_direct_output(&root, &raw, &identity()).unwrap();
+        assert!(draft["taskGroups"].as_array().unwrap().is_empty());
+        raw["passage"] = json!({"content": []});
         let error = normalize_direct_output(&root, &raw, &identity()).unwrap_err();
         assert_eq!(error, "cloud_direct_no_task_groups");
         let _ = std::fs::remove_dir_all(root);
@@ -3134,7 +3177,7 @@ mod tests {
         // 写法是错的，已在产品副本里按编译器规则改正），因此**不再**断言两者一致。
         //
         // 这条测试改为钉住产品契约本身的关键纪律与集合题口径。
-        assert!(direct_system_prompt().contains("You convert ONE IELTS Reading test PDF"));
+        assert!(direct_system_prompt().contains("ONE complete document per reading passage"));
         assert!(direct_system_prompt().contains("paragraphMap"));
         assert!(direct_system_prompt().contains("answerKey"));
         // 集合题：记分策略必须是编译器口径，且不得再出现 exact_set 的旧写法。
@@ -3155,7 +3198,7 @@ mod tests {
     #[test]
     fn system_prompt_comes_from_the_validated_contract() {
         // 契约以 include_str! 纳入主线程验证过的 prompt：关键纪律必须原样在场。
-        assert!(direct_system_prompt().contains("You convert ONE IELTS Reading test PDF"));
+        assert!(direct_system_prompt().contains("ONE complete document per reading passage"));
         assert!(direct_system_prompt().contains("paragraphMap"));
         assert!(direct_system_prompt().contains("answerKey"));
     }
@@ -3351,6 +3394,145 @@ mod tests {
         profile_id
     }
 
+    fn batch_chat(output: Value) -> String {
+        json!({"choices":[{"message":{"content":output.to_string()},"finish_reason":"stop"}],
+            "usage":{"prompt_tokens":100,"completion_tokens":100,"total_tokens":200}}).to_string()
+    }
+
+    fn batch_document(title: &str, answer: &str) -> Value {
+        let reply: Value = serde_json::from_str(&direct_exam_with_prompt(title, "stop", &[1, 2])).unwrap();
+        let mut document: Value = serde_json::from_str(reply["choices"][0]["message"]["content"].as_str().unwrap()).unwrap();
+        document["meta"]["title"] = json!(title);
+        document["answerKey"]["q1"]["labels"] = json!([answer]);
+        document
+    }
+
+    #[test]
+    fn cloud_batch_fans_out_idempotently_and_keeps_same_number_answers_separate() {
+        let root = temp_root("multi-document");
+        crate::util::ensure_app_dirs(&root).unwrap();
+        let first = batch_document("First article", "TRUE");
+        let second = batch_document("Second article", "FALSE");
+        let service = controlled_service(vec![(batch_chat(json!({"documents":[
+            {"sourcePages":[1,2,3,4,5],"answerPages":[],"document":first},
+            {"sourcePages":[6,7,8,9,10],"answerPages":[],"document":second}
+        ],"warnings":[]})),200)]);
+        let job = direct_job_with_named_fixture(&root, "chunked-reading-evidence.pdf");
+        let profile_id = controlled_profile(&root, &service.base_url);
+        let outcome = run_exam_direct(&root, &job.job_id, Some(&profile_id)).unwrap();
+        assert_eq!(outcome.calls, 1);
+        assert_eq!(outcome.additional_documents.len(), 1);
+        assert_eq!(outcome.document["answerKey"]["q1"]["labels"], json!(["TRUE"]));
+        assert_eq!(outcome.additional_documents[0].document["answerKey"]["q1"]["labels"], json!(["FALSE"]));
+        assert!(outcome.compile_issues.is_empty());
+        let conn = crate::library::repository::open_library_connection(&root).unwrap();
+        crate::library::repository::upsert_item_shell(&conn, &crate::library::repository::UpsertItemInput {
+            id:&job.job_id,modality:"reading",title:&job.title,status:"processing",source_asset_id:None,
+        }).unwrap();
+        crate::processing::queue::enqueue(&conn, &job.job_id, &job.job_id, &job.job_id, &json!({"cloudEnabled":true,"pipelineMode":"direct"})).unwrap();
+        crate::processing::queue::claim_next(&conn, "multi-worker").unwrap().unwrap();
+        let ids = persist_direct_documents(&root, &job.job_id, &outcome, "multi-worker").unwrap();
+        assert_eq!(ids.len(), 2);
+        assert_eq!(crate::processing::queue::get_job(&conn, &job.job_id).unwrap().unwrap().stage, "ready_for_review");
+        assert!(!crate::processing::queue::request_cancel(&conn, &job.job_id).unwrap(), "the whole committed batch wins a later cancel");
+        let child = &ids[1];
+        let mut edited = crate::library::repository::get_canonical_ds(&conn, child).unwrap().unwrap().0;
+        edited["exam"]["title"] = json!("Human edited child");
+        conn.execute("UPDATE library_items_v2 SET canonical_ds_json=?2 WHERE id=?1", rusqlite::params![child,edited.to_string()]).unwrap();
+        let mut parent_edited = crate::library::repository::get_canonical_ds(&conn, &job.job_id).unwrap().unwrap().0;
+        parent_edited["exam"]["title"] = json!("Human edited parent");
+        conn.execute("UPDATE library_items_v2 SET canonical_ds_json=?2 WHERE id=?1", rusqlite::params![job.job_id,parent_edited.to_string()]).unwrap();
+        crate::processing::queue::retry_with_cloud(&conn, &job.job_id, Some(&profile_id)).unwrap();
+        crate::processing::queue::claim_next(&conn, "multi-worker").unwrap().unwrap();
+        assert_eq!(persist_direct_documents(&root, &job.job_id, &outcome, "multi-worker").unwrap(), ids);
+        assert_eq!(crate::library::repository::get_canonical_ds(&conn, &job.job_id).unwrap().unwrap().0["exam"]["title"], "Human edited parent");
+        assert_eq!(crate::library::repository::get_canonical_ds(&conn, child).unwrap().unwrap().0["exam"]["title"], "Human edited child");
+        assert_eq!(conn.query_row("SELECT count(*) FROM library_items_v2", [], |r| r.get::<_,u32>(0)).unwrap(), 2);
+        assert_eq!(crate::processing::queue::get_job(&conn, child).unwrap().unwrap().stage, "ready_for_review");
+        let mut texts: Vec<_> = (1..=10).map(|n|(n,format!("page {n}"))).collect();
+        let mut images = json!({"pages":[]});
+        assert!(multi::restrict_saved_scope(&root, child, &mut texts, &mut images).unwrap());
+        assert_eq!(texts.iter().map(|(n,_)|*n).collect::<Vec<_>>(), vec![6,7,8,9,10]);
+        std::fs::remove_file(crate::util::job_dir(&root, &job.job_id).join("cloud-direct-source.json")).unwrap();
+        let mut texts: Vec<_> = (1..=10).map(|n|(n,format!("page {n}"))).collect();
+        assert!(multi::restrict_saved_scope(&root, &job.job_id, &mut texts, &mut images).unwrap());
+        assert_eq!(texts.iter().map(|(n,_)|*n).collect::<Vec<_>>(), vec![1,2,3,4,5], "source scope survives a missing filesystem cache");
+        assert!(persist_direct_documents(&root, &job.job_id, &outcome, "stale-worker").is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn batch_keeps_articles_when_page_numbers_are_wrong_or_one_article_is_unusable() {
+        let root = temp_root("multi-lenient");
+        crate::util::ensure_app_dirs(&root).unwrap();
+        let job = direct_job_with_fixture(&root);
+        let texts = vec![(1,"First article".to_string()), (2,"Second article".to_string())];
+        // A hallucinated page number is dropped with a warning; both articles stay.
+        let mut output = json!({"documents":[{"sourcePages":[1],"answerPages":[42],"document":batch_document("A","TRUE")},
+            {"sourcePages":[99],"document":batch_document("B","FALSE")} ]});
+        let multi::NormalizedBatch { outcomes: docs, warnings, .. } = multi::normalize_batch(&root,&job,&job.source_files[0],&output,&texts,&json!({})).unwrap();
+        assert_eq!(docs.len(), 2);
+        assert_eq!(docs[0].source_pages, vec![1]);
+        assert!(warnings.iter().any(|w| w.contains("page_ignored") && w.contains("42")), "{warnings:?}");
+        assert!(warnings.iter().any(|w| w.contains("source_pages_missing")), "{warnings:?}");
+        // One article the normalizer cannot use is skipped, not fatal.
+        output["documents"][1]["document"] = json!({"meta":{"title":"Broken"}});
+        output["documents"][1]["sourcePages"] = json!([2]);
+        let multi::NormalizedBatch { outcomes: docs, warnings, .. } = multi::normalize_batch(&root,&job,&job.source_files[0],&output,&texts,&json!({})).unwrap();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].document["jobId"], json!(job.job_id), "the surviving article keeps the placeholder item");
+        assert!(warnings.iter().any(|w| w.contains("document_skipped") && w.contains("Broken")), "{warnings:?}");
+        // Only when nothing is usable does the batch fail.
+        output["documents"][0]["document"] = json!({"meta":{"title":"Also broken"}});
+        assert!(multi::normalize_batch(&root,&job,&job.source_files[0],&output,&texts,&json!({})).is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn missed_article_is_requested_once_with_the_same_prefix_and_a_short_tail() {
+        let root = temp_root("multi-coverage");
+        crate::util::ensure_app_dirs(&root).unwrap();
+        // Pages 1-2 hold the article (> threshold); the first reply only claims 3-4.
+        let service = controlled_service(vec![
+            (batch_chat(json!({"documents":[{"sourcePages":[3,4],"answerPages":[],"document":batch_document("Claimed","TRUE")}],"warnings":[]})),200),
+            (batch_chat(json!({"documents":[{"sourcePages":[1,2],"answerPages":[],"document":batch_document("Missed","FALSE")}],"warnings":[]})),200),
+        ]);
+        let job = direct_job_with_named_fixture(&root, "demanding-reading-passage-3.pdf");
+        let profile_id = controlled_profile(&root, &service.base_url);
+        let outcome = run_exam_direct(&root, &job.job_id, Some(&profile_id)).unwrap();
+        assert_eq!(outcome.calls, 2, "one conversion plus one coverage follow-up");
+        assert_eq!(outcome.additional_documents.len(), 1);
+        // Physical order: the recovered article on pages 1-2 becomes the first item.
+        assert_eq!(outcome.document["answerKey"]["q1"]["labels"], json!(["FALSE"]));
+        let first = service.requests.recv_timeout(Duration::from_secs(5)).unwrap();
+        let followup = service.requests.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(!first.contains("COVERAGE FOLLOW-UP"));
+        assert!(followup.contains("COVERAGE FOLLOW-UP") && followup.contains("[1, 2]"));
+        // Cache-friendly: the follow-up repeats the first request's pages and
+        // does not resend the previously returned document body.
+        assert!(followup.contains("=== PAGE 1 (text layer)") && followup.contains("=== PAGE 4 (text layer)"));
+        assert!(!followup.contains("Statement 1 about pearls"), "previous document bodies must not be re-sent");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn coverage_followup_that_finds_nothing_keeps_the_batch_and_warns() {
+        let root = temp_root("multi-coverage-none");
+        crate::util::ensure_app_dirs(&root).unwrap();
+        let service = controlled_service(vec![
+            (batch_chat(json!({"documents":[{"sourcePages":[3,4],"answerPages":[],"document":batch_document("Claimed","TRUE")}],"warnings":[]})),200),
+            (batch_chat(json!({"documents":[],"warnings":["pages 1-2 are instructions"]})),200),
+        ]);
+        let job = direct_job_with_named_fixture(&root, "demanding-reading-passage-3.pdf");
+        let profile_id = controlled_profile(&root, &service.base_url);
+        let outcome = run_exam_direct(&root, &job.job_id, Some(&profile_id)).unwrap();
+        assert_eq!(outcome.calls, 2);
+        assert!(outcome.additional_documents.is_empty());
+        assert!(outcome.warnings.iter().any(|w| w == "cloud_direct_pages_uncovered:1,2"), "{:?}", outcome.warnings);
+        assert!(outcome.warnings.iter().any(|w| w == "pages 1-2 are instructions"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn direct_chain_runs_end_to_end_against_a_controlled_service() {
         let root = temp_root("e2e-direct");
@@ -3399,7 +3581,7 @@ mod tests {
             request.contains("=== PAGE"),
             "request must carry per-page text layers"
         );
-        assert!(request.contains("You convert ONE IELTS Reading test PDF"));
+        assert!(request.contains("ONE complete document per reading passage"));
         assert!(request.contains("TASK PRESENTATION RULES"));
         assert!(
             !request.contains("sourceParagraphs"),
@@ -3409,6 +3591,55 @@ mod tests {
             !request.contains("localNodeTargets"),
             "direct chain must not send local targets"
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn article_without_printed_questions_is_ingested_without_placeholders() {
+        let root = temp_root("multi-no-questions");
+        crate::util::ensure_app_dirs(&root).unwrap();
+        let job = direct_job_with_fixture(&root);
+        let texts = vec![(1,"First article".to_string()), (2,"Second article".to_string())];
+        let mut bare = batch_document("Article only", "TRUE");
+        bare["taskGroups"] = json!([]); bare["answerSlots"] = json!({}); bare["answerKey"] = json!({});
+        let output = json!({"documents":[{"sourcePages":[1],"document":batch_document("A","TRUE")},
+            {"sourcePages":[2],"document":bare}],"warnings":["Article only: questions not printed"]});
+        let multi::NormalizedBatch { outcomes, .. } = multi::normalize_batch(&root,&job,&job.source_files[0],&output,&texts,&json!({})).unwrap();
+        assert_eq!(outcomes.len(), 2, "an article without questions is still worth editing");
+        assert!(outcomes[1].compile_issues.is_empty(), "no compiler issue, so no repair round is spent re-adding questions");
+        assert!(outcomes[1].document["taskGroups"].as_array().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn batch_repair_continues_the_conversation_with_only_the_failed_document() {
+        let root = temp_root("multi-repair");
+        crate::util::ensure_app_dirs(&root).unwrap();
+        let good = batch_document("First article", "TRUE");
+        let mut broken = batch_document("Second article", "FALSE");
+        let groups = broken["taskGroups"].as_array().unwrap().clone();
+        broken["taskGroups"] = json!([groups[0].clone(), groups[0].clone()]);
+        let service = controlled_service(vec![
+            (batch_chat(json!({"documents":[
+                {"sourcePages":[1,2,3,4,5],"answerPages":[],"document":good},
+                {"sourcePages":[6,7,8,9,10],"answerPages":[],"document":broken}],"warnings":[]})),200),
+            // The repair returns only the one failed document.
+            (batch_chat(json!({"documents":[{"sourcePages":[6,7,8,9,10],"document":batch_document("Second article","FALSE")}]})),200),
+        ]);
+        let job = direct_job_with_named_fixture(&root, "chunked-reading-evidence.pdf");
+        let profile_id = controlled_profile(&root, &service.base_url);
+        let outcome = run_exam_direct(&root, &job.job_id, Some(&profile_id)).unwrap();
+        assert_eq!(outcome.calls, 2);
+        assert_eq!(outcome.additional_documents.len(), 1);
+        assert!(outcome.compile_issues.is_empty() && outcome.additional_documents[0].compile_issues.is_empty());
+        assert_eq!(outcome.document["answerKey"]["q1"]["labels"], json!(["TRUE"]));
+        assert_eq!(outcome.additional_documents[0].document["answerKey"]["q1"]["labels"], json!(["FALSE"]));
+        let first = service.requests.recv_timeout(Duration::from_secs(5)).unwrap();
+        let repair = service.requests.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(!first.contains("\"role\":\"assistant\""));
+        assert!(repair.contains("\"role\":\"assistant\"") && repair.contains("REPAIR ROUND"));
+        assert!(repair.contains("Second article"), "the failed document is the previous assistant turn");
+        assert!(!repair.contains("First article"), "accepted documents are neither re-sent nor re-generated");
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -3467,25 +3698,28 @@ mod tests {
             "修复回合必须带编译错误清单"
         );
         assert!(
-            second.contains("CURRENT OUTPUT TO FIX"),
-            "修复回合必须带当前 JSON"
+            second.contains("\"role\":\"assistant\""),
+            "修复回合在同一会话里把上一轮输出作为 assistant 轮带回"
         );
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
-    fn finish_reason_length_retries_once_in_page_chunks() {
-        // 10 个文字页的 fixture：截断后按页段对半切（两块）。
+    fn finish_reason_length_discovers_articles_then_converts_each_without_merging_numbers() {
         let root = temp_root("e2e-chunked");
         crate::util::ensure_app_dirs(&root).unwrap();
         let service = controlled_service(vec![
             (direct_exam_with_prompt("Pearls.", "length", &[1, 2]), 200),
+            (batch_chat(json!({"documents":[
+                {"sourcePages":[1,2,3,4,5],"answerPages":[],"title":"First test"},
+                {"sourcePages":[6,7,8,9,10],"answerPages":[],"title":"Second test"}
+            ],"warnings":[]})), 200),
             (
                 direct_exam_with_prompt("Pearls are formed inside oysters.", "stop", &[1, 2]),
                 200,
             ),
             (
-                direct_exam_with_prompt("Pearls are formed inside oysters.", "stop", &[3, 4]),
+                direct_exam_with_prompt("Another test restarts at question one.", "stop", &[1, 2]),
                 200,
             ),
         ]);
@@ -3496,32 +3730,25 @@ mod tests {
             .expect("chunked retry must succeed");
 
         assert!(outcome.chunked);
-        // 被截断的首次请求 + 两块 = 3 次（≤3 次/份，含截断那次）。
-        assert_eq!(outcome.calls, 3, "截断后按页段分块重试一次（两块）");
+        assert_eq!(outcome.calls, 4, "one truncated call, one boundary manifest, two complete documents");
         assert!(
             outcome.compile_issues.is_empty(),
             "{:?}",
             outcome.compile_issues
         );
-        // 两块按题号拼接：槽位合并，正文取节点数最多的一份。
         assert_eq!(
             outcome.document["answerSlots"].as_object().unwrap().len(),
-            4
+            2
         );
-        // 块间 id 不重号：两块都从 group-1 开始，合并后不得有重复 taskId。
-        let task_ids: Vec<&str> = outcome.document["taskGroups"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(|group| group["taskId"].as_str())
-            .collect();
-        let unique: std::collections::BTreeSet<&&str> = task_ids.iter().collect();
-        assert_eq!(
-            task_ids.len(),
-            unique.len(),
-            "块间 taskId 必须唯一: {task_ids:?}"
-        );
+        assert_eq!(outcome.additional_documents.len(), 1);
+        assert_eq!(outcome.additional_documents[0].document["answerSlots"].as_object().unwrap().len(), 2);
+        assert_ne!(outcome.document["exam"]["examId"], outcome.additional_documents[0].document["exam"]["examId"]);
+        assert!(outcome.additional_documents[0].compile_issues.is_empty());
         let first = service
+            .requests
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        let manifest = service
             .requests
             .recv_timeout(Duration::from_secs(5))
             .unwrap();
@@ -3529,12 +3756,11 @@ mod tests {
             .requests
             .recv_timeout(Duration::from_secs(5))
             .unwrap();
-        let chunk_b = service
-            .requests
-            .recv_timeout(Duration::from_secs(5))
-            .unwrap();
-        assert!(!first.contains("page chunks"), "首次请求不带分块说明");
-        assert!(chunk_a.contains("page chunks") && chunk_b.contains("page chunks"));
+        let chunk_b = service.requests.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(!first.contains("OUTPUT MODE OVERRIDE"));
+        assert!(manifest.contains("OUTPUT MODE OVERRIDE"));
+        assert!(chunk_a.contains("=== PAGE 1 (text layer)") && !chunk_a.contains("=== PAGE 6 (text layer)"));
+        assert!(chunk_b.contains("=== PAGE 6 (text layer)") && !chunk_b.contains("=== PAGE 1 (text layer)"));
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -3835,11 +4061,11 @@ mod tests {
     fn unusable_output_falls_back_to_the_local_chain() {
         let root = temp_root("e2e-unusable");
         crate::util::ensure_app_dirs(&root).unwrap();
-        // 没有题组的「直出」= 完全不可用：归一化必须拒绝（调用方回退本地链）。
+        // 既无题组也无正文的「直出」= 完全不可用：归一化必须拒绝。
         let service = controlled_service(vec![(
             json!({"choices": [{"message": {"content": serde_json::to_string(&json!({
                 "meta": {"title": "x", "language": "en"},
-                "passage": {"content": [paragraph("p", None, "text")], "paragraphMap": {}},
+                "passage": {"content": [], "paragraphMap": {}},
                 "taskGroups": [],
                 "answerSlots": {},
                 "answerKey": {},

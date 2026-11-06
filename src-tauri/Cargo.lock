@@ -1971,6 +1971,7 @@ dependencies = [
  "jpeg-decoder",
  "jpeg-encoder",
  "keyring",
+ "lopdf",
  "pdf-extract",
  "pdfium-render",
  "png 0.17.16",

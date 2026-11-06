@@ -201,8 +201,8 @@ fn parse_range(text: &str) -> Option<(u32, u32)> {
     let rest = text[digits.len()..].trim_start();
     let rest = rest
         .strip_prefix('-')
-        .or_else(|| rest.strip_prefix("to "))
-        .or_else(|| rest.strip_prefix("and "));
+        .or_else(|| rest.strip_prefix("to"))
+        .or_else(|| rest.strip_prefix("and"));
     let end = match rest {
         Some(rest) => {
             let rest = rest.trim_start();
@@ -300,7 +300,17 @@ fn page_features(text: &str) -> PageFeatures {
             features.test = test_heading(line);
         }
         if features.heading.is_none() {
-            if let Some(passage) = passage_heading(line) {
+            // Some producers emit READING / PASSAGE / 2 as separate text runs.
+            // Only join unfinished heading fragments, never prose references.
+            let mut heading = line.to_string();
+            for next in lines.iter().skip(index + 1).take(2) {
+                if !matches!(squash(&heading).as_str(), "reading" | "readingpassage" | "passage") {
+                    break;
+                }
+                heading.push(' ');
+                heading.push_str(next);
+            }
+            if let Some(passage) = passage_heading(&heading) {
                 features.heading = Some((passage, index));
             }
         }
@@ -316,17 +326,22 @@ fn page_features(text: &str) -> PageFeatures {
         if is_prose_line(line) {
             features.prose_lines += 1;
         }
-        // 说明行可能折成两行：拼上后一行再找。
+        // A long instruction may span 3-6 text runs, and PDF fonts may omit
+        // spaces entirely. Preserve punctuation for the question range.
         if features.instruction.is_none() {
-            let window = normalize(&format!("{line} {}", lines.get(index + 1).unwrap_or(&"")));
-            if let Some(at) = window.find("spend about 20 minutes") {
+            let window: String = normalize(&lines[index..lines.len().min(index + 6)].join(" "))
+                .chars().filter(|ch| !ch.is_whitespace()).collect();
+            if let Some(at) = window.find("spendabout20minutes").or_else(|| window.find("spend20minutes")) {
                 let tail = &window[at..];
                 let range = tail
                     .find("questions")
                     .and_then(|pos| parse_range(&tail[pos + "questions".len()..]));
-                let passage = tail.find("reading passage").and_then(|pos| {
-                    let rest = tail[pos + "reading passage".len()..].trim_start();
-                    ordinal_word(rest.split(|ch: char| !ch.is_ascii_alphanumeric()).next().unwrap_or(""))
+                let passage = tail.find("readingpassage").and_then(|pos| {
+                    let rest = &tail[pos + "readingpassage".len()..];
+                    // "1onpages2and3" also occurs with missing inter-word spaces.
+                    let number: String = rest.chars().take_while(char::is_ascii_digit).collect();
+                    ordinal_word(&number).or_else(|| ["one", "two", "three"].iter()
+                        .find(|word| rest.starts_with(**word)).and_then(|word| ordinal_word(word)))
                 });
                 features.instruction = Some((passage, range, index));
             }
@@ -447,9 +462,15 @@ pub(crate) fn plan_from_page_texts(pages: &[String]) -> PdfSplitPlan {
             });
         let new_layout = kind == Some(first_kind)
             && drafts.last().is_some_and(|last| last.seen_second_kind);
+        // A full declared question band is an independent boundary even when
+        // prose/heading extraction failed. Partial task groups never trigger it.
+        let new_question_band = f.heading.is_none() && f.instruction.is_none()
+            && f.question_ranges.first().is_some_and(|range| matches!(range, (14, 26) | (27, 40))
+                && drafts.last().is_some_and(|last| last.range().is_some_and(|prev| prev.1 + 1 == range.0)));
         let starts = drafts.is_empty() && kind.is_some()
             || new_explicit
             || new_layout
+            || new_question_band
             || (test_changed && kind.is_some());
 
         if starts {
@@ -481,6 +502,9 @@ pub(crate) fn plan_from_page_texts(pages: &[String]) -> PdfSplitPlan {
             }
             if test_changed {
                 draft.signal("test");
+            }
+            if new_question_band {
+                draft.signal("question_band");
             }
             drafts.push(draft);
             after_answers = false;
@@ -589,7 +613,7 @@ pub(crate) fn plan_from_page_texts(pages: &[String]) -> PdfSplitPlan {
             "low"
         } else if explicit && corroborated {
             "high"
-        } else if explicit || (draft.signals.contains(&"layout") && numbering && band_agrees) {
+        } else if explicit || ((draft.signals.contains(&"layout") || draft.signals.contains(&"question_band")) && numbering && band_agrees) {
             "medium"
         } else {
             "low"
@@ -800,7 +824,14 @@ fn assign_answers(
 
 // ───────────────────────── 文件入口 ─────────────────────────
 
-/// 读 PDF 文本层并生成切分计划。读不到文本（扫描件）时返回空计划（不拆）。
+fn text_poor_page(text: &str) -> bool {
+    // Scans often have a selectable watermark/page number, so non-empty text
+    // does not establish that the article or its heading was actually read.
+    text.chars().filter(char::is_ascii_alphabetic).take(40).count() < 40
+}
+
+/// Two independent text readers. A failed/empty extraction is an unknown
+/// outcome, never evidence that the file contains only one passage.
 pub(crate) fn plan_pdf_file(path: &Path) -> PdfSplitPlan {
     let is_pdf = path
         .extension()
@@ -809,13 +840,39 @@ pub(crate) fn plan_pdf_file(path: &Path) -> PdfSplitPlan {
     if !is_pdf {
         return PdfSplitPlan::default();
     }
-    match pdf_extract::extract_text_by_pages(path) {
-        Ok(pages) => plan_from_page_texts(&pages),
+    let mut warnings = Vec::new();
+    let primary = match pdf_extract::extract_text_by_pages(path) {
+        Ok(pages) => pages,
         Err(error) => {
             eprintln!("[import] split plan: text layer unreadable {}: {error}", path.display());
-            PdfSplitPlan::default()
+            warnings.push("PDF 文本读取失败，分篇检查可能不完整。".to_string());
+            Vec::new()
+        }
+    };
+    let mut plan = plan_from_page_texts(&primary);
+    if !plan.is_multi() || !plan.default_split || primary.iter().any(|page| text_poor_page(page)) {
+        match crate::pdf_geometry::extract_page_texts_for_split(path) {
+            Ok(pages) => {
+                let alternative = plan_from_page_texts(&pages);
+                // Keep each reader's page plan intact; concatenating their text
+                // would duplicate answer lines and manufacture boundary evidence.
+                if alternative.is_multi() && (!plan.is_multi() || (!plan.default_split && alternative.default_split)) {
+                    plan = alternative;
+                } else if plan.page_count == 0 {
+                    plan = alternative;
+                }
+                if pages.iter().any(|page| text_poor_page(page)) {
+                    warnings.push("部分页面没有可读文字或文字过少，可能是扫描页；无法确认是否还有其他文章，需通过云端图像识别或人工核对分篇。".to_string());
+                }
+            }
+            Err(error) => {
+                eprintln!("[import] split plan: PDFium unavailable: {error}");
+                warnings.push("备用 PDF 读取器不可用，分篇检查可能不完整；请检查是否使用了完整安装包。".to_string());
+            }
         }
     }
+    plan.warnings.extend(warnings);
+    plan
 }
 
 /// 把一篇的页写成独立 PDF（原页面直接复制，不栅格化）。
@@ -827,9 +884,32 @@ pub(crate) fn write_segment_pdf(
 ) -> CommandResult<()> {
     let bytes = std::fs::read(source).map_err(|error| format!("split_read_source:{error}"))?;
     let pages = plan.pages_for(segment);
-    let subset =
-        crate::pdf_geometry::subset_pdf_pages(&bytes, &pages, plan.page_count as usize)?;
+    let subset = crate::pdf_geometry::subset_pdf_pages(&bytes, &pages, plan.page_count as usize)
+        .or_else(|error| {
+            eprintln!("[import] split: PDFium page copy failed, trying built-in copier: {error}");
+            subset_pdf_builtin(&bytes, &pages, plan.page_count)
+        })?;
     std::fs::write(output, subset).map_err(|error| format!("split_write_segment:{error}"))
+}
+
+/// Native-library-independent page copier. Keep the original page tree and
+/// inherited resources, fonts, images and rotation; remove only unselected pages.
+fn subset_pdf_builtin(bytes: &[u8], pages: &[u32], original_count: u32) -> CommandResult<Vec<u8>> {
+    let mut document = lopdf::Document::load_mem(bytes).map_err(|error| format!("split_pdf_open:{error}"))?;
+    if document.get_pages().len() != original_count as usize || pages.is_empty()
+        || pages.iter().any(|page| *page == 0 || *page > original_count)
+        || pages.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err("split_pdf_page_selection_invalid".into());
+    }
+    let removed: Vec<u32> = (1..=original_count).filter(|page| !pages.contains(page)).collect();
+    document.delete_pages(&removed);
+    document.prune_objects();
+    if document.get_pages().len() != pages.len() {
+        return Err("split_pdf_copy_incomplete".into());
+    }
+    let mut output = Vec::new();
+    document.save_to(&mut output).map_err(|error| format!("split_pdf_save:{error}"))?;
+    Ok(output)
 }
 
 #[derive(Debug, Serialize)]
@@ -858,7 +938,7 @@ pub(crate) fn preview_import_split(paths: &[String]) -> Vec<ImportSplitPreview> 
                     answer_pages: Vec::new(),
                     unassigned_pages: Vec::new(),
                     default_split: false,
-                    warnings: Vec::new(),
+                    warnings: plan.warnings,
                 };
             }
             ImportSplitPreview {
@@ -1127,7 +1207,74 @@ mod tests {
         assert!(answer_heading("Answer key Test 3"));
         assert!(!answer_heading("Write your answers in boxes 1-5"));
         assert_eq!(question_heading_range("Questions 14–26"), Some((14, 26)));
+        assert_eq!(question_heading_range("Questions 14to26"), Some((14, 26)));
         assert_eq!(question_heading_range("Questionnaire 1"), None);
+    }
+
+    #[test]
+    fn fragmented_headings_and_wrapped_instructions_match_customer_layout() {
+        let plan = plan_from_page_texts(&[
+            page(&["2", "READING", "PASSAGE", "1", "You should spend about 20 minutes on", "Questions 1-13, which are based on", "Reading Passage 1 on pages 2 and 3."]),
+            questions("1-13", 1, 13),
+            page(&["6", "READING", "PASSAGE", "2", "You should spend about 20 minutes on", "Questions 14-26, which are based on Reading", "Passage 2 on pages 6 and 7."]),
+            questions("14-26", 14, 13),
+        ]);
+        assert_eq!(plan.segments.len(), 2, "{:?}", summary(&plan));
+        assert_eq!(plan.segments[1].pages, vec![3, 4]);
+        assert_eq!(plan.segments[1].question_range, Some((14, 26)));
+        assert!(plan.default_split);
+    }
+
+    #[test]
+    fn instruction_alone_handles_missing_spaces_and_many_text_runs() {
+        let plan = plan_from_page_texts(&[
+            page(&["You should spend", "about 20 minutes", "on Questions 1-13,", "which are based on Reading", "Passage 1 on pages 2 and 3."]),
+            page(&["Youshouldspendabout20minutesonQuestions14-26,whicharebasedonReadingPassage2onpages6and7."]),
+        ]);
+        assert_eq!(plan.segments.len(), 2, "{:?}", summary(&plan));
+        assert_eq!(plan.segments[1].passage, 2);
+        assert!(plan.default_split);
+        let features = page_features("You should spend about 20 minutes on Questions 14 to 26, which are based on Reading Passage 2.");
+        assert_eq!(features.instruction.unwrap().1, Some((14, 26)));
+    }
+
+    #[test]
+    fn full_question_bands_can_suggest_split_without_prose_layout() {
+        let plan = plan_from_page_texts(&[
+            questions("1-13", 1, 13), questions("14-26", 14, 13), questions("27-40", 27, 14),
+        ]);
+        assert_eq!(plan.segments.len(), 3, "{:?}", summary(&plan));
+        assert!(plan.segments[1].signals.iter().any(|s| s == "question_band"));
+        let single = plan_from_page_texts(&[questions("1-5", 1, 5), questions("6-13", 6, 8)]);
+        assert_eq!(single.segments.len(), 1);
+    }
+
+    #[test]
+    fn builtin_copier_keeps_selected_pages_and_inherited_geometry() {
+        let bytes = minimal_text_pdf(&[&["first"], &["second"], &["third"]]);
+        let mut source = lopdf::Document::load_mem(&bytes).unwrap();
+        let page_ids: Vec<_> = source.get_pages().into_values().collect();
+        source.get_object_mut(page_ids[2]).unwrap().as_dict_mut().unwrap().set("Rotate", 90);
+        let mut bytes = Vec::new();
+        source.save_to(&mut bytes).unwrap();
+        let result = subset_pdf_builtin(&bytes, &[1, 3], 3).unwrap();
+        let output = lopdf::Document::load_mem(&result).unwrap();
+        assert_eq!(output.get_pages().len(), 2);
+        assert_eq!(output.extract_text(&[1, 2]).unwrap().trim(), "first\nthird");
+        let last = output.get_pages()[&2];
+        assert_eq!(output.get_object(last).unwrap().as_dict().unwrap().get(b"Rotate").unwrap().as_i64().unwrap(), 90);
+        assert!(subset_pdf_builtin(&bytes, &[3, 1], 3).is_err());
+        assert!(subset_pdf_builtin(&bytes, &[4], 3).is_err());
+        assert!(subset_pdf_builtin(&bytes, &[1], 4).is_err());
+    }
+
+    #[test]
+    fn failed_preflight_keeps_warnings_in_preview() {
+        let previews = preview_import_split(&["does-not-exist.pdf".into()]);
+        assert!(previews[0].segments.is_empty());
+        assert!(!previews[0].warnings.is_empty());
+        assert!(text_poor_page("6\nPublisher watermark"));
+        assert!(!text_poor_page("You should spend about twenty minutes on questions fourteen to twenty six"));
     }
 
     #[test]

@@ -69,6 +69,18 @@ pub(crate) struct ProcessingState {
     pub cloud_permits: Arc<tokio::sync::Semaphore>,
     /// 用户请求取消的任务（阶段边界检查；queued 的取消直接走 queue::request_cancel）。
     pub cancelled: Arc<tokio::sync::RwLock<HashSet<String>>>,
+    /// 提示缓存预热闸门：键 = 模型配置 + 题型。冷状态下第一份直出独占发出，
+    /// 让服务商先建好固定前缀（系统说明 + 范例）的缓存，之后的并发请求才能命中。
+    pub direct_cache_warmth: Arc<tokio::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<Option<std::time::Instant>>>>>>,
+}
+
+/// 预热有效期：超过后视为冷，下一份重新独占预热（服务商缓存为尽力而为）。
+const DIRECT_CACHE_WARM_TTL: Duration = Duration::from_secs(30 * 60);
+
+impl ProcessingState {
+    async fn direct_cache_gate(&self, key: String) -> Arc<tokio::sync::Mutex<Option<std::time::Instant>>> {
+        self.direct_cache_warmth.lock().await.entry(key).or_default().clone()
+    }
 }
 
 impl ProcessingState {
@@ -78,6 +90,7 @@ impl ProcessingState {
             local_permits: Arc::new(tokio::sync::Semaphore::new(settings.local_concurrency)),
             cloud_permits: Arc::new(tokio::sync::Semaphore::new(settings.cloud_concurrency)),
             cancelled: Arc::new(tokio::sync::RwLock::new(HashSet::new())),
+            direct_cache_warmth: Arc::default(),
             settings,
         }
     }
@@ -104,6 +117,7 @@ fn display_message(stage: &str, error: Option<&str>) -> String {
             "retry_exhausted" => "已达到自动恢复上限，请手动重试。".to_string(),
             // G1 对抗审计 P2：恢复兑现的取消不得显示成"识别失败"。
             "cancelled" => "已取消。".to_string(),
+            code if code.starts_with("cloud_direct_batch_") => "云端多篇题稿未能完整接收或保存，请重试；已保存的篇章会保留。".to_string(),
             _ => "识别失败，可以重试。".to_string(),
         };
     }
@@ -394,6 +408,7 @@ async fn run_job(app: AppHandle, state: Arc<ProcessingState>, job: queue::Proces
         local_permits: state.local_permits.clone(),
         cloud_permits: state.cloud_permits.clone(),
         cancelled: state.cancelled.clone(),
+        direct_cache_warmth: state.direct_cache_warmth.clone(),
     });
     let heartbeat = tauri::async_runtime::spawn({
         let app = app.clone();
@@ -1775,6 +1790,15 @@ async fn try_cloud_direct(
         finish_cancelled(app, state, job_id).await;
         return DirectAttempt::Aborted;
     }
+    // 缓存预热：请求内容不变，只调整发出时机——冷状态下第一份独占发出，
+    // 其余等它完成后再并发，从而命中同一固定前缀的缓存。闸门先于 permit 获取，
+    // 顺序固定，不会互相等待成死锁。
+    let warm_key = format!("{}:{}", profile_id.unwrap_or("default"),
+        if crate::cloud_direct::is_listening(root, job_id) { "listening" } else { "reading" });
+    let gate = state.direct_cache_gate(warm_key).await;
+    let warm_guard = gate.clone().lock_owned().await;
+    let warming = warm_guard.is_none_or(|at| at.elapsed() >= DIRECT_CACHE_WARM_TTL);
+    let warm_guard = if warming { Some(warm_guard) } else { drop(warm_guard); None };
     // 受控并发：cloud permit 只覆盖模型调用本身。
     let _cloud_permit = state.cloud_permits.clone().acquire_owned().await;
     let root_owned = root.to_path_buf();
@@ -1786,55 +1810,71 @@ async fn try_cloud_direct(
     .await
     .unwrap_or_else(|error| Err(format!("processing_join:{error}")));
     drop(_cloud_permit);
+    // 一次真实发出的尝试（成功或失败）都结束预热，失败也不让后续任务串行排队。
+    if let Some(mut guard) = warm_guard { *guard = Some(std::time::Instant::now()); }
     if state.cancelled.read().await.contains(job_id) {
         finish_cancelled(app, state, job_id).await;
         return DirectAttempt::Aborted;
     }
     let outcome = match outcome {
         Ok(outcome) => outcome,
+        Err(error) if !error.starts_with("cloud_direct_source_not_pdf:") && error != "NO_PROFILE" => {
+            fail_direct_job(app, state, job_id, &error).await;
+            return DirectAttempt::Aborted;
+        }
         Err(error) => return direct_fallback(app, state, job_id, &error).await,
     };
     // 结构完全不可用的产物不会到这里（归一化阶段已判 Err）；编译有问题也保留并标注。
-    if (outcome.document["modality"] != "listening" && outcome.document.pointer("/passage/content").and_then(Value::as_array).is_none_or(|content| content.is_empty()))
-        || outcome.document.get("taskGroups").and_then(Value::as_array).is_none_or(|groups| groups.is_empty())
+    // Loose ingest gate: a draft with an article but no questions (or questions
+    // but no article) is still worth editing; the publish gate stays strict.
+    if outcome.document.get("taskGroups").and_then(Value::as_array).is_none_or(|groups| groups.is_empty())
+        && (outcome.document["modality"] == "listening"
+            || outcome.document.pointer("/passage/content").and_then(Value::as_array).is_none_or(|content| content.is_empty()))
     {
-        return direct_fallback(app, state, job_id, "cloud_direct_outcome_unusable").await;
+        fail_direct_job(app, state, job_id, "cloud_direct_batch_outcome_unusable").await;
+        return DirectAttempt::Aborted;
     }
     // 落盘：诊断记录 + 保真度 + 可播种的题稿影子。
+    let batch_committed_atomically = !outcome.source_pages.is_empty();
     let write_result = tauri::async_runtime::spawn_blocking({
         let worker_id = state.worker_id.clone();
         let root = root.to_path_buf();
         let job_id = job_id.to_string();
         move || {
-            crate::cloud_direct::write_direct_result(&root, &job_id, &outcome)?;
-            crate::cloud_direct::write_direct_canonical_leased(&root, &job_id, &outcome.document, &worker_id)?;
+            let ids = crate::cloud_direct::persist_direct_documents(&root, &job_id, &outcome, &worker_id)?;
             crate::listening_audio::canonical_media::sync_item_audio_media(&root, &job_id)?;
-            Ok(true)
+            Ok(ids)
         }
     })
     .await
     .unwrap_or_else(|error| Err(format!("processing_join:{error}")));
-    match write_result {
-        Ok(true) => {}
-        Ok(false) => {
-            return direct_fallback(app, state, job_id, "cloud_direct_canonical_not_seeded").await;
-        }
+    let document_ids = match write_result {
+        Ok(ids) => ids,
         Err(error) => {
             if error == "processing_lease_lost" { return DirectAttempt::Aborted; }
-            let error = format!("cloud_direct_write_failed:{error}");
-            return direct_fallback(app, state, job_id, &error).await;
+            // A fan-out may already have durable rows. Do not overwrite its
+            // first document with a local whole-PDF fallback after a write error.
+            let error = format!("cloud_direct_batch_write_failed:{error}");
+            fail_direct_job(app, state, job_id, &error).await;
+            return DirectAttempt::Aborted;
         }
-    }
+    };
     // 清掉上一轮回退留下的原因，并通知前端「权威稿变了」（重新识别场景下
     // 编辑器可能正开着旧稿）。
     let (root, job_id_owned, app_owned) = (root.to_path_buf(), job_id.to_string(), app.clone());
     let _ = tauri::async_runtime::spawn_blocking(move || {
         let conn = open_library_connection(&root)?;
         queue::clear_cloud_direct_fallback(&conn, &job_id_owned)?;
-        crate::processing::scheduler::notify_item_content_changed(&conn, &app_owned, &job_id_owned)?;
+        for id in document_ids {
+            crate::processing::scheduler::notify_item_content_changed(&conn, &app_owned, &id)?;
+        }
         Ok::<(), String>(())
     })
     .await;
+    if batch_committed_atomically {
+        state.cancelled.write().await.remove(job_id);
+        return DirectAttempt::Completed;
+    }
     // 收口：可打开编辑 + ready_for_review。云端成功；reconcile 未跑（not_run）。
     let settled = advance(
         app,
@@ -2413,6 +2453,23 @@ async fn set_cloud_status_only(
             Some((seq, stage))
         }
         _ => None,
+    }
+}
+
+async fn fail_direct_job(app: &AppHandle, state: &Arc<ProcessingState>, job_id: &str, error: &str) {
+    let code: String = error.split(':').next().unwrap_or("cloud_direct_failed").chars().take(80).collect();
+    let advanced = advance(app, state, job_id, STAGE_FAILED, Some("not_run"), Some("failed"),
+        Some("not_run"), None, Some(&code)).await;
+    if advanced.is_ok_and(|(_, stage)| stage == STAGE_FAILED) {
+        if let Ok(root) = app_root(app) {
+            let id = job_id.to_string(); let app = app.clone();
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                let conn = open_library_connection(&root)?;
+                crate::library::repository::set_item_status(&conn, &id, "failed")?;
+                notify_item_content_changed(&conn, &app, &id)?;
+                Ok::<(), String>(())
+            }).await;
+        }
     }
 }
 

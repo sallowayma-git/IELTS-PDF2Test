@@ -68,7 +68,8 @@ export const SPLIT_SIGNAL_LABEL: Record<string, string> = {
   layout: "版式",
   numbering: "题号接力",
   band: "题号区间",
-  test: "套题切换"
+  test: "套题切换",
+  question_band: "完整题号范围"
 };
 export const SPLIT_CONFIDENCE_LABEL: Record<ImportSplitSegment["confidence"], string> = {
   high: "把握高",

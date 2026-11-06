@@ -25,6 +25,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 fs2 = "0.4"
 thiserror = "2"
 pdf-extract = "0.10"
+lopdf = { version = "0.38", default-features = false }
 pdfium-render = { version = "0.9", default-features = false, features = ["pdfium_latest", "thread_safe"] }
 png = "0.17"
 quick-xml = "0.39"

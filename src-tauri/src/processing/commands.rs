@@ -32,7 +32,7 @@ pub(crate) struct ImportFileInput {
     #[serde(default)]
     pub answer_files: Vec<String>,
     /// 阅读整套卷子：按 `READING PASSAGE n` 标题把这份 PDF 拆成多篇，各建一条条目。
-    /// 用户在导入抽屉里确认（默认勾选）；判不出两篇以上时照常整份导入。
+    /// 用户在导入抽屉里确认；确认后无法拆分时明确返回失败，允许取消拆分再导入。
     #[serde(default)]
     pub split_passages: bool,
 }
@@ -116,26 +116,31 @@ pub(crate) fn import_files_at_root(
             pipeline_mode,
         };
         if file.split_passages && modality == "reading" {
-            if let Some(parts) = stage_passage_split(root, &file, &title) {
-                for part in &parts {
-                    let source = SourceToImport {
-                        path: &part.path,
-                        name: &part.name,
-                        answer_files: &file.answer_files,
-                        part: Some(&part.part),
-                        split_answers: part.answer_path.as_deref(),
-                    };
-                    match import_one_source(root, &source, &part.title, &options) {
-                        Ok(item) => created.push(item),
-                        Err(reason) => rejected.push(ImportRejectedFile {
-                            name: part.name.clone(),
-                            reason,
-                        }),
-                    }
+            let parts = match stage_passage_split(root, &file, &title) {
+                Ok(parts) => parts,
+                Err(reason) => {
+                    rejected.push(ImportRejectedFile { name: file.name.clone(), reason });
+                    continue;
                 }
-                remove_split_parts(&parts);
-                continue;
+            };
+            for part in &parts {
+                let source = SourceToImport {
+                    path: &part.path,
+                    name: &part.name,
+                    answer_files: &file.answer_files,
+                    part: Some(&part.part),
+                    split_answers: part.answer_path.as_deref(),
+                };
+                match import_one_source(root, &source, &part.title, &options) {
+                    Ok(item) => created.push(item),
+                    Err(reason) => rejected.push(ImportRejectedFile {
+                        name: part.name.clone(),
+                        reason,
+                    }),
+                }
             }
+            remove_split_parts(&parts);
+            continue;
         }
         let source = SourceToImport {
             path: &file.path,
@@ -202,17 +207,16 @@ struct SplitPart {
     answer_path: Option<String>,
 }
 
-/// 把整套阅读卷子拆成每篇一份子 PDF。判不出两篇以上、或子 PDF 写不出来时返回
-/// `None`，调用方照常整份导入——绝不因为拆分失败丢掉这份文件。
+/// 已确认拆分的文件必须拆成多条；失败明确返回，不得静默改为整份导入。
 fn stage_passage_split(
     root: &std::path::Path,
     file: &ImportFileInput,
     title: &str,
-) -> Option<Vec<SplitPart>> {
+) -> CommandResult<Vec<SplitPart>> {
     let source = std::path::Path::new(&file.path);
     let plan = super::pdf_split::plan_pdf_file(source);
     if !plan.is_multi() {
-        return None;
+        return Err("拆分未完成：重新检查时未找到多篇阅读，未建立整份条目。请重新选择文件检查，或取消拆分后整份导入。".into());
     }
     let stem = file
         .name
@@ -223,7 +227,7 @@ fn stage_passage_split(
     let dir = root.join("tmp").join("import-split");
     if let Err(error) = std::fs::create_dir_all(&dir) {
         eprintln!("[import] split: create temp dir failed: {error}");
-        return None;
+        return Err("拆分未完成：无法建立临时目录，请检查应用数据目录的写入权限或磁盘空间。".into());
     }
     // 没有标题提示时整份导入的标题带扩展名；拆出来的篇名不重复带「.pdf」。
     let base_title = match title.len().checked_sub(4).and_then(|cut| title.get(cut..).map(|ext| (cut, ext))) {
@@ -257,7 +261,7 @@ fn stage_passage_split(
             eprintln!("[import] split: {} segment {} failed: {error}", file.name, segment.label);
             remove_split_parts(&parts);
             let _ = std::fs::remove_dir_all(&part_dir);
-            return None;
+            return Err("拆分未完成：无法生成各篇 PDF 或答案文件，未建立整份条目。请检查磁盘空间、目录权限及 PDF 是否损坏，然后重试；也可取消拆分后整份导入。".into());
         }
         parts.push(SplitPart {
             path: path.to_string_lossy().to_string(),
@@ -267,7 +271,7 @@ fn stage_passage_split(
             answer_path: answer_path.map(|(answer, _)| answer.to_string_lossy().to_string()),
         });
     }
-    Some(parts)
+    Ok(parts)
 }
 
 fn remove_split_parts(parts: &[SplitPart]) {
@@ -616,12 +620,6 @@ mod tests {
         let bytes = whole_test_pdf(&[("glass", 1, 13), ("horses", 14, 26), ("sleep", 27, 40)]);
         let result = split_import(&root, "剑桥 Test 1.pdf", &bytes, None);
         let reasons: Vec<_> = result.rejected.iter().map(|r| r.reason.clone()).collect();
-        if crate::pdf_geometry::pdfium_library_path().is_none() {
-            // 本机没有 pdfium：拆分必须安全退回整份导入，绝不丢文件。
-            assert_eq!(result.created.len(), 1, "rejected: {reasons:?}");
-            let _ = fs::remove_dir_all(&root);
-            return;
-        }
         assert!(reasons.is_empty(), "rejected: {reasons:?}");
         let titles: Vec<_> = result.created.iter().map(|item| item.title.clone()).collect();
         assert_eq!(titles, ["剑桥 Test 1 · P1", "剑桥 Test 1 · P2", "剑桥 Test 1 · P3"]);
@@ -647,6 +645,21 @@ mod tests {
             .map(|entries| entries.count())
             .unwrap_or(0);
         assert_eq!(leftovers, 0, "临时子 PDF / 答案文本已清理");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn confirmed_split_staging_failure_does_not_import_whole() {
+        let root = temp_root();
+        crate::util::ensure_app_dirs(&root).unwrap();
+        fs::create_dir_all(root.join("tmp")).unwrap();
+        fs::write(root.join("tmp/import-split"), b"blocked directory").unwrap();
+        let bytes = whole_test_pdf(&[("glass", 1, 13), ("horses", 14, 26)]);
+        let result = split_import(&root, "full.pdf", &bytes, None);
+        assert!(result.created.is_empty(), "must not silently import whole");
+        assert_eq!(result.rejected.len(), 1);
+        assert!(result.rejected[0].reason.contains("拆分未完成"));
+        assert!(item_rows(&root).is_empty());
         let _ = fs::remove_dir_all(&root);
     }
 

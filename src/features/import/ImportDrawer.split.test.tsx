@@ -3,8 +3,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ planImportSplit: vi.fn(), detectImportModality: vi.fn(), chooseSourceFiles: vi.fn() }));
-vi.mock("../../api/tauriCommands", () => ({ listLlmProfiles: vi.fn().mockResolvedValue([]) }));
+const mocks = vi.hoisted(() => ({ planImportSplit: vi.fn(), detectImportModality: vi.fn(), chooseSourceFiles: vi.fn(), listLlmProfiles: vi.fn() }));
+vi.mock("../../api/tauriCommands", () => ({ listLlmProfiles: mocks.listLlmProfiles, getPipelineSettings: vi.fn().mockResolvedValue({ pipelineMode: "direct" }) }));
 vi.mock("../../api/listeningAudioClient", () => ({ detectImportModality: mocks.detectImportModality }));
 vi.mock("../../api/desktopDialogs", () => ({
   chooseSourceFiles: mocks.chooseSourceFiles, choosePdfFolderSources: vi.fn(), listenForFileDrops: vi.fn().mockResolvedValue(() => {})
@@ -40,6 +40,7 @@ function plan(overrides: object = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.listLlmProfiles.mockResolvedValue([]);
   mocks.chooseSourceFiles.mockResolvedValue([whole, single]);
   mocks.detectImportModality.mockResolvedValue([]);
   mocks.planImportSplit.mockResolvedValue([plan(), { ...plan(), path: single.path, pageCount: 3, segments: [] }]);
@@ -55,6 +56,18 @@ async function pickAndStart(onImport: ReturnType<typeof vi.fn>) {
 }
 
 describe("ImportDrawer whole-test split", () => {
+  it("lets cloud direct discover passages while keeping selected source PDFs intact", async () => {
+    mocks.listLlmProfiles.mockResolvedValue([{ profileId:"cloud",enabled:true }]);
+    const onImport = vi.fn();
+    render(<ImportDrawer open busy={false} rejected={[]} onClose={() => {}} onImport={onImport} />);
+    await screen.findByTestId("import-cloud-multi");
+    fireEvent.click(screen.getByTestId("import-pick-files"));
+    await screen.findByText("Test 1.pdf");
+    fireEvent.click(screen.getByTestId("import-start"));
+    await waitFor(() => expect(onImport).toHaveBeenCalledTimes(1));
+    expect(mocks.planImportSplit).not.toHaveBeenCalled();
+    expect(onImport.mock.calls[0][0]).toEqual([whole,single]);
+  });
   it("shows the detected passages and splits by default", async () => {
     const onImport = vi.fn();
     await pickAndStart(onImport);
@@ -115,5 +128,106 @@ describe("ImportDrawer whole-test split", () => {
     await screen.findByText("Test 1.pdf");
     fireEvent.click(screen.getByTestId("import-start"));
     await waitFor(() => expect(mocks.planImportSplit).toHaveBeenCalledWith([single.path]));
+  });
+
+  it("shows failed preflight instead of silently importing whole, and allows rechecking", async () => {
+    mocks.planImportSplit.mockRejectedValueOnce(new Error("IPC failed"));
+    const onImport = vi.fn();
+    render(<ImportDrawer open busy={false} rejected={[]} onClose={() => {}} onImport={onImport} />);
+    fireEvent.click(screen.getByTestId("import-pick-files"));
+    await screen.findByText("Test 1.pdf");
+    fireEvent.click(screen.getByTestId("import-start"));
+    await screen.findByTestId("import-split-warning");
+    expect(onImport).not.toHaveBeenCalled();
+    expect(screen.getAllByText(/分篇检查未完成/)).toHaveLength(2);
+    fireEvent.click(screen.getByText("重新检查"));
+    await screen.findByTestId("import-split-plan");
+    fireEvent.click(screen.getByTestId("import-start"));
+    await waitFor(() => expect(onImport).toHaveBeenCalledTimes(1));
+    expect(onImport.mock.calls[0][0][0].splitPassages).toBe(true);
+  });
+
+  it("keeps unreadable-page warnings visible even without detected segments", async () => {
+    mocks.planImportSplit.mockResolvedValue([plan({ segments: [], defaultSplit: false, warnings: ["部分页面没有可读文字，需云端图像识别或人工核对分篇。"] })]);
+    const onImport = vi.fn();
+    render(<ImportDrawer open busy={false} rejected={[]} onClose={() => {}} onImport={onImport} />);
+    fireEvent.click(screen.getByTestId("import-pick-files"));
+    await screen.findByText("Test 1.pdf");
+    fireEvent.click(screen.getByTestId("import-start"));
+    await screen.findByTestId("import-split-warning");
+    expect(onImport).not.toHaveBeenCalled();
+    expect(screen.getByText(/部分页面没有可读文字/)).toBeTruthy();
+    fireEvent.click(screen.getByTestId("import-start"));
+    await waitFor(() => expect(onImport).toHaveBeenCalledTimes(1));
+    expect(onImport.mock.calls[0][0]).toEqual([whole, single]);
+  });
+
+  it("checks passage splitting after a listening guess is corrected to reading", async () => {
+    mocks.chooseSourceFiles.mockResolvedValue([whole]);
+    mocks.detectImportModality.mockResolvedValue([{ path: whole.path, modality: "listening", cues: ["listening:four_parts"] }]);
+    mocks.planImportSplit.mockImplementation(async (paths: string[]) => paths.length ? [plan()] : []);
+    const onImport = vi.fn();
+    render(<ImportDrawer open busy={false} rejected={[]} onClose={() => {}} onImport={onImport} />);
+    fireEvent.click(screen.getByTestId("import-pick-files"));
+    await screen.findByText("Test 1.pdf");
+    fireEvent.click(screen.getByTestId("import-start"));
+    await screen.findByTestId("listening-switch-reading");
+    fireEvent.click(screen.getByTestId("listening-switch-reading"));
+    await screen.findByTestId("import-split-plan");
+    expect(onImport).not.toHaveBeenCalled();
+    expect(mocks.planImportSplit).toHaveBeenCalledWith([whole.path]);
+    fireEvent.click(screen.getByTestId("import-start"));
+    await waitFor(() => expect(onImport).toHaveBeenCalledTimes(1));
+    expect(onImport.mock.calls[0][0]).toEqual([{ ...whole, splitPassages: true }]);
+    expect(onImport.mock.calls[0][1][whole.path].modality).toBe("reading");
+  });
+
+  it("reports an invalid preflight response and leaves checking state", async () => {
+    mocks.planImportSplit.mockResolvedValue(null);
+    const onImport = vi.fn();
+    render(<ImportDrawer open busy={false} rejected={[]} onClose={() => {}} onImport={onImport} />);
+    fireEvent.click(screen.getByTestId("import-pick-files"));
+    await screen.findByText("Test 1.pdf");
+    fireEvent.click(screen.getByTestId("import-start"));
+    await screen.findByTestId("import-split-warning");
+    expect(screen.getByTestId("import-start").textContent).toBe("确认导入");
+    expect(onImport).not.toHaveBeenCalled();
+  });
+
+  it("rechecks a corrected reading file without losing an earlier split or listening choice", async () => {
+    const listening = { path: "/papers/audio.pdf", name: "audio.pdf", sizeBytes: 10 };
+    mocks.chooseSourceFiles.mockResolvedValue([whole, listening, single]);
+    mocks.detectImportModality.mockResolvedValue([listening, single].map(file => ({ path: file.path, modality: "listening", cues: ["listening:four_parts"] })));
+    mocks.planImportSplit.mockResolvedValueOnce([plan()]).mockRejectedValueOnce(new Error("temporary"))
+      .mockResolvedValueOnce([plan({ path: single.path })]);
+    const onImport = vi.fn();
+    await pickAndStart(onImport);
+    fireEvent.click(screen.getByTestId("import-start"));
+    await screen.findByTestId("listening-audio-later");
+    fireEvent.click(screen.getByTestId("listening-audio-later"));
+    await screen.findByTestId("listening-switch-reading");
+    fireEvent.click(screen.getByTestId("listening-switch-reading"));
+    await screen.findByTestId("import-split-warning");
+    fireEvent.click(screen.getByText("重新检查"));
+    await screen.findByTestId("import-split-plan");
+    expect(mocks.detectImportModality).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId("import-start"));
+    await waitFor(() => expect(onImport).toHaveBeenCalledTimes(1));
+    expect(onImport.mock.calls[0][0]).toEqual([{ ...whole, splitPassages: true }, listening, { ...single, splitPassages: true }]);
+    expect(onImport.mock.calls[0][1][listening.path].modality).toBe("listening");
+  });
+
+  it("prevents leaving for cloud settings while preflight is in progress", async () => {
+    mocks.planImportSplit.mockReturnValue(new Promise(() => {}));
+    const onClose = vi.fn();
+    render(<ImportDrawer open busy={false} rejected={[]} onClose={onClose} onImport={vi.fn()} />);
+    fireEvent.click(screen.getByTestId("import-pick-files"));
+    await screen.findByText("Test 1.pdf");
+    fireEvent.click(screen.getByTestId("import-start"));
+    await waitFor(() => expect(mocks.planImportSplit).toHaveBeenCalled());
+    const connect = screen.getByText("去连接") as HTMLButtonElement;
+    expect(connect.disabled).toBe(true);
+    fireEvent.click(connect);
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

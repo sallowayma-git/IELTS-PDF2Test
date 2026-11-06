@@ -141,8 +141,8 @@ export function LibraryPage({ intent, initialModality }: { intent?: LibraryInten
       // 抽屉里渲染：导入期的音频绑定失败于是**静默消失**，用户只看到一句成功——
       // 而那段音频根本没绑上。所以提示词要说清失败数，清单要留在页面上（见下方 role="alert"）。
       setNotice(result.rejected.length
-        ? `已建立 ${result.rows.length} 个题目，但另有 ${result.rejected.length} 项没有成功（见下方清单）。`
-        : `已建立 ${result.rows.length} 个题目，识别在后台继续。`);
+        ? `已建立 ${result.rows.length} 个识别任务，但另有 ${result.rejected.length} 项没有成功（见下方清单）。`
+        : `已建立 ${result.rows.length} 个识别任务，多篇文章会分别保存，识别在后台继续。`);
     }
   }, [importer, store]);
 

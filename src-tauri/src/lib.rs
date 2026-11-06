@@ -1203,9 +1203,29 @@ async fn import_files(
 
 /// 导入抽屉的「整套卷子」预览：逐文件给出按 Passage 拆分的计划（两篇以上才有段）。
 #[tauri::command]
-async fn plan_import_split(paths: Vec<String>) -> CommandResult<Value> {
+async fn plan_import_split(paths: Vec<String>, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
     let previews = tauri::async_runtime::spawn_blocking(move || {
-        processing::pdf_split::preview_import_split(&paths)
+        let previews = processing::pdf_split::preview_import_split(&paths);
+        // Preflight happens before jobs exist. Keep its result available for
+        // customer diagnostics without storing extracted document text.
+        let log = root.join("logs/import-split-preflight.jsonl");
+        if std::fs::create_dir_all(root.join("logs")).is_ok() {
+            if std::fs::metadata(&log).is_ok_and(|metadata| metadata.len() > 512 * 1024) {
+                let _ = std::fs::remove_file(&log);
+            }
+            let summaries: Vec<_> = previews.iter().map(|preview| json!({
+                "path": preview.path, "pageCount": preview.page_count,
+                "defaultSplit": preview.default_split, "warnings": preview.warnings,
+                "segments": preview.segments.iter().map(|segment| json!({
+                    "label": segment.label, "pages": segment.pages,
+                    "signals": segment.signals, "confidence": segment.confidence,
+                })).collect::<Vec<_>>()
+            })).collect();
+            let record = json!({ "at": chrono::Utc::now().to_rfc3339(), "previews": summaries });
+            let _ = util::append_text(&log, &(record.to_string() + "\n"));
+        }
+        previews
     })
     .await
     .map_err(|error| error.to_string())?;

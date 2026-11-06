@@ -2527,6 +2527,12 @@ fn run_openai_compatible_generate_exam_direct_llm(
         json!({"role":"system", "content":if input["modality"] == "listening" {crate::cloud_direct::listening_system_prompt()} else {crate::cloud_direct::direct_system_prompt()}}),
         json!({"role":"user", "content":content})
     ];
+    // Repair continues the same conversation: the evidence prefix above stays
+    // byte-identical (prompt cache), the output to fix is the model's own
+    // previous turn, and only the issue list is new user content.
+    if let Some(current) = input.pointer("/repair/currentOutput") {
+        messages.push(json!({"role":"assistant", "content": serde_json::to_string(current).unwrap_or_default()}));
+    }
     let tail = exam_direct_tail(input);
     if !tail.is_empty() { messages.push(json!({"role":"user", "content":tail})); }
     let mut body = json!({"model":model,"temperature":llm_temperature(profile),"messages":messages});
@@ -2587,12 +2593,23 @@ answerSlots, answerKey, warnings). JSON only, no Markdown, no code fences."
     if input["modality"] == "listening" {
         prompt = prompt.replace("IELTS Reading", "IELTS Listening").replace("meta, passage, taskGroups", "meta, parts, taskGroups");
         prompt.push_str("\nSupplementary ANSWER KEY pages, if supplied below, are printed answer evidence. Without such evidence every answer must be unresolved. Never guess from questions.");
+    } else {
+        prompt = prompt.replace("Convert the ONE IELTS Reading test PDF below into one complete exam JSON object.",
+            "Convert all reading passages in this PDF evidence into separate complete document bodies, returned in the documents envelope.");
+        if let Some(at) = prompt.rfind("Return the single JSON object described in the system prompt") {
+            prompt.truncate(at);
+        }
+        // The examples above are individual document bodies, not the envelope.
+        prompt.push_str("\nOUTPUT CONTRACT: return {\"documents\":[{\"sourcePages\":[1],\"answerPages\":[],\"testLabel\":\"\",\"document\":<one complete example-shaped body>}],\"warnings\":[]}. Include every passage in source order. Never merge different tests by their repeated q1/q2 keys. Examples demonstrate each document body. If outputMode=document_manifest is requested, omit document bodies and return only article page boundaries and titles.");
     }
     prompt
 }
 
 fn exam_direct_tail(input: &Value) -> String {
     let mut prompt = String::new();
+    if input["outputMode"] == "document_manifest" {
+        prompt.push_str("\nOUTPUT MODE OVERRIDE: document_manifest. Return only the short documents manifest requested below; do not transcribe article or question bodies.");
+    }
     let repair = input.get("repair");
     if let Some(chunk_note) = input.get("chunkNote").and_then(Value::as_str) {
         prompt.push_str(&format!("\n\n=== PAGE RANGE NOTE ===\n{chunk_note}"));
@@ -2605,18 +2622,13 @@ fn exam_direct_tail(input: &Value) -> String {
             repair.get("compilerIssues").unwrap_or(&Value::Null),
         )
         .unwrap_or_default();
-        let current = serde_json::to_string(
-            repair.get("currentOutput").unwrap_or(&Value::Null),
-        )
-        .unwrap_or_default();
         let instruction = repair
             .get("instruction")
             .and_then(Value::as_str)
             .unwrap_or("Fix the listed structural problems.");
         prompt.push_str(&format!(
-            "\n\n=== REPAIR ROUND ===\n{instruction}\n\
-COMPILER ISSUES:\n{issues}\n\
-CURRENT OUTPUT TO FIX:\n{current}"
+            "\n\n=== REPAIR ROUND ===\nYour previous reply is the assistant message above.\n{instruction}\n\
+COMPILER ISSUES:\n{issues}"
         ));
     }
     prompt
@@ -2632,6 +2644,20 @@ fn validate_exam_direct_output(output: &mut Value) -> CommandResult<()> {
     let Some(object) = output.as_object_mut() else {
         return Err("exam_direct_output_not_object".to_string());
     };
+    if let Some(documents) = object.get_mut("documents") {
+        // An empty list is a valid coverage follow-up answer ("nothing missed");
+        // the batch normalizer still requires at least one usable article.
+        let documents = documents.as_array_mut().ok_or("cloud_direct_batch_documents_empty")?;
+        for entry in documents {
+            if !entry.is_object() { return Err("cloud_direct_batch_entry_invalid".into()); }
+            if let Some(document) = entry.get_mut("document") {
+                validate_exam_direct_output(document)?;
+            } else if entry.get("taskGroups").is_some() {
+                validate_exam_direct_output(entry)?;
+            }
+        }
+        return Ok(());
+    }
     if !object.get("meta").is_some_and(Value::is_object) {
         object.insert("meta".to_string(), json!({"title": "", "language": "en"}));
     }
@@ -5275,7 +5301,8 @@ mod tests {
         input["repair"]=json!({"compilerIssues":[{"code":"broken"}],"currentOutput":{"key":"fixed"}});
         assert_eq!(exam_direct_prompt(&input),prefix);
         assert!(exam_direct_tail(&input).contains("COMPILER ISSUES"));
-        assert!(!prefix.contains("CURRENT OUTPUT"));
+        assert!(!prefix.contains("fixed"));
+        assert!(!exam_direct_tail(&input).contains("fixed"), "the output to fix is the assistant turn, not tail text");
     }
 
     #[test]
