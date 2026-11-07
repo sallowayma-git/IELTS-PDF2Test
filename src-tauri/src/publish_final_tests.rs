@@ -1019,9 +1019,13 @@ fn forced_publish_of_a_complete_listening_paper_reaches_the_student_manifest() {
     assert_eq!(entry["schemaVersion"], json!("ListeningExamSourceV1"));
     assert_eq!(entry["modality"], json!("listening"));
 
-    let resources = reading_root(&root)
-        .join("resources")
-        .join("final-listening-full");
+    // V1.1：资源位于清单条目声明的批次目录（releases/<batchId>/resources/<examId>）。
+    let resources = reading_root(&root).join(
+        entry["resourcesBase"]
+            .as_str()
+            .expect("entry declares resourcesBase")
+            .trim_start_matches("./"),
+    );
     let asset_manifest: Value =
         serde_json::from_slice(&fs::read(resources.join("asset-manifest.json")).unwrap()).unwrap();
     let assets = asset_manifest["assets"].as_object().unwrap();
@@ -1435,7 +1439,12 @@ fn second_paper_publish_replaces_the_manifest_instead_of_accumulating() {
     assert_eq!(current["paperId"], second["paper"]["paperId"]);
     // 撤下的旧批次在 24 小时内保留（正在考试的学生仍锁定旧脚本）。
     assert!(reading_root(&root).join("releases").join(&first_batch).is_dir());
-    assert!(reading_root(&root).join("resources").join("rep-a1").is_dir());
+    assert!(reading_root(&root)
+        .join("releases")
+        .join(&first_batch)
+        .join("resources")
+        .join("rep-a1")
+        .is_dir());
     let kept = second["cleanup"]["kept"].as_array().unwrap();
     assert!(kept.contains(&json!(format!("releases/{first_batch}"))), "{second}");
     assert_eq!(second["cleanup"]["removed"], json!([]), "{second}");
@@ -1473,7 +1482,15 @@ fn superseded_files_are_removed_only_after_the_grace_period_and_never_the_curren
     }
     assert!(reading.join("releases").join(&second_batch).is_dir(), "当前批次绝不删除");
     for current_exam in ["rep-b1", "rep-b2", "rep-b3"] {
-        assert!(reading.join("resources").join(current_exam).is_dir(), "当前试卷资源绝不删除");
+        assert!(
+            reading
+                .join("releases")
+                .join(&second_batch)
+                .join("resources")
+                .join(current_exam)
+                .is_dir(),
+            "当前试卷资源绝不删除"
+        );
     }
     let _ = fs::remove_dir_all(root);
 }
@@ -1529,28 +1546,304 @@ fn an_incomplete_replacement_leaves_the_previous_paper_untouched() {
     let _ = fs::remove_dir_all(root);
 }
 
+fn item_version(root: &Path, item_id: &str) -> i64 {
+    let conn = crate::library::repository::open_library_connection(root).unwrap();
+    conn.query_row(
+        "SELECT current_edit_version FROM library_items_v2 WHERE id = ?1",
+        [item_id],
+        |row| row.get(0),
+    )
+    .unwrap()
+}
+
+fn batch_file(root: &Path, relative: &str) -> PathBuf {
+    reading_root(root).join(relative.trim_start_matches("./"))
+}
+
 #[test]
 fn rename_library_item_trims_validates_and_returns_the_row() {
+    use crate::library::commands::rename_library_item_core as rename;
     let root = temp_root("rename-item");
     ensure_app_dirs(&root).unwrap();
     let item = seed_item(&root, "rename-me", false, |_| {});
 
-    let row = crate::library::commands::rename_library_item_core(&root, &item, "  新的题名  ")
-        .expect("trimmed non-empty title must save");
+    let version = item_version(&root, &item);
+    let row = rename(&root, &item, "  新的题名  ", version).expect("trimmed non-empty title must save");
     assert_eq!(row["title"], json!("新的题名"), "{row}");
     assert_eq!(row["id"], json!(item));
+    let version = item_version(&root, &item);
+    assert_eq!(row["currentEditVersion"], json!(version), "改名走版本 CAS，版本必须前进");
 
-    let empty = crate::library::commands::rename_library_item_core(&root, &item, "   ");
-    assert_eq!(empty.unwrap_err(), "LIBRARY_TITLE_EMPTY");
-
+    assert_eq!(rename(&root, &item, "   ", version).unwrap_err(), "LIBRARY_TITLE_EMPTY");
     let too_long = "字".repeat(121);
-    assert!(crate::library::commands::rename_library_item_core(&root, &item, &too_long)
+    assert!(rename(&root, &item, &too_long, version)
         .unwrap_err()
         .starts_with("LIBRARY_TITLE_TOO_LONG"));
     let at_limit = "字".repeat(120);
-    assert!(crate::library::commands::rename_library_item_core(&root, &item, &at_limit).is_ok());
-
-    let missing = crate::library::commands::rename_library_item_core(&root, "no-such-item", "x");
-    assert!(missing.unwrap_err().starts_with("ITEM_NOT_FOUND"));
+    assert!(rename(&root, &item, &at_limit, version).is_ok());
     let _ = fs::remove_dir_all(root);
+}
+
+/// 改名与编辑共用版本 CAS：基线版本过期时明确拒绝，且不改任何东西。
+#[test]
+fn rename_with_a_stale_base_version_is_refused_and_changes_nothing() {
+    use crate::library::commands::rename_library_item_core as rename;
+    let root = temp_root("rename-stale");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_item(&root, "rename-stale", false, |_| {});
+    let stale = item_version(&root, &item);
+    rename(&root, &item, "第一次改名", stale).expect("first rename must save");
+
+    let conflict = rename(&root, &item, "过期的改名", stale).unwrap_err();
+    assert!(conflict.starts_with("EDIT_VERSION_CONFLICT"), "{conflict}");
+    let conn = crate::library::repository::open_library_connection(&root).unwrap();
+    let title: String = conn
+        .query_row("SELECT title FROM library_items_v2 WHERE id = ?1", [&item], |row| row.get(0))
+        .unwrap();
+    assert_eq!(title, "第一次改名", "冲突时题库标题不得被改");
+    let _ = fs::remove_dir_all(root);
+}
+
+/// P1-4 回归：改名后重新组卷发布，清单条目与当前试卷指针都必须是新名。
+#[test]
+fn a_renamed_paper_item_publishes_its_new_title_into_manifest_and_pointer() {
+    use crate::library::commands::rename_library_item_core as rename;
+    let root = temp_root("rename-then-publish");
+    ensure_app_dirs(&root).unwrap();
+    let (p1, p2, p3) = (
+        seed_part(&root, "rn-p1", "P1"),
+        seed_part(&root, "rn-p2", "P2"),
+        seed_part(&root, "rn-p3", "P3"),
+    );
+    publish_with_paper(&root, &[&p1, &p2, &p3], Some(paper_spec(&p1, &p2, &p3, &[])))
+        .expect("first publish");
+
+    rename(&root, &p1, "改名后的题", item_version(&root, &p1)).expect("rename");
+    let result = publish_with_paper(&root, &[&p1, &p2, &p3], Some(paper_spec(&p1, &p2, &p3, &[])))
+        .expect("republish after rename");
+    assert_eq!(result["paper"]["ok"], json!(true), "{result}");
+
+    let exam_id = outcome_for(&result, &p1)["examId"].as_str().unwrap().to_string();
+    assert_eq!(manifest(&root)[&exam_id]["title"], json!("改名后的题"));
+    let current: Value = serde_json::from_slice(&fs::read(current_paper_path(&root)).unwrap()).unwrap();
+    assert_eq!(current["reading"][0]["title"], json!("改名后的题"), "{current}");
+    assert_eq!(current["reading"][0]["entry"]["title"], json!("改名后的题"), "{current}");
+    let _ = fs::remove_dir_all(root);
+}
+
+/// V1.1 第1条：同一内容重复发布时，两批次的 asset-manifest 字节相同；
+/// 旧批次的文件（旧 pin 路径）在新发布之后仍在且字节未变。
+#[test]
+fn republishing_the_same_paper_keeps_old_batch_files_and_writes_identical_asset_manifests() {
+    let root = temp_root("paper-immutable-batches");
+    ensure_app_dirs(&root).unwrap();
+    let (p1, p2, p3) = (
+        seed_part(&root, "im-p1", "P1"),
+        seed_part(&root, "im-p2", "P2"),
+        seed_part(&root, "im-p3", "P3"),
+    );
+    let first = publish_with_paper(&root, &[&p1, &p2, &p3], Some(paper_spec(&p1, &p2, &p3, &[])))
+        .expect("first publish");
+    let first_batch = first["paper"]["batchId"].as_str().unwrap().to_string();
+    let first_manifest = manifest(&root);
+    let exams: Vec<String> = [&p1, &p2, &p3]
+        .iter()
+        .map(|item| outcome_for(&first, item)["examId"].as_str().unwrap().to_string())
+        .collect();
+    let mut pinned: Vec<(PathBuf, Vec<u8>)> = Vec::new();
+    for exam in &exams {
+        let entry = &first_manifest[exam];
+        for key in ["script", "assetManifest"] {
+            let path = batch_file(&root, entry[key].as_str().unwrap());
+            pinned.push((path.clone(), fs::read(&path).unwrap()));
+        }
+        let expected_base = format!("./releases/{first_batch}/resources/{exam}");
+        assert_eq!(entry["resourcesBase"], json!(expected_base), "{entry}");
+    }
+
+    let second = publish_with_paper(&root, &[&p1, &p2, &p3], Some(paper_spec(&p1, &p2, &p3, &[])))
+        .expect("second publish");
+    assert_eq!(second["status"], json!("published"), "{second}");
+    let second_batch = second["paper"]["batchId"].as_str().unwrap().to_string();
+    assert_ne!(first_batch, second_batch);
+    assert!(
+        reading_root(&root).join("releases").join(&first_batch).is_dir(),
+        "24 小时内旧批次必须保留"
+    );
+
+    for exam in &exams {
+        let first_asset = fs::read(batch_file(
+            &root,
+            &format!("./releases/{first_batch}/resources/{exam}/asset-manifest.json"),
+        ))
+        .unwrap();
+        let second_asset = fs::read(batch_file(
+            &root,
+            &format!("./releases/{second_batch}/resources/{exam}/asset-manifest.json"),
+        ))
+        .unwrap();
+        assert_eq!(first_asset, second_asset, "同内容两次发布 asset-manifest 字节必须相同（{exam}）");
+        let text = String::from_utf8(first_asset).unwrap();
+        assert!(!text.contains("generatedAt"), "asset-manifest 不得含随时间变化的字段");
+    }
+    for (path, bytes) in pinned {
+        assert_eq!(fs::read(&path).unwrap(), bytes, "旧 pin 路径文件必须字节不变：{}", path.display());
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+/// V1.1 第2条：指针的 entry 与清单原样一致；顶层 script/sha 与 entry 一致。
+#[test]
+fn pointer_entries_are_self_contained_copies_of_the_manifest_entries() {
+    let root = temp_root("paper-pointer-entry");
+    ensure_app_dirs(&root).unwrap();
+    let (p1, p2, p3) = (
+        seed_part(&root, "pe-p1", "P1"),
+        seed_part(&root, "pe-p2", "P2"),
+        seed_part(&root, "pe-p3", "P3"),
+    );
+    publish_with_paper(&root, &[&p1, &p2, &p3], Some(paper_spec(&p1, &p2, &p3, &[])))
+        .expect("publish");
+    let current: Value = serde_json::from_slice(&fs::read(current_paper_path(&root)).unwrap()).unwrap();
+    let manifest = manifest(&root);
+    for item in current["reading"].as_array().unwrap() {
+        let exam = item["examId"].as_str().unwrap();
+        assert_eq!(item["entry"], manifest[exam], "entry 必须是清单条目的原样拷贝");
+        assert_eq!(item["script"], item["entry"]["script"]);
+        assert_eq!(item["scriptSha256"], item["entry"]["checksums"]["scriptSha256"]);
+        assert_eq!(item["runtimeSha256"], item["entry"]["checksums"]["runtimeSha256"]);
+        assert!(item["entry"]["assetManifest"].as_str().unwrap().contains("/resources/"));
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+/// P1-1：指针写失败 → 顶层为未完成（`paper_pointer_stale`），不得清理旧批次。
+/// 旧批次被回拨到超过 24 小时宽限期，若清理误执行它会被删掉——据此断言清理确实被跳过。
+/// 指针恢复后再次发布，清理才执行，且旧批次（不再被指针引用、已过宽限期）被删除。
+#[test]
+fn a_failed_pointer_write_is_reported_as_stale_and_never_cleans_up() {
+    let root = temp_root("paper-pointer-fail");
+    ensure_app_dirs(&root).unwrap();
+    let (p1, p2, p3) = (
+        seed_part(&root, "pf-p1", "P1"),
+        seed_part(&root, "pf-p2", "P2"),
+        seed_part(&root, "pf-p3", "P3"),
+    );
+    let first = publish_with_paper(&root, &[&p1, &p2, &p3], Some(paper_spec(&p1, &p2, &p3, &[])))
+        .expect("first publish");
+    let batch_a = first["paper"]["batchId"].as_str().unwrap().to_string();
+    let paper_a = first["paper"]["paperId"].as_str().unwrap().to_string();
+    let history_path = crate::export_nas_library::normalize_nas_library_root(&destination(&root))
+        .join(".publish-control")
+        .join("papers")
+        .join(format!("{paper_a}.json"));
+    let mut record: Value = serde_json::from_slice(&fs::read(&history_path).unwrap()).unwrap();
+    record["publishedAt"] = json!((chrono::Utc::now() - chrono::Duration::hours(48)).to_rfc3339());
+    fs::write(&history_path, serde_json::to_vec(&record).unwrap()).unwrap();
+
+    // 让指针无法替换：指针路径变成目录，原子替换必然失败。
+    let pointer = current_paper_path(&root);
+    fs::remove_file(&pointer).unwrap();
+    fs::create_dir_all(&pointer).unwrap();
+    let second = publish_with_paper(&root, &[&p1, &p2, &p3], Some(paper_spec(&p1, &p2, &p3, &[])))
+        .expect("清单已提交，发布调用本身不得报错");
+    assert_eq!(second["status"], json!("paper_pointer_stale"), "{second}");
+    assert_eq!(second["paper"]["ok"], json!(false), "{second}");
+    assert!(second.get("cleanup").is_none(), "指针失败时不得执行清理：{second}");
+    assert!(
+        reading_root(&root).join("releases").join(&batch_a).is_dir(),
+        "旧批次必须保留"
+    );
+    assert_eq!(manifest(&root).as_object().unwrap().len() - 1, 3, "清单已是新一套（清单提交不因指针失败回滚）");
+
+    // 恢复：指针可写后再次发布，清理执行，旧批次（已不被指针引用、已过宽限期）被删除。
+    fs::remove_dir_all(&pointer).unwrap();
+    let third = publish_with_paper(&root, &[&p1, &p2, &p3], Some(paper_spec(&p1, &p2, &p3, &[])))
+        .expect("third publish");
+    assert_eq!(third["status"], json!("published"), "{third}");
+    assert_eq!(third["paper"]["ok"], json!(true), "{third}");
+    let current: Value = serde_json::from_slice(&fs::read(&pointer).unwrap()).unwrap();
+    let third_batch = third["paper"]["batchId"].as_str().unwrap();
+    assert_eq!(current["batchId"], json!(third_batch));
+    assert!(!reading_root(&root).join("releases").join(&batch_a).exists(), "{third}");
+    assert!(reading_root(&root).join("releases").join(third_batch).is_dir(), "当前指针批次绝不删除");
+    let _ = fs::remove_dir_all(root);
+}
+
+/// P1-2：同一批次在两份历史记录中归属时间不同，结果必须取最近时间，与文件名顺序无关。
+#[test]
+fn superseded_ownership_takes_the_newest_record_regardless_of_file_order() {
+    for names in [["a-recent.json", "z-old.json"], ["z-old.json", "a-recent.json"]] {
+        let root = temp_root("cleanup-order");
+        let library_root = root.join("lib");
+        let reading = crate::export_nas_library::nas_reading_exams_dir(&library_root);
+        let history = library_root.join(".publish-control").join("papers");
+        fs::create_dir_all(&history).unwrap();
+        let now = chrono::Utc::now();
+        let recent = (now - chrono::Duration::hours(2)).to_rfc3339();
+        let old = (now - chrono::Duration::hours(30)).to_rfc3339();
+        for name in names {
+            let published = if name.starts_with("a-") { &recent } else { &old };
+            let record = json!({
+                "schemaVersion": "CurrentPaperV1",
+                "paperId": name,
+                "publishedAt": published,
+                "batchId": "batch-shared",
+                "reading": [{"examId": "exam-shared"}],
+                "listening": []
+            });
+            fs::write(history.join(name), serde_json::to_vec(&record).unwrap()).unwrap();
+        }
+        fs::create_dir_all(reading.join("releases").join("batch-shared")).unwrap();
+        fs::create_dir_all(reading.join("resources").join("exam-shared")).unwrap();
+
+        let outcome = crate::nas_package_v2::cleanup_superseded_releases(
+            &library_root,
+            &reading,
+            &serde_json::Map::new(),
+            "batch-current",
+            now,
+        );
+        assert_eq!(outcome["removed"], json!([]), "文件顺序 {names:?}：{outcome}");
+        assert!(reading.join("releases").join("batch-shared").is_dir(), "{names:?}");
+        assert!(reading.join("resources").join("exam-shared").is_dir(), "{names:?}");
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
+/// P2-1：试卷题集合之外的 item_id 不得被当成试卷的一部分发出去，且整次不写任何东西。
+#[test]
+fn paper_publish_refuses_selected_items_that_are_not_part_of_the_paper() {
+    let root = temp_root("paper-extra-item");
+    ensure_app_dirs(&root).unwrap();
+    let (p1, p2, p3) = (
+        seed_part(&root, "ex-p1", "P1"),
+        seed_part(&root, "ex-p2", "P2"),
+        seed_part(&root, "ex-p3", "P3"),
+    );
+    let extra = seed_item(&root, "ex-extra", false, |_| {});
+    let error = publish_with_paper(
+        &root,
+        &[&p1, &p2, &p3, &extra],
+        Some(paper_spec(&p1, &p2, &p3, &[])),
+    )
+    .unwrap_err();
+    assert!(error.starts_with("PAPER_ITEM_NOT_IN_PAPER"), "{error}");
+    assert!(!reading_root(&root).join("manifest.js").exists());
+    assert!(!current_paper_path(&root).exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+/// 生产命令层（`publish_items`）拒绝单题发布：契约 V1.1 第5条。
+#[test]
+fn the_publish_command_refuses_a_single_item_publish_without_a_paper() {
+    let input: PublishItemsInput = serde_json::from_value(json!({
+        "itemIds": ["any-item"],
+        "destination": "/tmp/unused"
+    }))
+    .unwrap();
+    assert_eq!(
+        crate::nas_package_v2::require_paper_for_publish(&input).unwrap_err(),
+        "PUBLISH_REQUIRES_PAPER"
+    );
 }

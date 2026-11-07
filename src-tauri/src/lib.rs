@@ -1186,6 +1186,8 @@ async fn publish_items(
     input: nas_package_v2::PublishItemsInput,
     app: AppHandle,
 ) -> CommandResult<Value> {
+    // 契约 V1.1 第5条：生产命令只接受「组卷发布」。单题发布已取消，不带 paper 一律拒绝。
+    nas_package_v2::require_paper_for_publish(&input)?;
     let root = app_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || nas_package_v2::publish_items_core(&root, input))
         .await
@@ -1194,10 +1196,15 @@ async fn publish_items(
 
 /// 题库页改名（单元格编辑保存）。校验与落库见 `library::commands::rename_library_item_core`。
 #[tauri::command]
-async fn rename_library_item(item_id: String, title: String, app: AppHandle) -> CommandResult<Value> {
+async fn rename_library_item(
+    item_id: String,
+    title: String,
+    base_version: i64,
+    app: AppHandle,
+) -> CommandResult<Value> {
     let root = app_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
-        library::commands::rename_library_item_core(&root, &item_id, &title)
+        library::commands::rename_library_item_core(&root, &item_id, &title, base_version)
     })
     .await
     .map_err(|error| error.to_string())?

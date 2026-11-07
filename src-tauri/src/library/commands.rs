@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 use super::migration::migrate_single_item;
 use super::repository::{
     apply_editor_commands_tx, get_canonical_ds, get_item, list_items, open_library_connection,
-    rename_item, ApplyEditorCommandsInput, EditFootprint,
+    ApplyEditorCommandsInput, EditFootprint,
 };
 use crate::authoring_v2_commands::{
     apply_patch, explicitly_handled_issue_targets, refresh_quality_report_for_targets,
@@ -224,8 +224,17 @@ pub(crate) fn get_library_item_summary_core(root: &Path, item_id: &str) -> Comma
 }
 
 /// 题库页改名（Excel 式单元格编辑的保存端）。标题 trim 后非空、不超过 120 个字符。
+///
+/// 改名走权威稿的版本 CAS 事务（与编辑器保存同一条路径）：同一事务里同时更新
+/// canonical 稿的 `exam.title` 与题库标题，因此之后的发布（清单、当前试卷）拿到的是新名。
+/// `base_version` 与库里当前版本不一致时返回 `EDIT_VERSION_CONFLICT`，前端据此回滚单元格并提示刷新。
 /// 成功后返回新的题库行（与 `list_library_items` 同形），前端据此回填。
-pub(crate) fn rename_library_item_core(root: &Path, item_id: &str, title: &str) -> CommandResult<Value> {
+pub(crate) fn rename_library_item_core(
+    root: &Path,
+    item_id: &str,
+    title: &str,
+    base_version: i64,
+) -> CommandResult<Value> {
     let trimmed = title.trim();
     if trimmed.is_empty() {
         return Err("LIBRARY_TITLE_EMPTY".to_string());
@@ -233,10 +242,21 @@ pub(crate) fn rename_library_item_core(root: &Path, item_id: &str, title: &str) 
     if trimmed.chars().count() > LIBRARY_TITLE_MAX_CHARS {
         return Err(format!("LIBRARY_TITLE_TOO_LONG:max={LIBRARY_TITLE_MAX_CHARS}"));
     }
-    let conn = open_library_connection(root)?;
-    if !rename_item(&conn, item_id, trimmed)? {
-        return Err(format!("ITEM_NOT_FOUND:{item_id}"));
-    }
+    // 没有权威稿的旧条目先补齐（与发布路径相同的前置步骤），否则无处落版本号。
+    migrate_single_item(root, item_id)?;
+    let mut conn = open_library_connection(root)?;
+    apply_editor_commands_tx(
+        &mut conn,
+        &ApplyEditorCommandsInput {
+            item_id: item_id.to_string(),
+            base_version,
+            request_id: None,
+            commands: Vec::new(),
+            title: Some(trimmed.to_string()),
+        },
+        &|_, _| Ok(()),
+        &|_| Ok(()),
+    )?;
     drop(conn);
     let row = get_library_item_summary_core(root, item_id)?;
     if row.is_null() {
