@@ -2545,6 +2545,11 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
     }
     case "publish_items":
       throw new Error("requires_tauri_runtime:publish_items");
+    // 题库改名与当前试卷只在 Tauri 后端有真实落点（SQLite / NAS 文件），开发预览不模拟。
+    case "rename_library_item":
+      throw new Error("requires_tauri_runtime:rename_library_item");
+    case "get_current_paper":
+      throw new Error("requires_tauri_runtime:get_current_paper");
     case "import_files": {
       const input = args.input as { files: Array<{ name: string; path: string; titleHint?: string; sizeBytes?: number; textContent?: string; binaryContentBase64?: string }> };
       const created: Array<{ itemId: string; title: string }> = [];

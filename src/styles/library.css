@@ -192,3 +192,58 @@
   .library-row-state,
   .library-row-actions { grid-column: 1 / -1; justify-content: flex-start; justify-items: start; }
 }
+
+/* ── 当前试卷 / 组卷视图 ───────────────────────────────────────────── */
+.current-paper-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 16px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line, #d9dde3);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+}
+.current-paper-head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline; }
+.current-paper-parts { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; padding: 0; list-style: none; width: 100%; }
+.library-view-toggle { display: flex; gap: 8px; margin-bottom: 12px; }
+.paper-table { display: grid; gap: 16px; }
+.paper-group { border: 1px solid var(--line, #d9dde3); border-radius: 8px; overflow: hidden; }
+.paper-group-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 12px; background: var(--surface-muted, #f5f6f8); }
+.paper-group-head h3 { margin: 0; font-size: 15px; }
+.paper-group table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.paper-group th,
+.paper-group td { padding: 6px 10px; border-top: 1px solid var(--line, #e6e8ec); text-align: left; vertical-align: middle; }
+.paper-group th { font-weight: 600; color: var(--muted, #5b6370); }
+.paper-name-cell { min-width: 220px; }
+.paper-title-cell {
+  all: unset;
+  cursor: text;
+  padding: 2px 4px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+}
+.paper-title-cell:hover,
+.paper-title-cell:focus-visible { border-color: var(--line, #c9ced6); }
+.paper-title-input { width: 100%; font: inherit; padding: 2px 4px; }
+.paper-title-error { display: block; color: var(--danger, #b42318); font-size: 12px; }
+.paper-type-chip { margin: 0 4px 2px 0; }
+.paper-composer {
+  position: sticky;
+  bottom: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line, #d9dde3);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+.paper-composer-slots { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.paper-slot { display: inline-flex; gap: 6px; align-items: baseline; font-size: 14px; }
+.paper-slot.is-filled b { color: var(--accent, #1f6feb); }

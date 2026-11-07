@@ -87,6 +87,10 @@ export interface LibraryRowV1 {
   category?: string;
   /** Part 标签（P1/P2/P3 / Part 1–4 / Task 1/2）；判不出为 undefined，不显示。 */
   part?: string;
+  /** 题型（内部 taskType 标识，去重）；展示时经 `taskTypeLabel` 译成中文。无权威稿时为空。 */
+  questionTypes: string[];
+  /** 权威稿的 examId：与发布清单、当前试卷是同一身份，用于判断「是否在当前试卷」。 */
+  examId?: string;
   updatedAt: string;
   inTrash: boolean;
   /** 已发布，且那次发布时检查没有全部通过、由用户点击发布放行（后端 `published_forced`）。 */
@@ -239,6 +243,8 @@ export function buildRow(
     actionableCount: actionable,
     category: summary?.category ?? job?.category,
     part: v2?.partLabel ?? undefined,
+    questionTypes: v2?.questionTypes ?? [],
+    examId: v2?.examId ?? undefined,
     updatedAt: v2?.updatedAt ?? job?.updatedAt ?? summary?.updatedAt ?? "",
     inTrash: Boolean(options.inTrash),
     publishedForced:

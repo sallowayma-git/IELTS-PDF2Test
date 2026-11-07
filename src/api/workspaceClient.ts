@@ -48,6 +48,10 @@ export interface LibraryItemSummaryV2 {
   partLabel?: string | null;
   /** 判定来源：manual | content | range | filename | none。 */
   partSource?: string | null;
+  /** 题型（内部 taskType 标识，去重，取自权威稿题组）；展示层译成中文。 */
+  questionTypes?: string[];
+  /** 权威稿的 examId（与发布清单、当前试卷同一身份）；无权威稿时为 null。 */
+  examId?: string | null;
   processing?: ProcessingState | null;
 }
 
@@ -107,4 +111,9 @@ export async function applyEditorCommands(input: {
 
 export async function listLibraryItems(includeDeleted = false): Promise<LibraryItemSummaryV2[]> {
   return command("list_library_items", { includeDeleted });
+}
+
+/** 题库页改名：后端 trim 后非空、不超过 120 字；返回新的题库行。 */
+export async function renameLibraryItem(itemId: string, title: string): Promise<LibraryItemSummaryV2> {
+  return command("rename_library_item", { itemId, title });
 }

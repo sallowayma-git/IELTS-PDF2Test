@@ -24,6 +24,35 @@ export interface PublishBatchOutcome {
   destination: string;
   succeeded: PublishItemOutcome[];
   failed: PublishItemOutcome[];
+  /** 仅组卷发布（带 `paper`）时返回：当前试卷指针是否已更新。 */
+  paper?: PaperPublishResult;
+}
+
+/** 组卷请求（与后端 `PaperSpec` 同形，字段名不可改）。阅读三篇必填，听力可为空。 */
+export interface PaperSpec {
+  reading: { P1: string; P2: string; P3: string };
+  listening: Array<{ part: string; itemId: string }>;
+}
+
+/** 组卷结果。失败时当前试卷保持不变；清单里已发布的题照常保留。 */
+export type PaperPublishResult =
+  | { ok: true; paperId: string; publishedAt: string; batchId: string; reading: unknown[]; listening: unknown[] }
+  | { ok: false; code: "PAPER_INCOMPLETE"; missing: string[] }
+  | { ok: false; code: "PAPER_WRITE_FAILED"; message?: string };
+
+/**
+ * 组卷发布的结果文案。`titleOf` 把缺失的题目 id 译成名称，用户看到的是题名而不是 id。
+ * 组卷结果缺失（后端没返回 paper）时只说明当前试卷没有更新。
+ */
+export function describePaperPublishOutcome(outcome: PublishBatchOutcome, titleOf: (itemId: string) => string): string {
+  const paper = outcome.paper;
+  if (!paper) return "当前试卷没有更新。";
+  if (paper.ok) return `当前试卷已发布（${paper.paperId.slice(0, 8)}）`;
+  if (paper.code === "PAPER_INCOMPLETE") {
+    const names = paper.missing.map(titleOf).join("、");
+    return `试卷中有题目未能发布，当前试卷保持不变：${names}`;
+  }
+  return "题目已发布，但当前试卷指针写入失败，学生端仍是旧试卷，请检查 NAS 后重试。";
 }
 
 /** 发布错误一律经用户文案层收敛；原始机器码不再直接渲染（audit A7-F04）。 */
@@ -88,12 +117,16 @@ export function describeBatchPublishOutcome(outcome: PublishBatchOutcome): strin
  */
 export async function publishItems(
   itemIds: string[], destination: string,
-  onProgress?: (done: number, total: number, itemId: string) => void
+  onProgress?: (done: number, total: number, itemId: string) => void,
+  options?: { paper?: PaperSpec }
 ): Promise<PublishBatchOutcome> {
   if (!itemIds.length) return { destination, succeeded: [], failed: [] };
   onProgress?.(0, itemIds.length, itemIds[0]);
+  // 只有组卷时才带 `paper` 字段：普通批量发布的请求体保持原样（后端 deny_unknown_fields）。
+  const input: Record<string, unknown> = { itemIds, destination };
+  if (options?.paper) input.paper = options.paper;
   try {
-    const result = await command<PublishBatchOutcome>("publish_items", { input: { itemIds, destination } });
+    const result = await command<PublishBatchOutcome>("publish_items", { input });
     onProgress?.(itemIds.length, itemIds.length, "");
     return result;
   } catch (error) {

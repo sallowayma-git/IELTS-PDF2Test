@@ -1,13 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { chooseExportDirectory } from "../../api/desktopDialogs";
-import { describeBatchPublishOutcome, publishItems } from "../../api/publishClient";
+import { describeBatchPublishOutcome, describePaperPublishOutcome, publishItems } from "../../api/publishClient";
 import { describeRetryOutcome, retryProcessing } from "../../api/processingClient";
+import { getCurrentPaper, type CurrentPaperV1 } from "../../api/paperClient";
+import { renameLibraryItem } from "../../api/workspaceClient";
 import { go, workspacePath, type LibraryIntent } from "../../app/router";
 import { ImportDrawer } from "../import/ImportDrawer";
 import { useImportFiles, type ImportRejection } from "../import/useImportFiles";
+import { CurrentPaperCard } from "./CurrentPaperCard";
 import { LibraryBatchBar } from "./LibraryBatchBar";
 import { LibraryHeader } from "./LibraryHeader";
 import { LibraryItemList } from "./LibraryItemList";
+import { LibraryPaperTable } from "./LibraryPaperTable";
+import { PaperComposerBar } from "./PaperComposerBar";
+import {
+  buildPaperSpec,
+  EMPTY_PAPER_SELECTION,
+  reconcilePaperSelection,
+  selectedPaperItemIds,
+  toggleListeningItem,
+  toggleReadingItem,
+  type PaperSelection,
+  type ReadingPart
+} from "./paperSelection";
 import { WritingPanel } from "./WritingPanel";
 import { readAppSettings, writeAppSettings } from "../settings/appSettings";
 import { toUserFacingError } from "../../utils/userFacingError";
@@ -51,8 +66,58 @@ export function LibraryPage({ intent, initialModality }: { intent?: LibraryInten
   const [notice, setNotice] = useState<string | undefined>(
     intent === "publish" ? "在下面勾选要发布的题目，然后点击「发布到 NAS」。" : undefined
   );
+  // 视图：列表（原有批量发布）或组卷视图（按 Part 分组、选三篇阅读发布为当前试卷）。
+  const [viewMode, setViewMode] = useState<"list" | "paper">("list");
+  const [paperSelection, setPaperSelection] = useState<PaperSelection>(EMPTY_PAPER_SELECTION);
+  const [paperPublishing, setPaperPublishing] = useState(false);
+  const [paperMessage, setPaperMessage] = useState<string | undefined>();
+  const [destination, setDestination] = useState<string | undefined>(() => readAppSettings().nasDestination);
+  // undefined = 还在读取；null = NAS 上还没有当前试卷。
+  const [currentPaper, setCurrentPaper] = useState<CurrentPaperV1 | null | undefined>(undefined);
+  const [currentPaperError, setCurrentPaperError] = useState<string | undefined>();
+  const [paperVersion, setPaperVersion] = useState(0);
 
   const importer = useImportFiles(store.refresh);
+
+  // 当前试卷（NAS 上的指针）：页面打开时读取，组卷发布后重读。
+  useEffect(() => {
+    if (!destination) {
+      setCurrentPaper(undefined);
+      return;
+    }
+    let cancelled = false;
+    getCurrentPaper(destination)
+      .then((paper) => {
+        if (cancelled) return;
+        setCurrentPaperError(undefined);
+        setCurrentPaper(paper);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error("[library] current paper read failed", error);
+        setCurrentPaperError(describeLibraryActionError(error, "读取当前试卷失败，请稍后再试。"));
+        setCurrentPaper(undefined);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [destination, paperVersion]);
+
+  // 组卷选择与题库对齐：题被删除、或 Part 被改到别的槽位，就从选择里去掉。
+  useEffect(() => {
+    const candidates = store.rows
+      .filter((row) => !row.inTrash)
+      .map((row) => ({ id: row.id, modality: row.modality, part: row.part }));
+    setPaperSelection((current) => {
+      const next = reconcilePaperSelection(current, candidates);
+      return JSON.stringify(next) === JSON.stringify(current) ? current : next;
+    });
+  }, [store.rows]);
+
+  const currentExamIds = useMemo(
+    () => new Set([...(currentPaper?.reading ?? []), ...(currentPaper?.listening ?? [])].map((entry) => entry.examId)),
+    [currentPaper]
+  );
 
   // 路由携带 ?modality= 时（含 #/legacy/writing 重定向）切到对应题型子标签。
   useEffect(() => {
@@ -153,7 +218,49 @@ export function LibraryPage({ intent, initialModality }: { intent?: LibraryInten
     const picked = await chooseExportDirectory();
     if (!picked) return undefined;
     writeAppSettings({ nasDestination: picked });
+    setDestination(picked);
     return picked;
+  }
+
+  /** 组卷发布：三篇阅读齐了才可点。清单提交之后才写当前试卷，失败时如实说明。 */
+  async function publishPaper() {
+    const spec = buildPaperSpec(paperSelection);
+    if (!spec) return;
+    const itemIds = selectedPaperItemIds(paperSelection);
+    const target = await resolveDestination();
+    if (!target) {
+      setPaperMessage("请先选择 NAS 目录。");
+      return;
+    }
+    setPaperPublishing(true);
+    setPaperMessage(`正在发布 0/${itemIds.length}`);
+    try {
+      const outcome = await publishItems(itemIds, target, (done, total) => {
+        setPaperMessage(`正在发布 ${done}/${total}`);
+      }, { paper: spec });
+      const titleOf = (id: string) => store.rows.find((row) => row.id === id)?.title ?? id;
+      setNotice(describeBatchPublishOutcome(outcome));
+      if (outcome.paper) {
+        setPaperMessage(describePaperPublishOutcome(outcome, titleOf));
+      } else {
+        setPaperMessage(outcome.failed[0]?.message ?? describePaperPublishOutcome(outcome, titleOf));
+      }
+      if (outcome.paper?.ok) setPaperSelection(EMPTY_PAPER_SELECTION);
+      setPaperVersion((version) => version + 1);
+      store.refresh();
+    } finally {
+      setPaperPublishing(false);
+    }
+  }
+
+  /** 组卷视图里改名：失败时抛出用户文案，由单元格回滚并提示。 */
+  async function renameItem(id: string, title: string) {
+    try {
+      await renameLibraryItem(id, title);
+      store.refresh();
+    } catch (error) {
+      throw new Error(describeLibraryActionError(error, "名称保存失败，请稍后再试。"));
+    }
   }
 
   async function publishSelected() {
@@ -285,6 +392,20 @@ export function LibraryPage({ intent, initialModality }: { intent?: LibraryInten
         <WritingPanel refresh={store.refresh} />
       ) : (
         <>
+          <CurrentPaperCard paper={currentPaper} destination={destination} error={currentPaperError} />
+          {tab !== "trash" ? (
+            <div className="library-view-toggle" role="group" aria-label="题库视图">
+              <button className={`chip small${viewMode === "list" ? " is-active" : ""}`} onClick={() => setViewMode("list")}>列表</button>
+              <button
+                className={`chip small${viewMode === "paper" ? " is-active" : ""}`}
+                data-testid="library-view-paper"
+                onClick={() => setViewMode("paper")}
+              >
+                组卷视图
+              </button>
+            </div>
+          ) : null}
+
           {/* 导入抽屉一旦关闭，它自己的 reject-list 就随之卸载。导入期的音频绑定失败不能跟着
               消失——「已建立 N 个题目」会和它同时出现，用户得能看见到底哪一段没绑上。 */}
           {!drawerOpen && rejected.length ? (
@@ -298,6 +419,31 @@ export function LibraryPage({ intent, initialModality }: { intent?: LibraryInten
             </ul>
           ) : null}
 
+          {viewMode === "paper" && tab !== "trash" ? (
+            <>
+              <LibraryPaperTable
+                rows={tabRows}
+                selection={paperSelection}
+                hasCurrentPaper={Boolean(currentPaper)}
+                currentExamIds={currentExamIds}
+                onToggleReading={(part: ReadingPart, id: string) => setPaperSelection((current) => toggleReadingItem(current, part, id))}
+                onToggleListening={(id: string, part: string) => setPaperSelection((current) => toggleListeningItem(current, id, part))}
+                onRename={renameItem}
+                onOpen={(id) => go(workspacePath(id))}
+              />
+              <PaperComposerBar
+                selection={paperSelection}
+                titleOf={(id) => store.rows.find((row) => row.id === id)?.title ?? id}
+                publishing={paperPublishing}
+                message={paperMessage}
+                onClear={() => setPaperSelection(EMPTY_PAPER_SELECTION)}
+                onPublish={publishPaper}
+              />
+            </>
+          ) : null}
+
+          {viewMode === "list" || tab === "trash" ? (
+            <>
           {tab !== "trash" && availableParts.length ? (
             <div className="library-part-filter" data-testid="library-part-filter" role="group" aria-label="按 Part 筛选">
               <button className={`chip small${!partFilter ? " is-active" : ""}`} onClick={() => setPartFilter(undefined)}>全部</button>
@@ -348,6 +494,8 @@ export function LibraryPage({ intent, initialModality }: { intent?: LibraryInten
             onClear={() => setSelectedIds(new Set())}
             onPublish={publishSelected}
           />
+            </>
+          ) : null}
         </>
       )}
 
