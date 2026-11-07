@@ -11,5 +11,6 @@
 @import "./styles/workspace.css";
 @import "./styles/exam-canvas.css";
 @import "./styles/settings.css";
+@import "./styles/data.css";
 @import "./styles/overlays.css";
 @import "./styles/utilities.css";

@@ -1,9 +1,11 @@
-// 产品路由只有三个主表面（计划 §3.1）：题库 / 题目工作区 / 设置。
+// 一级入口：导入 / 题库 / 数据 / 设置（数据模块见 features/data）。题目工作区是沉浸式子页面。
 //
 // 流水线内部阶段（source review、split、groups、llm-review、preview、export）不再是路由，
 // 它们变成题库行上的阶段状态和工作区内的局部问题。旧链接通过 legacyRedirect 一次性重定向，
 // 保留一个发行周期，只写日志，不出现在导航里。
-export type RouteName = "import" | "library" | "workspace" | "settings" | "legacy";
+import { parseDataView, type DataView } from "../features/data/dataRoute";
+
+export type RouteName = "import" | "library" | "workspace" | "settings" | "data" | "legacy";
 
 /** 兼容期内仍可通过 URL 到达、但不出现在导航中的旧页面（计划 §16.2 的兼容周期）。
  *  收敛期不能在替代能力落地前静默移除用户已有能力，因此这些页面保留在 `#/legacy/...`，
@@ -38,6 +40,8 @@ export interface RouteState {
   /** 题库题型子标签（reading | listening | writing | all）。承接被退休的 #/legacy/writing。 */
   modality?: string;
   legacyPage?: LegacyPageName;
+  /** 数据模块的子视图（#/data/...）。 */
+  data?: DataView;
 }
 
 /** 路径分段，忽略 query：`#/a/b?x=1` → `["a","b"]`。query 段不能当路径判断，否则
@@ -94,6 +98,7 @@ export function parseRoute(hash = window.location.hash): RouteState {
   if (parts[0] === "import" || intent === "import") return { name: "import" };
   if (parts[0] === "items" && parts[1]) return { name: "workspace", itemId: parts[1], intent };
   if (parts[0] === "settings") return { name: "settings" };
+  if (parts[0] === "data") return { name: "data", data: parseDataView(value) };
   if (parts[0] === "legacy") {
     const legacyPage = asLegacyPage(parts[1]);
     if (legacyPage) return { name: "legacy", legacyPage, itemId: parts[2], intent };

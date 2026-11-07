@@ -5,6 +5,7 @@ import { useImportBadge } from "../features/import/useImportBadge";
 import { LibraryPage } from "../features/library/LibraryPage";
 import { ExamWorkspacePage } from "../features/editor/ExamWorkspacePage";
 import { SettingsPage } from "../features/settings/SettingsPage";
+import { DataPage } from "../features/data/DataPage";
 import { applyLegacyRedirect, go, parseRoute, type RouteState } from "./router";
 
 export function App() {
@@ -39,6 +40,7 @@ export function App() {
       {route.name === "workspace" && route.itemId ? (
         <ExamWorkspacePage key={route.itemId} itemId={route.itemId} intent={route.intent} />
       ) : null}
+      {route.name === "data" ? <DataPage view={route.data ?? { kind: "batches" }} /> : null}
       {route.name === "settings" ? <SettingsPage /> : null}
     </AppShell>
   );

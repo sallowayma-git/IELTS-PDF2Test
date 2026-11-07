@@ -221,6 +221,13 @@ export function SettingsPage() {
     setNotice("已记住发布目录，之后发布不用再选。");
   }
 
+  async function pickSubmissionsRoot() {
+    const picked = await chooseExportDirectory();
+    if (!picked) return;
+    updateSettings({ submissionsRoot: picked });
+    setNotice("已记住作答数据目录，「数据」页将从这里导入交卷快照。");
+  }
+
   async function changePipelineMode(next: PipelineMode) {
     setPipelineMode(next);
     try {
@@ -360,6 +367,20 @@ export function SettingsPage() {
             {settings.nasDestination ? "更换目录" : "选择目录"}
           </button>
         </div>
+      </section>
+
+      <section className="settings-group" data-testid="settings-submissions">
+        <h2>数据</h2>
+        <div className="settings-field-row">
+          <span className="settings-field-label">
+            作答数据目录
+            <small className="file-name">{settings.submissionsRoot || "尚未选择：学生端的考试作答存储目录（其中应有 snapshots/ 与 status/）"}</small>
+          </span>
+          <button className="ghost small" data-testid="settings-pick-submissions" onClick={() => void pickSubmissionsRoot()}>
+            {settings.submissionsRoot ? "更换目录" : "选择目录"}
+          </button>
+        </div>
+        <small>只读使用，不会修改或删除学生端数据；与上面的 NAS 发布目录分开保存。</small>
       </section>
 
       <section className="settings-group">

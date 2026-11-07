@@ -2543,6 +2543,14 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       if (input.requestId) localStorage.setItem(journalKey, JSON.stringify({ input, editVersion: session.revision + 1 }));
       return { editVersion: session.revision + 1, replayed: false, appliedCount: input.commands.length } as T;
     }
+    // 「数据」模块只有 Tauri 后端有真实落点（本地 analytics.sqlite + 作答快照目录），开发预览不模拟。
+    case "analytics_import_snapshots":
+    case "analytics_overview":
+    case "analytics_exam":
+    case "analytics_student":
+    case "analytics_question":
+    case "analytics_export_xlsx":
+      throw new Error(`requires_tauri_runtime:${command}`);
     case "publish_items":
       throw new Error("requires_tauri_runtime:publish_items");
     // 题库改名与当前试卷只在 Tauri 后端有真实落点（SQLite / NAS 文件），开发预览不模拟。

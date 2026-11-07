@@ -3,11 +3,12 @@ import type { RouteState } from "../app/router";
 import { go } from "../app/router";
 import wonderLogo from "../assets/wonder-ielts-logo-square.png";
 
-// 外壳：一级入口「导入 / 题库 / 设置」。导入入口带角标（识别中 + 待检查 + 失败）。
+// 外壳：一级入口「导入 / 题库 / 数据 / 设置」。导入入口带角标（识别中 + 待检查 + 失败）。
 // 工作区是沉浸式全屏，不显示侧栏。
 const NAV = [
   { label: "导入", short: "导", path: "/import", match: "import" as const },
   { label: "题库", short: "库", path: "/library", match: "library" as const },
+  { label: "数据", short: "数", path: "/data", match: "data" as const },
   { label: "设置", short: "设", path: "/settings", match: "settings" as const }
 ];
 
