@@ -130,6 +130,7 @@ fn publish(root: &Path, item_ids: &[&str], force: Option<ForceOverride>) -> Resu
             destination: destination(root).to_string_lossy().into_owned(),
             fault: None,
             force,
+            paper: None,
         },
     )
 }
@@ -1179,5 +1180,232 @@ fn strict_publish_still_fails_the_batch_when_one_item_cannot_be_packaged() {
         !reading_root(&root).join("manifest.js").exists(),
         "严格发布失败时不得留下清单"
     );
+    let _ = fs::remove_dir_all(root);
+}
+
+// ───────────────────────── 组卷：当前试卷指针 ─────────────────────────
+
+fn set_part(root: &Path, item_id: &str, label: &str) {
+    crate::library::commands::set_library_item_part_core(root, item_id, Some(label))
+        .expect("manual part must be set");
+}
+
+fn paper_spec(p1: &str, p2: &str, p3: &str, listening: &[(&str, &str)]) -> crate::nas_package_v2::PaperSpec {
+    serde_json::from_value(json!({
+        "reading": {"P1": p1, "P2": p2, "P3": p3},
+        "listening": listening
+            .iter()
+            .map(|(part, item)| json!({"part": part, "itemId": item}))
+            .collect::<Vec<_>>(),
+    }))
+    .expect("paper spec must deserialize with the wire field names")
+}
+
+fn publish_with_paper(
+    root: &Path,
+    item_ids: &[&str],
+    paper: Option<crate::nas_package_v2::PaperSpec>,
+) -> Result<Value, String> {
+    publish_items_core(
+        root,
+        PublishItemsInput {
+            item_ids: item_ids.iter().map(|id| id.to_string()).collect(),
+            destination: destination(root).to_string_lossy().into_owned(),
+            fault: None,
+            force: None,
+            paper,
+        },
+    )
+}
+
+fn current_paper_path(root: &Path) -> PathBuf {
+    reading_root(root).join("current-paper.json")
+}
+
+#[test]
+fn current_paper_is_null_before_any_paper_is_published() {
+    let root = temp_root("paper-none");
+    ensure_app_dirs(&root).unwrap();
+    let value = crate::nas_package_v2::get_current_paper_core(&destination(&root).to_string_lossy())
+        .expect("reading a missing pointer must not fail");
+    assert!(value.is_null(), "{value}");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn paper_publish_points_current_paper_at_the_committed_manifest_entries() {
+    let root = temp_root("paper-ok");
+    ensure_app_dirs(&root).unwrap();
+    let p1 = seed_item(&root, "paper-p1", false, |_| {});
+    let p2 = seed_item(&root, "paper-p2", false, |_| {});
+    let p3 = seed_item(&root, "paper-p3", false, |_| {});
+    set_part(&root, &p1, "P1");
+    set_part(&root, &p2, "P2");
+    set_part(&root, &p3, "P3");
+
+    let result = publish_with_paper(
+        &root,
+        &[&p1, &p2, &p3],
+        Some(paper_spec(&p1, &p2, &p3, &[])),
+    )
+    .expect("three ready reading items must publish as a paper");
+    assert_eq!(result["paper"]["ok"], json!(true), "{result}");
+
+    let current: Value = serde_json::from_slice(&fs::read(current_paper_path(&root)).unwrap()).unwrap();
+    assert_eq!(current["schemaVersion"], json!("CurrentPaperV1"));
+    assert_eq!(current["paperId"], result["paper"]["paperId"]);
+    assert_eq!(current["batchId"], result["paper"]["batchId"]);
+    assert_eq!(current["listening"], json!([]));
+
+    let manifest = manifest(&root);
+    let reading = current["reading"].as_array().unwrap();
+    assert_eq!(reading.len(), 3, "{current}");
+    for (entry, (part, item)) in reading.iter().zip([("P1", &p1), ("P2", &p2), ("P3", &p3)]) {
+        assert_eq!(entry["part"], json!(part));
+        let exam_id = outcome_for(&result, item)["examId"].clone();
+        assert_eq!(entry["examId"], exam_id, "指针里的 examId 必须与清单条目一致");
+        let committed = &manifest[exam_id.as_str().unwrap()];
+        assert_eq!(entry["script"], committed["script"], "script 取自同一次提交后的清单");
+        assert_eq!(entry["scriptSha256"], committed["checksums"]["scriptSha256"]);
+        assert_eq!(entry["runtimeSha256"], committed["checksums"]["runtimeSha256"]);
+        assert!(
+            entry["script"].as_str().unwrap().starts_with(&format!(
+                "./releases/{}/",
+                current["batchId"].as_str().unwrap()
+            )),
+            "{entry}"
+        );
+    }
+
+    // 历史留档：同一 paperId，学生端不读但必须可查。
+    let history = crate::export_nas_library::normalize_nas_library_root(&destination(&root))
+        .join(".publish-control")
+        .join("papers")
+        .join(format!("{}.json", current["paperId"].as_str().unwrap()));
+    assert!(history.is_file(), "历史留档缺失：{}", history.display());
+    let history_value: Value = serde_json::from_slice(&fs::read(&history).unwrap()).unwrap();
+    assert_eq!(history_value, current);
+
+    // 临时文件不得残留在学生端目录里。
+    let leftovers: Vec<_> = fs::read_dir(reading_root(&root))
+        .unwrap()
+        .flatten()
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with(".current-paper-"))
+        .collect();
+    assert!(leftovers.is_empty(), "临时指针文件残留");
+
+    // 读取命令与磁盘文件一致。
+    let read_back = crate::nas_package_v2::get_current_paper_core(&destination(&root).to_string_lossy())
+        .unwrap();
+    assert_eq!(read_back, current);
+
+    // 列表行的 examId 与指针一致（界面用它判断「是否在当前试卷」）。
+    let rows = crate::library::commands::list_library_items_core(&root, false).unwrap();
+    let row = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == json!(p1))
+        .unwrap();
+    assert_eq!(row["examId"], json!("paper-p1"));
+    assert_eq!(row["questionTypes"], json!(["multiple_choice"]), "{row}");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn paper_publish_rejects_a_part_mismatch_before_writing_anything() {
+    let root = temp_root("paper-part-mismatch");
+    ensure_app_dirs(&root).unwrap();
+    let p1 = seed_item(&root, "mismatch-p1", false, |_| {});
+    let p2 = seed_item(&root, "mismatch-p2", false, |_| {});
+    let p3 = seed_item(&root, "mismatch-p3", false, |_| {});
+    // p1 被标成 P2：三篇位置与 Part 不符，必须整次拒绝。
+    set_part(&root, &p1, "P2");
+    set_part(&root, &p2, "P2");
+    set_part(&root, &p3, "P3");
+
+    let error = publish_with_paper(&root, &[&p1, &p2, &p3], Some(paper_spec(&p1, &p2, &p3, &[])))
+        .expect_err("Part 不符必须报错");
+    assert_eq!(error, format!("PAPER_PART_MISMATCH:{p1}"));
+    assert!(!current_paper_path(&root).exists(), "拒绝时不得写指针");
+    assert!(
+        !reading_root(&root).join("manifest.js").exists(),
+        "拒绝发生在任何写入之前：清单也不得出现"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn paper_publish_requires_every_paper_item_to_be_in_the_batch() {
+    let root = temp_root("paper-not-selected");
+    ensure_app_dirs(&root).unwrap();
+    let p1 = seed_item(&root, "unselected-p1", false, |_| {});
+    let p2 = seed_item(&root, "unselected-p2", false, |_| {});
+    let p3 = seed_item(&root, "unselected-p3", false, |_| {});
+    set_part(&root, &p1, "P1");
+    set_part(&root, &p2, "P2");
+    set_part(&root, &p3, "P3");
+
+    let error = publish_with_paper(&root, &[&p1, &p2], Some(paper_spec(&p1, &p2, &p3, &[])))
+        .expect_err("试卷题必须同时出现在 item_ids 里");
+    assert_eq!(error, format!("PAPER_ITEM_NOT_SELECTED:{p3}"));
+    assert!(!current_paper_path(&root).exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn paper_publish_writes_no_pointer_when_a_paper_item_does_not_publish() {
+    let root = temp_root("paper-incomplete");
+    ensure_app_dirs(&root).unwrap();
+    let p1 = seed_item(&root, "incomplete-p1", false, |_| {});
+    let p2 = seed_item(&root, "incomplete-p2", false, |_| {});
+    // p3 的答案未闭合：严格发布下它不进学生端，试卷必须整体不更新。
+    let p3 = seed_item(&root, "incomplete-p3", false, |authoring| {
+        authoring["answerKey"]["q15"] = json!({"kind": "unresolved"});
+    });
+    set_part(&root, &p1, "P1");
+    set_part(&root, &p2, "P2");
+    set_part(&root, &p3, "P3");
+
+    let result = publish_with_paper(&root, &[&p1, &p2, &p3], Some(paper_spec(&p1, &p2, &p3, &[])))
+        .expect("批次本身照常提交，缺题只体现在 paper 结果里");
+    assert_eq!(result["paper"]["ok"], json!(false), "{result}");
+    assert_eq!(result["paper"]["code"], json!("PAPER_INCOMPLETE"), "{result}");
+    assert_eq!(result["paper"]["missing"], json!([p3.clone()]), "{result}");
+    assert!(!current_paper_path(&root).exists(), "缺题时不得写指针");
+    assert!(
+        reading_root(&root).join("manifest.js").is_file(),
+        "已成功的题照常保留在清单里"
+    );
+    let manifest = manifest(&root);
+    assert!(manifest.get("incomplete-p1").is_some());
+    assert!(manifest.get("incomplete-p2").is_some());
+    assert!(manifest.get("incomplete-p3").is_none(), "学生端不可加载的题不得进清单");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn rename_library_item_trims_validates_and_returns_the_row() {
+    let root = temp_root("rename-item");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_item(&root, "rename-me", false, |_| {});
+
+    let row = crate::library::commands::rename_library_item_core(&root, &item, "  新的题名  ")
+        .expect("trimmed non-empty title must save");
+    assert_eq!(row["title"], json!("新的题名"), "{row}");
+    assert_eq!(row["id"], json!(item));
+
+    let empty = crate::library::commands::rename_library_item_core(&root, &item, "   ");
+    assert_eq!(empty.unwrap_err(), "LIBRARY_TITLE_EMPTY");
+
+    let too_long = "字".repeat(121);
+    assert!(crate::library::commands::rename_library_item_core(&root, &item, &too_long)
+        .unwrap_err()
+        .starts_with("LIBRARY_TITLE_TOO_LONG"));
+    let at_limit = "字".repeat(120);
+    assert!(crate::library::commands::rename_library_item_core(&root, &item, &at_limit).is_ok());
+
+    let missing = crate::library::commands::rename_library_item_core(&root, "no-such-item", "x");
+    assert!(missing.unwrap_err().starts_with("ITEM_NOT_FOUND"));
     let _ = fs::remove_dir_all(root);
 }

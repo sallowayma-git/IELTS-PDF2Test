@@ -279,6 +279,10 @@ pub(crate) struct PublishItemsInput {
     /// 只有门禁结论确实不是 Ready 时才**被使用**并记录为显式放行。
     #[serde(default)]
     pub force: Option<ForceOverride>,
+    /// 组卷：有它时，三篇阅读（P1/P2/P3）与听力题必须都在 `item_ids` 里、Part 相符；
+    /// 全部学生端可加载时在清单提交之后写 `current-paper.json`（契约 CurrentPaperV1）。
+    #[serde(default)]
+    pub paper: Option<PaperSpec>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -286,6 +290,167 @@ pub(crate) struct PublishItemsInput {
 pub(crate) struct ForceOverride {
     pub confirmed_at: String,
     pub acknowledged_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct PaperSpec {
+    pub reading: PaperReadingSlots,
+    #[serde(default)]
+    pub listening: Vec<PaperListeningSlot>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PaperReadingSlots {
+    #[serde(rename = "P1")]
+    pub p1: String,
+    #[serde(rename = "P2")]
+    pub p2: String,
+    #[serde(rename = "P3")]
+    pub p3: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct PaperListeningSlot {
+    pub part: String,
+    pub item_id: String,
+}
+
+/// 当前试卷指针文件名（学生端只读这一个位置，与 manifest.js 同目录）。
+pub(crate) const CURRENT_PAPER_FILE_NAME: &str = "current-paper.json";
+const CURRENT_PAPER_SCHEMA: &str = "CurrentPaperV1";
+const PAPER_HISTORY_DIR_NAME: &str = "papers";
+
+/// 组卷校验（清单写入之前）：三篇阅读必须是 reading 且 Part 分别为 P1/P2/P3，
+/// 听力题必须是 listening 且 Part 相符；所有试卷题都必须在本次 `item_ids` 里、不得重复。
+fn validate_paper_spec(conn: &rusqlite::Connection, input: &PublishItemsInput) -> CommandResult<()> {
+    use crate::library::repository::get_item;
+    let Some(paper) = input.paper.as_ref() else {
+        return Ok(());
+    };
+    let selected: BTreeSet<&str> = input.item_ids.iter().map(String::as_str).collect();
+    let mut slots: Vec<(&str, &str, &str)> = vec![
+        ("reading", "P1", paper.reading.p1.as_str()),
+        ("reading", "P2", paper.reading.p2.as_str()),
+        ("reading", "P3", paper.reading.p3.as_str()),
+    ];
+    for slot in &paper.listening {
+        slots.push(("listening", slot.part.as_str(), slot.item_id.as_str()));
+    }
+    let mut seen = BTreeSet::new();
+    for (modality, part, item_id) in slots {
+        if !seen.insert(item_id) {
+            return Err(format!("PAPER_DUPLICATE_ITEM:{item_id}"));
+        }
+        if !selected.contains(item_id) {
+            return Err(format!("PAPER_ITEM_NOT_SELECTED:{item_id}"));
+        }
+        let row = get_item(conn, item_id)?.ok_or_else(|| format!("ITEM_NOT_FOUND:{item_id}"))?;
+        if row.modality != modality || row.part_label.as_deref() != Some(part) {
+            return Err(format!("PAPER_PART_MISMATCH:{item_id}"));
+        }
+    }
+    Ok(())
+}
+
+/// 清单提交之后写当前试卷。全部试卷题在本批以「学生端可加载」成功、且清单里有对应条目
+/// 时才写；否则返回 `PAPER_INCOMPLETE` 与缺失清单，且**不写任何文件**。调用方保证在
+/// `export.lock` 之内、清单原子替换之后调用；本函数的失败不回滚已提交的清单。
+fn publish_current_paper(
+    library_root: &Path,
+    reading_root: &Path,
+    manifest_path: &Path,
+    batch_id: &str,
+    paper: &PaperSpec,
+    outcomes: &[Value],
+) -> CommandResult<Value> {
+    let committed = load_existing_manifest(manifest_path)?;
+    let mut slots: Vec<(&str, &str, &str)> = vec![
+        ("reading", "P1", paper.reading.p1.as_str()),
+        ("reading", "P2", paper.reading.p2.as_str()),
+        ("reading", "P3", paper.reading.p3.as_str()),
+    ];
+    for slot in &paper.listening {
+        slots.push(("listening", slot.part.as_str(), slot.item_id.as_str()));
+    }
+    let script_prefix = format!("./releases/{batch_id}/");
+    let mut missing = Vec::new();
+    let mut reading = Vec::new();
+    let mut listening = Vec::new();
+    for (modality, part, item_id) in slots {
+        let loadable = outcomes.iter().find(|outcome| {
+            outcome.get("itemId").and_then(Value::as_str) == Some(item_id)
+                && outcome.get("ok").and_then(Value::as_bool) == Some(true)
+                && outcome.get("studentLoadable").and_then(Value::as_bool) == Some(true)
+        });
+        let entry = loadable
+            .and_then(|outcome| outcome.get("examId").and_then(Value::as_str))
+            .and_then(|exam_id| committed.get(exam_id).map(|entry| (exam_id, entry)))
+            .and_then(|(exam_id, entry)| {
+                let script = entry.get("script").and_then(Value::as_str)?;
+                let script_sha = entry.pointer("/checksums/scriptSha256").and_then(Value::as_str)?;
+                let runtime_sha = entry.pointer("/checksums/runtimeSha256").and_then(Value::as_str)?;
+                if !script.starts_with(&script_prefix) {
+                    return None;
+                }
+                let title = entry.get("title").and_then(Value::as_str).unwrap_or_default();
+                Some(json!({
+                    "part": part,
+                    "examId": exam_id,
+                    "title": title,
+                    "script": script,
+                    "scriptSha256": script_sha,
+                    "runtimeSha256": runtime_sha,
+                }))
+            });
+        match entry {
+            Some(entry) if modality == "reading" => reading.push(entry),
+            Some(entry) => listening.push(entry),
+            None => missing.push(item_id.to_string()),
+        }
+    }
+    if !missing.is_empty() {
+        return Ok(json!({"ok": false, "code": "PAPER_INCOMPLETE", "missing": missing}));
+    }
+    let paper_id = Uuid::new_v4().simple().to_string();
+    let published_at = Utc::now().to_rfc3339();
+    let document = json!({
+        "schemaVersion": CURRENT_PAPER_SCHEMA,
+        "paperId": paper_id,
+        "publishedAt": published_at,
+        "batchId": batch_id,
+        "reading": reading,
+        "listening": listening,
+    });
+    let bytes = canonical_json_bytes(&document).map_err(|error| error.to_string())?;
+    // 历史留档先写：学生端不读它，但指针指向的 paperId 必须有可查的记录。
+    let history = library_root
+        .join(CONTROL_DIR_NAME)
+        .join(PAPER_HISTORY_DIR_NAME)
+        .join(format!("{paper_id}.json"));
+    write_synced_file(&history, &bytes)?;
+    // 指针：临时文件 + 原子替换。失败则清掉临时文件，旧指针保持不变。
+    let temporary = reading_root.join(format!(".current-paper-{paper_id}.tmp"));
+    write_synced_file(&temporary, &bytes)?;
+    if let Err(error) = atomic_replace_file(&temporary, &reading_root.join(CURRENT_PAPER_FILE_NAME)) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
+    Ok(json!({"ok": true, "paperId": paper_id, "publishedAt": published_at, "batchId": batch_id,
+        "reading": document["reading"], "listening": document["listening"]}))
+}
+
+/// 读取 NAS 上的当前试卷指针；不存在返回 `null`。
+pub(crate) fn get_current_paper_core(destination: &str) -> CommandResult<Value> {
+    let library_root = normalize_nas_library_root(&absolute_path("library_root", destination)?);
+    let path = nas_reading_exams_dir(&library_root).join(CURRENT_PAPER_FILE_NAME);
+    if !path.is_file() {
+        return Ok(Value::Null);
+    }
+    let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    serde_json::from_str::<Value>(&text).map_err(|error| format!("CURRENT_PAPER_INVALID:{error}"))
 }
 
 
@@ -320,6 +485,7 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
         crate::library::migration::migrate_single_item(root, id)?;
     }
     let mut conn = open_library_connection(root)?;
+    validate_paper_spec(&conn, &input)?;
     let transaction = conn.transaction().map_err(|error| error.to_string())?;
     let snapshots = ids
         .iter()
@@ -663,8 +829,28 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
         if let Err(error) = write_batch_state(&moved_resources, true) {
             eprintln!("[publish] batch committed state write failed: {error}");
         }
+        // 组卷指针：清单已提交之后才写。失败只如实报告，不回滚已生效的清单。
+        let paper_result = input.paper.as_ref().map(|paper| {
+            publish_current_paper(
+                &library_root,
+                &reading_root,
+                &paths.manifest_path,
+                &batch_id,
+                paper,
+                &outcomes,
+            )
+            .unwrap_or_else(|error| {
+                eprintln!("[publish] current paper write failed: {error}");
+                json!({"ok": false, "code": "PAPER_WRITE_FAILED", "message": error})
+            })
+        });
         let succeeded = outcomes;
-        Ok(json!({"destination": input.destination, "succeeded": succeeded, "failed": failed_items}))
+        let mut value =
+            json!({"destination": input.destination, "succeeded": succeeded, "failed": failed_items});
+        if let Some(paper_result) = paper_result {
+            value["paper"] = paper_result;
+        }
+        Ok(value)
     })();
     if result.is_err() {
         if manifest_committed {

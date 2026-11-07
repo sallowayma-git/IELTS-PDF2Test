@@ -8,6 +8,7 @@
 //!   因此导出/发布链改为直接解析 canonical DS，不再依赖 shadow 缓存。
 //! - `list_library_items`：题库列表改读 V2 仓库。
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use serde_json::{json, Value};
@@ -15,7 +16,7 @@ use serde_json::{json, Value};
 use super::migration::migrate_single_item;
 use super::repository::{
     apply_editor_commands_tx, get_canonical_ds, get_item, list_items, open_library_connection,
-    ApplyEditorCommandsInput, EditFootprint,
+    rename_item, ApplyEditorCommandsInput, EditFootprint,
 };
 use crate::authoring_v2_commands::{
     apply_patch, explicitly_handled_issue_targets, refresh_quality_report_for_targets,
@@ -184,12 +185,14 @@ pub(crate) fn list_library_items_core(root: &Path, include_deleted: bool) -> Com
         }
     }
 
+    let extras = library_row_extras(&conn, None)?;
     let mut result = Vec::new();
     for row in rows {
         let processing = crate::processing::queue::get_job_by_library_item(&conn, &row.id)?;
-        let mut value = serde_json::to_value(row).map_err(|error| error.to_string())?;
+        let mut value = serde_json::to_value(&row).map_err(|error| error.to_string())?;
         value["processing"] =
             serde_json::to_value(processing).map_err(|error| error.to_string())?;
+        apply_row_extras(&mut value, extras.get(&row.id));
         result.push(value);
     }
     Ok(Value::Array(result))
@@ -213,9 +216,88 @@ pub(crate) fn get_library_item_summary_core(root: &Path, item_id: &str) -> Comma
         }
     }
     let processing = crate::processing::queue::get_job_by_library_item(&conn, item_id)?;
+    let extras = library_row_extras(&conn, Some(item_id))?;
     let mut value = serde_json::to_value(row).map_err(|error| error.to_string())?;
     value["processing"] = serde_json::to_value(processing).map_err(|error| error.to_string())?;
+    apply_row_extras(&mut value, extras.get(item_id));
     Ok(value)
+}
+
+/// 题库页改名（Excel 式单元格编辑的保存端）。标题 trim 后非空、不超过 120 个字符。
+/// 成功后返回新的题库行（与 `list_library_items` 同形），前端据此回填。
+pub(crate) fn rename_library_item_core(root: &Path, item_id: &str, title: &str) -> CommandResult<Value> {
+    let trimmed = title.trim();
+    if trimmed.is_empty() {
+        return Err("LIBRARY_TITLE_EMPTY".to_string());
+    }
+    if trimmed.chars().count() > LIBRARY_TITLE_MAX_CHARS {
+        return Err(format!("LIBRARY_TITLE_TOO_LONG:max={LIBRARY_TITLE_MAX_CHARS}"));
+    }
+    let conn = open_library_connection(root)?;
+    if !rename_item(&conn, item_id, trimmed)? {
+        return Err(format!("ITEM_NOT_FOUND:{item_id}"));
+    }
+    drop(conn);
+    let row = get_library_item_summary_core(root, item_id)?;
+    if row.is_null() {
+        return Err(format!("ITEM_NOT_FOUND:{item_id}"));
+    }
+    Ok(row)
+}
+
+pub(crate) const LIBRARY_TITLE_MAX_CHARS: usize = 120;
+
+/// 行的派生字段：题型（去重，取自权威稿 `taskGroups[].taskType`）与 examId
+/// （与发布清单、当前试卷的 examId 同一身份，用于判断「是否在当前试卷」）。
+#[derive(Default, Clone)]
+struct LibraryRowExtras {
+    question_types: Vec<String>,
+    exam_id: Option<String>,
+}
+
+/// 一次查询取出全部（或单条）题的派生字段。只读 SQLite JSON 函数，不把整份权威稿
+/// 反序列化进 Rust；`only` 为 None 时覆盖全部有权威稿的条目。
+fn library_row_extras(
+    conn: &rusqlite::Connection,
+    only: Option<&str>,
+) -> CommandResult<HashMap<String, LibraryRowExtras>> {
+    let mut statement = conn
+        .prepare(
+            "SELECT i.id,
+                    json_extract(i.canonical_ds_json, '$.exam.examId'),
+                    (SELECT json_group_array(t) FROM (
+                        SELECT DISTINCT json_extract(g.value, '$.taskType') AS t
+                        FROM json_each(i.canonical_ds_json, '$.taskGroups') AS g
+                        WHERE json_extract(g.value, '$.taskType') IS NOT NULL))
+               FROM library_items_v2 i
+              WHERE i.canonical_ds_json IS NOT NULL AND json_valid(i.canonical_ds_json)
+                AND (?1 IS NULL OR i.id = ?1)",
+        )
+        .map_err(|error| format!("library_row_extras:{error}"))?;
+    let rows = statement
+        .query_map([only], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })
+        .map_err(|error| format!("library_row_extras:{error}"))?;
+    let mut extras = HashMap::new();
+    for row in rows {
+        let (id, exam_id, types_json) = row.map_err(|error| format!("library_row_extras:{error}"))?;
+        let question_types = types_json
+            .and_then(|text| serde_json::from_str::<Vec<String>>(&text).ok())
+            .unwrap_or_default();
+        extras.insert(id, LibraryRowExtras { question_types, exam_id });
+    }
+    Ok(extras)
+}
+
+fn apply_row_extras(value: &mut Value, extras: Option<&LibraryRowExtras>) {
+    let extras = extras.cloned().unwrap_or_default();
+    value["questionTypes"] = json!(extras.question_types);
+    value["examId"] = json!(extras.exam_id);
 }
 
 /// 手动设置某条目的 Part 标签：来源记为 `manual`，压过一切自动判定。

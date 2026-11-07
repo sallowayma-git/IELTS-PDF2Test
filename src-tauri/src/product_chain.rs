@@ -1605,6 +1605,7 @@ fn publish_items_is_all_or_nothing_across_a_batch() {
         destination: destination.to_string_lossy().into_owned(),
         fault: fault.map(str::to_string),
         force: None,
+        paper: None,
     };
 
     // 1. 第一题之后中断：整批回滚，清单与 releases 都不得留下痕迹。

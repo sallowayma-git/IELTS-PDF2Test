@@ -1192,6 +1192,25 @@ async fn publish_items(
         .map_err(|error| error.to_string())?
 }
 
+/// 题库页改名（单元格编辑保存）。校验与落库见 `library::commands::rename_library_item_core`。
+#[tauri::command]
+async fn rename_library_item(item_id: String, title: String, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        library::commands::rename_library_item_core(&root, &item_id, &title)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// 读取 NAS 上的「当前试卷」指针（不存在返回 null）。
+#[tauri::command]
+async fn get_current_paper(destination: String) -> CommandResult<Value> {
+    tauri::async_runtime::spawn_blocking(move || nas_package_v2::get_current_paper_core(&destination))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 #[tauri::command]
 async fn import_files(
     input: processing::commands::ImportFilesInput,
@@ -1933,6 +1952,8 @@ pub fn run() {
             listening_audio::commands::probe_listening_audio_files,
             listening_audio::commands::automation_audio_selection_from_env,
             publish_items,
+            rename_library_item,
+            get_current_paper,
             open_source_file,
             cancel_processing,
             retry_processing,
