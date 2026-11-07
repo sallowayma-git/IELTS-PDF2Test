@@ -1,12 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AppShell } from "../components/AppShell";
+import { ImportPage } from "../features/import/ImportPage";
+import { useImportBadge } from "../features/import/useImportBadge";
 import { LibraryPage } from "../features/library/LibraryPage";
 import { ExamWorkspacePage } from "../features/editor/ExamWorkspacePage";
 import { SettingsPage } from "../features/settings/SettingsPage";
-import { applyLegacyRedirect, parseRoute, type RouteState } from "./router";
+import { applyLegacyRedirect, go, parseRoute, type RouteState } from "./router";
 
 export function App() {
   const [route, setRoute] = useState<RouteState>(() => parseRoute());
+  const importBadge = useImportBadge();
+  // 启动默认落点：没有指定 hash 时，有未完成导入进「导入」，否则进「题库」（只决定一次）。
+  const openedWithoutHash = useRef(!window.location.hash);
+  const startupRouteDecided = useRef(false);
 
   useEffect(() => {
     const sync = () => {
@@ -20,9 +26,16 @@ export function App() {
     return () => window.removeEventListener("hashchange", sync);
   }, []);
 
+  useEffect(() => {
+    if (startupRouteDecided.current || !openedWithoutHash.current || importBadge === undefined) return;
+    startupRouteDecided.current = true;
+    go(importBadge > 0 ? "/import" : "/library");
+  }, [importBadge]);
+
   return (
-    <AppShell route={route}>
-      {route.name === "library" ? <LibraryPage intent={route.intent} initialModality={route.modality} /> : null}
+    <AppShell route={route} importBadge={importBadge}>
+      {route.name === "import" ? <ImportPage /> : null}
+      {route.name === "library" ? <LibraryPage intent={route.intent} /> : null}
       {route.name === "workspace" && route.itemId ? (
         <ExamWorkspacePage key={route.itemId} itemId={route.itemId} intent={route.intent} />
       ) : null}

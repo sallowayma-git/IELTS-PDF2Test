@@ -1,6 +1,6 @@
 import { useRef, useState, type KeyboardEvent } from "react";
 import { taskTypeLabel } from "../../utils/displayLabels";
-import { STAGE_LABEL, type LibraryRowV1 } from "./libraryTypes";
+import { PART_OPTIONS, STAGE_LABEL, type LibraryRowV1 } from "./libraryTypes";
 import { isReadingPart, READING_PARTS, type PaperSelection, type ReadingPart } from "./paperSelection";
 
 // 组卷视图：按 阅读 P1 / P2 / P3、听力 分组的表格。勾选即组卷选择（阅读每 Part 一篇，听力多选）。
@@ -129,7 +129,9 @@ export function LibraryPaperTable({
   onToggleReading,
   onToggleListening,
   onRename,
-  onOpen
+  onOpen,
+  onSetPart,
+  onTrash
 }: {
   rows: LibraryRowV1[];
   selection: PaperSelection;
@@ -139,6 +141,10 @@ export function LibraryPaperTable({
   onToggleListening: (itemId: string, part: string) => void;
   onRename: (itemId: string, title: string) => Promise<void>;
   onOpen: (itemId: string) => void;
+  /** 手动设置 Part；null 表示清除、回到自动判定。 */
+  onSetPart: (itemId: string, label: string | null) => void;
+  /** 移入回收站（可恢复）。 */
+  onTrash: (itemId: string) => void;
 }) {
   const groups = groupRowsForPaper(rows);
   return (
@@ -185,7 +191,20 @@ export function LibraryPaperTable({
                           }}
                         />
                       </td>
-                      <td>{row.part ? <span className="part-badge">{row.part}</span> : <span className="muted">未设置</span>}</td>
+                      <td>
+                        <select
+                          className="part-select small"
+                          data-testid="library-row-part-select"
+                          aria-label={`设置 ${row.title} 的 Part`}
+                          value={row.part ?? ""}
+                          onChange={(event) => onSetPart(row.id, event.target.value === "" ? null : event.target.value)}
+                        >
+                          <option value="">未设置</option>
+                          {PART_OPTIONS[isListening ? "listening" : "reading"].map((label) => (
+                            <option key={label} value={label}>{label}</option>
+                          ))}
+                        </select>
+                      </td>
                       <td>
                         {row.questionTypes.length
                           ? row.questionTypes.map((type) => (
@@ -201,7 +220,10 @@ export function LibraryPaperTable({
                         {hasCurrentPaper ? (inPaper ? "是" : "否") : <span className="muted">—</span>}
                       </td>
                       <td>
-                        <button type="button" className="ghost small" onClick={() => onOpen(row.id)}>打开</button>
+                        <div className="button-row">
+                          <button type="button" className="ghost small" onClick={() => onOpen(row.id)}>打开</button>
+                          <button type="button" className="danger small" onClick={() => onTrash(row.id)}>删除</button>
+                        </div>
                       </td>
                     </tr>
                   );

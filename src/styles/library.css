@@ -247,3 +247,44 @@
 .paper-composer-slots { display: flex; flex-wrap: wrap; gap: 8px 16px; }
 .paper-slot { display: inline-flex; gap: 6px; align-items: baseline; font-size: 14px; }
 .paper-slot.is-filled b { color: var(--accent, #1f6feb); }
+.paper-confirm {
+  flex-basis: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--accent, #1f6feb);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+}
+.paper-confirm p { margin: 4px 0; }
+.paper-replace-note { font-size: 12px; }
+
+/* ── 导入一级页（队列 + 常驻选择面板） ─────────────────────────────── */
+.import-page { display: grid; gap: 16px; }
+.import-page .drawer-scrim.import-page { position: static; background: none; padding: 0; display: block; }
+.import-page .drawer.import-page-card {
+  position: static;
+  width: auto;
+  max-width: none;
+  height: auto;
+  max-height: none;
+  transform: none;
+  box-shadow: none;
+  border: 1px solid var(--line, #d9dde3);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+}
+.import-queue-group { border: 1px solid var(--line, #d9dde3); border-radius: 8px; overflow: hidden; }
+.import-queue-group .library-list { padding: 4px 8px; }
+.library-writing-section { margin-top: 24px; border: 1px solid var(--line, #d9dde3); border-radius: 8px; overflow: hidden; }
+
+/* 外壳角标：导入入口的待处理数 */
+.nav-badge {
+  margin-left: auto;
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--accent, #1f6feb);
+  color: #fff;
+  font-size: 12px;
+  line-height: 20px;
+  text-align: center;
+}

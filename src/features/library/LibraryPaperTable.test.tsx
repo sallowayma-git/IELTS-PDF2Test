@@ -50,6 +50,7 @@ const rows: LibraryRowV1[] = [
 /** 与 LibraryPage 相同的选择语义：把表格回调接到 paperSelection 纯函数上。 */
 function Harness({ onRename, onPublish }: { onRename: (id: string, title: string) => Promise<void>; onPublish?: () => void }) {
   const [selection, setSelection] = useState<PaperSelection>(EMPTY_PAPER_SELECTION);
+  const [confirming, setConfirming] = useState(false);
   return (
     <>
       <LibraryPaperTable
@@ -61,15 +62,21 @@ function Harness({ onRename, onPublish }: { onRename: (id: string, title: string
         onToggleListening={(id: string, part: string) => setSelection((current) => toggleListeningItem(current, id, part))}
         onRename={onRename}
         onOpen={() => undefined}
+        onSetPart={() => undefined}
+        onTrash={() => undefined}
       />
       <PaperComposerBar
         selection={selection}
         titleOf={(id) => rows.find((r) => r.id === id)?.title ?? id}
         publishing={false}
+        confirmation={confirming ? { incoming: [], replacing: [] } : undefined}
         onClear={() => setSelection(EMPTY_PAPER_SELECTION)}
-        onPublish={() => {
+        onRequestPublish={() => setConfirming(true)}
+        onConfirm={() => {
+          setConfirming(false);
           onPublish?.();
         }}
+        onCancelConfirm={() => setConfirming(false)}
       />
       <output data-testid="ready">{isPaperReady(selection) ? "ready" : "not-ready"}</output>
     </>
@@ -104,6 +111,8 @@ describe("组卷选择（表格 + 组卷栏）", () => {
     expect(screen.getByTestId("ready").textContent).toBe("ready");
     expect(publish.disabled).toBe(false);
     fireEvent.click(publish);
+    expect(onPublish).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("paper-confirm-ok"));
     expect(onPublish).toHaveBeenCalledTimes(1);
   });
 

@@ -28,7 +28,8 @@ export function ImportDrawer({
   error,
   rejected,
   onClose,
-  onImport
+  onImport,
+  mode = "drawer"
 }: {
   open: boolean;
   busy: boolean;
@@ -37,7 +38,10 @@ export function ImportDrawer({
   rejected: ImportRejection[];
   onClose: () => void;
   onImport: (files: PickedPath[], decisions?: Record<string, ListeningImportDecision>) => void;
+  /** `page`：作为导入一级页面的常驻面板（无遮罩、无关闭/取消，同一套选择与拆分逻辑）。 */
+  mode?: "drawer" | "page";
 }) {
+  const page = mode === "page";
   const [files, setFiles] = useState<PickedPath[]>([]);
   const [checking, setChecking] = useState(false);
   // 识别为听力的文件逐个确认；decisions 以源文件路径为键。
@@ -198,9 +202,9 @@ export function ImportDrawer({
   const pending = queue[0];
 
   return (
-    <div className="drawer-scrim" role="presentation" onClick={busy || checking ? undefined : close}>
+    <div className={page ? "drawer-scrim import-page" : "drawer-scrim"} role="presentation" onClick={page || busy || checking ? undefined : close}>
       <aside
-        className="drawer"
+        className={page ? "drawer import-page-card" : "drawer"}
         role="dialog"
         aria-modal="true"
         aria-label="导入 PDF 或 DOCX"
@@ -209,7 +213,7 @@ export function ImportDrawer({
       >
         <header className="drawer-head">
           <h2>导入题目</h2>
-          <button className="ghost small" onClick={close} disabled={busy || checking} aria-label="关闭">×</button>
+          {page ? null : <button className="ghost small" onClick={close} disabled={busy || checking} aria-label="关闭">×</button>}
         </header>
 
         <div className="drawer-body">
@@ -344,7 +348,7 @@ export function ImportDrawer({
         </div>
 
         <footer className="drawer-foot">
-          <button className="ghost" onClick={close} disabled={busy || checking}>取消</button>
+          {page ? null : <button className="ghost" onClick={close} disabled={busy || checking}>取消</button>}
           <button
             className="primary"
             data-testid="import-start"

@@ -169,7 +169,7 @@ async function main() {
     if (!wanted.every((p) => ids[p])) throw new Error("无法为三篇分别设置 P1/P2/P3");
 
     // 5. 组卷视图：勾选三篇，发布按钮只在三篇齐了之后可点。
-    await session.clickSelector('[data-testid="library-view-paper"]');
+    // 题库默认就是组卷表格（待检查题不在题库里，导入页负责它们）。
     await session.waitFor(`!!document.querySelector('[data-testid="paper-table"]')`, { timeoutMs: 15000, label: "paper-table" });
     await clickPaperCheck(session, ids.P1);
     await clickPaperCheck(session, ids.P2);
@@ -186,6 +186,9 @@ async function main() {
 
     // 6. 发布为当前试卷。
     await session.clickSelector('[data-testid="paper-publish"]');
+    // 替换前必须经过确认框（列出将被替换的当前试卷）。
+    await session.waitFor(`!!document.querySelector('[data-testid="paper-confirm"]')`, { timeoutMs: 10000, label: "paper-confirm" });
+    await session.clickSelector('[data-testid="paper-confirm-ok"]');
     await session.waitFor(
       `(() => { const m = document.querySelector('[data-testid="paper-composer"] [role="status"]'); return !!m && /当前试卷已发布|没有|失败|未能|保持不变/.test(m.textContent); })()`,
       { timeoutMs: 15 * 60 * 1000, intervalMs: 1000, label: "paper-result" }

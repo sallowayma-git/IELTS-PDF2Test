@@ -295,3 +295,34 @@ export function matchesPart(row: LibraryRowV1, part: string | undefined): boolea
   if (!part) return true;
   return row.part === part;
 }
+
+// 一级入口拆分（导入 / 题库）的行归属。两边读同一份行模型，只是过滤不同：
+// - 导入：识别中 / 待检查 / 失败（发布门禁通过、变成「可发布」后离开导入页）。
+// - 题库：可发布 + 已发布（待检查不出现在题库）。写作走自己的区块，不进组卷表格。
+const IMPORT_QUEUE_STAGES: readonly LibraryStageV1[] = ["queued", "local", "cloud", "reconciling", "action_required", "failed"];
+
+export function isImportQueueStage(stage: LibraryStageV1): boolean {
+  return IMPORT_QUEUE_STAGES.includes(stage);
+}
+
+/** 导入页的三组：识别中 / 待检查 / 失败。已删除（回收站）的行不在队列里。 */
+export function importQueueGroups(rows: LibraryRowV1[]): { working: LibraryRowV1[]; review: LibraryRowV1[]; failed: LibraryRowV1[] } {
+  const live = rows.filter((row) => !row.inTrash && row.modality !== "writing" && isImportQueueStage(row.stage));
+  const byUpdate = (a: LibraryRowV1, b: LibraryRowV1) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "");
+  return {
+    working: live.filter((row) => isProcessingStage(row.stage)).sort(byUpdate),
+    review: live.filter((row) => row.stage === "action_required").sort(byUpdate),
+    failed: live.filter((row) => row.stage === "failed").sort(byUpdate)
+  };
+}
+
+/** 题库里可见的行：只有可发布与已发布；写作不在这里（见 WritingPanel 区块）。 */
+export function libraryRows(rows: LibraryRowV1[]): LibraryRowV1[] {
+  return rows.filter((row) => !row.inTrash && row.modality !== "writing" && (row.stage === "ready" || row.stage === "published"));
+}
+
+/** 导入角标：识别中 + 待检查 + 失败。 */
+export function importBadgeCount(rows: LibraryRowV1[]): number {
+  const groups = importQueueGroups(rows);
+  return groups.working.length + groups.review.length + groups.failed.length;
+}

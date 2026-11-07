@@ -3,7 +3,7 @@
 // 流水线内部阶段（source review、split、groups、llm-review、preview、export）不再是路由，
 // 它们变成题库行上的阶段状态和工作区内的局部问题。旧链接通过 legacyRedirect 一次性重定向，
 // 保留一个发行周期，只写日志，不出现在导航里。
-export type RouteName = "library" | "workspace" | "settings" | "legacy";
+export type RouteName = "import" | "library" | "workspace" | "settings" | "legacy";
 
 /** 兼容期内仍可通过 URL 到达、但不出现在导航中的旧页面（计划 §16.2 的兼容周期）。
  *  收敛期不能在替代能力落地前静默移除用户已有能力，因此这些页面保留在 `#/legacy/...`，
@@ -54,12 +54,12 @@ export function legacyRedirect(hash: string): string | undefined {
   if (head === "legacy") {
     // 写作创作页并入题库的写作子标签，不再是独立的逃生页面。
     if (second === "writing") return "/library?modality=writing";
-    return third ? `/items/${third}` : second === "import" ? "/library?import=1" : "/library";
+    return third ? `/items/${third}` : second === "import" ? "/import" : "/library";
   }
   if (head === "dashboard" || head === "phase5") return "/library";
   if (head === "jobs") {
     if (!second) return "/library";
-    if (second === "new") return "/library?import=1";
+    if (second === "new") return "/import";
     // /jobs/:id/(document|split|groups|llm-review|preview|authoring-v2|export) -> /items/:id
     return third === "export" ? `/items/${second}?publish=1` : `/items/${second}`;
   }
@@ -90,6 +90,8 @@ export function parseRoute(hash = window.location.hash): RouteState {
   const modality = parseModality(value);
   const parts = value.split(/[/?]/).filter(Boolean);
   if (!parts.length) return { name: "library" };
+  // 导入是一级入口（#/import）；旧的 ?import=1 意图也落到导入页。
+  if (parts[0] === "import" || intent === "import") return { name: "import" };
   if (parts[0] === "items" && parts[1]) return { name: "workspace", itemId: parts[1], intent };
   if (parts[0] === "settings") return { name: "settings" };
   if (parts[0] === "legacy") {
@@ -106,7 +108,12 @@ export function go(path: string): void {
 }
 
 export function libraryPath(intent?: LibraryIntent): string {
-  return intent ? `/library?${intent}=1` : "/library";
+  if (intent === "import") return "/import";
+  return intent === "publish" ? "/library?publish=1" : "/library";
+}
+
+export function importPath(): string {
+  return "/import";
 }
 
 export function workspacePath(itemId: string, intent?: LibraryIntent): string {
@@ -128,7 +135,7 @@ export function applyLegacyRedirect(hash = window.location.hash): boolean {
   const raw = hash.replace(/^#\/?/, "");
   const parts = routePathSegments(hash);
   // 新路由不重定向；#/legacy/writing 例外——它要被重定向到题库写作子标签。
-  if (parts[0] === "items" || parts[0] === "settings") return false;
+  if (parts[0] === "items" || parts[0] === "settings" || parts[0] === "import") return false;
   if (parts[0] === "library" && !parts[1]) return false;
   const target = legacyRedirect(hash);
   if (!target) return false;
