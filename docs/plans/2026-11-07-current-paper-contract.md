@@ -35,9 +35,14 @@
 - `listening` 可为空数组；非空时每条同上字段。
 - `script`/`scriptSha256`/`runtimeSha256` 取自**同一次提交后**的 `manifest.js` 对应条目（`entry.script`、`entry.checksums.*`）。
 - 作者端：在 `publish_items_core` 持有的 `export.lock` 内、`manifest.js` 原子替换**之后**，用临时文件 + `atomic_replace_file`
-  写入。任一试卷题目发布失败或 `studentLoadable=false` → **不写** current-paper.json，并把整次结果报告为 `PAPER_INCOMPLETE`
-  （manifest 里已成功的题照常保留，学生端继续用旧的当前试卷）。
+  写入。任一试卷题目发布失败或 `studentLoadable=false` → **整次不提交**：不替换 manifest、不写 current-paper.json，
+  返回 `PAPER_INCOMPLETE`，NAS 上旧的当前试卷与清单保持原样（替换语义下部分提交会让旧指针失效）。
 - 学生端：没有文件 / 解析失败 / 不满足上述规则 / examId 不在 manifest / 校验和与 manifest 条目不一致 → 报错
   `exam_paper_not_published`（HTTP 409，"未发布试卷，请联系监考老师"）。**禁止**回退到随机抽题。
+- **发布即替换（V1 起）**：每次「发布为当前试卷」后，`manifest.js` 只包含本套试卷的题（reading 3 篇 + listening），
+  不再累积旧题。旧题从清单撤下后，学生端新开考不可能再抽到它们。
+- **撤下的旧文件保留宽限期**：`releases/<batchId>/` 与根级 `resources/<examId>/` 若不被当前试卷引用，且该批次发布时间早于
+  24 小时，则在下一次发布时删除；24 小时内的保留，保证正在考试的学生（锁定了旧脚本）仍能交卷判分。
+  批次发布时间以 `.publish-control/papers/*.json` 的 `publishedAt` + `batchId` 为准。
 - 学生端锁定套题时把每篇的 `examId`、`script`、`scriptSha256`、`runtimeSha256` 和 `paperId` 记进 lockedSequence；
   交卷判分按锁定的 `script` 读取并校验 `scriptSha256`（脚本在 `releases/<batchId>/` 下不可变），不按当时的 manifest。
