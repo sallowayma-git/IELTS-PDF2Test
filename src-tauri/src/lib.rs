@@ -42,6 +42,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use util::ensure_app_dirs;
+mod analytics;
 mod artifact_store;
 mod authoring_commands;
 mod authoring_pipeline;
@@ -107,6 +108,7 @@ mod validator;
 mod workflow_state;
 mod writing_store;
 use tauri::{AppHandle, Manager};
+use tauri_plugin_dialog::DialogExt;
 
 pub type CommandResult<T> = Result<T, String>;
 
@@ -1027,6 +1029,140 @@ async fn list_library_items(include_deleted: Option<bool>, app: AppHandle) -> Co
     .map_err(|error| format!("library_v2_join:{error}"))?
 }
 
+// ── 作者端「数据」模块（教师端第一阶段，见 analytics/）────────────────
+// 只读消费学生端作答快照；结果写本地 analytics.sqlite。作答数据目录由前端按参数传入。
+
+fn analytics_root_arg(submissions_root: &str) -> CommandResult<PathBuf> {
+    let trimmed = submissions_root.trim();
+    if trimmed.is_empty() {
+        return Err("ANALYTICS_ROOT_NOT_CONFIGURED".to_string());
+    }
+    Ok(PathBuf::from(trimmed))
+}
+
+#[tauri::command]
+async fn analytics_import_snapshots(
+    submissions_root: String,
+    app: AppHandle,
+) -> CommandResult<analytics::import::ImportReport> {
+    let root = app_root(&app)?;
+    let submissions = analytics_root_arg(&submissions_root)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut conn = analytics::open_analytics(&root)?;
+        analytics::import::import_submission_snapshots(&mut conn, &root, &submissions)
+    })
+    .await
+    .map_err(|error| format!("analytics_join:{error}"))?
+}
+
+#[tauri::command]
+async fn analytics_overview(
+    submissions_root: String,
+    app: AppHandle,
+) -> CommandResult<analytics::queries::Overview> {
+    let root = app_root(&app)?;
+    let submissions = submissions_root.trim().to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = analytics::open_analytics(&root)?;
+        let beacons = if submissions.is_empty() {
+            analytics::status::BeaconScan::default()
+        } else {
+            analytics::status::read_attempt_status(Path::new(&submissions))
+        };
+        analytics::queries::build_overview(&conn, &beacons)
+    })
+    .await
+    .map_err(|error| format!("analytics_join:{error}"))?
+}
+
+#[tauri::command]
+async fn analytics_exam(
+    batch_id: String,
+    paper_id: String,
+    app: AppHandle,
+) -> CommandResult<analytics::queries::ExamView> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = analytics::open_analytics(&root)?;
+        analytics::queries::build_exam_view(&conn, &batch_id, &paper_id)
+    })
+    .await
+    .map_err(|error| format!("analytics_join:{error}"))?
+}
+
+#[tauri::command]
+async fn analytics_student(
+    attempt_id: String,
+    app: AppHandle,
+) -> CommandResult<analytics::queries::StudentView> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = analytics::open_analytics(&root)?;
+        analytics::queries::build_student_view(&conn, &attempt_id)
+    })
+    .await
+    .map_err(|error| format!("analytics_join:{error}"))?
+}
+
+#[tauri::command]
+async fn analytics_question(
+    batch_id: String,
+    paper_id: String,
+    passage_index: i64,
+    question_id: String,
+    app: AppHandle,
+) -> CommandResult<analytics::queries::QuestionView> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = analytics::open_analytics(&root)?;
+        analytics::queries::build_question_view(&conn, &batch_id, &paper_id, passage_index, &question_id)
+    })
+    .await
+    .map_err(|error| format!("analytics_join:{error}"))?
+}
+
+/// 导出 Excel：弹保存对话框选路径；取消返回 None。自动化钩子 PDF2TEST_AUTOMATION_EXPORT_XLSX 可直接指定路径。
+#[tauri::command]
+async fn analytics_export_xlsx(
+    batch_id: String,
+    paper_id: String,
+    app: AppHandle,
+) -> CommandResult<Option<analytics::export::ExportSummary>> {
+    let root = app_root(&app)?;
+    let picked: Option<PathBuf> = match env::var("PDF2TEST_AUTOMATION_EXPORT_XLSX") {
+        Ok(path) if !path.trim().is_empty() => Some(PathBuf::from(path.trim())),
+        _ => {
+            let dialog_app = app.clone();
+            let paper_text = if paper_id.is_empty() { "旧套题".to_string() } else { paper_id.clone() };
+            let default_name = format!("{batch_id}-{paper_text}-成绩.xlsx");
+            tauri::async_runtime::spawn_blocking(move || {
+                let picked = dialog_app
+                    .dialog()
+                    .file()
+                    .set_title("导出 Excel")
+                    .set_file_name(default_name)
+                    .add_filter("Excel", &["xlsx"])
+                    .blocking_save_file();
+                match picked {
+                    Some(path) => path.into_path().map(Some).map_err(|error| error.to_string()),
+                    None => Ok(None),
+                }
+            })
+            .await
+            .map_err(|error| format!("analytics_dialog_join:{error}"))??
+        }
+    };
+    let Some(path) = picked else {
+        return Ok(None);
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = analytics::open_analytics(&root)?;
+        analytics::export::write_export(&conn, &batch_id, &paper_id, &path).map(Some)
+    })
+    .await
+    .map_err(|error| format!("analytics_join:{error}"))?
+}
+
 // ── 识别闭环：统一建议读取与人工决策（reconcile 的薄壳）──────────────
 
 #[tauri::command]
@@ -1935,6 +2071,12 @@ pub fn run() {
             get_workspace_item,
             apply_editor_commands,
             list_library_items,
+            analytics_import_snapshots,
+            analytics_overview,
+            analytics_exam,
+            analytics_student,
+            analytics_question,
+            analytics_export_xlsx,
             get_library_item_processing,
             get_library_row,
             get_recognition_decision,
