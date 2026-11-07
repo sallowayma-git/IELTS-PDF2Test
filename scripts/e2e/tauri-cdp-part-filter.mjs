@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// C4b Part 筛选真实应用 e2e：导入两份不同 Passage 的卷子 → 卡片显示对应标签（P1/P2）→
-// 点 P1 筛选只剩 P1 那份 → 手动把其中一份改成别的 Part，筛选结果随之变化、且持久化。
+// C4b Part 分组真实应用 e2e：导入两份不同 Passage 的卷子 → 卡片显示对应标签（P1/P2）→
+// 组卷视图 P1 分组只含 P1 那份 → 手动把其中一份改成 P3，分组随之移动，且持久化。
+// （Part 筛选芯片已取消，改为按 Part 分组；本脚本据此断言分组。）
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -82,15 +83,16 @@ async function main() {
       `卡片 Part 徽标=${JSON.stringify(parts)}（需含一张 P1、一张 P2）`);
     if (!p1Id || !p2Id) throw new Error("两份卷未分别判为 P1/P2，无法继续筛选场景");
 
-    // 点 P1 筛选 → 只剩 P1 那份。
-    await session.clickSelector('[data-testid="library-part-chip-P1"]');
-    await sleep(600);
-    const afterFilter = await session.evaluate(`[...document.querySelectorAll('[data-testid="library-row"]')].map(r => r.getAttribute('data-item-id'))`);
-    recordAssertion(report, "C4b-2 filter-P1-keeps-only-P1", afterFilter.length === 1 && afterFilter[0] === p1Id,
-      `P1 筛选后可见行=${JSON.stringify(afterFilter)}（期望只剩 ${p1Id}）`);
+    // 组卷视图按 Part 分组（P1/P2/P3 三个分组表格；取代了已删除的 Part 筛选芯片）。
+    // 分组即筛选：P1 分组里只应有 P1 那份。
+    const groupMembers = async (group) => session.evaluate(`[...document.querySelectorAll('[data-testid="paper-group-${group}"] [data-item-id]')].map(r => r.getAttribute('data-item-id'))`);
+    await session.waitFor(`!!document.querySelector('[data-testid="paper-group-P1"]')`, { timeoutMs: 20000, label: "paper-group-P1" });
+    const p1Group = await groupMembers("P1");
+    const p2InP1 = p1Group.includes(p2Id);
+    recordAssertion(report, "C4b-2 group-P1-keeps-only-P1", p1Group.includes(p1Id) && !p2InP1,
+      `P1 分组成员=${JSON.stringify(p1Group)}（应含 ${p1Id}，不含 ${p2Id}）`);
 
-    await session.clickByText('全部').catch(() => {});
-    await sleep(400);
+    // 手动把 P2 那份改成 P3（题库行内 Part 下拉），分组随之移动。
     await session.evaluate(`(() => {
       const el = document.querySelector('[data-item-id="${p2Id}"] [data-testid="library-row-part-select"]');
       if (!el) return false;
@@ -101,17 +103,11 @@ async function main() {
     const md = Date.now() + 15000;
     while (Date.now() < md) { manual = await partViaList(session, p2Id); if (manual === "P3") break; await sleep(500); }
     recordAssertion(report, "C4b-3 manual-set-part", manual === "P3", `手动改后 partLabel=${JSON.stringify(manual)}（期望 P3）`);
-
-    await session.clickByText('全部').catch(() => {});
-    await sleep(300);
-    await session.waitFor(`!!document.querySelector('[data-testid="library-part-chip-P3"]')`, { timeoutMs: 8000, label: "p3-chip" });
-    await session.clickSelector('[data-testid="library-part-chip-P3"]');
     await sleep(600);
-    const afterP3 = await session.evaluate(`[...document.querySelectorAll('[data-testid="library-row"]')].map(r => r.getAttribute('data-item-id'))`);
-    recordAssertion(report, "C4b-3b filter-follows-manual-change", afterP3.length === 1 && afterP3[0] === p2Id,
-      `改成 P3 后按 P3 筛选可见行=${JSON.stringify(afterP3)}（期望只剩 ${p2Id}）`);
-    await session.clickByText('全部').catch(() => {});
-    await sleep(300);
+    const p3Group = await groupMembers("P3");
+    const p2Group = await groupMembers("P2");
+    recordAssertion(report, "C4b-3b group-follows-manual-change", p3Group.includes(p2Id) && !p2Group.includes(p2Id),
+      `改成 P3 后 P3 分组=${JSON.stringify(p3Group)}，P2 分组=${JSON.stringify(p2Group)}`);
 
     // 离开再回题库触发重新拉取，验证 P3 已落持久化而非仅在内存。
     await session.evaluate(`(() => { window.location.hash = "#/settings"; return true; })()`);
