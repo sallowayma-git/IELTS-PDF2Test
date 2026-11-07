@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { go, workspacePath, type LibraryIntent } from "../../app/router";
 import { getCurrentPaper, type CurrentPaperV1 } from "../../api/paperClient";
 import { describeBatchPublishOutcome, describePaperPublishOutcome, publishItems } from "../../api/publishClient";
@@ -15,6 +15,7 @@ import { libraryRows, matchesSearch } from "./libraryTypes";
 import {
   buildPaperSpec,
   EMPTY_PAPER_SELECTION,
+  isReadingPart,
   reconcilePaperSelection,
   selectedPaperItemIds,
   toggleListeningItem,
@@ -40,8 +41,12 @@ export function replacedPaperTitles(paper: CurrentPaperV1 | null | undefined): s
   return [...paper.reading, ...paper.listening].map((entry) => entry.title);
 }
 
-export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
+export function LibraryPage({ intent, pickItemId }: { intent?: LibraryIntent; pickItemId?: string }) {
   const store = useLibraryStore();
+  // 编辑器「去组卷发布」带来的预选题：每个 id 只应用一次，避免刷新时反复勾选。
+  const appliedPick = useRef<string | undefined>(undefined);
+  // 组卷发布的防重入：在 await 之前就占住，双击或快速重复点击只会发出一次请求。
+  const paperBusy = useRef(false);
   const [search, setSearch] = useState("");
   const [showTrash, setShowTrash] = useState(false);
   const [notice, setNotice] = useState<string | undefined>(
@@ -80,6 +85,37 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
       cancelled = true;
     };
   }, [destination, paperVersion]);
+
+  // 编辑器「去组卷发布」：把这道题预选进它所在 Part 的组卷栏；没有 Part 就提示先设 Part。
+  useEffect(() => {
+    if (!pickItemId || appliedPick.current === pickItemId) return;
+    if (!store.rows.length) return;
+    appliedPick.current = pickItemId;
+    const row = store.rows.find((candidate) => candidate.id === pickItemId && !candidate.inTrash);
+    if (!row) {
+      setNotice("这道题不在题库里，无法加入组卷。");
+      return;
+    }
+    if (row.modality === "reading" && isReadingPart(row.part)) {
+      const part = row.part;
+      setPaperSelection((current) =>
+        current.reading[part] === row.id ? current : toggleReadingItem(current, part, row.id)
+      );
+      setNotice(`已把「${row.title}」放进 ${part} 的组卷栏；选齐三篇阅读后即可发布为当前试卷。`);
+      return;
+    }
+    if (row.modality === "listening" && row.part) {
+      const part = row.part;
+      setPaperSelection((current) =>
+        current.listening.some((entry) => entry.itemId === row.id)
+          ? current
+          : toggleListeningItem(current, row.id, part)
+      );
+      setNotice(`已把「${row.title}」加入听力组卷（${part}）。`);
+      return;
+    }
+    setNotice(`「${row.title}」还没有 Part，请先在下面的表格里为它设置 P1/P2/P3（阅读）或 Part 1–4（听力），再去组卷。`);
+  }, [pickItemId, store.rows]);
 
   // 组卷选择与题库对齐：题被删除、或 Part 被改到别的槽位，就从选择里去掉。
   useEffect(() => {
@@ -126,40 +162,52 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
 
   /** 组卷发布（替换语义）。清单提交并写入当前试卷之后才算成功；缺题时旧试卷保持不变。 */
   async function publishPaper() {
-    setConfirmation(undefined);
-    const spec = buildPaperSpec(paperSelection);
-    if (!spec) return;
-    const itemIds = selectedPaperItemIds(paperSelection);
-    const target = await resolveDestination();
-    if (!target) {
-      setPaperMessage("请先选择 NAS 目录。");
-      return;
-    }
+    if (paperBusy.current) return;
+    paperBusy.current = true;
     setPaperPublishing(true);
-    setPaperMessage(`正在发布 0/${itemIds.length}`);
+    setConfirmation(undefined);
     try {
+      const spec = buildPaperSpec(paperSelection);
+      if (!spec) return;
+      const itemIds = selectedPaperItemIds(paperSelection);
+      const target = await resolveDestination();
+      if (!target) {
+        setPaperMessage("请先选择 NAS 目录。");
+        return;
+      }
+      setPaperMessage(`正在发布 0/${itemIds.length}`);
       const outcome = await publishItems(itemIds, target, (done, total) => {
         setPaperMessage(`正在发布 ${done}/${total}`);
       }, { paper: spec });
       const titleOf = (id: string) => store.rows.find((row) => row.id === id)?.title ?? id;
       setNotice(describeBatchPublishOutcome(outcome));
-      setPaperMessage(outcome.paper
+      setPaperMessage(outcome.paper || outcome.status
         ? describePaperPublishOutcome(outcome, titleOf)
         : outcome.failed[0]?.message ?? describePaperPublishOutcome(outcome, titleOf));
       if (outcome.paper?.ok) setPaperSelection(EMPTY_PAPER_SELECTION);
+    } finally {
+      // 不论成败都重读当前试卷：锁忙或指针失败时，页面要显示 NAS 上真实的当前试卷。
       setPaperVersion((version) => version + 1);
       store.refresh();
-    } finally {
+      paperBusy.current = false;
       setPaperPublishing(false);
     }
   }
 
   /** 组卷视图里改名：失败时抛出用户文案，由单元格回滚并提示。 */
   async function renameItem(id: string, title: string) {
+    const row = store.rows.find((candidate) => candidate.id === id);
+    if (row?.currentEditVersion === undefined) {
+      throw new Error("这道题的数据还没准备好，请刷新后再改名。");
+    }
     try {
-      await renameLibraryItem(id, title);
+      await renameLibraryItem(id, title, row.currentEditVersion);
       store.refresh();
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("EDIT_VERSION_CONFLICT")) {
+        throw new Error("已被其他编辑修改，请刷新。");
+      }
       throw new Error(describeLibraryActionError(error, "名称保存失败，请稍后再试。"));
     }
   }

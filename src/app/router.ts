@@ -35,6 +35,8 @@ export interface RouteState {
   /** 题库条目 id。当前数据模型下 library item id 与 job id 相同（见 findings F12）。 */
   itemId?: string;
   intent?: LibraryIntent;
+  /** 题库组卷栏预选的题（编辑器「去组卷发布」带过来）。 */
+  pickItemId?: string;
   /** 题库题型子标签（reading | listening | writing | all）。承接被退休的 #/legacy/writing。 */
   modality?: string;
   legacyPage?: LegacyPageName;
@@ -77,6 +79,13 @@ function parseIntent(value: string): LibraryIntent | undefined {
   return undefined;
 }
 
+/** 题库组卷预选，由 `?pick=` 携带（编辑器「去组卷发布」）。 */
+function parsePick(value: string): string | undefined {
+  const query = value.includes("?") ? value.slice(value.indexOf("?") + 1) : "";
+  if (!query) return undefined;
+  return new URLSearchParams(query).get("pick") ?? undefined;
+}
+
 /** 题库题型子标签，由 `?modality=` 携带（承接 #/legacy/writing 的重定向）。 */
 function parseModality(value: string): string | undefined {
   const query = value.includes("?") ? value.slice(value.indexOf("?") + 1) : "";
@@ -88,6 +97,7 @@ export function parseRoute(hash = window.location.hash): RouteState {
   const value = hash.replace(/^#\/?/, "");
   const intent = parseIntent(value);
   const modality = parseModality(value);
+  const pickItemId = parsePick(value);
   const parts = value.split(/[/?]/).filter(Boolean);
   if (!parts.length) return { name: "library" };
   // 导入是一级入口（#/import）；旧的 ?import=1 意图也落到导入页。
@@ -99,8 +109,8 @@ export function parseRoute(hash = window.location.hash): RouteState {
     if (legacyPage) return { name: "legacy", legacyPage, itemId: parts[2], intent };
     return { name: "library", intent, modality };
   }
-  if (parts[0] === "library") return { name: "library", intent, modality };
-  return { name: "library", intent, modality };
+  if (parts[0] === "library") return { name: "library", intent, modality, pickItemId };
+  return { name: "library", intent, modality, pickItemId };
 }
 
 export function go(path: string): void {
@@ -110,6 +120,11 @@ export function go(path: string): void {
 export function libraryPath(intent?: LibraryIntent): string {
   if (intent === "import") return "/import";
   return intent === "publish" ? "/library?publish=1" : "/library";
+}
+
+/** 编辑器「去组卷发布」：打开题库组卷视图并把这道题预选进它的 Part 组卷栏。 */
+export function libraryPickPath(itemId: string): string {
+  return `/library?publish=1&pick=${encodeURIComponent(itemId)}`;
 }
 
 export function importPath(): string {

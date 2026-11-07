@@ -35,7 +35,7 @@ export function App() {
   return (
     <AppShell route={route} importBadge={importBadge}>
       {route.name === "import" ? <ImportPage /> : null}
-      {route.name === "library" ? <LibraryPage intent={route.intent} /> : null}
+      {route.name === "library" ? <LibraryPage intent={route.intent} pickItemId={route.pickItemId} /> : null}
       {route.name === "workspace" && route.itemId ? (
         <ExamWorkspacePage key={route.itemId} itemId={route.itemId} intent={route.intent} />
       ) : null}
