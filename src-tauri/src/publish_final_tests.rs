@@ -1374,13 +1374,158 @@ fn paper_publish_writes_no_pointer_when_a_paper_item_does_not_publish() {
     assert_eq!(result["paper"]["missing"], json!([p3.clone()]), "{result}");
     assert!(!current_paper_path(&root).exists(), "缺题时不得写指针");
     assert!(
-        reading_root(&root).join("manifest.js").is_file(),
-        "已成功的题照常保留在清单里"
+        !reading_root(&root).join("manifest.js").exists(),
+        "替换语义：缺题时整次不提交清单，否则旧试卷的题会被撤下"
     );
-    let manifest = manifest(&root);
-    assert!(manifest.get("incomplete-p1").is_some());
-    assert!(manifest.get("incomplete-p2").is_some());
-    assert!(manifest.get("incomplete-p3").is_none(), "学生端不可加载的题不得进清单");
+    assert_eq!(result["succeeded"], json!([]), "{result}");
+    let _ = fs::remove_dir_all(root);
+}
+
+fn seed_part(root: &Path, exam_id: &str, part: &str) -> String {
+    let item = seed_item(root, exam_id, false, |_| {});
+    set_part(root, &item, part);
+    item
+}
+
+fn manifest_exam_ids(root: &Path) -> Vec<String> {
+    let mut ids: Vec<String> = manifest(root)
+        .as_object()
+        .unwrap()
+        .keys()
+        .filter(|key| key.as_str() != "_meta")
+        .cloned()
+        .collect();
+    ids.sort();
+    ids
+}
+
+/// 发布两套试卷：第一套 `rep-a*`，第二套 `rep-b*`。返回 (第一批 batchId, 第二批结果)。
+fn publish_two_papers(root: &Path) -> (String, Value) {
+    let (a1, a2, a3) = (
+        seed_part(root, "rep-a1", "P1"),
+        seed_part(root, "rep-a2", "P2"),
+        seed_part(root, "rep-a3", "P3"),
+    );
+    let first = publish_with_paper(root, &[&a1, &a2, &a3], Some(paper_spec(&a1, &a2, &a3, &[])))
+        .expect("first paper must publish");
+    assert_eq!(first["paper"]["ok"], json!(true), "{first}");
+    let (b1, b2, b3) = (
+        seed_part(root, "rep-b1", "P1"),
+        seed_part(root, "rep-b2", "P2"),
+        seed_part(root, "rep-b3", "P3"),
+    );
+    let second = publish_with_paper(root, &[&b1, &b2, &b3], Some(paper_spec(&b1, &b2, &b3, &[])))
+        .expect("second paper must publish");
+    assert_eq!(second["paper"]["ok"], json!(true), "{second}");
+    (first["paper"]["batchId"].as_str().unwrap().to_string(), second)
+}
+
+#[test]
+fn second_paper_publish_replaces_the_manifest_instead_of_accumulating() {
+    let root = temp_root("paper-replace");
+    ensure_app_dirs(&root).unwrap();
+    let (first_batch, second) = publish_two_papers(&root);
+
+    assert_eq!(
+        manifest_exam_ids(&root),
+        vec!["rep-b1", "rep-b2", "rep-b3"],
+        "清单只能含本套试卷，旧题必须撤下"
+    );
+    let current: Value = serde_json::from_slice(&fs::read(current_paper_path(&root)).unwrap()).unwrap();
+    assert_eq!(current["paperId"], second["paper"]["paperId"]);
+    // 撤下的旧批次在 24 小时内保留（正在考试的学生仍锁定旧脚本）。
+    assert!(reading_root(&root).join("releases").join(&first_batch).is_dir());
+    assert!(reading_root(&root).join("resources").join("rep-a1").is_dir());
+    let kept = second["cleanup"]["kept"].as_array().unwrap();
+    assert!(kept.contains(&json!(format!("releases/{first_batch}"))), "{second}");
+    assert_eq!(second["cleanup"]["removed"], json!([]), "{second}");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn superseded_files_are_removed_only_after_the_grace_period_and_never_the_current_paper() {
+    let root = temp_root("paper-cleanup-grace");
+    ensure_app_dirs(&root).unwrap();
+    let (first_batch, second) = publish_two_papers(&root);
+    let second_batch = second["paper"]["batchId"].as_str().unwrap().to_string();
+    let library_root = crate::export_nas_library::normalize_nas_library_root(&destination(&root));
+    let reading = reading_root(&root);
+    let manifest_value = manifest(&root);
+    let current = manifest_value.as_object().unwrap();
+
+    // 未满 24 小时：什么都不删。
+    let soon = crate::nas_package_v2::cleanup_superseded_releases(
+        &library_root, &reading, current, &second_batch,
+        chrono::Utc::now() + chrono::Duration::hours(1),
+    );
+    assert_eq!(soon["removed"], json!([]), "{soon}");
+    assert!(reading.join("releases").join(&first_batch).is_dir());
+
+    // 超过 24 小时：旧批次与旧题资源删除；当前试卷的一切从不删除。
+    let later = crate::nas_package_v2::cleanup_superseded_releases(
+        &library_root, &reading, current, &second_batch,
+        chrono::Utc::now() + chrono::Duration::hours(25),
+    );
+    assert!(later["failed"].as_array().unwrap().is_empty(), "{later}");
+    assert!(!reading.join("releases").join(&first_batch).exists(), "{later}");
+    for old in ["rep-a1", "rep-a2", "rep-a3"] {
+        assert!(!reading.join("resources").join(old).exists(), "{later}");
+    }
+    assert!(reading.join("releases").join(&second_batch).is_dir(), "当前批次绝不删除");
+    for current_exam in ["rep-b1", "rep-b2", "rep-b3"] {
+        assert!(reading.join("resources").join(current_exam).is_dir(), "当前试卷资源绝不删除");
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn an_undeletable_superseded_directory_is_reported_as_failed_not_raised() {
+    let root = temp_root("paper-cleanup-failure");
+    ensure_app_dirs(&root).unwrap();
+    let (_first_batch, second) = publish_two_papers(&root);
+    let second_batch = second["paper"]["batchId"].as_str().unwrap().to_string();
+    let library_root = crate::export_nas_library::normalize_nas_library_root(&destination(&root));
+    let reading = reading_root(&root);
+    // 一个无归属记录的旧目录；删除动作注入为失败，模拟文件被占用。
+    let stuck = reading.join("releases").join("orphan-batch");
+    fs::create_dir_all(&stuck).unwrap();
+    let manifest_value = manifest(&root);
+    let outcome = crate::nas_package_v2::cleanup_superseded_releases_with(
+        &library_root, &reading, manifest_value.as_object().unwrap(), &second_batch,
+        chrono::Utc::now() + chrono::Duration::hours(48),
+        &|path| Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, format!("locked: {}", path.display()))),
+    );
+    // 清理只报告，不抛错：失败项带路径与原因；当前试卷不受影响。
+    let failed = outcome["failed"].as_array().unwrap();
+    assert!(
+        failed.iter().any(|item| item["path"] == json!("releases/orphan-batch")),
+        "删除失败必须进入 failed：{outcome}"
+    );
+    assert!(stuck.is_dir(), "删除失败时目录仍在，且不误报为 removed");
+    assert!(outcome["removed"].as_array().unwrap().iter().all(|item| item != "releases/orphan-batch"));
+    assert!(reading.join("releases").join(&second_batch).is_dir());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn an_incomplete_replacement_leaves_the_previous_paper_untouched() {
+    let root = temp_root("paper-incomplete-keeps-old");
+    ensure_app_dirs(&root).unwrap();
+    let (_first_batch, _second) = publish_two_papers(&root);
+    let before_manifest = manifest_exam_ids(&root);
+    let before_pointer: Value = serde_json::from_slice(&fs::read(current_paper_path(&root)).unwrap()).unwrap();
+
+    let (c1, c2) = (seed_part(&root, "rep-c1", "P1"), seed_part(&root, "rep-c2", "P2"));
+    let c3 = seed_item(&root, "rep-c3", false, |authoring| {
+        authoring["answerKey"]["q15"] = json!({"kind": "unresolved"});
+    });
+    set_part(&root, &c3, "P3");
+    let result = publish_with_paper(&root, &[&c1, &c2, &c3], Some(paper_spec(&c1, &c2, &c3, &[])))
+        .expect("缺题是正常结果，不是错误");
+    assert_eq!(result["paper"]["code"], json!("PAPER_INCOMPLETE"), "{result}");
+    assert_eq!(manifest_exam_ids(&root), before_manifest, "旧试卷的清单不得改变");
+    let after_pointer: Value = serde_json::from_slice(&fs::read(current_paper_path(&root)).unwrap()).unwrap();
+    assert_eq!(after_pointer, before_pointer);
     let _ = fs::remove_dir_all(root);
 }
 

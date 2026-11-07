@@ -513,7 +513,13 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
         .map_err(|error| format!("nas_package_v2_lock_busy:{error}"))?;
     recover_incomplete_transactions(&paths)?;
     let base_hash = manifest_sha256(&paths.manifest_path)?;
-    let mut manifest = load_existing_manifest(&paths.manifest_path)?;
+    // 组卷发布是「替换」语义：新清单只从空开始构建，旧题整体撤下。
+    // 无 paper 的老路径保持累积（别处仍在使用），CAS 基线两者都取当前清单哈希。
+    let mut manifest = if input.paper.is_some() {
+        Map::new()
+    } else {
+        load_existing_manifest(&paths.manifest_path)?
+    };
     let batch_id = Uuid::new_v4().simple().to_string();
     write_lock_metadata(&paths, &batch_id)?;
     let staging = reading_root.join(format!(".batch-staging-{batch_id}"));
@@ -525,6 +531,8 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
     let mut moved_resources: Vec<(String, bool)> = Vec::new();
     // 提交点标志：清单替换成功即为「包已对学生可见」。此后任何失败都不得回滚资源。
     let mut manifest_committed = false;
+    // 组卷缺题：未提交任何东西时，这里保存要返回的结果（见函数末尾）。
+    let mut paper_incomplete: Option<Value> = None;
     let mut publications: Vec<ItemPublication> = Vec::new();
     let mut result = (|| -> CommandResult<Value> {
         fs::create_dir_all(&staging).map_err(|error| error.to_string())?;
@@ -755,6 +763,20 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
                 return Err("PUBLISH_BATCH_INTERRUPTED".to_string());
             }
         }
+        // 组卷替换：试卷有任何一题不能被学生端加载，就整次不提交清单。否则新清单会撤下
+        // 旧试卷的题，而旧指针（仍是学生端当前试卷）随之失效。本批什么都不写，旧试卷保持不变。
+        if let Some(paper) = input.paper.as_ref() {
+            let missing = paper_missing_items(paper, &outcomes);
+            if !missing.is_empty() {
+                paper_incomplete = Some(json!({
+                    "destination": input.destination,
+                    "succeeded": [],
+                    "failed": failed_items.clone(),
+                    "paper": {"ok": false, "code": "PAPER_INCOMPLETE", "missing": missing},
+                }));
+                return Err("PAPER_INCOMPLETE".to_string());
+            }
+        }
         manifest.remove("_meta");
         manifest.insert("_meta".to_string(), json!({"schemaVersion": "ReadingExamManifestV2",
             "assetCount": manifest.len(), "generatedAt": Utc::now().to_rfc3339(), "batchId": batch_id,
@@ -844,11 +866,23 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
                 json!({"ok": false, "code": "PAPER_WRITE_FAILED", "message": error})
             })
         });
+        // 清理旧批次：只在清单与当前试卷都已提交之后执行；它的任何失败只记入 cleanup，不回滚。
+        let paper_written = paper_result
+            .as_ref()
+            .and_then(|value| value.get("ok"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let cleanup = paper_written.then(|| {
+            cleanup_superseded_releases(&library_root, &reading_root, &manifest, &batch_id, Utc::now())
+        });
         let succeeded = outcomes;
         let mut value =
             json!({"destination": input.destination, "succeeded": succeeded, "failed": failed_items});
         if let Some(paper_result) = paper_result {
             value["paper"] = paper_result;
+        }
+        if let Some(cleanup) = cleanup {
+            value["cleanup"] = cleanup;
         }
         Ok(value)
     })();
@@ -974,7 +1008,149 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
         }
     }
     let _ = fs::remove_file(&paths.lock_metadata_path);
-    result
+    match (result, paper_incomplete) {
+        // 组卷缺题：本批没有提交任何东西，作为正常结果返回（旧试卷保持不变）。
+        (Err(_), Some(incomplete)) => Ok(incomplete),
+        (result, _) => result,
+    }
+}
+
+/// 组卷的试卷题里，本批没有以「学生端可加载」成功的 examId（按 item id 列出）。
+fn paper_missing_items(paper: &PaperSpec, outcomes: &[Value]) -> Vec<String> {
+    let mut slots: Vec<&str> = vec![paper.reading.p1.as_str(), paper.reading.p2.as_str(), paper.reading.p3.as_str()];
+    slots.extend(paper.listening.iter().map(|slot| slot.item_id.as_str()));
+    slots
+        .into_iter()
+        .filter(|item_id| {
+            !outcomes.iter().any(|outcome| {
+                outcome.get("itemId").and_then(Value::as_str) == Some(item_id)
+                    && outcome.get("ok").and_then(Value::as_bool) == Some(true)
+                    && outcome.get("studentLoadable").and_then(Value::as_bool) == Some(true)
+            })
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+/// 撤下的旧批次与旧题资源的宽限期：发布时间距今不足此时长的保留（正在考试的学生仍锁定旧脚本）。
+const SUPERSEDED_GRACE_HOURS: i64 = 24;
+
+/// 清理被替换掉的 `releases/<batchId>/` 与 `resources/<examId>/`。
+///
+/// 规则（与契约 V1 一致）：
+/// - 被当前清单（即当前试卷）引用的 examId 资源、当前批次目录：永不删除。
+/// - 其余对象按归属时间判定：归属 = `.publish-control/papers/*.json` 中含它的记录的 `publishedAt`
+///   （批次目录按 `batchId`，资源目录按 examId 所在的试卷记录）。归属时间距 `now` ≥ 24 小时删除，否则保留。
+/// - 找不到归属记录时退回目录 mtime：≥ 24 小时删除，否则保留。
+/// 任何单项失败只记入 `failed`，不影响调用方的发布结果。
+pub(crate) fn cleanup_superseded_releases(
+    library_root: &Path,
+    reading_root: &Path,
+    manifest: &Map<String, Value>,
+    current_batch_id: &str,
+    now: chrono::DateTime<Utc>,
+) -> Value {
+    cleanup_superseded_releases_with(library_root, reading_root, manifest, current_batch_id, now, &|path| {
+        fs::remove_dir_all(path)
+    })
+}
+
+/// 同 `cleanup_superseded_releases`，删除动作可注入（测试用它模拟删除失败）。
+pub(crate) fn cleanup_superseded_releases_with(
+    library_root: &Path,
+    reading_root: &Path,
+    manifest: &Map<String, Value>,
+    current_batch_id: &str,
+    now: chrono::DateTime<Utc>,
+    remove_dir: &dyn Fn(&Path) -> std::io::Result<()>,
+) -> Value {
+    let mut batch_published: BTreeMap<String, chrono::DateTime<Utc>> = BTreeMap::new();
+    let mut exam_published: BTreeMap<String, chrono::DateTime<Utc>> = BTreeMap::new();
+    let history_dir = library_root.join(CONTROL_DIR_NAME).join(PAPER_HISTORY_DIR_NAME);
+    let mut failed = Vec::new();
+    for entry in fs::read_dir(&history_dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let record = fs::read(&path)
+            .map_err(|error| error.to_string())
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).map_err(|error| error.to_string()));
+        let record = match record {
+            Ok(record) => record,
+            Err(error) => {
+                failed.push(json!({"path": path.to_string_lossy(), "error": error}));
+                continue;
+            }
+        };
+        let Some(published) = record
+            .get("publishedAt")
+            .and_then(Value::as_str)
+            .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
+            .map(|time| time.with_timezone(&Utc))
+        else {
+            continue;
+        };
+        if let Some(batch) = record.get("batchId").and_then(Value::as_str) {
+            batch_published.insert(batch.to_string(), published);
+        }
+        for group in ["reading", "listening"] {
+            for item in record.get(group).and_then(Value::as_array).into_iter().flatten() {
+                if let Some(exam_id) = item.get("examId").and_then(Value::as_str) {
+                    exam_published.insert(exam_id.to_string(), published);
+                }
+            }
+        }
+    }
+
+    let mut removed = Vec::new();
+    let mut kept = Vec::new();
+    let grace = chrono::Duration::hours(SUPERSEDED_GRACE_HOURS);
+    let mut sweep = |dir_root: PathBuf, label: &str, owner: &dyn Fn(&str) -> Option<chrono::DateTime<Utc>>, referenced: &dyn Fn(&str) -> bool| {
+        for entry in fs::read_dir(&dir_root).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let display = format!("{label}/{name}");
+            if referenced(&name) {
+                kept.push(display);
+                continue;
+            }
+            let age_ok = match owner(&name) {
+                Some(published) => now - published >= grace,
+                None => match fs::metadata(&path).and_then(|meta| meta.modified()) {
+                    Ok(modified) => now - chrono::DateTime::<Utc>::from(modified) >= grace,
+                    Err(error) => {
+                        failed.push(json!({"path": display, "error": error.to_string()}));
+                        continue;
+                    }
+                },
+            };
+            if !age_ok {
+                kept.push(display);
+                continue;
+            }
+            match remove_dir(&path) {
+                Ok(()) => removed.push(display),
+                Err(error) => failed.push(json!({"path": display, "error": error.to_string()})),
+            }
+        }
+    };
+    sweep(
+        reading_root.join("releases"),
+        "releases",
+        &|name| batch_published.get(name).copied(),
+        &|name| name == current_batch_id,
+    );
+    sweep(
+        reading_root.join("resources"),
+        "resources",
+        &|name| exam_published.get(name).copied(),
+        &|name| manifest.contains_key(name),
+    );
+    json!({"removed": removed, "kept": kept, "failed": failed})
 }
 
 /// 提交后的状态 CAS：把已发布的条目标成 `status = 'published'`，且**版本必须仍是
