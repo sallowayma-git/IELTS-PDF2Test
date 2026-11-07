@@ -24,7 +24,7 @@ pub(crate) const EXAM_ASSET_MANIFEST_V2_SCHEMA_VERSION: &str = "ExamAssetManifes
 pub(crate) struct ExamAssetManifestV2 {
     pub schema_version: String,
     pub exam_id: String,
-    pub generated_at: String,
+    // 不含任何随时间变化的字段（如 generatedAt）：相同内容重复发布时字节必须相同。
     pub assets: BTreeMap<String, AssetDescriptorV2>,
 }
 
@@ -572,7 +572,6 @@ mod tests {
         let manifest = ExamAssetManifestV2 {
             schema_version: EXAM_ASSET_MANIFEST_V2_SCHEMA_VERSION.to_string(),
             exam_id: source.exam_id().to_string(),
-            generated_at: "2026-08-12T00:00:00Z".to_string(),
             assets,
         };
         let root = temp_root();
@@ -615,7 +614,6 @@ mod tests {
         let manifest = ExamAssetManifestV2 {
             schema_version: EXAM_ASSET_MANIFEST_V2_SCHEMA_VERSION.to_string(),
             exam_id: source.exam_id().to_string(),
-            generated_at: "2026-08-12T00:00:00Z".to_string(),
             assets: BTreeMap::new(),
         };
 

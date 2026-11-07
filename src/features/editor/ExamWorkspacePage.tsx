@@ -2,17 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Undo2, Redo2, MoreHorizontal, FileSearch, X } from "lucide-react";
 import { command, getJob } from "../../api/tauriCommands";
 import { describeRetryOutcome, retryAnswerPageRecognition, retryProcessing, cancelProcessing, subscribeProcessing } from "../../api/processingClient";
-import { chooseExportDirectory } from "../../api/desktopDialogs";
-import { describePublishOutcome, publishItem, publishOutcomeKind, type PublishOutcomeKind } from "../../api/publishClient";
 import { getWorkspaceItem } from "../../api/workspaceClient";
 import { SOURCE_PURGED_EXPLANATION, saveToLibrary, sourceActionsAvailable } from "./finalVersion";
-import { go, libraryPath, type LibraryIntent } from "../../app/router";
+import { go, libraryPath, libraryPickPath, type LibraryIntent } from "../../app/router";
 import { StudentFontSizeControls, type StudentFontSize } from "../../exam-canvas/StudentReadingTools";
 import { ExamCanvas, type ExamCanvasStructureAction } from "../../exam-canvas/ExamCanvas";
 import { compileStructureAction } from "../../exam-canvas/structureActions";
 import { SelectionInspector } from "./SelectionInspector";
 import type { IeltsAuthoringIRV2, JobDetail } from "../../types";
-import { readAppSettings, writeAppSettings } from "../settings/appSettings";
+import { readAppSettings } from "../settings/appSettings";
 import { deriveActionableIssues, mergePublishGateIssues, type ActionableIssueV1 } from "./actionableIssues";
 import { getRecognitionDecision } from "../../api/recognitionClient";
 import {
@@ -120,9 +118,6 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   const [busyAction, setBusyAction] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | undefined>();
   const [noticeDetail, setNoticeDetail] = useState<string | undefined>();
-  // 仅供验收脚本读取（`data-publish-outcome`），不渲染成文字。
-  // 绑定到当时那条提示文字：提示被别的消息替换后，这个值自动失效，不会残留。
-  const [publishOutcome, setPublishOutcome] = useState<{ text: string; kind: PublishOutcomeKind } | undefined>();
   const [titleEditing, setTitleEditing] = useState(false);
   const [preflight, setPreflight] = useState<PublishCheckResultV1 | undefined>();
   // 预检拉取失败必须让用户看见：`mergePublishGateIssues` 在 preflight 为 undefined 时
@@ -448,7 +443,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   }, [itemId, editor.pendingCount, editor.saveState, editor.loading]);
 
   useEffect(() => {
-    if (intent === "publish") setNotice("点右上角「发布」把这道题发到 NAS。");
+    if (intent === "publish") setNotice("点右上角「去组卷发布」，到题库的组卷栏把这道题与另两篇阅读一起发布为当前试卷。");
   }, [intent]);
 
   /** 失败提示一律经用户文案层收敛；机器码/路径只进日志与开发者附注（audit A7-F04）。 */
@@ -460,7 +455,6 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   }
   function clearNotice() {
     setNotice(undefined);
-    setPublishOutcome(undefined);
     setNoticeDetail(undefined);
   }
 
@@ -480,35 +474,14 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
     }
   }
 
+  /**
+   * 单题发布已取消（契约 V1.1 第5条）：保存后把这道题带到题库的组卷栏预选，
+   * 由题库页统一发布为当前试卷。没有 Part 的题，题库页会提示先设 Part。
+   */
   async function publish() {
     await withBusy("publish", async () => {
       await editor.flush();
-      let destination = readAppSettings().nasDestination;
-      if (!destination) {
-        const picked = await chooseExportDirectory();
-        if (!picked) {
-          setNotice("请先在设置页选择 NAS 目录，或在这里选一次。");
-          return;
-        }
-        writeAppSettings({ nasDestination: picked });
-        destination = picked;
-      }
-      // 一次点击即发布：不预检、不列阻断、不二次确认。点击本身就是确认。
-      const outcome = await publishItem(itemId, destination);
-      let publishNotice = describePublishOutcome(outcome);
-      // P2：编译通过即可发布，其余是警告。发布成功但还有未处理的提示
-      // （答案未填、保真度低、未人工确认……）时，如实在结果里指回问题列表。
-      if (outcome.ok) {
-        const gateWarnings = preflight?.warnings?.length ?? 0;
-        if (gateWarnings > 0) {
-          publishNotice += `（有 ${gateWarnings} 条待核对提示，见问题列表）`;
-        }
-      }
-      setNotice(publishNotice);
-      setPublishOutcome({ text: publishNotice, kind: publishOutcomeKind(outcome) });
-      // 发布提交后原文件会被删除：刷新「原文件是否还在」，并重读题稿（状态与质量块已变）。
-      refreshSourcePurged();
-      if (outcome.ok) editor.reload();
+      go(libraryPickPath(itemId));
     });
   }
 
@@ -633,7 +606,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             {/* 顶栏唯一的主操作：底色/悬停对齐基准的提交类按钮（见 workspace.css 的
                 .workspace-publish-btn）。data-testid 与点击行为不变。 */}
             <button className="workspace-publish-btn" data-testid="workspace-publish" disabled={Boolean(busyAction) || cloudReviewing} onClick={publish}>
-              {busyAction === "publish" ? "正在发布…" : "发布"}
+              {busyAction === "publish" ? "正在保存…" : "去组卷发布"}
             </button>
             <button aria-label="更多操作" aria-expanded={menuOpen} aria-haspopup="menu" title="更多操作" onClick={() => setMenuOpen((open) => !open)}><MoreHorizontal size={16} /></button>
           </div>
@@ -745,7 +718,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
         </div>
       ) : null}
       {notice ? (
-        <p className="workspace-notice" role="status" data-publish-outcome={publishOutcome && publishOutcome.text === notice ? publishOutcome.kind : undefined}>
+        <p className="workspace-notice" role="status">
           {notice}
           {noticeDetail && noticeDetail !== notice && readAppSettings().developerMode ? (
             <small className="workspace-notice-detail">技术详情：{noticeDetail}</small>

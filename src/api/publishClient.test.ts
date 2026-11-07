@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   describeBatchPublishOutcome,
+  describePaperPublishOutcome,
   describePublishOutcome,
-  publishItem,
   publishItems,
   publishOutcomeKind,
   type PublishItemOutcome
@@ -33,16 +33,12 @@ describe("publishItems — 一次点击发出请求（P2：无 force 伪装）",
     expect(Object.keys(args.input).sort()).toEqual(["destination", "itemIds"]);
   });
 
-  it("单题发布同样一步到位，不先拉预检", async () => {
-    commandMock.mockResolvedValue({
-      destination: "D:/nas",
-      succeeded: [{ itemId: "a", ok: true, examId: "x", forced: true, studentLoadable: true }],
-      failed: []
-    });
-    const outcome = await publishItem("a", "D:/nas");
-    expect(commandMock).toHaveBeenCalledTimes(1);
-    expect(commandMock.mock.calls[0][0]).toBe("publish_items");
-    expect(outcome.ok).toBe(true);
+  it("单题发布入口已取消：后端拒绝不带 paper 的请求，前端把它收敛成可读的失败结果", async () => {
+    commandMock.mockRejectedValue("PUBLISH_REQUIRES_PAPER");
+    const batch = await publishItems(["a"], "D:/nas");
+    expect(batch.succeeded).toEqual([]);
+    expect(batch.failed[0].ok).toBe(false);
+    expect(batch.failed[0].message).toContain("组卷栏");
   });
 });
 
@@ -125,5 +121,47 @@ describe("publishOutcomeKind — 只给验收脚本读的机器分类", () => {
 
   it("失败就是失败，不被任何字段改判成已发布", () => {
     expect(publishOutcomeKind({ ...base, ok: false, forced: false, studentLoadable: true })).toBe("failed");
+  });
+});
+
+describe("组卷结果的顶层状态与锁忙（V1.1 第4条 / P1-1 / P2-2）", () => {
+  const titleOf = (id: string) => id;
+
+  it("清单已更新但指针失败：文案说明学生端仍是旧试卷，不得说成已发布", () => {
+    const text = describePaperPublishOutcome(
+      {
+        destination: "D:/nas",
+        succeeded: [{ itemId: "a", ok: true }],
+        failed: [],
+        status: "paper_pointer_stale",
+        paper: { ok: false, code: "PAPER_WRITE_FAILED", message: "disk full" }
+      },
+      titleOf
+    );
+    expect(text).toBe("清单已更新，但学生端仍是旧试卷，请重试发布。");
+    expect(text).not.toContain("已发布");
+  });
+
+  it("指针成功但有提交后警告：显示警告而不是失败", () => {
+    const text = describePaperPublishOutcome(
+      {
+        destination: "D:/nas",
+        succeeded: [],
+        failed: [],
+        status: "published_with_warnings",
+        warnings: [{ reason: "status_drift" }],
+        paper: { ok: true, paperId: "0123456789abcdef", publishedAt: "", batchId: "b", reading: [], listening: [] }
+      },
+      titleOf
+    );
+    expect(text).toContain("已发布");
+    expect(text).toContain("未完整写入");
+  });
+
+  it("发布锁忙：提示另一次发布进行中，不得显示「当前试卷没有更新」", async () => {
+    commandMock.mockRejectedValue("nas_package_v2_lock_busy:the lock could not be acquired");
+    const batch = await publishItems(["a"], "D:/nas", undefined, { paper: { reading: { P1: "a", P2: "b", P3: "c" }, listening: [] } });
+    expect(batch.failed[0].message).toBe("另一次发布正在进行，请稍后查看当前试卷。");
+    expect(batch.failed[0].message).not.toContain("没有更新");
   });
 });

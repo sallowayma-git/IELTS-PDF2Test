@@ -44,5 +44,24 @@
 - **撤下的旧文件保留宽限期**：`releases/<batchId>/` 与根级 `resources/<examId>/` 若不被当前试卷引用，且该批次发布时间早于
   24 小时，则在下一次发布时删除；24 小时内的保留，保证正在考试的学生（锁定了旧脚本）仍能交卷判分。
   批次发布时间以 `.publish-control/papers/*.json` 的 `publishedAt` + `batchId` 为准。
+## V1.1 修订（2026-11-07 审计后，**覆盖上文冲突条款**）
+
+目的：让 `current-paper.json` 成为考试路径**唯一的提交点**，消除"清单与指针两个文件不一致"的窗口；让每个批次的全部文件不可变。
+
+1. **资源按批次归档、不可变**：作者端把每题资源写到 `releases/<batchId>/resources/<examId>/`（含 `asset-manifest.json`），
+   不再写根级 `resources/<examId>/`，也不再原地替换任何已发布文件。manifest 条目的 `resourcesBase` = `./releases/<batchId>/resources/<examId>`，
+   `assetManifest` 为该目录下的 `asset-manifest.json` 相对路径。资产清单内容必须确定性生成（不含 `generated_at` 等随时间变化的字段），
+   相同内容重复发布字节相同。
+2. **指针自包含**：`reading[i]` 与 `listening[i]` 增加 `entry` 字段 = 写进 manifest 的那条完整条目对象（含 `script`、`resourcesBase`、
+   `assetManifest`、`checksums{scriptSha256,assetManifestSha256,runtimeSha256}`、`schemaVersion`、`dataKey`、`title`、`category`、
+   `modality`、`minimumRuntimeVersion` 等，原样拷贝）。顶层的 `script`/`scriptSha256`/`runtimeSha256` 保留且必须等于 `entry` 中对应值。
+3. **学生端考试路径只读指针**：锁卷与判分只用 `current-paper.json` 的 `entry`（经 `safeJoinNasRoot`、限定 `releases/<batchId>/` 前缀，
+   校验 script 与 asset-manifest 的 sha256），**不再要求 examId 在 manifest 中存在、也不与 manifest 比对**。manifest 只服务练习/目录展示。
+   `resourcesBase` 缺失或为根级 `resources/<examId>` 的旧条目按原路径兼容读取。
+4. **提交顺序与失败语义**：release 目录就位 → manifest 原子替换 → 指针原子替换（考试路径的提交点）。指针写失败或在其前崩溃：
+   旧指针仍引用旧批次（旧批次文件未被清理，清理只在指针成功后执行），学生端照常按旧卷考试；作者端顶层结果必须是"未完成"状态，
+   文案"学生端仍是旧试卷"。清理永不删除当前指针（无论新旧）引用的批次。
+5. **单题发布取消**：生产命令 `publish_items` 必须带 `paper`；不带 → `PUBLISH_REQUIRES_PAPER`。编辑器不再有单题发布。
+
 - 学生端锁定套题时把每篇的 `examId`、`script`、`scriptSha256`、`runtimeSha256` 和 `paperId` 记进 lockedSequence；
   交卷判分按锁定的 `script` 读取并校验 `scriptSha256`（脚本在 `releases/<batchId>/` 下不可变），不按当时的 manifest。

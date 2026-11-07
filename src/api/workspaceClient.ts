@@ -114,6 +114,7 @@ export async function listLibraryItems(includeDeleted = false): Promise<LibraryI
 }
 
 /** 题库页改名：后端 trim 后非空、不超过 120 字；返回新的题库行。 */
-export async function renameLibraryItem(itemId: string, title: string): Promise<LibraryItemSummaryV2> {
-  return command("rename_library_item", { itemId, title });
+/** 改名走权威稿的版本 CAS：`baseVersion` 过期时后端返回 EDIT_VERSION_CONFLICT。 */
+export async function renameLibraryItem(itemId: string, title: string, baseVersion: number): Promise<LibraryItemSummaryV2> {
+  return command("rename_library_item", { itemId, title, baseVersion });
 }

@@ -330,7 +330,12 @@ fn validate_paper_spec(conn: &rusqlite::Connection, input: &PublishItemsInput) -
     let Some(paper) = input.paper.as_ref() else {
         return Ok(());
     };
-    let selected: BTreeSet<&str> = input.item_ids.iter().map(String::as_str).collect();
+    let mut selected: BTreeSet<&str> = BTreeSet::new();
+    for item_id in &input.item_ids {
+        if !selected.insert(item_id.as_str()) {
+            return Err(format!("PAPER_DUPLICATE_ITEM:{item_id}"));
+        }
+    }
     let mut slots: Vec<(&str, &str, &str)> = vec![
         ("reading", "P1", paper.reading.p1.as_str()),
         ("reading", "P2", paper.reading.p2.as_str()),
@@ -340,10 +345,21 @@ fn validate_paper_spec(conn: &rusqlite::Connection, input: &PublishItemsInput) -
         slots.push(("listening", slot.part.as_str(), slot.item_id.as_str()));
     }
     let mut seen = BTreeSet::new();
-    for (modality, part, item_id) in slots {
-        if !seen.insert(item_id) {
+    let mut seen_listening_parts = BTreeSet::new();
+    for (modality, part, item_id) in &slots {
+        if !seen.insert(*item_id) {
             return Err(format!("PAPER_DUPLICATE_ITEM:{item_id}"));
         }
+        if *modality == "listening" && !seen_listening_parts.insert(*part) {
+            return Err(format!("PAPER_DUPLICATE_PART:{part}"));
+        }
+    }
+    // 试卷题集合与 item_ids 必须完全相等：多出来的题会被当成试卷的一部分发出去，
+    // 缺的题则会让 current-paper 指向一套不完整的试卷。
+    if let Some(extra) = selected.iter().find(|id| !seen.contains(*id)) {
+        return Err(format!("PAPER_ITEM_NOT_IN_PAPER:{extra}"));
+    }
+    for (modality, part, item_id) in slots {
         if !selected.contains(item_id) {
             return Err(format!("PAPER_ITEM_NOT_SELECTED:{item_id}"));
         }
@@ -385,6 +401,8 @@ fn publish_current_paper(
                 && outcome.get("ok").and_then(Value::as_bool) == Some(true)
                 && outcome.get("studentLoadable").and_then(Value::as_bool) == Some(true)
         });
+        // V1.1 第2条：指针自包含。`entry` 原样拷贝清单里那条完整条目；顶层
+        // script/scriptSha256/runtimeSha256 必须与 entry 中对应值一致（由这里统一生成）。
         let entry = loadable
             .and_then(|outcome| outcome.get("examId").and_then(Value::as_str))
             .and_then(|exam_id| committed.get(exam_id).map(|entry| (exam_id, entry)))
@@ -403,6 +421,7 @@ fn publish_current_paper(
                     "script": script,
                     "scriptSha256": script_sha,
                     "runtimeSha256": runtime_sha,
+                    "entry": entry,
                 }))
             });
         match entry {
@@ -462,6 +481,14 @@ fn is_publish_gate_failure(error: &str) -> bool {
         || error.starts_with("AUTHORING_SCHEMA_INVALID")
 }
 
+/// 生产命令层的门槛（契约 V1.1 第5条）：`publish_items` 只接受组卷发布，单题发布已取消。
+pub(crate) fn require_paper_for_publish(input: &PublishItemsInput) -> CommandResult<()> {
+    if input.paper.is_none() {
+        return Err("PUBLISH_REQUIRES_PAPER".to_string());
+    }
+    Ok(())
+}
+
 pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> CommandResult<Value> {
     use crate::library::repository::{get_canonical_ds, open_library_connection};
     if input.item_ids.is_empty() {
@@ -485,8 +512,9 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
         crate::library::migration::migrate_single_item(root, id)?;
     }
     let mut conn = open_library_connection(root)?;
-    validate_paper_spec(&conn, &input)?;
     let transaction = conn.transaction().map_err(|error| error.to_string())?;
+    // P2-3：Part 标签与试卷约定在快照事务内重新核对，与读取权威稿处于同一一致视图。
+    validate_paper_spec(&transaction, &input)?;
     let snapshots = ids
         .iter()
         .map(|id| {
@@ -528,7 +556,6 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
         .join(CONTROL_DIR_NAME)
         .join(BACKUP_DIR_NAME)
         .join(format!("batch-{batch_id}"));
-    let mut moved_resources: Vec<(String, bool)> = Vec::new();
     // 提交点标志：清单替换成功即为「包已对学生可见」。此后任何失败都不得回滚资源。
     let mut manifest_committed = false;
     // 组卷缺题：未提交任何东西时，这里保存要返回的结果（见函数末尾）。
@@ -537,10 +564,9 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
     let mut result = (|| -> CommandResult<Value> {
         fs::create_dir_all(&staging).map_err(|error| error.to_string())?;
         let mut outcomes = Vec::new();
-        // 全部 examId（重复检查是硬性不变量，放行模式同样适用）；
-        // 只有学生端可加载的题才有需要落到根级的资源目录。
+        // 全部 examId（重复检查是硬性不变量，放行模式同样适用）。
+        // 资源与脚本都随 staging 一起整体重命名进 `releases/<batchId>/`，不再写根级资源目录。
         let mut exam_ids = BTreeSet::new();
-        let mut loadable_exam_ids = BTreeSet::new();
         let mut forced_items = Vec::new();
         // 被门禁挡下的条目（编译未通过）：本条失败，不影响批次其余条目。
         let mut failed_items: Vec<Value> = Vec::new();
@@ -725,15 +751,18 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
                     if !exam_ids.insert(exam_id.clone()) {
                         return Err(format!("PUBLISH_DUPLICATE_EXAM_ID:{exam_id}"));
                     }
-                    loadable_exam_ids.insert(exam_id.clone());
-                    // 脚本放进不可变的 releases/ 目录；资源路径保持根级 `resources/<examId>/`，
-                    // 因为学生端 resolver 固定从 reading 根解析 `resources/${examId}`，不消费 resourcesBase。
+                    // V1.1 第1条：脚本与资源都在 `releases/<batchId>/` 下，批次内不可变。
                     let script_relative = staged.entry["script"]
                         .as_str()
                         .ok_or("PUBLISH_PATH_MISSING")?
-                        .trim_start_matches("./");
+                        .trim_start_matches("./")
+                        .to_string();
                     staged.entry["script"] =
                         json!(format!("./releases/{batch_id}/{script_relative}"));
+                    let batch_resources = format!("./releases/{batch_id}/resources/{exam_id}");
+                    staged.entry["resourcesBase"] = json!(batch_resources);
+                    staged.entry["assetManifest"] =
+                        json!(format!("{batch_resources}/{ASSET_MANIFEST_FILE_NAME}"));
                     // 学生端忽略未知的清单条目字段；放行标记留在条目上供审计。
                     if let Some(publish_override) = publish_override.as_ref() {
                         staged.entry["publishOverride"] = publish_override.clone();
@@ -769,6 +798,7 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
             let missing = paper_missing_items(paper, &outcomes);
             if !missing.is_empty() {
                 paper_incomplete = Some(json!({
+                    "status": "paper_incomplete",
                     "destination": input.destination,
                     "succeeded": [],
                     "failed": failed_items.clone(),
@@ -792,17 +822,15 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
         // 提交后 release 里已无候选清单，所以必须先把候选清单的内容哈希记进状态，
         // 崩溃恢复才能凭「线上清单哈希 == 待提交哈希」认出包已经生效。
         let candidate_manifest_sha256 = sha256_hex(&candidate_bytes);
-        // 在清单替换前把每题资源落到根级 `resources/<examId>/`（学生端唯一可解析位置）。
-        // 备份 + 状态文件保证：任何一步失败可回滚；崩溃后由 recover_incomplete_transactions 重放。
-        let write_batch_state = |moved: &[(String, bool)], committed: bool| -> CommandResult<()> {
+        // 状态文件只是诊断与恢复的辅助事实：V1.1 起资源不再移动到根级，因此 `exams` 恒为空；
+        // 旧版本遗留的进行中事务仍由 recover_interrupted_batches 的兼容分支处理。
+        let write_batch_state = |committed: bool| -> CommandResult<()> {
             let state = json!({
                 "schemaVersion": "NasBatchBackupStateV1",
                 "manifestCommitted": committed,
                 "hadManifest": paths.manifest_path.is_file(),
                 "pendingManifestSha256": candidate_manifest_sha256,
-                "exams": moved.iter()
-                    .map(|(exam_id, had)| json!({"examId": exam_id, "hadResources": had}))
-                    .collect::<Vec<_>>(),
+                "exams": [],
             });
             fs::create_dir_all(&backup_dir).map_err(|error| error.to_string())?;
             write_synced_file(
@@ -817,41 +845,25 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
             copy_file_verified(&paths.manifest_path, &backup_dir.join("manifest.js"))
                 .map_err(|error| format!("PUBLISH_BATCH_MANIFEST_BACKUP:{error}"))?;
         }
-        write_batch_state(&moved_resources, false)?;
-        fs::create_dir_all(reading_root.join("resources")).map_err(|error| error.to_string())?;
-        for exam_id in &loadable_exam_ids {
-            let root_resource = reading_root.join("resources").join(exam_id);
-            let had_resources = root_resource.exists();
-            // 先把「本题将被移动」写进状态，再动磁盘。顺序反过来会留下一个
-            // 崩溃窗口：旧资源已移走但状态未记录，恢复端不知道它存在过，
-            // 线上目录永久缺失。
-            moved_resources.push((exam_id.clone(), had_resources));
-            write_batch_state(&moved_resources, false)?;
-            if had_resources {
-                fs::create_dir_all(backup_dir.join("resources"))
-                    .map_err(|error| error.to_string())?;
-                fs::rename(&root_resource, backup_dir.join("resources").join(exam_id))
-                    .map_err(|error| error.to_string())?;
-            }
-            fs::rename(staging.join("resources").join(exam_id), &root_resource)
-                .map_err(|error| error.to_string())?;
-        }
+        write_batch_state(false)?;
         verify_manifest_compare_and_swap(&paths.manifest_path, &base_hash)?;
         fs::create_dir_all(release.parent().unwrap()).map_err(|error| error.to_string())?;
+        // 资源与脚本已经在 staging 内完整就位（`releases/<batchId>/resources/<examId>/`），
+        // 整目录一次重命名进 release；之后任何失败都只删除本批新建的 release，不触碰线上文件。
         fs::rename(&staging, &release).map_err(|error| error.to_string())?;
         if input.fault.as_deref() == Some("before_manifest") {
             return Err("PUBLISH_BATCH_INTERRUPTED".to_string());
         }
-        // Published entries point only at immutable script files; one manifest replacement exposes the batch.
+        // 第一个提交点：清单原子替换。
         atomic_replace_file(&release.join("manifest.js"), &paths.manifest_path)?;
-        // 提交点已过：新清单引用的 scripts 与 resources 都已就位。状态文件此刻
-        // 只是诊断信息，写失败不得升级为回滚——回滚会删掉刚生效的资源，
-        // 留下「新清单 + 无资源」的坏包。
+        // 提交点已过：新清单引用的 scripts 与 resources 都已在批次目录就位。状态文件此刻
+        // 只是诊断信息，写失败不得升级为回滚——回滚会删掉刚生效的包。
         manifest_committed = true;
-        if let Err(error) = write_batch_state(&moved_resources, true) {
+        if let Err(error) = write_batch_state(true) {
             eprintln!("[publish] batch committed state write failed: {error}");
         }
-        // 组卷指针：清单已提交之后才写。失败只如实报告，不回滚已生效的清单。
+        // 第二个提交点（学生端考试路径的唯一读取点）：当前试卷指针。清单已提交之后才写；
+        // 失败不回滚清单，但结果顶层必须是「未完成」，且不做清理（旧指针仍引用旧批次）。
         let paper_result = input.paper.as_ref().map(|paper| {
             publish_current_paper(
                 &library_root,
@@ -866,55 +878,61 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
                 json!({"ok": false, "code": "PAPER_WRITE_FAILED", "message": error})
             })
         });
-        // 清理旧批次：只在清单与当前试卷都已提交之后执行；它的任何失败只记入 cleanup，不回滚。
         let paper_written = paper_result
             .as_ref()
             .and_then(|value| value.get("ok"))
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        // 清理旧批次：只在指针成功之后执行；它永不删除当前磁盘指针引用的批次。
         let cleanup = paper_written.then(|| {
             cleanup_superseded_releases(&library_root, &reading_root, &manifest, &batch_id, Utc::now())
         });
         let succeeded = outcomes;
         let mut value =
             json!({"destination": input.destination, "succeeded": succeeded, "failed": failed_items});
+        let pointer_failed = input.paper.is_some() && !paper_written;
         if let Some(paper_result) = paper_result {
             value["paper"] = paper_result;
         }
         if let Some(cleanup) = cleanup {
             value["cleanup"] = cleanup;
         }
+        // 顶层结论：清单已提交但指针未更新时，学生端仍是旧试卷，必须明确标为未完成，
+        // 前端不得把 succeeded 当成功展示。
+        value["status"] = json!(if pointer_failed {
+            "paper_pointer_stale"
+        } else {
+            "published"
+        });
+        value["batchId"] = json!(batch_id);
         Ok(value)
     })();
     if result.is_err() {
         if manifest_committed {
             eprintln!("[publish] batch failed after manifest commit; leaving the committed package in place");
         } else {
-            rollback_batch_resources(&reading_root, &backup_dir, &moved_resources);
+            // 清单未替换：线上文件从未被触碰，只删除本批新建的 staging / release / 备份。
             let _ = fs::remove_dir_all(&staging);
             let _ = fs::remove_dir_all(&release);
+            let _ = fs::remove_dir_all(&backup_dir);
         }
     } else {
         let _ = fs::remove_dir_all(&backup_dir);
-        // ── 提交后的状态 CAS：**三种结果必须分开处理** ──────────────────────
-        // 修前这里只处理了第一种，另两种被静默吞掉，于是 publish 对调用方返回 `Ok`
-        // （表现为"发布成功"），而库里那条目的 `status` 根本没被标成 `published` ——
-        // 同一个事实在返回值和数据库里是两个答案。
+        // ── 提交后的记录与状态：清单（与指针）已提交，这里的任何失败都**不得返回 Err**。
+        // 返回 Err 会让前端显示"发布失败"，而包其实已经对学生生效。失败一律作为 `warnings`
+        // 随成功结果返回，前端据此如实提示。
         //
-        //   * `Err`   —— 真数据库错误。不升级为回滚：清单已替换、资源已就位，
-        //                回滚会留下「新清单 + 无资源」的坏包（既有注释记录的决策）；
-        //                但**同样不得静默**。
-        //   * CAS 未匹配 —— 快照之后该条目又被编辑过（`current_edit_version` 前进），
-        //                即发布出去的**不是**当前编辑版本。这是确凿的版本漂移。
-        //   * 正常。
-        //
-        // 判据用**读回校验**而不是 `execute` 的受影响行数：行数是"匹配到"还是
-        // "真的改了"属于驱动层语义（SQLite 对 UPDATE 计匹配行，但这个前提不该
-        // 成为发布判据的一部分）。直接查 `status` + `current_edit_version`，
-        // 后置条件成立与否一目了然。
-        let status_drift = commit_published_status(&conn, &publications)?;
-        // 每次发布一行记录，与状态提交相邻。清单已提交，记录写失败同样不得回滚包，
-        // 但必须向调用方如实报告（不能让「发了」却没有任何可查的放行记录）。
+        //   * CAS 未匹配（快照之后条目又被编辑）：确凿的版本漂移，记为 status_drift。
+        //   * 状态提交的真数据库错误：记为 warning。
+        //   * 发布记录写失败：记为 warning。
+        let mut post_commit_warnings: Vec<Value> = Vec::new();
+        let status_drift = match commit_published_status(&conn, &publications) {
+            Ok(drift) => drift,
+            Err(error) => {
+                post_commit_warnings.push(json!({"reason": "status_commit_failed", "error": error}));
+                Vec::new()
+            }
+        };
         if let Err(error) = write_publish_records(
             &conn,
             &publications,
@@ -922,20 +940,12 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
             &batch_id,
             &input.destination,
         ) {
-            let _ = fs::remove_file(&paths.lock_metadata_path);
-            return Err(format!(
-                "PUBLISH_RECORD_WRITE_FAILED:manifest_committed:{error}"
-            ));
+            post_commit_warnings.push(json!({"reason": "publish_record_write_failed", "error": error}));
         }
         if !status_drift.is_empty() {
-            let _ = fs::remove_file(&paths.lock_metadata_path);
-            // `manifest_committed` 前缀是给调用方看的：包**已经**对学生可见，
-            // 所以这既不是"什么都没发生"，也不是干净的失败，而是"发了但与库不一致"。
-            return Err(format!(
-                "PUBLISH_BATCH_STATUS_DRIFT:manifest_committed:{}",
-                serde_json::to_string(&status_drift).unwrap_or_default()
-            ));
+            post_commit_warnings.push(json!({"reason": "status_drift", "items": status_drift}));
         }
+        let _ = fs::remove_file(&paths.lock_metadata_path);
         // ── 题库保存：发布**已提交且状态已确认**之后，冻结最终版证据并删除原文件与
         // 过程文件。两步都不得让发布失败或回滚（包已对学生可见）；结果逐题如实报告。
         // 冻结失败时**不**删除：没有冻结证据，删除 shadow 会让这道题再也无法正常发布。
@@ -1005,6 +1015,15 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
                     outcome["finalVersion"] = report;
                 }
             }
+            if !post_commit_warnings.is_empty() {
+                for warning in &post_commit_warnings {
+                    eprintln!("[publish] post-commit warning: {warning}");
+                }
+                value["warnings"] = json!(post_commit_warnings);
+                if value.get("status").and_then(Value::as_str) == Some("published") {
+                    value["status"] = json!("published_with_warnings");
+                }
+            }
         }
     }
     let _ = fs::remove_file(&paths.lock_metadata_path);
@@ -1055,6 +1074,50 @@ pub(crate) fn cleanup_superseded_releases(
     })
 }
 
+/// 把 `key` 的发布时间更新为「已知的最晚时间」。
+fn newest_published(
+    map: &mut BTreeMap<String, chrono::DateTime<Utc>>,
+    key: &str,
+    published: chrono::DateTime<Utc>,
+) {
+    map.entry(key.to_string())
+        .and_modify(|current| {
+            if published > *current {
+                *current = published;
+            }
+        })
+        .or_insert(published);
+}
+
+/// 磁盘上当前指针引用的批次号集合：顶层 `batchId` 与每条的 `releases/<batchId>/` 前缀。
+/// 指针缺失或损坏时返回空集合（此时清理仍只删除超过宽限期的批次，且指针写入路径不会走到这里）。
+fn current_pointer_batch_ids(reading_root: &Path) -> BTreeSet<String> {
+    let mut batches = BTreeSet::new();
+    let Ok(bytes) = fs::read(reading_root.join(CURRENT_PAPER_FILE_NAME)) else {
+        return batches;
+    };
+    let Ok(pointer) = serde_json::from_slice::<Value>(&bytes) else {
+        return batches;
+    };
+    if let Some(batch) = pointer.get("batchId").and_then(Value::as_str) {
+        batches.insert(batch.to_string());
+    }
+    for group in ["reading", "listening"] {
+        for item in pointer.get(group).and_then(Value::as_array).into_iter().flatten() {
+            let script = item
+                .get("script")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if let Some(rest) = script.strip_prefix("./releases/") {
+                if let Some((batch, _)) = rest.split_once('/') {
+                    batches.insert(batch.to_string());
+                }
+            }
+        }
+    }
+    batches
+}
+
 /// 同 `cleanup_superseded_releases`，删除动作可注入（测试用它模拟删除失败）。
 pub(crate) fn cleanup_superseded_releases_with(
     library_root: &Path,
@@ -1091,17 +1154,21 @@ pub(crate) fn cleanup_superseded_releases_with(
         else {
             continue;
         };
+        // P1-2：归属取「最近」的发布时间。同一批次/题目可能出现在多份历史记录里，
+        // 目录遍历顺序不稳定，因此只在时间更晚时覆盖，结果与文件名顺序无关。
         if let Some(batch) = record.get("batchId").and_then(Value::as_str) {
-            batch_published.insert(batch.to_string(), published);
+            newest_published(&mut batch_published, batch, published);
         }
         for group in ["reading", "listening"] {
             for item in record.get(group).and_then(Value::as_array).into_iter().flatten() {
                 if let Some(exam_id) = item.get("examId").and_then(Value::as_str) {
-                    exam_published.insert(exam_id.to_string(), published);
+                    newest_published(&mut exam_published, exam_id, published);
                 }
             }
         }
     }
+    // 当前磁盘指针引用的批次（无论是刚写入的新指针，还是仍然有效的旧指针）永不删除。
+    let pointer_batches = current_pointer_batch_ids(reading_root);
 
     let mut removed = Vec::new();
     let mut kept = Vec::new();
@@ -1142,7 +1209,7 @@ pub(crate) fn cleanup_superseded_releases_with(
         reading_root.join("releases"),
         "releases",
         &|name| batch_published.get(name).copied(),
-        &|name| name == current_batch_id,
+        &|name| name == current_batch_id || pointer_batches.contains(name),
     );
     sweep(
         reading_root.join("resources"),
@@ -1501,11 +1568,10 @@ fn stage_package_files(
         manifest_assets.insert(descriptor.asset_id.clone(), descriptor.clone());
     }
 
-    let generated_at = Utc::now().to_rfc3339();
+    // 确定性：只含 schema、examId 与按 assetId 排序的资产描述，不含时间戳。
     let asset_manifest = ExamAssetManifestV2 {
         schema_version: "ExamAssetManifestV2".to_string(),
         exam_id: source.exam_id().to_string(),
-        generated_at,
         assets: manifest_assets,
     };
     let asset_manifest_value =
@@ -2399,45 +2465,6 @@ fn restore_backup_dir_or_keep(
         ));
     }
     Ok(())
-}
-
-/// 批量发布失败后的资源回滚：还原备份资源，删除本次新移入的根级资源目录。
-///
-/// 状态文件先于 `rename` 写入，所以「状态里有该题」不代表旧资源已被移走。
-/// 因此只有备份目录确实存在时才允许动线上目录；否则线上目录仍是旧资源，
-/// 必须原样保留，删掉它就是不可逆的数据丢失。
-fn rollback_batch_resources(reading_root: &Path, backup_dir: &Path, moved: &[(String, bool)]) {
-    let mut fully_restored = true;
-    for (exam_id, had_resources) in moved.iter().rev() {
-        let root_resource = reading_root.join("resources").join(exam_id);
-        let backup_resource = backup_dir.join("resources").join(exam_id);
-        if *had_resources {
-            if !backup_resource.exists() {
-                // 尚未移动：线上目录就是旧资源，保留。
-                continue;
-            }
-            if let Err(error) = fs::remove_dir_all(&root_resource) {
-                if error.kind() != std::io::ErrorKind::NotFound {
-                    eprintln!("[publish] batch rollback remove {exam_id}: {error}");
-                    fully_restored = false;
-                }
-            }
-            if let Err(error) = fs::rename(&backup_resource, &root_resource) {
-                eprintln!("[publish] batch rollback restore {exam_id}: {error}");
-                fully_restored = false;
-            }
-        } else if let Err(error) = fs::remove_dir_all(&root_resource) {
-            // 原本没有资源：删除本次可能已生效的新资源。
-            if error.kind() != std::io::ErrorKind::NotFound {
-                eprintln!("[publish] batch rollback remove {exam_id}: {error}");
-                fully_restored = false;
-            }
-        }
-    }
-    // 还原未完成时保留备份与状态文件，交给下一次 recover_incomplete_transactions 重放。
-    if fully_restored {
-        let _ = fs::remove_dir_all(backup_dir);
-    }
 }
 
 /// 重放被中断的批量发布：清单未替换 → 还原备份资源、清理 staging/release；
@@ -3692,27 +3719,6 @@ mod tests {
             canonical_json_bytes(&state).unwrap(),
         )
         .unwrap();
-    }
-
-    /// 状态文件先于 `rename` 写入，所以「状态里有该题」不代表旧资源已被移走。
-    /// 回滚绝不能因为状态里有记录就删掉线上目录——那正是旧资源本身。
-    #[test]
-    fn batch_rollback_keeps_live_resources_when_no_backup_was_taken() {
-        let root = temp_root();
-        let reading_root = root.join("reading");
-        let live = reading_root.join("resources").join("v2-p1");
-        fs::create_dir_all(&live).unwrap();
-        fs::write(live.join("asset.bin"), "old-asset").unwrap();
-        let backup_dir = root.join("backup");
-
-        rollback_batch_resources(&reading_root, &backup_dir, &[("v2-p1".to_string(), true)]);
-
-        assert_eq!(
-            fs::read_to_string(live.join("asset.bin")).unwrap(),
-            "old-asset",
-            "live resources must survive a rollback that never moved them"
-        );
-        let _ = fs::remove_dir_all(root);
     }
 
     /// 崩溃恢复同样必须备份感知：state 记录存在但没有备份 = 尚未移动。

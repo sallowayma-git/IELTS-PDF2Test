@@ -4,6 +4,7 @@ import {
   legacyPath,
   legacyRedirect,
   libraryPath,
+  libraryPickPath,
   parseRoute,
   workspacePath
 } from "./router";
@@ -111,5 +112,20 @@ describe("路径构造", () => {
     expect(legacyPath("writing")).toBe("/legacy/writing");
     expect(legacyPath("writing", "id-1")).toBe("/legacy/writing/id-1");
     expect(jobResumePath({ jobId: "job-9" })).toBe("/items/job-9");
+  });
+});
+
+describe("编辑器「去组卷发布」的预选路由", () => {
+  it("libraryPickPath 生成带 publish 意图与 pick 的题库地址，parseRoute 能读回预选题", () => {
+    const path = libraryPickPath("item-abc");
+    expect(path).toBe("/library?publish=1&pick=item-abc");
+    const route = parseRoute(`#${path}`);
+    expect(route.name).toBe("library");
+    expect(route.intent).toBe("publish");
+    expect(route.pickItemId).toBe("item-abc");
+  });
+
+  it("没有 pick 时 pickItemId 为 undefined", () => {
+    expect(parseRoute("#/library?publish=1").pickItemId).toBeUndefined();
   });
 });

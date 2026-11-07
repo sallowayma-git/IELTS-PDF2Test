@@ -1678,20 +1678,36 @@ fn publish_items_is_all_or_nothing_across_a_batch() {
         manifest.contains("./releases/"),
         "发布条目必须指向不可变的 release 文件，而不是可被下一次发布覆盖的根目录文件"
     );
-    // 学生端 resolver 固定从 reading 根解析 resources/<examId>，
-    // 因此批量发布的资源与 asset-manifest 必须落在根级布局，且真实存在。
+    // V1.1：资源按批次归档在 releases/<batchId>/resources/<examId>/（不可变），
+    // 清单条目的 resourcesBase / assetManifest 必须指向该批次目录，且文件真实存在。
+    let batch_id = published
+        .get("batchId")
+        .and_then(Value::as_str)
+        .expect("a published batch reports its batchId")
+        .to_string();
     for index in 0..2 {
         let resource_dir = reading_root
+            .join("releases")
+            .join(&batch_id)
             .join("resources")
             .join(format!("batch-{index}"));
         assert!(
             resource_dir.join("asset-manifest.json").is_file(),
-            "批量发布的资源必须位于根级 resources/<examId>/asset-manifest.json：{}",
+            "批量发布的资源必须位于 releases/<batchId>/resources/<examId>/asset-manifest.json：{}",
             resource_dir.display()
         );
         assert!(
-            manifest.contains(&format!("./resources/batch-{index}/")),
-            "清单的资源路径必须指向根级 resources/：{manifest}"
+            manifest.contains(&format!(
+                "./releases/{batch_id}/resources/batch-{index}"
+            )),
+            "清单的资源路径必须指向本批次 releases 目录：{manifest}"
+        );
+        assert!(
+            !reading_root
+                .join("resources")
+                .join(format!("batch-{index}"))
+                .exists(),
+            "V1.1 起不得再写根级 resources/<examId>/"
         );
     }
 
