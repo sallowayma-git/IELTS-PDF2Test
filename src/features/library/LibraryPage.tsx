@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { go, workspacePath, type LibraryIntent } from "../../app/router";
 import { getCurrentPaper, type CurrentPaperV1 } from "../../api/paperClient";
-import { describeBatchPublishOutcome, describePaperPublishOutcome, publishItems } from "../../api/publishClient";
+import { describePublishResult, publishItems } from "../../api/publishClient";
 import { renameLibraryItem } from "../../api/workspaceClient";
 import { readAppSettings, writeAppSettings } from "../settings/appSettings";
 import { chooseExportDirectory } from "../../api/desktopDialogs";
@@ -180,10 +180,10 @@ export function LibraryPage({ intent, pickItemId }: { intent?: LibraryIntent; pi
         setPaperMessage(`正在发布 ${done}/${total}`);
       }, { paper: spec });
       const titleOf = (id: string) => store.rows.find((row) => row.id === id)?.title ?? id;
-      setNotice(describeBatchPublishOutcome(outcome));
-      setPaperMessage(outcome.paper || outcome.status
-        ? describePaperPublishOutcome(outcome, titleOf)
-        : outcome.failed[0]?.message ?? describePaperPublishOutcome(outcome, titleOf));
+      // 一条结论只说一次：顶层提示与组卷区用同一句，由后端 status 决定（审计 A5）。
+      const message = describePublishResult(outcome, titleOf);
+      setNotice(message);
+      setPaperMessage(message);
       if (outcome.paper?.ok) setPaperSelection(EMPTY_PAPER_SELECTION);
     } finally {
       // 不论成败都重读当前试卷：锁忙或指针失败时，页面要显示 NAS 上真实的当前试卷。

@@ -76,6 +76,37 @@ export function describePaperPublishOutcome(outcome: PublishBatchOutcome, titleO
   return PAPER_POINTER_STALE_NOTICE;
 }
 
+/**
+ * 组卷发布的**唯一**顶层提示（审计 A5）。只按后端 `status` / 组卷结果给出一句话，
+ * 不再把「已发布 N 题」和「学生端仍是旧试卷」拼在一起：两者互相矛盾时以指针结果为准。
+ *
+ * - `paper_incomplete`：缺题，什么都没提交，旧试卷保持不变（列出缺失题名）。
+ * - `paper_pointer_stale`：清单已更新但指针没写成，学生端仍是旧试卷。
+ * - `published_with_warnings`：已发布，但提交后有记录未完整写入。
+ * - `published`：当前试卷已发布。
+ * - 发布锁忙（请求失败且带锁忙提示）：另一次发布进行中，不说成「没有更新」。
+ * - 其余失败：取第一条失败原因。
+ */
+export function describePublishResult(outcome: PublishBatchOutcome, titleOf: (itemId: string) => string): string {
+  const paper = outcome.paper;
+  if (outcome.status === "paper_incomplete" || (paper && !paper.ok && paper.code === "PAPER_INCOMPLETE")) {
+    const missing = paper && !paper.ok && paper.code === "PAPER_INCOMPLETE" ? paper.missing : [];
+    const names = missing.map(titleOf).join("、");
+    return names ? `试卷中有题目未能发布，当前试卷保持不变：${names}` : "试卷中有题目未能发布，当前试卷保持不变。";
+  }
+  if (outcome.status === "paper_pointer_stale" || (paper && !paper.ok)) return PAPER_POINTER_STALE_NOTICE;
+  if (paper?.ok) {
+    const id = paper.paperId.slice(0, 8);
+    if (outcome.status === "published_with_warnings" || outcome.warnings?.length) {
+      return `当前试卷已发布（${id}），但有 ${outcome.warnings?.length ?? 0} 项记录未完整写入，请在 NAS 发布记录中核对。`;
+    }
+    return `当前试卷已发布（${id}）`;
+  }
+  const firstFailure = outcome.failed[0]?.message;
+  if (firstFailure) return firstFailure;
+  return "当前试卷没有更新。";
+}
+
 /** 发布错误一律经用户文案层收敛；原始机器码不再直接渲染（audit A7-F04）。 */
 export function describePublishError(error: unknown): string {
   if (String(error).includes("PUBLISH_REQUIRES_PAPER")) return "单题发布已取消，请到题库的组卷栏选三篇阅读后发布为当前试卷。";
