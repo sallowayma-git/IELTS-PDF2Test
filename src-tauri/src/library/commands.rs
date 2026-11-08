@@ -422,7 +422,10 @@ fn align_reading_part(conn: &mut rusqlite::Connection, item_id: &str) -> Command
                     row.part_source.as_deref().unwrap(), super::repository::EditOrigin::PartBackfill);
             }
         }
-        if let Some(category) = category.filter(|v| matches!(*v, "P1" | "P2" | "P3")) {
+        // 从未判定过（part_source 为 NULL）的行不在这里投影 exam.category：category 是派生元数据，
+        // 不是证据（见 part_detection::reading_part_from_document）。先由 compute_part_for_row 按
+        // 原文标题 / 题号范围 / 文件名判定，判不出才回落到 category（审计 A9）。
+        if let Some(category) = category.filter(|v| matches!(*v, "P1" | "P2" | "P3")).filter(|_| row.part_source.is_some()) {
             // Guard the projection against a concurrent save or new manual choice.
             conn.execute("UPDATE library_items_v2 SET part_label=?2, part_source=COALESCE(part_source,'canonical')
                 WHERE id=?1 AND current_edit_version=?3 AND (part_source IS NULL OR part_source != 'manual')",
@@ -446,7 +449,11 @@ fn compute_part_for_row(
     if row.modality == "reading" {
         return Some(match super::part_detection::reading_part_from_document(&row.title, &ds) {
             Some(part) => (Some(part.label), part.source.as_str().to_string()),
-            None => (None, PART_SOURCE_NONE.to_string()),
+            // 判定证据都没有时才回落到规范稿的 category；来源仍是 sentinel「none」（判不出，不是自动判定）。
+            None => match ds.pointer("/exam/category").and_then(Value::as_str).filter(|v| matches!(*v, "P1" | "P2" | "P3")) {
+                Some(category) => (Some(category.to_string()), PART_SOURCE_NONE.to_string()),
+                None => (None, PART_SOURCE_NONE.to_string()),
+            },
         });
     }
     let (lines, numbers) = part_inputs_from_ds(&ds);
