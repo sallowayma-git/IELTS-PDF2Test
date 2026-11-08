@@ -1585,6 +1585,38 @@ fn rename_library_item_trims_validates_and_returns_the_row() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// 审计 A4 回归：已发布条目只改名，状态仍是 published（版本照常前进、照常 CAS），
+/// 题库列表里仍有这一行且状态未变（前端的题库行与组卷栏都依据这个状态）。
+#[test]
+fn renaming_a_published_item_keeps_its_published_status() {
+    use crate::library::commands::{list_library_items_core, rename_library_item_core as rename};
+    let root = temp_root("rename-published");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_item(&root, "rename-published", false, |_| {});
+    {
+        let conn = crate::library::repository::open_library_connection(&root).unwrap();
+        crate::library::repository::set_item_status(&conn, &item, "published").unwrap();
+    }
+    let before = item_version(&root, &item);
+    rename(&root, &item, "改名后的已发布题", before).expect("rename must save");
+    assert_eq!(item_version(&root, &item), before + 1, "改名仍递增版本");
+
+    let conn = crate::library::repository::open_library_connection(&root).unwrap();
+    let status: String = conn
+        .query_row("SELECT status FROM library_items_v2 WHERE id = ?1", [&item], |row| row.get(0))
+        .unwrap();
+    assert_eq!(status, "published", "只改标题不得改变发布状态");
+    drop(conn);
+    let listing = list_library_items_core(&root, false).unwrap();
+    let row = listing
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["id"] == json!(item)))
+        .unwrap_or_else(|| panic!("改名后题库必须仍列出该条目：{listing}"));
+    assert_eq!(row["status"], json!("published"), "{row}");
+    assert_eq!(row["title"], json!("改名后的已发布题"), "{row}");
+    let _ = fs::remove_dir_all(root);
+}
+
 /// 改名与编辑共用版本 CAS：基线版本过期时明确拒绝，且不改任何东西。
 #[test]
 fn rename_with_a_stale_base_version_is_refused_and_changes_nothing() {

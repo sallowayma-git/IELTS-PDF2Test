@@ -2183,15 +2183,15 @@ pub(crate) fn apply_editor_commands_tx_with(
         }
     }
 
-    let row: Option<(Option<String>, i64)> = transaction
+    let row: Option<(Option<String>, i64, String)> = transaction
         .query_row(
-            "SELECT canonical_ds_json, current_edit_version FROM library_items_v2 WHERE id = ?1",
+            "SELECT canonical_ds_json, current_edit_version, status FROM library_items_v2 WHERE id = ?1",
             [&input.item_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()
         .map_err(|error| format!("library_v2_tx_load:{error}"))?;
-    let (ds_json, current_version) =
+    let (ds_json, current_version, stored_status) =
         row.ok_or_else(|| format!("ITEM_NOT_FOUND:{}", input.item_id))?;
     if current_version != input.base_version {
         return Err(format!(
@@ -2251,13 +2251,20 @@ pub(crate) fn apply_editor_commands_tx_with(
 
     let next_version = current_version + 1;
     let now = Utc::now().to_rfc3339();
+    // 只改标题（改名）不是内容编辑：状态保持不变（已发布仍是已发布），版本照常递增、照常做 CAS。
+    // 否则质量报告重算会把「已发布」降成 action_required，题库行随之消失。
+    let next_status = if input.commands.is_empty() {
+        stored_status.as_str()
+    } else {
+        edit_status_for(&ds)
+    };
     cas_write_canonical(
         &transaction,
         &input.item_id,
         current_version,
         next_version,
         &ds,
-        edit_status_for(&ds),
+        next_status,
         &now,
     )?;
     if origin.writes_human_protection() && input.commands.iter().any(|c| c.get("op").and_then(Value::as_str) == Some("setExamCategory")) {
