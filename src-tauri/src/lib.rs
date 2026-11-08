@@ -2035,6 +2035,14 @@ pub fn run() {
             diagnostics::install_worker_panic_log(root.clone());
             // 初始化题库 DB schema + 首次启动迁移既有 job 数据（幂等，失败不阻断启动）。
             let _ = library_commands::migrate_existing_into_library(&root);
+            {
+                let root=root.clone();
+                tauri::async_runtime::spawn_blocking(move||{
+                    if let Ok(conn)=library::repository::open_library_connection(&root){
+                        if let Err(error)=library::paper_archive::recover(&conn){eprintln!("[paper-archive] startup recovery: {error}");}
+                    }
+                });
+            }
             // M2：托管调度状态并启动调度循环（含启动恢复）。
             let processing_state = std::sync::Arc::new(processing::scheduler::ProcessingState::new(
                 processing::scheduler::ProcessingSettings::defaults(),

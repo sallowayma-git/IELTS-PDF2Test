@@ -934,6 +934,21 @@ fn seed_listening_item(root: &Path, exam_id: &str, bound_parts: &[i64]) -> Strin
     job.job_id
 }
 
+/// Test-only seed for the real Tauri→Electron→Tauri backend-data acceptance chain.
+#[test]
+#[ignore = "requires PDF2TEST_E2E_LISTENING_APP_ROOT; generates an isolated E2E fixture"]
+fn dump_backend_data_listening_fixture() {
+    let root=std::path::PathBuf::from(std::env::var("PDF2TEST_E2E_LISTENING_APP_ROOT").expect("explicit isolated application root"));
+    assert!(root.is_absolute());
+    let item=seed_listening_item(&root,"backend-data-listening",&[1,2,3,4]);
+    let conn=crate::library::repository::open_library_connection(&root).unwrap();
+    let (mut ds,_)=crate::library::repository::get_canonical_ds(&conn,&item).unwrap().unwrap();
+    for value in ds["answerKey"].as_object_mut().unwrap().values_mut(){*value=json!({"kind":"text","values":["alpha"]});}
+    conn.execute("UPDATE library_items_v2 SET canonical_ds_json=?2 WHERE id=?1",rusqlite::params![item,serde_json::to_string(&ds).unwrap()]).unwrap();
+    crate::library::repository::set_item_part(&conn,&item,Some("Part 1"),Some("manual")).unwrap();
+    println!("E2E_LISTENING={}",json!({"jobId":item,"examId":"backend-data-listening","title":"Listening Paper","answers":ds["answerKey"]}));
+}
+
 /// 缺一个 Section 音频的听力卷，放行后只能停在授权快照里。
 ///
 /// 这一条在单一编译入口之前是**假通过**：导出走的是阅读编译器，一份没有 passage 的听力稿
