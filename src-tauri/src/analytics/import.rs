@@ -217,6 +217,10 @@ fn import_one_inner(
             "快照版本过新（dbSchemaVersion={db_schema_version}，作者端支持至 {SUPPORTED_DB_SCHEMA_VERSION}），请升级作者端"
         ));
     }
+    let schema=meta["schemaVersion"].as_str().unwrap_or_default();
+    if !matches!((schema,db_schema_version),("SubmissionSnapshotV1",1)|("SubmissionSnapshotV2",2)){
+        return Err("SNAPSHOT_VERSION:快照协议与数据库版本不一致".into());
+    }
     let hints = MetaHints {
         terminal_id: string_field(&meta, "terminalId"),
         attempt_id: string_field(&meta, "attemptId"),
@@ -249,6 +253,7 @@ fn import_one_inner(
         &exported_at,
         expected_size,
         &expected_sha,
+        db_schema_version,
         now,
     );
     let _ = fs::remove_file(&local_copy);
@@ -265,6 +270,7 @@ fn verify_and_import(
     exported_at: &str,
     expected_size: u64,
     expected_sha: &str,
+    expected_schema_version: u64,
     now: &str,
 ) -> Result<SnapshotOutcome, String> {
     let file = candidate.file_key.clone();
@@ -302,9 +308,9 @@ fn verify_and_import(
         });
     }
 
-    let source = read_source_db(local_copy)?;
+    let source = read_source_db(local_copy,expected_schema_version)?;
     if !source.attempts.iter().any(|attempt| attempt.attempt_id == attempt_hint) {
-        return Err(format!("快照内找不到已交卷的 attempt：{attempt_hint}"));
+        return Err(format!("快照内找不到已关闭的 attempt：{attempt_hint}"));
     }
 
     let tx = conn.transaction().map_err(|error| error.to_string())?;
@@ -415,10 +421,25 @@ fn write_attempt(
     now: &str,
 ) -> Result<(), String> {
     let id = attempt.attempt_id.as_str();
-    // 子表整组替换：先清掉该 attempt 的旧子行，再 UPSERT 新快照的行。
-    for table in ["answers", "passages", "writings", "suites"] {
-        tx.execute(&format!("DELETE FROM {table} WHERE attempt_id = ?1"), params![id])
-            .map_err(|error| error.to_string())?;
+    // Submitted student facts are immutable; later whole-terminal snapshots only enrich evidence.
+    source.extensions.validate_writings(tx,id)?;
+    for answer in source.answers.iter().filter(|a|a.attempt_id==id){
+        let previous:Option<(Option<String>,Option<String>,Option<i64>,f64)>=tx.query_row(
+            "SELECT user_answer_json,correct_answer_json,is_correct,weight FROM answers WHERE attempt_id=?1 AND passage_index=?2 AND question_id=?3",
+            params![id,answer.passage_index,answer.question_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(|e|e.to_string())?;
+        let same_json=|a:Option<&str>,b:Option<&str>|a==b || a.zip(b).is_some_and(|(a,b)|serde_json::from_str::<Value>(a).ok().zip(serde_json::from_str::<Value>(b).ok()).is_some_and(|(a,b)|a==b));
+        if let Some(old)=previous {
+            if !same_json(old.0.as_deref(),answer.user_answer_json.as_deref()) || !same_json(old.1.as_deref(),answer.correct_answer_json.as_deref()) || old.2!=answer.is_correct || old.3!=answer.weight {
+                return Err(format!("SNAPSHOT_FACT_CONFLICT:已交卷原始作答或判分发生冲突：{id}/{}",answer.question_id));
+            }
+        }
+    }
+    for passage in source.passages.iter().filter(|p|p.attempt_id==id){
+        let old:Option<(bool,f64,f64)>=tx.query_row("SELECT gradable,correct,total FROM passages WHERE attempt_id=?1 AND passage_index=?2",params![id,passage.passage_index],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|e|e.to_string())?;
+        if let Some(old)=old {
+            let incoming=super::parse_score_info(&passage.score_info_json);
+            if !incoming.is_some_and(|s|(s.gradable,s.correct,s.total)==old){return Err(format!("SNAPSHOT_FACT_CONFLICT:已交卷原始篇章判分发生冲突：{id}/{}",passage.passage_index));}
+        }
     }
     tx.execute(
         "INSERT INTO attempts (attempt_id, terminal_id, batch_id, paper_id, candidate_id, candidate_name,
@@ -569,6 +590,7 @@ fn write_attempt(
         )
         .map_err(|error| format!("写入 writings 失败：{error}"))?;
     }
+    source.extensions.import(tx,id)?;
     Ok(())
 }
 
@@ -622,6 +644,7 @@ fn record_import(
 
 /// 快照库里读出的已交卷 attempt 及子表（只读副本）。
 struct SourceDb {
+    extensions: super::snapshot_v2::Extensions,
     attempts: Vec<SrcAttempt>,
     suites: Vec<SrcSuite>,
     passages: Vec<SrcPassage>,
@@ -703,7 +726,7 @@ struct SrcWriting {
 }
 
 /// 只读打开副本，读出已交卷的数据。失败即整份快照 failed。
-fn read_source_db(path: &Path) -> Result<SourceDb, String> {
+fn read_source_db(path: &Path, expected_version:u64) -> Result<SourceDb, String> {
     let conn = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -715,11 +738,20 @@ fn read_source_db(path: &Path) -> Result<SourceDb, String> {
     if check != "ok" {
         return Err(format!("quick_check 未通过：{check}"));
     }
+    let version:Option<String>=conn.query_row("SELECT value_json FROM exam_kv WHERE key='db_schema_version'",[],|r|r.get(0)).optional().map_err(|e|e.to_string())?;
+    let actual=version.as_deref().and_then(|s|serde_json::from_str::<u64>(s).ok()).unwrap_or(1);
+    if actual!=expected_version{return Err("SNAPSHOT_VERSION:快照元数据与实际数据库版本不一致".into())}
+    if actual==2 {
+        for table in ["answer_events","listening_attempts","listening_answers"]{
+            let exists:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",[table],|r|r.get(0)).map_err(|e|e.to_string())?;
+            if !exists{return Err(format!("SNAPSHOT_SCHEMA:V2 快照缺少 {table}"))}
+        }
+    }
     let attempts = query_rows(
         &conn,
         "SELECT attempt_id, batch_id, terminal_id, candidate_id, candidate_name, checkin_at, started_at,
                 submitted_at, status, app_version
-         FROM exam_attempts WHERE status = 'submitted'",
+         FROM exam_attempts WHERE status IN ('submitted','failed')",
         |row| {
             Ok(SrcAttempt {
                 attempt_id: row.get(0)?,
@@ -906,7 +938,7 @@ fn read_source_db(path: &Path) -> Result<SourceDb, String> {
         }
     }
 
-    Ok(SourceDb { attempts, suites, passages, answers, writings, scorer_versions, paper_ids, paper_conflicts })
+    Ok(SourceDb { extensions: super::snapshot_v2::Extensions::read(&conn)?, attempts, suites, passages, answers, writings, scorer_versions, paper_ids, paper_conflicts })
 }
 
 /// 从 reading_suite_attempts.aggregate_json 取 paperId（契约 §1.1 优先级 2、3）。

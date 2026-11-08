@@ -222,3 +222,8 @@ pub fn passage_label(category: Option<&str>, passage_index: i64) -> String {
         _ => format!("P{}", passage_index + 1),
     }
 }
+
+pub mod snapshot_v2;
+pub mod archive;
+#[cfg(test)]
+mod snapshot_tests;

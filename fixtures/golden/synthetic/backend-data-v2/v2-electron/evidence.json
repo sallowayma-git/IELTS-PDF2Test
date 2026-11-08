@@ -1,0 +1,17 @@
+{
+  "schema": "SubmissionSnapshotV2",
+  "attemptId": "attempt_a8847caf-6d15-449a-a846-9808ebc1e2cd",
+  "paperId": "dddddddddddddddddddddddddddddddd",
+  "terminal": "t-2600ebc29898",
+  "submissionsRoot": "submissions",
+  "papersRoot": "papers",
+  "evidenceLevel": "real macOS Electron UI → ready snapshot; original snapshot/meta/ready and actual published package copied unchanged",
+  "studentSourceRevision": "4ccf390 plus test artifact retention",
+  "report": "student-exam-listening-v1-flow-20261108-232816.json",
+  "snapshotCounts": {
+    "listening_attempts": 1,
+    "listening_answers": 9,
+    "answer_events": 14,
+    "writing_submissions": 2
+  }
+}

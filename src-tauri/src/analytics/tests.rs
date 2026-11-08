@@ -685,25 +685,25 @@ fn reimport_is_idempotent() {
 }
 
 #[test]
-fn newer_exported_at_replaces_and_older_is_ignored() {
+fn newer_snapshot_cannot_replace_submitted_answer_facts() {
     let env = fresh_env("newer");
     seed_standard(&env);
     let mut conn = open(&env);
     run_import(&env, &mut conn);
     assert_eq!(build_student_view(&conn, "A1").unwrap().raw_score, 8.0);
 
-    // 更新：A1 的 P3 全对，exportedAt 更晚 -> 覆盖。
+    // 新 exportedAt 携带改过的原始答案必须拒绝，教师重判走 override。
     let newer = db_bytes("t1-newer", &t1_attempts("TTTT"));
     publish_snapshot(&env.submissions, "T1", "A1", &newer, "2026-11-07T13:00:00+08:00", false, true);
     let report = run_import(&env, &mut conn);
-    assert!(report.attempts_imported >= 1, "{report:?}");
-    assert_eq!(build_student_view(&conn, "A1").unwrap().raw_score, 11.0);
+    assert!(report.failed >= 1, "{report:?}");
+    assert_eq!(build_student_view(&conn, "A1").unwrap().raw_score, 8.0);
 
     // 旧快照（exportedAt 更早，内容为全错）再次出现 -> 不覆盖。
     let older = db_bytes("t1-older", &t1_attempts("FFFF"));
     publish_snapshot(&env.submissions, "T1", "A1", &older, "2026-11-07T10:30:00+08:00", false, true);
     run_import(&env, &mut conn);
-    assert_eq!(build_student_view(&conn, "A1").unwrap().raw_score, 11.0);
+    assert_eq!(build_student_view(&conn, "A1").unwrap().raw_score, 8.0);
 }
 
 #[test]

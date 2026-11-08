@@ -639,6 +639,7 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
                             .ok_or("PUBLISH_RUNTIME_MISSING")?,
                     );
                     let source_value: Value = crate::util::read_json(&source_path)?;
+                    crate::analytics::archive::capture(&crate::analytics::open_analytics(root)?, &source_value)?;
                     let source = CompiledExamSourceV2::parse(&source_value)
                         .map_err(|error| error.to_string())?;
                     let mut staged_paths = paths.clone();
@@ -886,6 +887,12 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
             .and_then(|value| value.get("ok"))
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let archive_result = if paper_written {
+            let archived = crate::util::read_json::<Value>(&reading_root.join(CURRENT_PAPER_FILE_NAME)).and_then(|pointer|
+                crate::analytics::open_analytics(root).and_then(|mut conn|
+                crate::analytics::archive::record(&mut conn, &input.destination, &pointer, true, None, &outcomes)));
+            Some(archived)
+        } else { None };
         // 清理旧批次：只在指针成功之后执行；它永不删除当前磁盘指针引用的批次。
         let cleanup = paper_written.then(|| {
             cleanup_superseded_releases(&library_root, &reading_root, &manifest, &batch_id, Utc::now())
@@ -893,6 +900,7 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
         let succeeded = outcomes;
         let mut value =
             json!({"destination": input.destination, "succeeded": succeeded, "failed": failed_items});
+        if let Some(Err(error)) = archive_result { value["archiveWarning"] = json!(format!("试卷已发布，本地档案待恢复：{error}")); }
         let pointer_failed = input.paper.is_some() && !paper_written;
         if let Some(paper_result) = paper_result {
             value["paper"] = paper_result;

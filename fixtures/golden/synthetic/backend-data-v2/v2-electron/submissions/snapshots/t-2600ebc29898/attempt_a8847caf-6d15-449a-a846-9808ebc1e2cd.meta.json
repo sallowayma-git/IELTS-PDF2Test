@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "SubmissionSnapshotV2",
+  "terminalId": "t-2600ebc29898",
+  "installId": "eb95ac82-f2d0-4786-a79e-67275ec2c36a",
+  "attemptId": "attempt_a8847caf-6d15-449a-a846-9808ebc1e2cd",
+  "batchId": "data-v2-fixture",
+  "paperId": "dddddddddddddddddddddddddddddddd",
+  "candidateId": "LISTENING-E2E-01",
+  "candidateName": "听力 E2E",
+  "submittedAt": "2026-11-08T23:28:22.942Z",
+  "exportedAt": "2026-11-08T23:28:22.948Z",
+  "appVersion": "1.0.0-e2e",
+  "dbSchemaVersion": 2,
+  "scorerVersion": "reading-scorer/1",
+  "sizeBytes": 126976,
+  "sha256": "650cb9bf01366dab6b1cacbf92a65001db5e53e8cfe08e3d24241b438f74360c"
+}

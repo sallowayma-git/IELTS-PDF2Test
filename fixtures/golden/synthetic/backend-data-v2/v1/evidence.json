@@ -1,0 +1,12 @@
+{
+  "schema": "SubmissionSnapshotV1",
+  "attemptId": "attempt_eeae90c7-f1d6-42fa-b967-4bedca03466b",
+  "writingSubmissionId": "writing_attempt_eeae90c7-f1d6-42fa-b967-4bedca03466b_task1",
+  "paperId": "dddddddddddddddddddddddddddddddd",
+  "terminal": "DATA-V2-TERM",
+  "submissionsRoot": "submissions",
+  "papersRoot": "papers",
+  "studentHead": "4ccf3906e5c584d5e664be6bc252156643a50ec9",
+  "generatorSha256": "24b95aafafc072fbb70ce360e222199cf8579378f64608b5b5f60e5f0111ae25",
+  "studentSourceRevision": "f68555299ff7de37c3291065658ecdbd86e7b12d"
+}

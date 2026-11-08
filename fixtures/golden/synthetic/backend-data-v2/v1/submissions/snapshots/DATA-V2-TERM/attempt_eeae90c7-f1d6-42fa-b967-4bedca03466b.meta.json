@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "SubmissionSnapshotV1",
+  "terminalId": "DATA-V2-TERM",
+  "installId": "5217fe63-4979-400f-a7be-08a2dedff07d",
+  "attemptId": "attempt_eeae90c7-f1d6-42fa-b967-4bedca03466b",
+  "batchId": "data-v2-fixture",
+  "paperId": "dddddddddddddddddddddddddddddddd",
+  "candidateId": "V2-001",
+  "candidateName": "数据测试学生",
+  "submittedAt": "2026-11-08T23:27:55.335Z",
+  "exportedAt": "2026-11-08T23:27:55.341Z",
+  "appVersion": "0.0.1-beta",
+  "dbSchemaVersion": 1,
+  "scorerVersion": "reading-scorer/1",
+  "sizeBytes": 86016,
+  "sha256": "d661aa5f3ad67c0c748cf5d833be2e851e6e507a72cfab230851010b58594347"
+}

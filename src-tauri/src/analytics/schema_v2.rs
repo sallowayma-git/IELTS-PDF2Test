@@ -1,28 +1,59 @@
 //! Additive local-only migrations. Student snapshots are never migrated by the author.
-use rusqlite::Connection;
 use crate::CommandResult;
+use rusqlite::Connection;
 
 pub fn migrate(conn: &Connection) -> CommandResult<()> {
-    conn.execute_batch("SAVEPOINT analytics_v2").map_err(|e| e.to_string())?;
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    if version > 2 {
+        return Err("ANALYTICS_VERSION:分析库版本过新，请升级作者端".into());
+    }
+    conn.execute_batch("SAVEPOINT analytics_v2")
+        .map_err(|e| e.to_string())?;
     let result = (|| {
         for (table, column, decl) in [
-            ("attempts", "session_id", "TEXT"), ("attempts", "student_uuid", "TEXT"),
-            ("attempts", "abandon_reason", "TEXT"), ("attempts", "counted", "INTEGER NOT NULL DEFAULT 0"),
+            ("attempts", "session_id", "TEXT"),
+            ("attempts", "student_uuid", "TEXT"),
+            ("attempts", "abandon_reason", "TEXT"),
+            ("attempts", "counted", "INTEGER NOT NULL DEFAULT 0"),
             ("attempts", "counted_override", "INTEGER NOT NULL DEFAULT 0"),
-            ("attempts", "exclude_reason", "TEXT"), ("attempts", "version", "INTEGER NOT NULL DEFAULT 1"),
-            ("passages", "raw_submission_json", "TEXT"), ("passages", "highlights_json", "TEXT"),
-            ("passages", "note_text", "TEXT"), ("passages", "timer_snapshot_json", "TEXT"),
-            ("passages", "runtime_sha256", "TEXT"), ("passages", "script_sha256", "TEXT"),
-            ("answers", "response_slot_id", "TEXT"), ("answers", "max_score", "REAL"), ("answers", "score", "REAL"),
-            ("writings", "prompt_text", "TEXT"), ("writings", "content", "TEXT"), ("writings", "metadata_json", "TEXT"),
-        ] { super::ensure_column(conn, table, column, decl)?; }
-        conn.execute_batch(SQL).map_err(|e| format!("ANALYTICS_MIGRATION:分析库升级失败：{e}"))?;
+            ("attempts", "exclude_reason", "TEXT"),
+            ("attempts", "version", "INTEGER NOT NULL DEFAULT 1"),
+            ("passages", "raw_submission_json", "TEXT"),
+            ("passages", "highlights_json", "TEXT"),
+            ("passages", "note_text", "TEXT"),
+            ("passages", "timer_snapshot_json", "TEXT"),
+            ("passages", "runtime_sha256", "TEXT"),
+            ("passages", "script_sha256", "TEXT"),
+            ("answers", "response_slot_id", "TEXT"),
+            ("answers", "max_score", "REAL"),
+            ("answers", "score", "REAL"),
+            ("writings", "prompt_text", "TEXT"),
+            ("writings", "content", "TEXT"),
+            ("writings", "metadata_json", "TEXT"),
+        ] {
+            super::ensure_column(conn, table, column, decl)?;
+        }
+        conn.execute_batch(SQL)
+            .map_err(|e| format!("ANALYTICS_MIGRATION:分析库升级失败：{e}"))?;
+        super::ensure_column(
+            conn,
+            "candidate_aliases",
+            "version",
+            "INTEGER NOT NULL DEFAULT 1",
+        )?;
         refresh_counted(conn)?;
         Ok(())
     })();
     match result {
-        Ok(()) => conn.execute_batch("RELEASE analytics_v2").map_err(|e| e.to_string()),
-        Err(e) => { let _ = conn.execute_batch("ROLLBACK TO analytics_v2; RELEASE analytics_v2"); Err(e) }
+        Ok(()) => conn
+            .execute_batch("RELEASE analytics_v2")
+            .map_err(|e| e.to_string()),
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK TO analytics_v2; RELEASE analytics_v2");
+            Err(e)
+        }
     }
 }
 
@@ -37,6 +68,7 @@ pub fn refresh_counted(conn: &Connection) -> CommandResult<()> {
 }
 
 const SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS analytics_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
 UPDATE answers SET response_slot_id=question_id WHERE response_slot_id IS NULL;
 UPDATE answers SET max_score=weight WHERE max_score IS NULL;
 UPDATE answers SET score=is_correct*weight WHERE score IS NULL AND is_correct IS NOT NULL;
@@ -112,7 +144,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_log(target_type,target_id,at);
 CREATE TABLE IF NOT EXISTS candidate_aliases (
  candidate_id TEXT NOT NULL, candidate_name TEXT NOT NULL, student_uuid TEXT, merged_into TEXT,
- operator TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY(candidate_id,candidate_name)
+ operator TEXT NOT NULL, at TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(candidate_id,candidate_name)
 );
 PRAGMA user_version=2;
 "#;
