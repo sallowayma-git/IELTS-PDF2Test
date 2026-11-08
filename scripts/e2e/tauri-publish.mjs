@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// DEPRECATED（审计 A7，2026-11-08）：本脚本经编辑器的 [data-testid="workspace-publish"] 发布单题并等待发布结论。
+// 该按钮现在是「去组卷发布」，只把题目预选到题库组卷栏，不再发布单题（契约 V1.1 第5条：publish_items 必须带 paper）。
+// 不要再用它做验收。替代：组卷发布真实应用脚本 scripts/e2e/tauri-cdp-paper-publish.mjs；
+// 可复用的组卷步骤见 scripts/e2e/lib/paper-publish-steps.mjs；跨仓库全链路见 scripts/e2e/cross-repo-full-chain.mjs（由协调者统一运行）。
 // 真实 Tauri E2E —— 发布链（计划 §18 P0-T02 / §19.7，audit A11-F02 缺失脚本之一）。
 //
 // 覆盖层级：**product**。驱动真实 Tauri 进程 + WebView2 + 真实 SQLite + 真实文件系统，
