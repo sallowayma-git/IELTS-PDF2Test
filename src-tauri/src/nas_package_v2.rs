@@ -453,10 +453,13 @@ fn publish_current_paper(
     // 指针：临时文件 + 原子替换。失败则清掉临时文件，旧指针保持不变。
     let temporary = reading_root.join(format!(".current-paper-{paper_id}.tmp"));
     write_synced_file(&temporary, &bytes)?;
+    let old_batches = current_pointer_batch_ids(reading_root);
     if let Err(error) = atomic_replace_file(&temporary, &reading_root.join(CURRENT_PAPER_FILE_NAME)) {
         let _ = fs::remove_file(&temporary);
         return Err(error);
     }
+    // 指针已切换：旧指针独有的批次从此刻起算宽限期（契约 V1.1 第 6 条）。
+    record_superseded_batches(library_root, &old_batches, &pointer_batch_ids(&document), Utc::now());
     Ok(json!({"ok": true, "paperId": paper_id, "publishedAt": published_at, "batchId": batch_id,
         "reading": document["reading"], "listening": document["listening"]}))
 }
@@ -1051,16 +1054,77 @@ fn paper_missing_items(paper: &PaperSpec, outcomes: &[Value]) -> Vec<String> {
         .collect()
 }
 
-/// 撤下的旧批次与旧题资源的宽限期：发布时间距今不足此时长的保留（正在考试的学生仍锁定旧脚本）。
+/// 撤下的旧批次与旧题资源的宽限期（契约 V1.1 第 6 条）：从「被撤下」（指针切换）起算满此时长才删除。
+/// 与发布时间无关：长期使用的旧卷不会因为发布得早而在被替换的瞬间就被删。
 const SUPERSEDED_GRACE_HOURS: i64 = 24;
+/// `.publish-control/superseded/` 下的撤下记录目录。
+const SUPERSEDED_DIR_NAME: &str = "superseded";
 
-/// 清理被替换掉的 `releases/<batchId>/` 与 `resources/<examId>/`。
+/// 批次撤下记录的键（文件名）。根级旧资源 `resources/<examId>` 用 `resource-<examId>`，与批次互不混淆。
+fn superseded_record_path(library_root: &Path, key: &str) -> PathBuf {
+    library_root
+        .join(CONTROL_DIR_NAME)
+        .join(SUPERSEDED_DIR_NAME)
+        .join(format!("{key}.json"))
+}
+
+/// 读取撤下时间；无记录返回 `Ok(None)`，记录损坏返回 `Err`（清理跳过该项并报告，不删除）。
+fn read_superseded_at(library_root: &Path, key: &str) -> Result<Option<chrono::DateTime<Utc>>, String> {
+    let path = superseded_record_path(library_root, key);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let bytes = fs::read(&path).map_err(|error| error.to_string())?;
+    let record = serde_json::from_slice::<Value>(&bytes).map_err(|error| error.to_string())?;
+    record
+        .get("supersededAt")
+        .and_then(Value::as_str)
+        .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
+        .map(|time| time.with_timezone(&Utc))
+        .map(Some)
+        .ok_or_else(|| "supersededAt 缺失或格式错误".to_string())
+}
+
+/// 写撤下记录（临时文件 + 原子替换，经 write_synced_file 落盘）。
+fn write_superseded_record(library_root: &Path, key: &str, at: chrono::DateTime<Utc>) -> CommandResult<()> {
+    let path = superseded_record_path(library_root, key);
+    let bytes = canonical_json_bytes(&json!({
+        "schemaVersion": "SupersededV1",
+        "key": key,
+        "supersededAt": at.to_rfc3339(),
+    }))
+    .map_err(|error| error.to_string())?;
+    write_synced_file(&path, &bytes)
+}
+
+/// 指针切换成功后：旧指针引用、新指针不再引用的批次，记录 `supersededAt = now`（已有记录不覆盖）。
+/// 记录写失败只打日志：指针已经切换，清理在首次发现时会补记。
+fn record_superseded_batches(
+    library_root: &Path,
+    old_batches: &BTreeSet<String>,
+    new_batches: &BTreeSet<String>,
+    now: chrono::DateTime<Utc>,
+) {
+    for batch in old_batches.difference(new_batches) {
+        match read_superseded_at(library_root, batch) {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                if let Err(error) = write_superseded_record(library_root, batch, now) {
+                    eprintln!("[publish] superseded record write failed for {batch}: {error}");
+                }
+            }
+            Err(error) => eprintln!("[publish] superseded record unreadable for {batch}: {error}"),
+        }
+    }
+}
+
+/// 清理被替换掉的 `releases/<batchId>/` 与根级旧 `resources/<examId>/`。
 ///
-/// 规则（与契约 V1 一致）：
-/// - 被当前清单（即当前试卷）引用的 examId 资源、当前批次目录：永不删除。
-/// - 其余对象按归属时间判定：归属 = `.publish-control/papers/*.json` 中含它的记录的 `publishedAt`
-///   （批次目录按 `batchId`，资源目录按 examId 所在的试卷记录）。归属时间距 `now` ≥ 24 小时删除，否则保留。
-/// - 找不到归属记录时退回目录 mtime：≥ 24 小时删除，否则保留。
+/// 规则（契约 V1.1 第 6 条）：
+/// - 被当前指针引用的批次、当前批次、被当前清单引用的根级资源：永不删除。
+/// - 其余对象按撤下时间（`.publish-control/superseded/<key>.json` 的 `supersededAt`）判定：
+///   距 `now` ≥ 24 小时删除，否则保留。
+/// - 无撤下记录的（历史批次）首次发现时补记 `supersededAt = now` 并保留，不立即删除。
 /// 任何单项失败只记入 `failed`，不影响调用方的发布结果。
 pub(crate) fn cleanup_superseded_releases(
     library_root: &Path,
@@ -1074,40 +1138,26 @@ pub(crate) fn cleanup_superseded_releases(
     })
 }
 
-/// 把 `key` 的发布时间更新为「已知的最晚时间」。
-fn newest_published(
-    map: &mut BTreeMap<String, chrono::DateTime<Utc>>,
-    key: &str,
-    published: chrono::DateTime<Utc>,
-) {
-    map.entry(key.to_string())
-        .and_modify(|current| {
-            if published > *current {
-                *current = published;
-            }
-        })
-        .or_insert(published);
-}
-
-/// 磁盘上当前指针引用的批次号集合：顶层 `batchId` 与每条的 `releases/<batchId>/` 前缀。
-/// 指针缺失或损坏时返回空集合（此时清理仍只删除超过宽限期的批次，且指针写入路径不会走到这里）。
+/// 磁盘上当前指针引用的批次号集合（见 `pointer_batch_ids`）。指针缺失或损坏时返回空集合。
 fn current_pointer_batch_ids(reading_root: &Path) -> BTreeSet<String> {
-    let mut batches = BTreeSet::new();
     let Ok(bytes) = fs::read(reading_root.join(CURRENT_PAPER_FILE_NAME)) else {
-        return batches;
+        return BTreeSet::new();
     };
     let Ok(pointer) = serde_json::from_slice::<Value>(&bytes) else {
-        return batches;
+        return BTreeSet::new();
     };
+    pointer_batch_ids(&pointer)
+}
+
+/// 指针内容引用的批次号：顶层 `batchId` 与每条的 `releases/<batchId>/` 前缀。
+fn pointer_batch_ids(pointer: &Value) -> BTreeSet<String> {
+    let mut batches = BTreeSet::new();
     if let Some(batch) = pointer.get("batchId").and_then(Value::as_str) {
         batches.insert(batch.to_string());
     }
     for group in ["reading", "listening"] {
         for item in pointer.get(group).and_then(Value::as_array).into_iter().flatten() {
-            let script = item
-                .get("script")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
+            let script = item.get("script").and_then(Value::as_str).unwrap_or_default();
             if let Some(rest) = script.strip_prefix("./releases/") {
                 if let Some((batch, _)) = rest.split_once('/') {
                     batches.insert(batch.to_string());
@@ -1127,53 +1177,14 @@ pub(crate) fn cleanup_superseded_releases_with(
     now: chrono::DateTime<Utc>,
     remove_dir: &dyn Fn(&Path) -> std::io::Result<()>,
 ) -> Value {
-    let mut batch_published: BTreeMap<String, chrono::DateTime<Utc>> = BTreeMap::new();
-    let mut exam_published: BTreeMap<String, chrono::DateTime<Utc>> = BTreeMap::new();
-    let history_dir = library_root.join(CONTROL_DIR_NAME).join(PAPER_HISTORY_DIR_NAME);
-    let mut failed = Vec::new();
-    for entry in fs::read_dir(&history_dir).into_iter().flatten().flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|value| value.to_str()) != Some("json") {
-            continue;
-        }
-        let record = fs::read(&path)
-            .map_err(|error| error.to_string())
-            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).map_err(|error| error.to_string()));
-        let record = match record {
-            Ok(record) => record,
-            Err(error) => {
-                failed.push(json!({"path": path.to_string_lossy(), "error": error}));
-                continue;
-            }
-        };
-        let Some(published) = record
-            .get("publishedAt")
-            .and_then(Value::as_str)
-            .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
-            .map(|time| time.with_timezone(&Utc))
-        else {
-            continue;
-        };
-        // P1-2：归属取「最近」的发布时间。同一批次/题目可能出现在多份历史记录里，
-        // 目录遍历顺序不稳定，因此只在时间更晚时覆盖，结果与文件名顺序无关。
-        if let Some(batch) = record.get("batchId").and_then(Value::as_str) {
-            newest_published(&mut batch_published, batch, published);
-        }
-        for group in ["reading", "listening"] {
-            for item in record.get(group).and_then(Value::as_array).into_iter().flatten() {
-                if let Some(exam_id) = item.get("examId").and_then(Value::as_str) {
-                    newest_published(&mut exam_published, exam_id, published);
-                }
-            }
-        }
-    }
     // 当前磁盘指针引用的批次（无论是刚写入的新指针，还是仍然有效的旧指针）永不删除。
     let pointer_batches = current_pointer_batch_ids(reading_root);
 
     let mut removed = Vec::new();
     let mut kept = Vec::new();
+    let mut failed = Vec::new();
     let grace = chrono::Duration::hours(SUPERSEDED_GRACE_HOURS);
-    let mut sweep = |dir_root: PathBuf, label: &str, owner: &dyn Fn(&str) -> Option<chrono::DateTime<Utc>>, referenced: &dyn Fn(&str) -> bool| {
+    let mut sweep = |dir_root: PathBuf, label: &str, key_of: &dyn Fn(&str) -> String, referenced: &dyn Fn(&str) -> bool| {
         for entry in fs::read_dir(&dir_root).into_iter().flatten().flatten() {
             let path = entry.path();
             if !path.is_dir() {
@@ -1185,17 +1196,24 @@ pub(crate) fn cleanup_superseded_releases_with(
                 kept.push(display);
                 continue;
             }
-            let age_ok = match owner(&name) {
-                Some(published) => now - published >= grace,
-                None => match fs::metadata(&path).and_then(|meta| meta.modified()) {
-                    Ok(modified) => now - chrono::DateTime::<Utc>::from(modified) >= grace,
-                    Err(error) => {
-                        failed.push(json!({"path": display, "error": error.to_string()}));
-                        continue;
+            let key = key_of(&name);
+            let superseded_at = match read_superseded_at(library_root, &key) {
+                Ok(Some(at)) => at,
+                Ok(None) => {
+                    // 历史批次首次被发现：补记撤下时间，本轮保留（契约 §6）。
+                    if let Err(error) = write_superseded_record(library_root, &key, now) {
+                        failed.push(json!({"path": display, "error": error}));
+                    } else {
+                        kept.push(display);
                     }
-                },
+                    continue;
+                }
+                Err(error) => {
+                    failed.push(json!({"path": display, "error": error}));
+                    continue;
+                }
             };
-            if !age_ok {
+            if now - superseded_at < grace {
                 kept.push(display);
                 continue;
             }
@@ -1208,13 +1226,13 @@ pub(crate) fn cleanup_superseded_releases_with(
     sweep(
         reading_root.join("releases"),
         "releases",
-        &|name| batch_published.get(name).copied(),
+        &|name| name.to_string(),
         &|name| name == current_batch_id || pointer_batches.contains(name),
     );
     sweep(
         reading_root.join("resources"),
         "resources",
-        &|name| exam_published.get(name).copied(),
+        &|name| format!("resource-{name}"),
         &|name| manifest.contains_key(name),
     );
     json!({"removed": removed, "kept": kept, "failed": failed})

@@ -1506,6 +1506,7 @@ fn an_undeletable_superseded_directory_is_reported_as_failed_not_raised() {
     // 一个无归属记录的旧目录；删除动作注入为失败，模拟文件被占用。
     let stuck = reading.join("releases").join("orphan-batch");
     fs::create_dir_all(&stuck).unwrap();
+    backdate_superseded(&root, "orphan-batch", chrono::Utc::now() - chrono::Duration::hours(48));
     let manifest_value = manifest(&root);
     let outcome = crate::nas_package_v2::cleanup_superseded_releases_with(
         &library_root, &reading, manifest_value.as_object().unwrap(), &second_batch,
@@ -1732,14 +1733,8 @@ fn a_failed_pointer_write_is_reported_as_stale_and_never_cleans_up() {
     let first = publish_with_paper(&root, &[&p1, &p2, &p3], Some(paper_spec(&p1, &p2, &p3, &[])))
         .expect("first publish");
     let batch_a = first["paper"]["batchId"].as_str().unwrap().to_string();
-    let paper_a = first["paper"]["paperId"].as_str().unwrap().to_string();
-    let history_path = crate::export_nas_library::normalize_nas_library_root(&destination(&root))
-        .join(".publish-control")
-        .join("papers")
-        .join(format!("{paper_a}.json"));
-    let mut record: Value = serde_json::from_slice(&fs::read(&history_path).unwrap()).unwrap();
-    record["publishedAt"] = json!((chrono::Utc::now() - chrono::Duration::hours(48)).to_rfc3339());
-    fs::write(&history_path, serde_json::to_vec(&record).unwrap()).unwrap();
+    // 批次 A 在 48 小时前已被撤下（撤下时间回拨；宽限期从撤下起算，不看发布时间）。
+    backdate_superseded(&root, &batch_a, chrono::Utc::now() - chrono::Duration::hours(48));
 
     // 让指针无法替换：指针路径变成目录，原子替换必然失败。
     let pointer = current_paper_path(&root);
@@ -1770,9 +1765,10 @@ fn a_failed_pointer_write_is_reported_as_stale_and_never_cleans_up() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// P1-2：同一批次在两份历史记录中归属时间不同，结果必须取最近时间，与文件名顺序无关。
+/// 撤下时间只由 `.publish-control/superseded/<key>.json` 决定：发布历史的 publishedAt 再早也不影响宽限期。
+/// 历史记录的文件顺序与内容都不改变结果（替代原 P1-2 的「取最近发布时间」语义）。
 #[test]
-fn superseded_ownership_takes_the_newest_record_regardless_of_file_order() {
+fn superseded_grace_ignores_publish_history_and_file_order() {
     for names in [["a-recent.json", "z-old.json"], ["z-old.json", "a-recent.json"]] {
         let root = temp_root("cleanup-order");
         let library_root = root.join("lib");
@@ -1781,7 +1777,7 @@ fn superseded_ownership_takes_the_newest_record_regardless_of_file_order() {
         fs::create_dir_all(&history).unwrap();
         let now = chrono::Utc::now();
         let recent = (now - chrono::Duration::hours(2)).to_rfc3339();
-        let old = (now - chrono::Duration::hours(30)).to_rfc3339();
+        let old = (now - chrono::Duration::hours(300)).to_rfc3339();
         for name in names {
             let published = if name.starts_with("a-") { &recent } else { &old };
             let record = json!({
@@ -1796,6 +1792,8 @@ fn superseded_ownership_takes_the_newest_record_regardless_of_file_order() {
         }
         fs::create_dir_all(reading.join("releases").join("batch-shared")).unwrap();
         fs::create_dir_all(reading.join("resources").join("exam-shared")).unwrap();
+        // 撤下 2 小时前：未满宽限期，无论发布历史如何都保留。
+        backdate_superseded(&root, "batch-shared", now - chrono::Duration::hours(2));
 
         let outcome = crate::nas_package_v2::cleanup_superseded_releases(
             &library_root,
@@ -1806,9 +1804,80 @@ fn superseded_ownership_takes_the_newest_record_regardless_of_file_order() {
         );
         assert_eq!(outcome["removed"], json!([]), "文件顺序 {names:?}：{outcome}");
         assert!(reading.join("releases").join("batch-shared").is_dir(), "{names:?}");
-        assert!(reading.join("resources").join("exam-shared").is_dir(), "{names:?}");
         let _ = fs::remove_dir_all(root);
     }
+}
+
+/// 把批次撤下时间写到 `<destination>/.publish-control/superseded/<key>.json`（测试用，等价于指针切换时的记录）。
+fn backdate_superseded(root: &Path, key: &str, at: chrono::DateTime<chrono::Utc>) {
+    let dir = crate::export_nas_library::normalize_nas_library_root(&destination(root))
+        .join(".publish-control")
+        .join("superseded");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join(format!("{key}.json")),
+        serde_json::to_vec(&json!({"schemaVersion": "SupersededV1", "key": key, "supersededAt": at.to_rfc3339()}))
+            .unwrap(),
+    )
+    .unwrap();
+}
+
+/// 审计 A2 回归：旧卷 30 天前发布，此刻才被替换 → 撤下记录从此刻起算，批次不得立即删除；
+/// 满 24 小时后才删除。
+#[test]
+fn a_long_published_paper_is_kept_for_24_hours_after_it_is_superseded() {
+    let root = temp_root("paper-superseded-grace");
+    ensure_app_dirs(&root).unwrap();
+    let (a1, a2, a3) = (
+        seed_part(&root, "sg-a1", "P1"),
+        seed_part(&root, "sg-a2", "P2"),
+        seed_part(&root, "sg-a3", "P3"),
+    );
+    let first = publish_with_paper(&root, &[&a1, &a2, &a3], Some(paper_spec(&a1, &a2, &a3, &[])))
+        .expect("first paper must publish");
+    let batch_a = first["paper"]["batchId"].as_str().unwrap().to_string();
+    let paper_a = first["paper"]["paperId"].as_str().unwrap().to_string();
+    // 旧卷发布于 30 天前（只回拨发布历史的 publishedAt，撤下记录尚不存在）。
+    let history_path = crate::export_nas_library::normalize_nas_library_root(&destination(&root))
+        .join(".publish-control")
+        .join("papers")
+        .join(format!("{paper_a}.json"));
+    let mut record: Value = serde_json::from_slice(&fs::read(&history_path).unwrap()).unwrap();
+    record["publishedAt"] = json!((chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339());
+    fs::write(&history_path, serde_json::to_vec(&record).unwrap()).unwrap();
+
+    let (b1, b2, b3) = (
+        seed_part(&root, "sg-b1", "P1"),
+        seed_part(&root, "sg-b2", "P2"),
+        seed_part(&root, "sg-b3", "P3"),
+    );
+    let second = publish_with_paper(&root, &[&b1, &b2, &b3], Some(paper_spec(&b1, &b2, &b3, &[])))
+        .expect("second paper must publish");
+    assert_eq!(second["paper"]["ok"], json!(true), "{second}");
+    let reading = reading_root(&root);
+    assert!(
+        reading.join("releases").join(&batch_a).is_dir(),
+        "刚被替换的旧批次不得因发布于 30 天前而被删除：{second}"
+    );
+    assert!(second["cleanup"]["kept"]
+        .as_array()
+        .unwrap()
+        .contains(&json!(format!("releases/{batch_a}"))), "{second}");
+
+    let library_root = crate::export_nas_library::normalize_nas_library_root(&destination(&root));
+    let manifest_value = manifest(&root);
+    let current = manifest_value.as_object().unwrap();
+    let before_grace = crate::nas_package_v2::cleanup_superseded_releases(
+        &library_root, &reading, current, second["paper"]["batchId"].as_str().unwrap(),
+        chrono::Utc::now() + chrono::Duration::hours(23),
+    );
+    assert!(reading.join("releases").join(&batch_a).is_dir(), "未满 24 小时保留：{before_grace}");
+    let after_grace = crate::nas_package_v2::cleanup_superseded_releases(
+        &library_root, &reading, current, second["paper"]["batchId"].as_str().unwrap(),
+        chrono::Utc::now() + chrono::Duration::hours(25),
+    );
+    assert!(!reading.join("releases").join(&batch_a).exists(), "满 24 小时后删除：{after_grace}");
+    let _ = fs::remove_dir_all(root);
 }
 
 /// P2-1：试卷题集合之外的 item_id 不得被当成试卷的一部分发出去，且整次不写任何东西。
