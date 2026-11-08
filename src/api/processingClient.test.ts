@@ -43,6 +43,14 @@ describe("acceptProcessingUpdate — 事件收窄与去重", () => {
     expect(update?.itemId).toBe("item-2");
   });
 
+  it("无处理任务的稿件版本通知独立去重，不吞掉后续队列事件", () => {
+    const versions = new Map([["item-1", 20]]);
+    expect(acceptProcessingUpdate(versions, payload({ versionKind: "content", stateVersion: 7, editVersion: 7 }))?.editVersion).toBe(7);
+    expect(acceptProcessingUpdate(versions, payload({ versionKind: "content", stateVersion: 7 }))).toBeUndefined();
+    expect(acceptProcessingUpdate(versions, payload({ stateVersion: 21, editVersion: 8 }))?.editVersion).toBe(8);
+    expect(acceptProcessingUpdate(versions, payload({ versionKind: "content", stateVersion: 9, editVersion: 9 }))?.editVersion).toBe(9);
+  });
+
   it("editVersion 缺失不导致整条事件被丢（否则阶段推进也一起没了）", () => {
     const versions = new Map<string, number>();
     const update = acceptProcessingUpdate(versions, payload({ editVersion: undefined }));

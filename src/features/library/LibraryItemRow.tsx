@@ -24,7 +24,8 @@ export function LibraryItemRow({
   onRestore,
   onPermanentDelete,
   onSetPart,
-  onRetry
+  onRetry,
+  selectable = true
 }: {
   row: LibraryRowV1;
   selected: boolean;
@@ -35,6 +36,8 @@ export function LibraryItemRow({
   onPermanentDelete: (id: string) => void;
   onSetPart: (id: string, label: string | null) => void;
   onRetry?: (id: string) => void;
+  /** 导入队列等不做批量选择的地方关掉复选框。 */
+  selectable?: boolean;
 }) {
   const processing = isProcessingStage(row.stage);
   const meta = [MODALITY_LABEL[row.modality], row.category, relativeTime(row.updatedAt)].filter(Boolean).join(" · ");
@@ -47,7 +50,7 @@ export function LibraryItemRow({
       data-published-forced={row.publishedForced ? "true" : "false"}
       data-published-not-loadable={row.publishedNotLoadable ? "true" : "false"}
     >
-      {row.inTrash ? (
+      {row.inTrash || !selectable ? (
         <span className="library-row-check" aria-hidden="true" />
       ) : (
         <label className="library-row-check">

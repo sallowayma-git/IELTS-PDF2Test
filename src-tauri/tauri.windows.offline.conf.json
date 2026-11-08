@@ -3,6 +3,7 @@
   "bundle": {
     "resources": [
       "../sidecars",
+      "resources/cloud-direct",
       "lib/pdfium-windows/pdfium.dll"
     ],
     "windows": {

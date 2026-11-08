@@ -84,7 +84,7 @@ vi.mock("./SelectionInspector", () => ({ SelectionInspector: () => null }));
 vi.mock("./RecognitionPanel", () => ({ RecognitionPanel: () => null }));
 
 vi.mock("./studentPreview", () => ({
-  compilePreviewSource: vi.fn(() => ({ ok: true, summary: { answerKeyIssues: [] } })),
+  compilePreviewSource: vi.fn(async () => ({ ok: true, summary: { answerKeyIssues: [] } })),
   describePreviewPublishLimitation: vi.fn(() => null),
 }));
 

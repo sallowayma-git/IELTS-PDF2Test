@@ -121,7 +121,7 @@ async function main() {
     report.identity.itemId = id1;
     const jobDirExistedBefore = fs.existsSync(jobDir(id1));
     await moveToTrash(session, id1);
-    await session.clickSelector('[data-testid="library-tab-trash"]');
+    await session.clickSelector('[data-testid="library-trash-open"]');
     await session.waitFor(`!!document.querySelector('[data-item-id="${id1}"] [data-testid="library-row-permanent-delete"]')`, { timeoutMs: 15000, label: "in-trash" });
     await session.clickSelector(`[data-item-id="${id1}"] [data-testid="library-row-permanent-delete"]`);
     const goneDeadline = Date.now() + 20000;
@@ -147,7 +147,7 @@ async function main() {
     const id3 = await importOne(session, report);
     await moveToTrash(session, id2);
     await moveToTrash(session, id3);
-    await session.clickSelector('[data-testid="library-tab-trash"]');
+    await session.clickSelector('[data-testid="library-trash-open"]');
     await session.waitFor(`!!document.querySelector('[data-testid="library-empty-trash"]')`, { timeoutMs: 15000, label: "empty-trash-btn" });
     const trashCountBefore = (await libraryRowIds(session)).filter((id) => id === id2 || id === id3).length;
     await session.clickSelector('[data-testid="library-empty-trash"]');
@@ -177,7 +177,7 @@ async function main() {
     (report.settledStages ??= {})[idR] = settledR;
     const goneActiveAfter = !(await activeIds(session)).includes(idR);
     const trashCountAfter = (await trashIds(session)).filter((x) => x === idR).length;
-    await session.clickSelector('[data-testid="library-tab-trash"]');
+    await session.clickSelector('[data-testid="library-trash-open"]');
     await session.waitFor(`!!document.querySelector('[data-item-id="${idR}"] [data-testid="library-row-permanent-delete"]')`, { timeoutMs: 15000, label: "in-trash-c3" });
     await session.clickSelector(`[data-item-id="${idR}"] [data-testid="library-row-permanent-delete"]`);
     let jobGoneR = true;

@@ -71,6 +71,15 @@ const VISION_ANSWER_STATE_NOT_EXECUTED: &str = "not_executed";
 
 fn vision_answer_failure_state(error: &str) -> (&'static str, &'static str) {
     let lower = error.to_ascii_lowercase();
+    if lower.starts_with("cloud_token_budget_usage_unavailable:") {
+        return (VISION_ANSWER_STATE_NOT_EXECUTED, "usage_unavailable");
+    }
+    if lower.starts_with("cloud_token_budget_exceeded:") {
+        return (VISION_ANSWER_STATE_NOT_EXECUTED, "budget_exceeded");
+    }
+    if lower.starts_with("llm_output_truncated:") {
+        return (VISION_ANSWER_STATE_FAILED, "output_truncated");
+    }
     if lower.starts_with("llm_http_401:")
         || lower.starts_with("llm_http_403:")
         || lower.contains("invalid_api_key")
@@ -152,6 +161,15 @@ fn vision_answer_user_message(
 ) -> &'static str {
     if state == VISION_ANSWER_STATE_NOT_EXECUTED && state_reason == "no_answer_page" {
         return "原文件没有可识别的扫描答案页，请手工填写答案。";
+    }
+    if state_reason == "usage_unavailable" {
+        return "服务未返回可确认的 token 用量，答案页请求已停止；没有写入答案，题稿仍可编辑。";
+    }
+    if state_reason == "budget_exceeded" {
+        return "本次云端识别已达到 token 上限，答案页请求未执行；没有写入答案，题稿仍可编辑。";
+    }
+    if state_reason == "output_truncated" {
+        return "答案页识别响应达到输出上限而被截断，没有写入答案；请调整云端输出上限后重试。";
     }
     if state == VISION_ANSWER_STATE_NOT_EXECUTED {
         return "答案页识别这次未执行完成，题稿仍可编辑，请重试。";
@@ -580,7 +598,7 @@ fn main_pdf_upload_path(root: &Path, job: &ImportJob) -> CommandResult<(SourceFi
 /// 云端链需要拒绝的是「没有可用源文件」，而不是「来源不是 PDF」——否则 DOCX
 /// 永远到不了模型，云端识别对 DOCX 形同不存在。非 PDF 的证据面改由
 /// [`document_ir_source_text`] 提供，见 [`generate_cloud_reading_outline`]。
-fn main_source_for_cloud(root: &Path, job: &ImportJob) -> CommandResult<(SourceFile, PathBuf)> {
+pub(crate) fn main_source_for_cloud(root: &Path, job: &ImportJob) -> CommandResult<(SourceFile, PathBuf)> {
     let source = main_source_file(job)
         .cloned()
         .ok_or_else(|| "no_main_source_file".to_string())?;
@@ -775,7 +793,7 @@ fn local_name_of(name: &[u8]) -> &str {
     text.rsplit(':').next().unwrap_or("")
 }
 
-fn main_pdf_vision_extraction(root: &Path, job: &ImportJob) -> CommandResult<(Value, PathBuf)> {
+pub(crate) fn main_pdf_vision_extraction(root: &Path, job: &ImportJob) -> CommandResult<(Value, PathBuf)> {
     let (_source, upload_path) = main_pdf_upload_path(root, job)?;
     let dir = job_dir(root, &job.job_id);
     let cache_dir = dir.join("cache").join("vision");
@@ -934,13 +952,22 @@ where
     let input =
         make_vision_answer_extraction_input(&profile, job, profile_id, &answer_page_extraction);
     let api_key = load_llm_api_key(root, profile_id);
-    let output = match llm_gateway(
+    let first_result = llm_gateway(
         root,
         &job.job_id,
         "extract_pdf_image_answers",
         &input,
         api_key.as_deref(),
-    ) {
+    );
+    let result = match first_result {
+        Err(error) if error.starts_with("vision_answer_evidence_page_not_supplied:") => {
+            let mut retry = input.clone();
+            retry["repairNote"] = json!(error);
+            llm_gateway(root, &job.job_id, "extract_pdf_image_answers", &retry, api_key.as_deref())
+        }
+        result => result,
+    };
+    let output = match result {
         Ok(output) => output,
         // The real gateway rejects an empty `answers` object.  Treat that
         // particular result as a conservative empty page, so a rerun can clear
@@ -1135,7 +1162,7 @@ fn task_group_and_response_for_slot<'a>(
     None
 }
 
-fn option_labels_for_slot(canonical: &Value, slot_id: &str) -> BTreeSet<String> {
+fn option_labels_in_source_case(canonical: &Value, slot_id: &str) -> BTreeSet<String> {
     let Some(response) = response_group_for_slot(canonical, slot_id) else {
         return BTreeSet::new();
     };
@@ -1145,7 +1172,7 @@ fn option_labels_for_slot(canonical: &Value, slot_id: &str) -> BTreeSet<String> 
         .into_iter()
         .flatten()
         .filter_map(|option| option.get("label").and_then(Value::as_str))
-        .map(|label| label.to_ascii_uppercase())
+        .map(str::to_string)
         .collect::<BTreeSet<_>>();
     if let Some(bank_ref) = response.get("optionBankRef").and_then(Value::as_str) {
         for group in canonical
@@ -1168,12 +1195,17 @@ fn option_labels_for_slot(canonical: &Value, slot_id: &str) -> BTreeSet<String> 
                         .into_iter()
                         .flatten()
                         .filter_map(|option| option.get("label").and_then(Value::as_str))
-                        .map(|label| label.to_ascii_uppercase()),
+                        .map(str::to_string),
                 );
             }
         }
     }
     labels
+}
+
+fn option_labels_for_slot(canonical: &Value, slot_id: &str) -> BTreeSet<String> {
+    option_labels_in_source_case(canonical, slot_id).into_iter()
+        .map(|label| label.to_ascii_uppercase()).collect()
 }
 
 fn roman_label(value: u32) -> Option<String> {
@@ -1585,6 +1617,12 @@ pub(crate) fn answer_value_for_slot(
     if allowed.is_empty() || option_values.iter().any(|value| !allowed.contains(value)) {
         return None;
     }
+    // Validation is case-insensitive; storage/rendering must use the actual
+    // option label (not uppercase Roman numerals that do not exist in the pool).
+    let printed_labels = option_labels_in_source_case(canonical, slot_id);
+    let option_values = option_values.into_iter().map(|value| {
+        printed_labels.iter().find(|label| label.eq_ignore_ascii_case(&value)).cloned().unwrap_or(value)
+    }).collect::<Vec<_>>();
     let assignment = response_group_for_slot(canonical, slot_id)
         .and_then(|response| response.get("assignment"))
         .and_then(Value::as_str)
@@ -5765,7 +5803,7 @@ mod tests {
             vec![json!({
                 "op":"setAnswer",
                 "slotId":"q15",
-                "value":{"kind":"option", "labels":["II"], "assignment":"per_slot"}
+                "value":{"kind":"option", "labels":["ii"], "assignment":"per_slot"}
             })]
         );
     }
@@ -6551,6 +6589,21 @@ mod tests {
                 "credentials_invalid",
             ),
             (
+                "cloud_token_budget_usage_unavailable:1:300000",
+                "not_executed",
+                "usage_unavailable",
+            ),
+            (
+                "cloud_token_budget_exceeded:300001:300000",
+                "not_executed",
+                "budget_exceeded",
+            ),
+            (
+                "llm_output_truncated:finish_reason=length",
+                "failed",
+                "output_truncated",
+            ),
+            (
                 "llm_json_parse_failed:unexpected end of input",
                 "failed",
                 "invalid_response",
@@ -6649,6 +6702,34 @@ mod tests {
         );
         assert_eq!(unavailable_report["appliedCount"], 0);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn answer_attachment_page_number_gets_one_constrained_source_page_repair() {
+        let root = std::env::temp_dir().join(format!("answer-page-reference-repair-{}", Uuid::new_v4().simple()));
+        ensure_app_dirs(&root).unwrap();
+        let job = sample_job();
+        save_job(&root, &job).unwrap();
+        crate::llm_profiles::save_profiles(&root, &[json!({
+            "profileId":"page-repair-test","provider":"OpenAiCompatible","model":"test","enabled":true
+        })]).unwrap();
+        let extraction = json!({"pages":[{"pageIndex":5,"images":[{"path":"unused-by-fake-gateway"}]}]});
+        let mut calls = 0;
+        let (candidate, _) = vision_answer_candidate_for_job(&root, &job, "page-repair-test", &extraction, &mut |_, _, command, input, _| {
+            calls += 1;
+            assert_eq!(command, "extract_pdf_image_answers");
+            assert_eq!(input["pages"][0]["pageIndex"], 5);
+            if calls == 1 {
+                Err("vision_answer_evidence_page_not_supplied:0:1:allowed=[5]".to_string())
+            } else {
+                assert!(input["repairNote"].as_str().unwrap().contains("allowed=[5]"));
+                Ok(json!({"answers":{"1":"TRUE"},"confidence":1,"warnings":[],"evidence":[{"questionNumber":"1","pageIndex":5,"quote":"1 TRUE"}]}))
+            }
+        }).unwrap();
+        assert_eq!(calls, 2);
+        assert_eq!(candidate["answers"]["1"], "TRUE");
+        assert_eq!(candidate["evidence"][0]["pageIndex"], 5);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

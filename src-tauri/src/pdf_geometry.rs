@@ -2821,6 +2821,19 @@ fn write_rgba_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> CommandR
         .map_err(|error| format!("diagram_question_region_png_write:{}", error))
 }
 
+/// Import preflight uses the same geometric line reconstruction as the parser,
+/// independently of pdf-extract's content-stream order and spacing.
+pub(crate) fn extract_page_texts_for_split(path: &Path) -> CommandResult<Vec<String>> {
+    let guard = pdfium_instance()?;
+    let pdfium = guard.as_ref().map_err(|error| error.clone())?;
+    let document = pdfium.load_pdf_from_file(path, None)
+        .map_err(|error| format!("split_pdfium_open:{error}"))?;
+    Ok(document.pages().iter().map(|page| {
+        build_blocks_from_chars(&collect_chars_with_origin(&page))
+            .into_iter().map(|block| block.text).collect::<Vec<_>>().join("\n")
+    }).collect())
+}
+
 /// Copy original pages without rasterising or changing their layout.
 pub(crate) fn subset_pdf_pages(
     bytes: &[u8],

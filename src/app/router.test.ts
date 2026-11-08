@@ -4,6 +4,7 @@ import {
   legacyPath,
   legacyRedirect,
   libraryPath,
+  libraryPickPath,
   parseRoute,
   workspacePath
 } from "./router";
@@ -28,7 +29,7 @@ describe("parseRoute — 三个主表面", () => {
 
   it("/library 解析为题库并带上意图", () => {
     expect(parseRoute("#/library")).toEqual({ name: "library" });
-    expect(parseRoute("#/library?import=1")).toEqual({ name: "library", intent: "import" });
+    expect(parseRoute("#/library?import=1")).toEqual({ name: "import" });
     expect(parseRoute("#/library?publish=1")).toEqual({ name: "library", intent: "publish" });
   });
 
@@ -65,7 +66,7 @@ describe("legacyRedirect — 旧链接一次性重定向", () => {
 
   it("/jobs 系列映射到题库 / 工作区", () => {
     expect(legacyRedirect("#/jobs")).toBe("/library");
-    expect(legacyRedirect("#/jobs/new")).toBe("/library?import=1");
+    expect(legacyRedirect("#/jobs/new")).toBe("/import");
     expect(legacyRedirect("#/jobs/abc")).toBe("/items/abc");
     expect(legacyRedirect("#/jobs/abc/preview")).toBe("/items/abc");
     expect(legacyRedirect("#/jobs/abc/export")).toBe("/items/abc?publish=1");
@@ -78,7 +79,7 @@ describe("legacyRedirect — 旧链接一次性重定向", () => {
   });
 
   it("显式 legacy 逃生通道全部重定向（writing 并入题库写作子标签，C3）", () => {
-    expect(legacyRedirect("#/legacy/import")).toBe("/library?import=1");
+    expect(legacyRedirect("#/legacy/import")).toBe("/import");
     expect(legacyRedirect("#/legacy/dashboard")).toBe("/library");
     expect(legacyRedirect("#/legacy/dashboard/abc")).toBe("/items/abc");
     expect(legacyRedirect("#/legacy/writing")).toBe("/library?modality=writing");
@@ -102,7 +103,7 @@ describe("legacyRedirect — 旧链接一次性重定向", () => {
 describe("路径构造", () => {
   it("libraryPath / workspacePath 带可选意图", () => {
     expect(libraryPath()).toBe("/library");
-    expect(libraryPath("import")).toBe("/library?import=1");
+    expect(libraryPath("import")).toBe("/import");
     expect(workspacePath("x")).toBe("/items/x");
     expect(workspacePath("x", "publish")).toBe("/items/x?publish=1");
   });
@@ -111,5 +112,20 @@ describe("路径构造", () => {
     expect(legacyPath("writing")).toBe("/legacy/writing");
     expect(legacyPath("writing", "id-1")).toBe("/legacy/writing/id-1");
     expect(jobResumePath({ jobId: "job-9" })).toBe("/items/job-9");
+  });
+});
+
+describe("编辑器「去组卷发布」的预选路由", () => {
+  it("libraryPickPath 生成带 publish 意图与 pick 的题库地址，parseRoute 能读回预选题", () => {
+    const path = libraryPickPath("item-abc");
+    expect(path).toBe("/library?publish=1&pick=item-abc");
+    const route = parseRoute(`#${path}`);
+    expect(route.name).toBe("library");
+    expect(route.intent).toBe("publish");
+    expect(route.pickItemId).toBe("item-abc");
+  });
+
+  it("没有 pick 时 pickItemId 为 undefined", () => {
+    expect(parseRoute("#/library?publish=1").pickItemId).toBeUndefined();
   });
 });

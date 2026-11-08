@@ -1,182 +1,214 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { chooseExportDirectory } from "../../api/desktopDialogs";
-import { describeBatchPublishOutcome, publishItems } from "../../api/publishClient";
-import { describeRetryOutcome, retryProcessing } from "../../api/processingClient";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { go, workspacePath, type LibraryIntent } from "../../app/router";
-import { ImportDrawer } from "../import/ImportDrawer";
-import { useImportFiles, type ImportRejection } from "../import/useImportFiles";
-import { LibraryBatchBar } from "./LibraryBatchBar";
-import { LibraryHeader } from "./LibraryHeader";
-import { LibraryItemList } from "./LibraryItemList";
-import { WritingPanel } from "./WritingPanel";
+import { getCurrentPaper, type CurrentPaperV1 } from "../../api/paperClient";
+import { describePublishResult, publishItems } from "../../api/publishClient";
+import { renameLibraryItem } from "../../api/workspaceClient";
 import { readAppSettings, writeAppSettings } from "../settings/appSettings";
+import { chooseExportDirectory } from "../../api/desktopDialogs";
 import { toUserFacingError } from "../../utils/userFacingError";
+import { CurrentPaperCard } from "./CurrentPaperCard";
+import { LibraryItemList } from "./LibraryItemList";
+import { LibraryPaperTable } from "./LibraryPaperTable";
+import { PaperComposerBar, type PaperConfirmation } from "./PaperComposerBar";
 import { useLibraryStore } from "./libraryStore";
+import { libraryRows, matchesSearch } from "./libraryTypes";
 import {
-  isModalityTab,
-  isProcessingStage,
-  matchesModality,
-  matchesPart,
-  matchesSearch,
-  matchesTab,
-  MODALITY_TABS,
-  type LibraryFilterTab,
-  type LibraryModalityTab
-} from "./libraryTypes";
+  buildPaperSpec,
+  EMPTY_PAPER_SELECTION,
+  isReadingPart,
+  reconcilePaperSelection,
+  selectedPaperItemIds,
+  toggleListeningItem,
+  toggleReadingItem,
+  type PaperSelection,
+  type ReadingPart
+} from "./paperSelection";
+import { WritingPanel } from "./WritingPanel";
 
-// 题库是产品中心（计划 §0.3 / §16.4）：导入、批量任务进度、搜索、打开、选择发布都在这一页完成。
-// 已退休的独立页面：Dashboard、JobList、ImportWizard、ExportPage、LibraryExamDetail。
-const ALL_TABS: readonly LibraryFilterTab[] = ["all", "processing", "action_required", "ready", "failed", "trash"];
+// 题库一级页：只显示「可发布」与「已发布」。待检查、识别中、失败的题在「导入」页。
+// 唯一的发布动作是「发布为当前试卷」（替换语义）。回收站是右上角的次级入口。
 
-/** 失败提示经用户文案层收敛；机器码/路径只进日志（audit A7-F04）。 */
+/** 失败提示经用户文案层收敛；机器码只进日志。 */
 function describeLibraryActionError(error: unknown, fallback: string): string {
   const facing = toUserFacingError(error, fallback);
   console.error("[library]", facing.internalDetail);
   return facing.userMessage;
 }
 
-export function LibraryPage({ intent, initialModality }: { intent?: LibraryIntent; initialModality?: string }) {
+/** 确认框里列出的「将被替换」的当前试卷题名（阅读 + 听力）。 */
+export function replacedPaperTitles(paper: CurrentPaperV1 | null | undefined): string[] {
+  if (!paper) return [];
+  return [...paper.reading, ...paper.listening].map((entry) => entry.title);
+}
+
+export function LibraryPage({ intent, pickItemId }: { intent?: LibraryIntent; pickItemId?: string }) {
   const store = useLibraryStore();
-  const [tab, setTab] = useState<LibraryFilterTab>("all");
-  const [modalityTab, setModalityTab] = useState<LibraryModalityTab>(
-    isModalityTab(initialModality) ? initialModality : "all"
-  );
+  // 编辑器「去组卷发布」带来的预选题：每个 id 只应用一次，避免刷新时反复勾选。
+  const appliedPick = useRef<string | undefined>(undefined);
+  // 组卷发布的防重入：在 await 之前就占住，双击或快速重复点击只会发出一次请求。
+  const paperBusy = useRef(false);
   const [search, setSearch] = useState("");
-  const [partFilter, setPartFilter] = useState<string | undefined>(undefined);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [drawerOpen, setDrawerOpen] = useState(intent === "import");
-  const [rejected, setRejected] = useState<ImportRejection[]>([]);
-  const [publishing, setPublishing] = useState(false);
-  const [publishMessage, setPublishMessage] = useState<string | undefined>();
+  const [showTrash, setShowTrash] = useState(false);
   const [notice, setNotice] = useState<string | undefined>(
-    intent === "publish" ? "在下面勾选要发布的题目，然后点击「发布到 NAS」。" : undefined
+    intent === "publish" ? "在下面勾选三篇阅读（每个 Part 一篇），然后发布为当前试卷。" : undefined
   );
+  const [paperSelection, setPaperSelection] = useState<PaperSelection>(EMPTY_PAPER_SELECTION);
+  const [paperPublishing, setPaperPublishing] = useState(false);
+  const [paperMessage, setPaperMessage] = useState<string | undefined>();
+  const [confirmation, setConfirmation] = useState<PaperConfirmation | undefined>();
+  const [destination, setDestination] = useState<string | undefined>(() => readAppSettings().nasDestination);
+  // undefined = 还在读取；null = NAS 上还没有当前试卷。
+  const [currentPaper, setCurrentPaper] = useState<CurrentPaperV1 | null | undefined>(undefined);
+  const [currentPaperError, setCurrentPaperError] = useState<string | undefined>();
+  const [paperVersion, setPaperVersion] = useState(0);
 
-  const importer = useImportFiles(store.refresh);
-
-  // 路由携带 ?modality= 时（含 #/legacy/writing 重定向）切到对应题型子标签。
+  // 当前试卷（NAS 上的指针）：打开页面时读取，发布后重读。
   useEffect(() => {
-    if (isModalityTab(initialModality)) setModalityTab(initialModality);
-  }, [initialModality]);
-
-  // 题型子标签计数（活动条目，不含回收站）。
-  const modalityCounts = useMemo(() => {
-    const result = Object.fromEntries(MODALITY_TABS.map((value) => [value, 0])) as Record<LibraryModalityTab, number>;
-    for (const value of MODALITY_TABS) {
-      result[value] = store.rows.filter((row) => !row.inTrash && matchesModality(row, value)).length;
+    if (!destination) {
+      setCurrentPaper(undefined);
+      return;
     }
-    return result;
+    let cancelled = false;
+    getCurrentPaper(destination)
+      .then((paper) => {
+        if (cancelled) return;
+        setCurrentPaperError(undefined);
+        setCurrentPaper(paper);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error("[library] current paper read failed", error);
+        setCurrentPaperError(describeLibraryActionError(error, "读取当前试卷失败，请稍后再试。"));
+        setCurrentPaper(undefined);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [destination, paperVersion]);
+
+  // 编辑器「去组卷发布」：把这道题预选进它所在 Part 的组卷栏；没有 Part 就提示先设 Part。
+  useEffect(() => {
+    if (!pickItemId || appliedPick.current === pickItemId) return;
+    if (!store.rows.length) return;
+    appliedPick.current = pickItemId;
+    const row = store.rows.find((candidate) => candidate.id === pickItemId && !candidate.inTrash);
+    if (!row) {
+      setNotice("这道题不在题库里，无法加入组卷。");
+      return;
+    }
+    if (row.modality === "reading" && isReadingPart(row.part)) {
+      const part = row.part;
+      setPaperSelection((current) =>
+        current.reading[part] === row.id ? current : toggleReadingItem(current, part, row.id)
+      );
+      setNotice(`已把「${row.title}」放进 ${part} 的组卷栏；选齐三篇阅读后即可发布为当前试卷。`);
+      return;
+    }
+    if (row.modality === "listening" && row.part) {
+      const part = row.part;
+      setPaperSelection((current) =>
+        current.listening.some((entry) => entry.itemId === row.id)
+          ? current
+          : toggleListeningItem(current, row.id, part)
+      );
+      setNotice(`已把「${row.title}」加入听力组卷（${part}）。`);
+      return;
+    }
+    setNotice(`「${row.title}」还没有 Part，请先在下面的表格里为它设置 P1/P2/P3（阅读）或 Part 1–4（听力），再去组卷。`);
+  }, [pickItemId, store.rows]);
+
+  // 组卷选择与题库对齐：题被删除、或 Part 被改到别的槽位，就从选择里去掉。
+  useEffect(() => {
+    const candidates = store.rows
+      .filter((row) => !row.inTrash)
+      .map((row) => ({ id: row.id, modality: row.modality, part: row.part }));
+    setPaperSelection((current) => {
+      const next = reconcilePaperSelection(current, candidates);
+      return JSON.stringify(next) === JSON.stringify(current) ? current : next;
+    });
   }, [store.rows]);
 
-  // 状态标签计数：限定在当前题型子标签内。
-  const counts = useMemo(() => {
-    const result = Object.fromEntries(ALL_TABS.map((value) => [value, 0])) as Record<LibraryFilterTab, number>;
-    for (const value of ALL_TABS) {
-      result[value] = store.rows.filter((row) => matchesModality(row, modalityTab) && matchesTab(row, value)).length;
-    }
-    return result;
-  }, [store.rows, modalityTab]);
-
-  const tabRows = useMemo(
-    () => store.rows.filter((row) => matchesModality(row, modalityTab) && matchesTab(row, tab) && matchesSearch(row, search)),
-    [store.rows, modalityTab, tab, search]
+  const currentExamIds = useMemo(
+    () => new Set([...(currentPaper?.reading ?? []), ...(currentPaper?.listening ?? [])].map((entry) => entry.examId)),
+    [currentPaper]
   );
 
-  // 后台识别横幅与「清空回收站」都作用于全部题型，计数不能被题型子标签收敛。
-  const totalProcessingCount = useMemo(
-    () => store.rows.filter((row) => !row.inTrash && isProcessingStage(row.stage)).length,
-    [store.rows]
-  );
-  const totalTrashedCount = useMemo(
-    () => store.rows.filter((row) => row.inTrash).length,
-    [store.rows]
-  );
-
-  // 当前题面里实际出现的 Part（P1/P2/P3 / Part 1–4 / Task 1/2），用于渲染筛选按钮。
-  const availableParts = useMemo(() => {
-    const set = new Set<string>();
-    for (const row of tabRows) if (row.part) set.add(row.part);
-    return [...set].sort();
-  }, [tabRows]);
-
+  /** 题库可见行：可发布 + 已发布（待检查不在这里），按标题搜索。 */
   const visibleRows = useMemo(
-    () => tabRows.filter((row) => matchesPart(row, partFilter)),
-    [tabRows, partFilter]
+    () => libraryRows(store.rows).filter((row) => matchesSearch(row, search)),
+    [store.rows, search]
   );
+  const trashRows = useMemo(() => store.rows.filter((row) => row.inTrash), [store.rows]);
 
-  // 选中的 Part 不再出现在当前列表时（切了标签/搜索/删除），清掉筛选，避免空列表卡死。
-  useEffect(() => {
-    if (partFilter && !availableParts.includes(partFilter)) setPartFilter(undefined);
-  }, [availableParts, partFilter]);
-
-  // 行离开可见集合（被删除、被筛掉）后不应继续留在选择集中。
-  useEffect(() => {
-    const visibleIds = new Set(visibleRows.map((row) => row.id));
-    setSelectedIds((current) => {
-      const next = new Set([...current].filter((id) => visibleIds.has(id)));
-      return next.size === current.size ? current : next;
-    });
-  }, [visibleRows]);
-
-  const toggleSelect = useCallback((id: string) => {
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
-
-  const startImport = useCallback(async (
-    files: Parameters<typeof importer.importFiles>[0],
-    decisions?: NonNullable<Parameters<typeof importer.importFiles>[1]>["decisions"]
-  ) => {
-    const result = await importer.importFiles(files, decisions ? { decisions } : undefined);
-    setRejected(result.rejected);
-    if (result.rows.length) {
-      store.prependOptimistic(result.rows);
-      setDrawerOpen(false);
-      setTab("all");
-      // 失败必须跟「已建立 N 个题目」一起说出口。抽屉在这里被卸载，而 `rejected` 原本只在
-      // 抽屉里渲染：导入期的音频绑定失败于是**静默消失**，用户只看到一句成功——
-      // 而那段音频根本没绑上。所以提示词要说清失败数，清单要留在页面上（见下方 role="alert"）。
-      setNotice(result.rejected.length
-        ? `已建立 ${result.rows.length} 个题目，但另有 ${result.rejected.length} 项没有成功（见下方清单）。`
-        : `已建立 ${result.rows.length} 个题目，识别在后台继续。`);
-    }
-  }, [importer, store]);
-
-  // 发布目录在设置页选一次后记住（计划 §13.2）；这里只在还没选过时才追问。
+  // 发布目录：设置里选过就记住，否则追问一次。
   async function resolveDestination(): Promise<string | undefined> {
     const stored = readAppSettings().nasDestination;
     if (stored) return stored;
     const picked = await chooseExportDirectory();
     if (!picked) return undefined;
     writeAppSettings({ nasDestination: picked });
+    setDestination(picked);
     return picked;
   }
 
-  async function publishSelected() {
-    const itemIds = [...selectedIds];
-    if (!itemIds.length) return;
-    const destination = await resolveDestination();
-    if (!destination) {
-      setPublishMessage("请先选择 NAS 目录。");
-      return;
-    }
-    setPublishing(true);
-    setPublishMessage(`正在发布 0/${itemIds.length}`);
+  function requestPublish() {
+    if (!buildPaperSpec(paperSelection)) return;
+    const titleOf = (id: string) => store.rows.find((row) => row.id === id)?.title ?? id;
+    setConfirmation({
+      incoming: selectedPaperItemIds(paperSelection).map(titleOf),
+      replacing: replacedPaperTitles(currentPaper)
+    });
+  }
+
+  /** 组卷发布（替换语义）。清单提交并写入当前试卷之后才算成功；缺题时旧试卷保持不变。 */
+  async function publishPaper() {
+    if (paperBusy.current) return;
+    paperBusy.current = true;
+    setPaperPublishing(true);
+    setConfirmation(undefined);
     try {
-      const outcome = await publishItems(itemIds, destination, (done, total) => {
-        setPublishMessage(`正在发布 ${done}/${total}`);
-      });
-      // 一次点击即发布：没有预检、没有阻断清单。放行与否只在后端发布记录里。
-      setNotice(describeBatchPublishOutcome(outcome));
-      setPublishMessage(outcome.failed.length ? outcome.failed[0].message : undefined);
-      if (!outcome.failed.length) setSelectedIds(new Set());
-      store.refresh();
+      const spec = buildPaperSpec(paperSelection);
+      if (!spec) return;
+      const itemIds = selectedPaperItemIds(paperSelection);
+      const target = await resolveDestination();
+      if (!target) {
+        setPaperMessage("请先选择 NAS 目录。");
+        return;
+      }
+      setPaperMessage(`正在发布 0/${itemIds.length}`);
+      const outcome = await publishItems(itemIds, target, (done, total) => {
+        setPaperMessage(`正在发布 ${done}/${total}`);
+      }, { paper: spec });
+      const titleOf = (id: string) => store.rows.find((row) => row.id === id)?.title ?? id;
+      // 一条结论只说一次：顶层提示与组卷区用同一句，由后端 status 决定（审计 A5）。
+      const message = describePublishResult(outcome, titleOf);
+      setNotice(message);
+      setPaperMessage(message);
+      if (outcome.paper?.ok) setPaperSelection(EMPTY_PAPER_SELECTION);
     } finally {
-      setPublishing(false);
+      // 不论成败都重读当前试卷：锁忙或指针失败时，页面要显示 NAS 上真实的当前试卷。
+      setPaperVersion((version) => version + 1);
+      store.refresh();
+      paperBusy.current = false;
+      setPaperPublishing(false);
+    }
+  }
+
+  /** 组卷视图里改名：失败时抛出用户文案，由单元格回滚并提示。 */
+  async function renameItem(id: string, title: string) {
+    const row = store.rows.find((candidate) => candidate.id === id);
+    if (row?.currentEditVersion === undefined) {
+      throw new Error("这道题的数据还没准备好，请刷新后再改名。");
+    }
+    try {
+      await renameLibraryItem(id, title, row.currentEditVersion);
+      store.refresh();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("EDIT_VERSION_CONFLICT")) {
+        throw new Error("已被其他编辑修改，请刷新。");
+      }
+      throw new Error(describeLibraryActionError(error, "名称保存失败，请稍后再试。"));
     }
   }
 
@@ -186,17 +218,6 @@ export function LibraryPage({ intent, initialModality }: { intent?: LibraryInten
       setNotice("已移入回收站，可在回收站恢复。");
     } catch (error) {
       setNotice(describeLibraryActionError(error, "删除失败，请稍后重试。"));
-    }
-  }
-
-  /** 失败 / 已取消的行在题库里直接重试（按此刻的云端设置），并如实说有没有入队。 */
-  async function retry(id: string) {
-    try {
-      const queued = await retryProcessing(id);
-      setNotice(describeRetryOutcome(queued));
-      store.refresh();
-    } catch (error) {
-      setNotice(describeLibraryActionError(error, "重试没有成功，请稍后再试。"));
     }
   }
 
@@ -234,7 +255,6 @@ export function LibraryPage({ intent, initialModality }: { intent?: LibraryInten
         setNotice(`已清空回收站，永久删除 ${result.deleted} 项。`);
         return;
       }
-      // 区分「仍在处理中」与「真的删除失败」——不要把后者也说成「请取消或等待」。
       const stillProcessing = result.skipped.filter((s) => s.reason.includes("ITEM_STILL_PROCESSING")).length;
       const otherFailed = result.skipped.length - stillProcessing;
       const parts = [`已永久删除 ${result.deleted} 项`];
@@ -255,25 +275,74 @@ export function LibraryPage({ intent, initialModality }: { intent?: LibraryInten
     }
   }
 
+  if (showTrash) {
+    return (
+      <section className="library-page" data-testid="library-page">
+        <header className="library-header">
+          <div className="library-header-top">
+            <div>
+              <h1>回收站</h1>
+              <p className="library-background-note">回收站里的题不参与组卷。恢复后回到题库。</p>
+            </div>
+            <div className="button-row">
+              <button className="ghost small" data-testid="library-trash-close" onClick={() => setShowTrash(false)}>返回题库</button>
+              {trashRows.length ? (
+                <button className="danger small" data-testid="library-empty-trash" onClick={emptyTrash}>
+                  清空回收站（{trashRows.length}）
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </header>
+        {notice ? (
+          <p className="library-notice" data-testid="library-notice" role="status">
+            {notice}
+            <button className="ghost small" onClick={() => setNotice(undefined)} aria-label="关闭提示">×</button>
+          </p>
+        ) : null}
+        <LibraryItemList
+          rows={trashRows}
+          loading={store.loading}
+          tab="trash"
+          selectedIds={new Set()}
+          onToggleSelect={() => undefined}
+          onOpen={() => undefined}
+          onTrash={() => undefined}
+          onRestore={restore}
+          onPermanentDelete={permanentlyDelete}
+          onSetPart={setPart}
+          onRetry={() => undefined}
+        />
+      </section>
+    );
+  }
+
   return (
     <section className="library-page" data-testid="library-page">
-      <LibraryHeader
-        tab={tab}
-        counts={counts}
-        modalityTab={modalityTab}
-        modalityCounts={modalityCounts}
-        search={search}
-        backgroundCount={totalProcessingCount}
-        onTabChange={setTab}
-        onModalityChange={setModalityTab}
-        onSearchChange={setSearch}
-        onImport={() => {
-          setRejected([]);
-          importer.clearError();
-          setDrawerOpen(true);
-        }}
-      />
+      <header className="library-header">
+        <div className="library-header-top">
+          <div>
+            <h1>题库</h1>
+            <p className="library-background-note">这里只显示可发布与已发布的题。待检查的题在「导入」页处理。</p>
+          </div>
+          <div className="button-row">
+            <input
+              className="library-search"
+              type="search"
+              placeholder="按标题搜索…"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              aria-label="按标题搜索题目"
+            />
+            <button className="ghost small" data-testid="library-import" onClick={() => go("/import")}>导入</button>
+            <button className="ghost small" data-testid="library-trash-open" onClick={() => setShowTrash(true)}>
+              回收站（{trashRows.length}）
+            </button>
+          </div>
+        </div>
+      </header>
 
+      <CurrentPaperCard paper={currentPaper} destination={destination} error={currentPaperError} />
       {store.error ? <p className="error-text">{toUserFacingError(store.error, "题库读取失败，请稍后重试。").userMessage}</p> : null}
       {notice ? (
         <p className="library-notice" data-testid="library-notice" role="status">
@@ -281,85 +350,35 @@ export function LibraryPage({ intent, initialModality }: { intent?: LibraryInten
           <button className="ghost small" onClick={() => setNotice(undefined)} aria-label="关闭提示">×</button>
         </p>
       ) : null}
-      {modalityTab === "writing" ? (
-        <WritingPanel refresh={store.refresh} />
-      ) : (
-        <>
-          {/* 导入抽屉一旦关闭，它自己的 reject-list 就随之卸载。导入期的音频绑定失败不能跟着
-              消失——「已建立 N 个题目」会和它同时出现，用户得能看见到底哪一段没绑上。 */}
-          {!drawerOpen && rejected.length ? (
-            <ul className="reject-list" data-testid="library-import-rejected" role="alert">
-              {rejected.map((item) => (
-                <li key={`${item.name}:${item.reason}`}>
-                  <strong className="file-name">{item.name}</strong>
-                  <span>{item.reason}</span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
 
-          {tab !== "trash" && availableParts.length ? (
-            <div className="library-part-filter" data-testid="library-part-filter" role="group" aria-label="按 Part 筛选">
-              <button className={`chip small${!partFilter ? " is-active" : ""}`} onClick={() => setPartFilter(undefined)}>全部</button>
-              {availableParts.map((part) => (
-                <button
-                  key={part}
-                  className={`chip small${partFilter === part ? " is-active" : ""}`}
-                  data-testid={`library-part-chip-${part}`}
-                  onClick={() => setPartFilter(part)}
-                >
-                  {part}
-                </button>
-              ))}
-            </div>
-          ) : null}
-
-          {/* 清空回收站作用于全部题型，只在「全部」子标签下出现，避免计数与实际删除范围不符。 */}
-          {tab === "trash" && modalityTab === "all" && totalTrashedCount > 0 ? (
-            <div className="library-trash-toolbar" data-testid="library-trash-toolbar">
-              <button className="danger small" data-testid="library-empty-trash" onClick={emptyTrash}>
-                清空回收站（{totalTrashedCount}）
-              </button>
-            </div>
-          ) : null}
-
-          <LibraryItemList
-            rows={visibleRows}
-            loading={store.loading}
-            tab={tab}
-            selectedIds={selectedIds}
-            onToggleSelect={toggleSelect}
-            onOpen={(id) =>
-              store.rows.find((row) => row.id === id)?.modality === "writing"
-                ? setModalityTab("writing")
-                : go(workspacePath(id))
-            }
-            onTrash={trash}
-            onRestore={restore}
-            onPermanentDelete={permanentlyDelete}
-            onSetPart={setPart}
-            onRetry={retry}
-          />
-
-          <LibraryBatchBar
-            selectedCount={selectedIds.size}
-            publishing={publishing}
-            publishMessage={publishMessage}
-            onClear={() => setSelectedIds(new Set())}
-            onPublish={publishSelected}
-          />
-        </>
-      )}
-
-      <ImportDrawer
-        open={drawerOpen}
-        busy={importer.busy}
-        stageMessage={importer.stageMessage}
-        error={importer.error}
-        rejected={rejected}
-        onClose={() => setDrawerOpen(false)}
-        onImport={startImport}
+      <LibraryPaperTable
+        rows={visibleRows}
+        selection={paperSelection}
+        hasCurrentPaper={Boolean(currentPaper)}
+        currentExamIds={currentExamIds}
+        onToggleReading={(part: ReadingPart, id: string) => setPaperSelection((current) => toggleReadingItem(current, part, id))}
+        onToggleListening={(id: string, part: string) => setPaperSelection((current) => toggleListeningItem(current, id, part))}
+        onRename={renameItem}
+        onOpen={(id) => go(workspacePath(id))}
+        onSetPart={setPart}
+        onTrash={trash}
       />
+      <PaperComposerBar
+        selection={paperSelection}
+        titleOf={(id) => store.rows.find((row) => row.id === id)?.title ?? id}
+        publishing={paperPublishing}
+        message={paperMessage}
+        confirmation={confirmation}
+        onClear={() => setPaperSelection(EMPTY_PAPER_SELECTION)}
+        onRequestPublish={requestPublish}
+        onConfirm={publishPaper}
+        onCancelConfirm={() => setConfirmation(undefined)}
+      />
+
+      <section className="library-writing-section" data-testid="library-writing-section">
+        <header className="paper-group-head"><h3>写作</h3></header>
+        <WritingPanel refresh={store.refresh} />
+      </section>
     </section>
   );
 }

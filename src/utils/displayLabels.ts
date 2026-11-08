@@ -83,7 +83,7 @@ export const taskTypeLabels: Record<TaskTypeV2, string> = {
  * 前端多一层兜底文案只会把「后端多了一个题型」这件事藏起来。
  */
 export function taskTypeLabel(taskType: TaskTypeV2 | string | undefined): string {
-  if (!taskType) return "题型未标注";
+  if (!taskType || taskType === "unknown") return "题型未标注";
   return taskTypeLabels[taskType as TaskTypeV2] ?? String(taskType);
 }
 

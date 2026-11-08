@@ -37,7 +37,7 @@ vi.mock("../../exam-canvas/ExamCanvas", () => ({ ExamCanvas: () => null }));
 vi.mock("./SelectionInspector", () => ({ SelectionInspector: () => null }));
 vi.mock("./RecognitionPanel", () => ({ RecognitionPanel: () => null }));
 vi.mock("./studentPreview", () => ({
-  compilePreviewSource: vi.fn(() => ({ ok: true, summary: { answerKeyIssues: [] } })),
+  compilePreviewSource: vi.fn(async () => ({ ok: true, summary: { answerKeyIssues: [] } })),
   describePreviewPublishLimitation: vi.fn(() => null),
 }));
 
@@ -45,7 +45,7 @@ const ITEM_ID = "item-1";
 
 function makeEditor() {
   return {
-    draft: { exam: { title: "受控卷" }, taskGroups: [], answerSlots: {}, answerKey: {} },
+    draft: { modality: "reading", exam: { title: "受控卷", category: "P2" }, taskGroups: [], answerSlots: {}, answerKey: {} },
     version: 1, pendingCount: 0, saveState: "idle", loading: false, loadError: undefined,
     conflictRecovering: false, saveNotice: undefined, saveMessage: "", title: "", canUndo: true, canRedo: true,
     deferredRemoteRefresh: false,
@@ -66,6 +66,55 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 describe("ExamWorkspacePage 云端校核锁横幅", () => {
+  it("等待取消落库后才解锁并补发保存，避免重试再次撞锁", async () => {
+    let finishCancel!: () => void;
+    vi.mocked(cancelProcessing).mockReturnValueOnce(new Promise<void>(resolve => { finishCancel = resolve; }));
+    withProcessing("cloud_recognition", "running");
+    render(<ExamWorkspacePage itemId={ITEM_ID} />);
+    await act(async () => {});
+    const editor = editorRef.current as ReturnType<typeof makeEditor>;
+    fireEvent.click(screen.getByTestId("workspace-cloud-review-stop"));
+    expect((screen.getByLabelText("Part 归属") as HTMLSelectElement).disabled).toBe(true);
+    expect(editor.flush).not.toHaveBeenCalled();
+    await act(async () => { finishCancel(); });
+    expect((screen.getByLabelText("Part 归属") as HTMLSelectElement).disabled).toBe(false);
+    expect(editor.flush).toHaveBeenCalledOnce();
+  });
+  it("取消失败时继续锁定并如实显示错误", async () => {
+    vi.mocked(cancelProcessing).mockRejectedValueOnce(new Error("cancel-write-failed"));
+    withProcessing("cloud_recognition", "running");
+    render(<ExamWorkspacePage itemId={ITEM_ID} />);
+    await act(async () => {});
+    fireEvent.click(screen.getByTestId("workspace-cloud-review-stop"));
+    await act(async () => {});
+    expect((screen.getByLabelText("Part 归属") as HTMLSelectElement).disabled).toBe(true);
+    expect((editorRef.current as ReturnType<typeof makeEditor>).flush).not.toHaveBeenCalled();
+    expect(screen.getByText("操作没有完成，请稍后重试。")).toBeTruthy();
+  });
+  it.each(["conflict", "failed", "locked"] as const)("Part 保存 %s 时展示保留提示，选择仍为 P3", async saveState => {
+    const editor = makeEditor();
+    editor.draft.exam.category = "P3";
+    editor.saveState = saveState;
+    editor.saveMessage = "Part 修改尚未保存，你的选择已保留，请重试保存。";
+    editorRef.current = editor;
+    withProcessing("ready_for_review", "succeeded");
+    render(<ExamWorkspacePage itemId={ITEM_ID} />);
+    await act(async () => {});
+    expect(screen.getByTestId("workspace-save-message").textContent).toContain("选择已保留");
+    expect((screen.getByLabelText("Part 归属") as HTMLSelectElement).value).toBe("P3");
+  });
+  it.each(["loading", "conflictRecovering"] as const)("%s 期间只有禁用的 Part 下拉", async (state) => {
+    const editor = makeEditor();
+    editor[state] = true;
+    editorRef.current = editor;
+    withProcessing("ready_for_review", "succeeded");
+    render(<ExamWorkspacePage itemId={ITEM_ID} />);
+    await act(async () => {});
+    expect(screen.queryByTestId("workspace-part-badge")).toBeNull();
+    expect((screen.getByLabelText("Part 归属") as HTMLSelectElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Part 归属"), { target: { value: "P3" } });
+    expect(editor.applyPatch).not.toHaveBeenCalled();
+  });
   it("云端校核进行中：横幅可见、停止按钮调用取消、保存禁用", async () => {
     withProcessing("cloud_recognition", "running");
     render(<ExamWorkspacePage itemId={ITEM_ID} />);
@@ -74,6 +123,11 @@ describe("ExamWorkspacePage 云端校核锁横幅", () => {
     expect(screen.getByTestId("workspace-cloud-review-banner").textContent).toContain("云端正在校核");
     expect(screen.getByTestId("workspace-cloud-review-banner").textContent).toContain("可滚动查看，暂不能编辑");
     expect((screen.getByTestId("workspace-save") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByTestId("workspace-part-badge")).toBeNull();
+    expect((screen.getByLabelText("Part 归属") as HTMLSelectElement).value).toBe("P2");
+    expect((screen.getByLabelText("Part 归属") as HTMLSelectElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Part 归属"), { target: { value: "P3" } });
+    expect((editorRef.current as ReturnType<typeof makeEditor>).applyPatch).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByTestId("workspace-cloud-review-stop"));
     expect(vi.mocked(cancelProcessing)).toHaveBeenCalledWith(ITEM_ID);
@@ -86,5 +140,10 @@ describe("ExamWorkspacePage 云端校核锁横幅", () => {
 
     expect(screen.queryByTestId("workspace-cloud-review-banner")).toBeNull();
     expect((screen.getByTestId("workspace-save") as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByTestId("workspace-part-badge")).toBeNull();
+    expect((screen.getByLabelText("Part 归属") as HTMLSelectElement).value).toBe("P2");
+    expect((screen.getByLabelText("Part 归属") as HTMLSelectElement).disabled).toBe(false);
+    fireEvent.change(screen.getByLabelText("Part 归属"), { target: { value: "P3" } });
+    expect((editorRef.current as ReturnType<typeof makeEditor>).applyPatch).toHaveBeenCalledWith({ op: "setExamCategory", category: "P3" });
   });
 });

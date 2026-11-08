@@ -31,6 +31,9 @@ export interface PickedPath {
   name: string;
   sizeBytes: number;
   titleHint?: string;
+  answerFiles?: string[];
+  /** 整套阅读卷子：后端按 READING PASSAGE 标题拆成多篇，各建一条（导入抽屉里确认）。 */
+  splitPassages?: boolean;
   textContent?: string;
   binaryContentBase64?: string;
   parsedDocumentIr?: DocumentIr;
@@ -279,4 +282,12 @@ export async function chooseExportDirectory(): Promise<string | null> {
   const backend = await import("../services/devFallbackBackend");
   const fallback = await backend.devFallbackInvoke<string | null>("choose_export_dir");
   return fallback ?? "local://exports";
+}
+
+/** Optional printed listening answer evidence, staged before recognition starts. */
+export async function chooseAnswerFiles(): Promise<string[]> {
+  if (!isTauriRuntime()) return [];
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({ multiple: true, directory: false, filters: [{ name: "答案文件", extensions: ["pdf", "png", "jpg", "jpeg", "txt", "md"] }] });
+  return selected ? (Array.isArray(selected) ? selected : [selected]) : [];
 }

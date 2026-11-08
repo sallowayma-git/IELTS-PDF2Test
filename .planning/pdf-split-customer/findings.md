@@ -1,0 +1,13 @@
+# Evidence
+
+- User screenshots show independent passage headings and instruction lines for two passages. They do not establish whether the original PDF has a text layer or is scanned.
+- Worktree initially clean. Main detector is src-tauri/src/processing/pdf_split.rs. Frontend and package-dependency exploration delegated separately.
+- User corrected symptom: customer sees NO split preview; developer does see preview. No original customer PDF is available. Exact customer root cause remains unproven.
+- Confirmed code gaps: plan_pdf_file used only pdf-extract; empty/error became empty plan; preview erased warnings on non-multi plans; ImportDrawer swallowed IPC exceptions. Fragmented headings and >2-line/missing-space instructions were not recognized.
+- Separate failure after confirmation: stage_passage_split returned None for failed PDFium copying or staging writes; caller silently imported whole. Only page copying required native PDFium, whereas text detection did not.
+- Implemented independent PDFium geometry preflight fallback and built-in lopdf page copier fallback, retained warnings and explicit confirmation for unknown checks; confirmed split failure now rejects rather than silently importing whole.
+- Packaging investigation corrected: Tauri automatically merges tauri.windows.conf.json (local tauri-utils parse.rs). Current NSIS/WiX manifests include PDFium; no evidence that customer DLL is missing. Package audit lacks an explicit mandatory PDFium presence assertion, but this is not established as the customer cause.
+- Tauri CDP first full run: artifacts/e2e-cdp/run-passage-split-2026-11-06T09-30-33-679Z/report.json, 4/4 scenarios passed. Diagnostic port only; no sandbox/GPU relaxations. Missing-native scenario logs two built-in copier fallbacks and creates two actual job records.
+- Poppler renders of original and each imported sub-PDF are pixel-identical in both normal and missing-native scenarios (4 comparisons); see render-verification.json in that run. Split UI screenshot inspected.
+- Remaining boundary: no automatic cloud-based passage planner has been added. Pure scan pages are reported as unknown with a request for cloud vision/manual checking; the customer source PDF is unavailable for proving their exact failure.
+- Reproduced the same class of failure through the pre-change release application's real UI: the fragmented-heading/compact-instruction PDF returns segments=[] / warnings=[], no split panel, and creates ONE row. Baseline evidence: artifacts/e2e-cdp/run-passage-split-baseline/report.json. The patched application detects and creates TWO rows for the same PDF bytes. This establishes a concrete detector regression case, not the specific customer PDF's cause.

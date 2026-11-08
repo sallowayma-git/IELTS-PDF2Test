@@ -37,6 +37,10 @@ struct SourceCoverageSummary {
     physical_available: bool,
 }
 
+pub(crate) fn is_cloud_direct(authoring: &Value) -> bool {
+    authoring.pointer("/audit/source").and_then(Value::as_str) == Some("cloud_direct")
+}
+
 /// 发布时冻结的原文证据（「题库保存」：发布后原文件与过程文件被删除）。
 ///
 /// 只有两类结论会被冻结：原文声明的题号集合（之后每次评估仍与当前稿逐题核对），
@@ -321,7 +325,7 @@ pub(crate) fn quality_readiness(authoring: &Value) -> Result<QualityReadiness, S
         report.task_scores.values().any(|score| *score < 0.92),
         effective_source_coverage(
             report.source_coverage,
-            report.coverage_status.physical_shadow
+            is_cloud_direct(authoring) || report.coverage_status.physical_shadow
                 == crate::schema::quality_report_v2::PhysicalShadowStatusV2::VerifiedAtPublishSourcePurged,
         ),
         unresolved_blocking_issue_count,
@@ -366,6 +370,7 @@ fn evaluate_quality_inner(
     recognition_gate_enabled: bool,
 ) -> Value {
     // 冻结证据只在「确实没有 physical shadow」时生效；有 shadow 就按事实重算。
+    let cloud_direct = is_cloud_direct(authoring);
     let frozen = frozen.filter(|_| physical_shadow.is_none());
     let groups = authoring
         .get("taskGroups")
@@ -392,14 +397,14 @@ fn evaluate_quality_inner(
     // source, never from task groups or cloud output.  Listening uses the same
     // document-level check (its declared `Questions a-b` ranges are read the same
     // way) and adds the per-part view in `validate_listening_parts`.
-    let question_coverage = Some(match frozen {
+    let question_coverage = if cloud_direct { None } else { Some(match frozen {
         Some(frozen) => super::source_coverage::assess_against_frozen_declaration(
             authoring,
             &frozen.declared_question_numbers,
             &frozen.declarations,
         ),
         None => assess_source_question_coverage(authoring, physical_shadow),
-    });
+    }) };
 
     if let Some(assessment) = question_coverage.as_ref() {
         match assessment.status {
@@ -433,6 +438,14 @@ fn evaluate_quality_inner(
         }
     }
 
+    if authoring.pointer("/passage/content").and_then(Value::as_array).is_some_and(|nodes|
+        nodes.iter().any(|node| node.get("paragraphLabel").is_some() && node["provenanceStatus"] == "derived")) {
+        push_issue(&mut issues, &mut hard_failures, issue(
+            "PARAGRAPH_LABELS_DERIVED", "warning",
+            "段落字母按题目说明声明的范围及原文段落顺序推导，请核对段落边界。",
+            "document", "document", Vec::new(), vec!["edit_text"]));
+    }
+
     validate_exam_id(authoring, &mut issues, &mut hard_failures);
     validate_passage(authoring, &mut issues, &mut hard_failures);
     validate_listening_parts(authoring, physical_shadow, &mut issues, &mut hard_failures);
@@ -445,9 +458,11 @@ fn evaluate_quality_inner(
         &mut hard_failures,
     );
     validate_identifier_and_reference_closure(authoring, &mut issues, &mut hard_failures);
-    validate_provenance(authoring, &mut issues, &mut hard_failures);
+    if !cloud_direct {
+        validate_provenance(authoring, &mut issues, &mut hard_failures);
+        validate_source_ownership(authoring, physical_shadow, &mut issues, &mut hard_failures);
+    }
     validate_scoring_semantics(authoring, &mut issues, &mut hard_failures);
-    validate_source_ownership(authoring, physical_shadow, &mut issues, &mut hard_failures);
     validate_recognition_blockers(
         authoring,
         recognition_gate_enabled,
@@ -485,6 +500,7 @@ fn evaluate_quality_inner(
         );
         let evaluation = evaluate_group(
             group,
+            cloud_direct,
             &slots,
             &answer_key,
             &mut expected_numbers,
@@ -535,7 +551,7 @@ fn evaluate_quality_inner(
         }
     }
 
-    let source_summary = match frozen {
+    let source_summary = if cloud_direct { SourceCoverageSummary::default() } else { match frozen {
         Some(frozen) => SourceCoverageSummary {
             score: frozen.node_score,
             significant_count: frozen.significant_count,
@@ -545,10 +561,13 @@ fn evaluate_quality_inner(
             physical_available: false,
         },
         None => source_coverage_summary(authoring, physical_shadow),
-    };
+    } };
     let source_coverage = source_summary.score;
     let source_purged = frozen.is_some();
-    if source_purged {
+    if cloud_direct {
+        // Direct output has no local physical shadow/anchors. Fidelity is assessed
+        // separately from PDF text; do not pretend this local metric was measured.
+    } else if source_purged {
         // 原文件已按「题库保存」规则删除：节点覆盖是发布时的结论，不能重算，
         // 也不再阻断（发布即确认）。题号覆盖仍按冻结声明逐题核对（见上）。
     } else if !source_summary.physical_available {
@@ -618,7 +637,7 @@ fn evaluate_quality_inner(
         &hard_failures,
         document_score,
         task_scores.values().any(|score| *score < 0.92),
-        effective_source_coverage(source_coverage, source_purged),
+        effective_source_coverage(source_coverage, source_purged || cloud_direct),
         unresolved_blocking_issue_count,
     )
     .as_str();
@@ -2580,6 +2599,7 @@ fn paragraph_map_target_violations(authoring: &Value) -> Vec<Value> {
 
 fn evaluate_group(
     group: &Value,
+    cloud_direct: bool,
     slots: &Map<String, Value>,
     answer_key: &Map<String, Value>,
     expected_numbers: &mut BTreeSet<u32>,
@@ -2853,7 +2873,7 @@ fn evaluate_group(
         hard_failures,
     );
 
-    let source_anchor_coverage = if anchors.is_empty() { 0.0 } else { 1.0 };
+    let source_anchor_coverage = if cloud_direct || !anchors.is_empty() { 1.0 } else { 0.0 };
     let type_consistency = if task_type == "short_answer" {
         0.72
     } else {

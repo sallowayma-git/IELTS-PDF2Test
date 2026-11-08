@@ -18,6 +18,7 @@ export default defineConfig({
     // 产品级证据仍然只在 `scripts/e2e/tauri-*.mjs`（真实应用进程）里产生。
     include: ["src/**/*.test.ts", "src/**/*.test.tsx", "scripts/**/*.test.mjs"],
     environment: "node",
+    setupFiles: ["src/test-support/browserStorageSetup.ts"],
     reporters: "default"
   }
 });

@@ -4,7 +4,6 @@ import type {
   DocumentBlock,
   DocumentIr,
   ExportNasLibraryInput,
-  ExportNasPackageV2Input,
   ExportReadingJsInput,
   ExportResult,
   GroupKind,
@@ -12,7 +11,6 @@ import type {
   IgnoredValidationIssue,
   JsExportResult,
   NasExportResult,
-  NasPackageV2PublishResult,
   JobFilter,
   JobMetaPatch,
   LlmProfilePublic,
@@ -2543,8 +2541,21 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       if (input.requestId) localStorage.setItem(journalKey, JSON.stringify({ input, editVersion: session.revision + 1 }));
       return { editVersion: session.revision + 1, replayed: false, appliedCount: input.commands.length } as T;
     }
+    // 「数据」模块只有 Tauri 后端有真实落点（本地 analytics.sqlite + 作答快照目录），开发预览不模拟。
+    case "analytics_import_snapshots":
+    case "analytics_overview":
+    case "analytics_exam":
+    case "analytics_student":
+    case "analytics_question":
+    case "analytics_export_xlsx":
+      throw new Error(`requires_tauri_runtime:${command}`);
     case "publish_items":
       throw new Error("requires_tauri_runtime:publish_items");
+    // 题库改名与当前试卷只在 Tauri 后端有真实落点（SQLite / NAS 文件），开发预览不模拟。
+    case "rename_library_item":
+      throw new Error("requires_tauri_runtime:rename_library_item");
+    case "get_current_paper":
+      throw new Error("requires_tauri_runtime:get_current_paper");
     case "import_files": {
       const input = args.input as { files: Array<{ name: string; path: string; titleHint?: string; sizeBytes?: number; textContent?: string; binaryContentBase64?: string }> };
       const created: Array<{ itemId: string; title: string }> = [];
@@ -3595,25 +3606,6 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         })
       };
       save(store);
-      return result as T;
-    }
-
-    case "publish_nas_package_v2": {
-      // Browser/dev fallback cannot exercise filesystem locking, so it emits
-      // the same receipt shape while the real Tauri command remains the only
-      // implementation used by the desktop application.
-      const input = (args.input ?? {}) as ExportNasPackageV2Input;
-      if (!input.libraryRoot || !input.sourcePath) throw new Error("nas_package_v2_requires_library_and_source");
-      const result: NasPackageV2PublishResult = {
-        schemaVersion: "NasPackagePublishReportV2",
-        status: "committed",
-        examId: input.examId ?? "reading-v2-preview",
-        manifestPath: `${input.libraryRoot}/manifest.js`,
-        reportPath: `${input.libraryRoot}/publish/reports/dev-fallback.json`,
-        assetCount: 0,
-        exportId: `dev-${Date.now()}`,
-        probe: { passed: true, checkedAssetIds: [], referencedAssetIds: [], errors: [], warnings: ["dev_fallback_no_filesystem_probe"] }
-      };
       return result as T;
     }
 

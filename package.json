@@ -65,6 +65,7 @@
     "e2e:recycle-bin": "node scripts/e2e/tauri-cdp-recycle-bin.mjs",
     "e2e:writing-bank": "node scripts/e2e/tauri-cdp-writing-bank.mjs",
     "e2e:part-filter": "node scripts/e2e/tauri-cdp-part-filter.mjs",
+    "e2e:paper-publish": "node scripts/e2e/tauri-cdp-paper-publish.mjs",
     "test:chain-verdict": "vitest run scripts/e2e/lib/chain-verdict.test.mjs",
     "capture:phase0-baseline": "node scripts/phase0-golden.mjs capture",
     "register:phase0:private": "node scripts/register-phase0-private-sample.mjs",

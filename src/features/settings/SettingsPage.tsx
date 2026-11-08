@@ -1,17 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   getDiagnosticsSettings,
+  getAppBuildInfo,
+  getPipelineSettings,
   listLlmProfiles,
   runEnvironmentPreflight,
   saveDiagnosticsSettings,
   saveLlmProfile,
+  savePipelineSettings,
   testLlmProfile
 } from "../../api/tauriCommands";
+import type { AppBuildInfo } from "../../api/tauriCommands";
 import { chooseExportDirectory } from "../../api/desktopDialogs";
 import { toUserFacingError } from "../../utils/userFacingError";
-import type { DiagnosticsSettings, EnvironmentPreflightReport, LlmProfilePublic, LlmTestResult } from "../../types";
+import type { DiagnosticsSettings, EnvironmentPreflightReport, LlmProfilePublic, LlmTestResult, PipelineMode } from "../../types";
 import { useAppSettings } from "./appSettings";
-import { cloudShouldBeEnabledAfterSave } from "./settingsLogic";
+import { cloudShouldBeEnabledAfterSave, describePipelineMode, normalizePipelineMode } from "./settingsLogic";
 
 // 设置页（计划 §14 / §16.13）：默认只有模型连接、文件与发布目标，其他收进「高级设置」。
 //
@@ -53,7 +57,7 @@ function blankForm(): ModelForm {
     baseUrl: "https://api.openai.com/v1",
     model: "gpt-4.1",
     apiKey: "",
-    timeoutMs: 60000,
+    timeoutMs: 240000,
     hasApiKey: false
   };
 }
@@ -88,6 +92,7 @@ export function SettingsPage() {
   const [form, setForm] = useState<ModelForm>(blankForm());
   const [cloudEnabled, setCloudEnabled] = useState(false);
   const [diagnostics, setDiagnostics] = useState<DiagnosticsSettings>({ keepFullProcessArtifacts: false });
+  const [pipelineMode, setPipelineMode] = useState<PipelineMode>("direct");
   const [preflight, setPreflight] = useState<EnvironmentPreflightReport | undefined>();
   const [busy, setBusy] = useState<"idle" | "saving" | "testing">("idle");
   const [testResult, setTestResult] = useState<LlmTestResult | undefined>();
@@ -95,18 +100,22 @@ export function SettingsPage() {
   const [error, setError] = useState<string | undefined>();
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
+  const [buildInfo, setBuildInfo] = useState<AppBuildInfo>();
 
   useEffect(() => {
     let cancelled = false;
+    getAppBuildInfo().then((info) => { if (!cancelled && info?.revision) setBuildInfo(info); }).catch(() => {});
     Promise.all([
       listLlmProfiles().catch(() => [] as LlmProfilePublic[]),
       getDiagnosticsSettings().catch(() => ({ keepFullProcessArtifacts: false })),
-      runEnvironmentPreflight().catch(() => undefined)
-    ]).then(([profileList, diagnosticsSettings, preflightReport]) => {
+      runEnvironmentPreflight().catch(() => undefined),
+      getPipelineSettings().catch(() => undefined)
+    ]).then(([profileList, diagnosticsSettings, preflightReport, pipelineSettings]) => {
       if (cancelled) return;
       setProfiles(profileList);
       setDiagnostics(diagnosticsSettings);
       setPreflight(preflightReport);
+      if (pipelineSettings) setPipelineMode(normalizePipelineMode(pipelineSettings.pipelineMode));
       const active = activeProfileOf(profileList);
       setForm(active ? toForm(active) : blankForm());
       setCloudEnabled(Boolean(active?.enabled));
@@ -212,6 +221,26 @@ export function SettingsPage() {
     setNotice("已记住发布目录，之后发布不用再选。");
   }
 
+  async function pickSubmissionsRoot() {
+    const picked = await chooseExportDirectory();
+    if (!picked) return;
+    updateSettings({ submissionsRoot: picked });
+    setNotice("已记住作答数据目录，「数据」页将从这里导入交卷快照。");
+  }
+
+  async function changePipelineMode(next: PipelineMode) {
+    setPipelineMode(next);
+    try {
+      const saved = await savePipelineSettings({ schemaVersion: "PipelineSettingsV1", pipelineMode: next });
+      setPipelineMode(normalizePipelineMode(saved.pipelineMode));
+      setNotice(next === "direct"
+        ? "已切换为云端直出：之后导入的阅读卷由云端一次直出整份题稿。"
+        : "已切换为旧链路：之后导入的试卷走本地首稿 + 云端候选合并。");
+    } catch (caught) {
+      setError(describeSettingsError(caught, "保存流水线模式失败，请稍后重试。"));
+    }
+  }
+
   async function setKeepArtifacts(next: boolean) {
     try {
       setDiagnostics(await saveDiagnosticsSettings({ keepFullProcessArtifacts: next }));
@@ -264,6 +293,19 @@ export function SettingsPage() {
         </label>
 
         <label className="settings-field">
+          识别链路
+          <select
+            value={pipelineMode}
+            data-testid="settings-pipeline-mode"
+            onChange={(event) => void changePipelineMode(event.target.value as PipelineMode)}
+          >
+            <option value="direct">云端直出（默认）</option>
+            <option value="legacy">本地优先（旧链）</option>
+          </select>
+          <small>{describePipelineMode(pipelineMode)}切换只影响之后导入的试卷；已在处理中的作业保持原链路。听力卷暂不走直出链。</small>
+        </label>
+
+        <label className="settings-field">
           服务地址
           <input
             value={form.baseUrl}
@@ -309,6 +351,8 @@ export function SettingsPage() {
             </span>
           ) : null}
         </div>
+        <small>连接测试只验证一次小请求；完整文件识别还取决于响应时间、图像输入和结构化输出。</small>
+        {buildInfo ? <small data-testid="app-build-info">版本 {buildInfo.version} · 构建 {buildInfo.revision}{buildInfo.dirty ? "（含本地修改）" : ""} · {new Date(buildInfo.builtAtUnix * 1000).toLocaleString("zh-CN")}</small> : null}
       </section>
 
 
@@ -323,6 +367,20 @@ export function SettingsPage() {
             {settings.nasDestination ? "更换目录" : "选择目录"}
           </button>
         </div>
+      </section>
+
+      <section className="settings-group" data-testid="settings-submissions">
+        <h2>数据</h2>
+        <div className="settings-field-row">
+          <span className="settings-field-label">
+            作答数据目录
+            <small className="file-name">{settings.submissionsRoot || "尚未选择：学生端的考试作答存储目录（其中应有 snapshots/ 与 status/）"}</small>
+          </span>
+          <button className="ghost small" data-testid="settings-pick-submissions" onClick={() => void pickSubmissionsRoot()}>
+            {settings.submissionsRoot ? "更换目录" : "选择目录"}
+          </button>
+        </div>
+        <small>只读使用，不会修改或删除学生端数据；与上面的 NAS 发布目录分开保存。</small>
       </section>
 
       <section className="settings-group">
@@ -362,6 +420,7 @@ export function SettingsPage() {
                 data-testid="settings-timeout"
                 onChange={(event) => patchForm({ timeoutMs: Number(event.target.value) })}
               />
+              <small>整份试卷识别可能超过 60 秒，建议 240,000 毫秒。超时未收到用量时会停止后续请求。</small>
             </label>
 
 

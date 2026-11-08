@@ -1,4 +1,5 @@
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { StudentReadingTools } from "./StudentReadingTools";
 import { InlineTextEditor } from "./editors/InlineTextEditor";
 import { MatchingMatrix, matchingRowsFor } from "./renderers/MatchingMatrix";
 import { resolveAuthoringAssetPreview, type AuthoringAssetPreview } from "../api/tauriCommands";
@@ -31,6 +32,7 @@ export type ExamCanvasStructureAction =
 export interface ExamCanvasProps {
   authoring: IeltsAuthoringIRV2;
   mode: "student" | "author";
+  studentFontSize?: "normal" | "large" | "xlarge";
   selectedId?: string;
   onSelect?: (id: string) => void;
   onTextChange?: (node: Extract<ContentNodeV2, { type: "text" }>) => void;
@@ -74,6 +76,7 @@ interface AnswerDragController {
 }
 
 const AnswerDragContext = createContext<AnswerDragController | null>(null);
+const PassageContentContext = createContext(false);
 
 const assetPreviewCache = new Map<string, Promise<AuthoringAssetPreview | undefined>>();
 
@@ -117,6 +120,12 @@ function ToolButton({ label, disabled, onClick, children }: {
 
 /** 作者模式的选项增删：不再用悬浮工具条，而是贴在选项本身上、悬停才出现——
  *  删除是选项行末尾的 ×，添加是选项列表下方的一行轻量入口。排序见 {@link OptionDragHandle}。 */
+function optionSourceEditable(canvas: ExamCanvasProps, taskId: string, responseGroupId: string): boolean {
+  const task = canvas.authoring.taskGroups.find(task => task.taskId === taskId);
+  const response = task?.responseGroups.find(response => response.responseGroupId === responseGroupId);
+  return task?.taskType !== "matching_information" || response?.options !== undefined || response?.optionBankRef !== undefined;
+}
+
 function OptionDeleteButton({ canvas, taskId, responseGroupId, option, count }: {
   canvas: ExamCanvasProps;
   taskId: string;
@@ -124,7 +133,7 @@ function OptionDeleteButton({ canvas, taskId, responseGroupId, option, count }: 
   option: OptionV2;
   count: number;
 }) {
-  if (canvas.mode !== "author" || !canvas.onStructureAction || count <= 1) return null;
+  if (canvas.mode !== "author" || !canvas.onStructureAction || count <= 1 || !optionSourceEditable(canvas, taskId, responseGroupId)) return null;
   return <button
     type="button"
     className="v2-option-delete"
@@ -145,7 +154,7 @@ function OptionAddButton({ canvas, taskId, responseGroupId, options }: {
   responseGroupId: string;
   options: OptionV2[];
 }) {
-  if (canvas.mode !== "author" || !canvas.onStructureAction) return null;
+  if (canvas.mode !== "author" || !canvas.onStructureAction || !optionSourceEditable(canvas, taskId, responseGroupId)) return null;
   return <button
     type="button"
     className={`v2-option-add${options.length ? "" : " is-empty"}`}
@@ -201,7 +210,7 @@ function OptionDragHandle({ canvas, taskId, responseGroupId, options, index }: {
   index: number;
 }) {
   const beginDrag = useContext(OptionDragContext);
-  if (canvas.mode !== "author" || !canvas.onStructureAction || !beginDrag) return null;
+  if (canvas.mode !== "author" || !canvas.onStructureAction || !beginDrag || !optionSourceEditable(canvas, taskId, responseGroupId)) return null;
   const option = options[index];
   const move = (beforeOptionId: string | undefined) => canvas.onStructureAction?.({ type: "option.move", taskId, responseGroupId, optionId: option.optionId, beforeOptionId });
   return <span
@@ -330,7 +339,7 @@ function EditableTextNode({
 
 function nodeStyle(node: ContentNodeV2): CSSProperties | undefined {
   if (node.type === "paragraph") return node.align ? { textAlign: node.align } : undefined;
-  if (node.type === "heading") return undefined;
+  if (node.type === "heading") return { "--node-font-scale": node.fontScale ?? 1 } as CSSProperties;
   return undefined;
 }
 
@@ -419,6 +428,7 @@ function VisualAssetNode({ node, canvas, select }: {
 
 function ContentNodes({ nodes, canvas }: { nodes: ContentNodeV2[] | undefined; canvas: ExamCanvasProps }): ReactNode {
   const canvasState = useContext(CanvasAnswersContext);
+  const inPassage = useContext(PassageContentContext);
   if (!nodes?.length) return null;
   return nodes.map((node) => {
     const selected = canvas.selectedId === node.id;
@@ -436,7 +446,7 @@ function ContentNodes({ nodes, canvas }: { nodes: ContentNodeV2[] | undefined; c
         return <br key={node.id} />;
       case "paragraph": {
         const targetSlots = Object.values(canvas.authoring.answerSlots).filter((slot) =>
-          slot.interaction === "dragdrop" && slot.hostType === "passage_paragraph" && slot.hostNodeId === node.id,
+          inPassage && slot.interaction === "dragdrop" && slot.hostType === "passage_paragraph" && slot.hostNodeId === node.id,
         );
         const label = node.paragraphLabel ?? paragraphLabelFor(canvas.authoring, node.id);
         return <Fragment key={node.id}>
@@ -446,7 +456,7 @@ function ContentNodes({ nodes, canvas }: { nodes: ContentNodeV2[] | undefined; c
       }
       case "heading": {
         const Heading = `h${Math.min(6, Math.max(1, node.level))}` as "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
-        return <Heading key={node.id} data-editor-id={node.id} className={`v2-heading${authorClass}${selectedClass}`} onClick={select}><ContentNodes nodes={node.children} canvas={canvas} /></Heading>;
+        return <Heading key={node.id} data-editor-id={node.id} className={`v2-heading${authorClass}${selectedClass}`} style={nodeStyle(node)} onClick={select}><ContentNodes nodes={node.children} canvas={canvas} /></Heading>;
       }
       case "bullet_list":
       case "ordered_list": {
@@ -680,13 +690,16 @@ function containsAnswerSlot(nodes: ContentNodeV2[] | undefined, slotIds?: Set<st
 /** 矩阵已经完整呈现该 task 时，不再重复渲染逐组列表。 */
 function matrixHandled(
   task: TaskGroupV2,
-  runtime: { questionDisplayMap: Record<string, string>; answerSlots: Record<string, { interaction?: string }> }
+  runtime: { questionDisplayMap: Record<string, string>; answerSlots: Record<string, { interaction?: string }> },
+  paragraphMap?: Record<string, string>
 ): boolean {
-  if (!task.optionBank?.options.length) return false;
   return matchingRowsFor(
     task.responseGroups,
     runtime.questionDisplayMap,
-    (slotId) => (runtime.answerSlots[slotId]?.interaction === "checkbox" ? "checkbox" : "radio")
+    (slotId) => runtime.answerSlots[slotId]?.interaction,
+    response => response.options?.length ? response.options : task.optionBank?.options ?? [],
+    task.taskType,
+    paragraphMap
   ).length > 0;
 }
 
@@ -697,6 +710,9 @@ export function ExamCanvas(inputProps: ExamCanvasProps) {
     onTextCommand: undefined, onTextChange: undefined,
     onAnswerChange: undefined, onStructureAction: undefined
   } : inputProps;
+  const readingRoot = useRef<HTMLDivElement>(null);
+  const [localFontSize, setLocalFontSize] = useState<"normal" | "large" | "xlarge">("normal");
+  const fontSize = props.studentFontSize ?? localFontSize;
   const runtime = useMemo(() => buildRuntimeViewModelV2(props.authoring), [props.authoring]);
   const interactionModel = useMemo(() => buildReadingInteractionModelV2(runtime), [runtime]);
   const [studentAnswers, setStudentAnswers] = useState<Record<string, string[]>>({});
@@ -754,6 +770,7 @@ export function ExamCanvas(inputProps: ExamCanvasProps) {
     : undefined;
   // 底部题号导航的数据（author 看 answerKey，student 看预览本地作答；都不写回题稿）。
   const navModel = useMemo(() => buildQuestionNavModel({
+    readingCategory: props.authoring.exam.category,
     mode: props.mode,
     taskGroups: runtime.taskGroups,
     questionDisplayMap: runtime.questionDisplayMap,
@@ -762,7 +779,7 @@ export function ExamCanvas(inputProps: ExamCanvasProps) {
     studentAnswers,
     listeningParts: listeningPartViews,
     selectedPart: listening ? selectedPart : undefined
-  }), [props.mode, runtime, props.authoring.answerKey, studentAnswers, listeningPartViews, listening, selectedPart]);
+  }), [props.mode, runtime, props.authoring.exam.category, props.authoring.answerKey, studentAnswers, listeningPartViews, listening, selectedPart]);
   // 原文 | 题目 的可拖动分隔条（workspace.css 负责视觉，本组件只渲染元素）。
   const { dividerProps } = usePaneDivider(props.authoring.jobId);
   // ── 选项拖动会话（见 OptionDragSession）──
@@ -1001,12 +1018,16 @@ export function ExamCanvas(inputProps: ExamCanvasProps) {
   const optionRowProps = (option: OptionV2) => props.mode === "author" && props.onStructureAction
     ? { "data-option-row": "", "data-option-id": option.optionId }
     : {};
-  const optionsFor = (task: TaskGroupV2, response: ResponseGroupV2) => interactionModel.responseGroups[response.responseGroupId]?.options ?? task.optionBank?.options ?? [];
+  const optionsFor = (task: TaskGroupV2, response: ResponseGroupV2) => {
+    const options = interactionModel.responseGroups[response.responseGroupId]?.options;
+    return options?.length ? options : task.optionBank?.options ?? [];
+  };
 
   return <AnswerDragContext.Provider value={answerDrag}>
   <CanvasAnswersContext.Provider value={{ answers: canvasAnswers, setText, setOption }}>
     <OptionDragContext.Provider value={optionDrag}>
-    <div className={`exam-canvas-v2 ${props.mode === "author" ? "is-author" : "is-student"}${listening ? " is-listening" : ""}`} data-testid={`exam-canvas-v2-${props.mode}`} data-readonly={props.locked || undefined}>
+    <div ref={readingRoot} style={props.mode === "student" ? { "--student-font-size": String({ normal: 16, large: 18, xlarge: 20 }[fontSize]) + "px" } as CSSProperties : undefined} className={`exam-canvas-v2 ${props.mode === "author" ? "is-author" : "is-student"}${listening ? " is-listening" : ""}`} data-testid={`exam-canvas-v2-${props.mode}`} data-readonly={props.locked || undefined}>
+    {props.mode === "student" ? <StudentReadingTools root={readingRoot} fontSize={fontSize} onFontSizeChange={props.studentFontSize ? undefined : setLocalFontSize} /> : null}
     {!props.comparisonPreview && (listening ? (
       <ListeningHeader
         itemId={props.authoring.jobId}
@@ -1020,7 +1041,7 @@ export function ExamCanvas(inputProps: ExamCanvasProps) {
       <>
         <main id="left" className="reading-pane passage-pane pane v2-passage-pane">
           <article className="reading-html passage-html v2-passage-content" aria-label={runtime.title}>
-            <ContentNodes nodes={runtime.passage} canvas={props} />
+            <PassageContentContext.Provider value={true}><ContentNodes nodes={runtime.passage} canvas={props} /></PassageContentContext.Provider>
           </article>
         </main>
         <div id="divider" {...dividerProps} />
@@ -1034,29 +1055,35 @@ export function ExamCanvas(inputProps: ExamCanvasProps) {
         ) : null}
         {runtime.taskGroups.filter((task) => !shownTaskIds || shownTaskIds.has(task.taskId)).map((task) => <article key={task.taskId} className={`question-group unified-group v2-task-group${props.selectedId === task.taskId ? " is-selected" : ""}`} data-group-id={task.taskId} data-editor-id={task.taskId} onClick={() => props.mode === "author" && props.onSelect?.(task.taskId)}>
           {props.taskAdornment?.(task.taskId)}
-          <header className="v2-task-header"><h2>{taskTypeLabel(task.taskType)}</h2><div className="v2-instruction"><ContentNodes nodes={task.instructions} canvas={props} /></div></header>
+          <header className="v2-task-header">{props.mode === "author" ? <span className="v2-editor-task-badge">{taskTypeLabel(task.taskType)}</span> : null}<div className="v2-instruction"><ContentNodes nodes={task.instructions} canvas={props} /></div></header>
           {task.stimulus?.length ? <div className="v2-stimulus"><ContentNodes nodes={task.stimulus} canvas={props} /></div> : null}
           {(() => {
-            // Matching 走矩阵版式：共享选项库 + 每行一个答案位（计划 §9.8）。
+            // Matching 矩阵：相同选项集合、每行一个 radio/checkbox 答案位。
             // 不符合矩阵前提的 matching（多答案位、unordered_set）继续走下面的逐组列表。
-            const bankOptions = (task as TaskGroupV2).optionBank?.options ?? [];
-            if (!bankOptions.length) return null;
             const rows = matchingRowsFor(
               task.responseGroups as ResponseGroupV2[],
               runtime.questionDisplayMap,
-              (slotId) => runtime.answerSlots[slotId]?.interaction === "checkbox" ? "checkbox" : "radio"
+              (slotId) => runtime.answerSlots[slotId]?.interaction,
+              response => optionsFor(task as TaskGroupV2, response),
+              task.taskType,
+              props.authoring.passage?.paragraphMap
             );
             if (!rows.length) return null;
-            return <MatchingMatrix
+            return <><MatchingMatrix
               rows={rows}
-              options={bankOptions}
+              options={optionsFor(task as TaskGroupV2, rows[0].responseGroup)}
               answers={canvasAnswers}
               selectedId={props.selectedId}
               interactive={!props.locked}
               renderContent={(nodes) => nodes?.length ? <ContentNodes nodes={nodes} canvas={props} /> : null}
               onSelectOption={setOption}
               onSelectTarget={props.mode === "author" ? props.onSelect : undefined}
-            />;
+            />{props.mode === "author" ? rows.filter((row, index) => row.responseGroup.options?.length || index === 0).map(row => {
+              const response = row.responseGroup;
+              if (!optionSourceEditable(props, task.taskId, response.responseGroupId)) return null;
+              const options = optionsFor(task as TaskGroupV2, response);
+              return <details key={row.slotId} className="v2-matrix-option-editor"><summary>编辑选项 · {row.displayNumber}</summary><ol data-option-list="">{options.map((option, index) => <li key={option.optionId} {...optionRowProps(option)}><OptionDragHandle canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} index={index} /><strong>{option.label}</strong><ContentNodes nodes={option.content} canvas={props} /><OptionDeleteButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} option={option} count={options.length} /></li>)}</ol><OptionAddButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} /></details>;
+            }) : null}</>;
           })()}
           {task.responseGroups.map((response) => {
             const options = optionsFor(task as TaskGroupV2, response);
@@ -1065,7 +1092,7 @@ export function ExamCanvas(inputProps: ExamCanvasProps) {
               ? <AnswerOptionPool key={`pool-${response.responseGroupId}`} canvas={props} task={task as TaskGroupV2} response={response} options={options} />
               : null;
           })}
-          {matrixHandled(task as TaskGroupV2, runtime) ? null : task.responseGroups.map((response) => {
+          {matrixHandled(task as TaskGroupV2, runtime, props.authoring.passage?.paragraphMap) ? null : task.responseGroups.map((response) => {
             const options = optionsFor(task as TaskGroupV2, response);
             const unordered = response.assignment === "unordered_set";
             // 学生端 ReadingExamV2Renderer 用 `cardinality.max` 作为共享选择的禁用阈值

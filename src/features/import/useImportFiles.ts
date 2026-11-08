@@ -1,9 +1,10 @@
 import { useCallback, useRef, useState } from "react";
-import { listLlmProfiles } from "../../api/tauriCommands";
+import { getPipelineSettings, listLlmProfiles } from "../../api/tauriCommands";
 import { importFiles as enqueueFiles, type ImportModality } from "../../api/processingClient";
 import { bindListeningAudio } from "../../api/listeningAudioClient";
 import { readAppSettings } from "../settings/appSettings";
 import type { PickedPath } from "../../api/desktopDialogs";
+import type { PipelineMode } from "../../types";
 import { toUserFacingError } from "../../utils/userFacingError";
 import { buildRow, type LibraryRowV1 } from "../library/libraryTypes";
 import { bindListeningAssignments, splitImportPlan, type ImportRejection, type ListeningImportDecision } from "./listeningAudioPlan";
@@ -39,6 +40,8 @@ export function useImportFiles(onRowsChanged: () => void) {
       const profiles = options.cloudEnabled === false ? [] : await listLlmProfiles().catch(() => []);
       const cloudProfileId = profiles.find((profile) => profile.enabled && profile.profileId !== "profile-local-placeholder")?.profileId;
       const cloudEnabled = options.cloudEnabled ?? Boolean(cloudProfileId);
+      // 导入时快照流水线模式（读取失败按默认 direct；由后端在入队时再次归一）。
+      const pipelineMode: PipelineMode = (await getPipelineSettings().catch(() => undefined))?.pipelineMode ?? "direct";
 
       const enqueue = async (batch: PickedPath[], modality: ImportModality) => {
         const result = await enqueueFiles({
@@ -46,7 +49,8 @@ export function useImportFiles(onRowsChanged: () => void) {
           cloudEnabled,
           cloudProfileId,
           modality,
-          cloudTokenBudget: readAppSettings().cloudTokenBudget
+          cloudTokenBudget: readAppSettings().cloudTokenBudget,
+          pipelineMode
         });
         rejected.push(...result.rejected.map(({ name, reason }) => ({ name, reason: toUserFacingError(reason, "文件未能导入。").userMessage })));
         const created = result.created.map(({ itemId, title }) => ({ ...buildRow(itemId, undefined, undefined), title, modality }));
@@ -59,8 +63,8 @@ export function useImportFiles(onRowsChanged: () => void) {
       } else {
         const plan = splitImportPlan(files, options.decisions);
         if (plan.reading.length) await enqueue(plan.reading, "reading");
-        for (const { file, audio } of plan.listening) {
-          const [item] = await enqueue([file], "listening");
+        for (const { file, audio, answerFiles } of plan.listening) {
+          const [item] = await enqueue([{ ...file, answerFiles }], "listening");
           if (!item) continue;
           rejected.push(...await bindListeningAssignments(item.id, item.title, audio, async (itemId, partOrdinal, path) => {
             setStageMessage(`正在保存「${item.title}」的 Part ${partOrdinal} 音频`);

@@ -1,0 +1,11 @@
+# Findings
+
+- Current product prompt requires ONE PDF -> ONE complete JSON document. DirectExamOutcome contains a single document. Scheduler persists one canonical per imported source/job.
+- User wants existing renderer/editor/validation retained; cloud determines passage/test boundaries. Return document data, not executable JS.
+- Implemented reading documents envelope with original source/answer pages, per-document normalization, deterministic child ids and scope files. Existing single-document replies remain compatible; listening remains one test per item.
+- Existing arbitrary page-chunk merge keyed answers by qN and could overwrite repeated q1 from another test. Reading truncation now requests a cloud boundary manifest, then one complete article per scoped request, under existing per-job token accounting.
+- Source PDFs are copied into child jobs so each can be reopened/re-recognized without a shared-source resolver. Scope metadata restricts reruns to the corresponding article/answer pages. New child canonical rows/queue rows commit in one SQLite transaction; replay seeds do not overwrite edited siblings.
+- Connected cloud-direct import skips local passage preflight; source files are independently queued with existing bounded cloud concurrency. Offline/legacy path retains prior local split behavior.
+- Review fixes: all batch rows including the primary finalize atomically with the active lease/cancel check; source scopes are also durable in processing progress so a filesystem-cache failure cannot expand a rerun to the whole PDF; fan-out replay preserves both parent and sibling human edits. Envelope sourcePages is required even for one document; legacy flat replies remain compatible.
+- Design choices retained: shared answer-page semantic pairing is the model's task (testLabel + scoped prompt), while local checks ensure data shape/source-page scope and separate per-document answer maps. Semantic correctness still needs real-provider/source evaluation. Truncated reading calls may exceed the historical 3-call single-paper allowance; every call remains constrained by the existing per-job token budget.
+- Online direct failures now terminate with a retryable state, preserving source and canonical data, instead of silently creating a local whole-paper fallback. Offline/non-PDF/legacy behavior is retained.

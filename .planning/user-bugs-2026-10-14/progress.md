@@ -1,0 +1,32 @@
+# Progress
+
+- Read supplied/repository instructions, planning skill, package/configuration and historical plan beginning.
+- Started user bug investigation; baseline and QA context being established.
+- Implemented conservative total-token accounting, rejected-call handling, accurate answer states, old-report display compatibility, independent connection-test budgets and 240s new-profile timeout.
+- Fixed heading prompt identity/duplicate rendering and own-cloud-passage host validation; expanded nested flow/table/list content normalization and precise missing-field repairs.
+- Found default diagnostics disabled repair recovery; added one-shot worker-local candidate retention independent of full request logging.
+- Added visible build revision/time and release panic unwind plus location/backtrace logging.
+- First gateway suite 60/61 passed (test HTTP400 triggered intended PDF fallback); corrected regression to HTTP401; next gateway suite 63 passed/1 ignored.
+- Focused frontend 17 passed and tsc passed. Full frontend failed 13 tests due Node 26's storage getter shadowing jsdom, including with --no-experimental-webstorage; added explicit jsdom storage setup.
+- Full backend tests and fresh native build running. Initial native build will need refreshed manifest/rebuild after test setup change.
+- Frontend setup corrected to use globalThis.jsdom.window (Vitest aliases global window); full 53 files/548 tests now pass.
+- Fresh native smoke passed via WebView2 CDP with no no-sandbox/disable-gpu flags (run-smoke-2026-10-14T09-40-52-579Z).
+- First custom native regression failed because wait expression returned DOM object, causing CDP serialization chain error; fixed expressions to boolean. Not an app crash.
+- Passage test found paragraphMap values were intentionally not rewritten due obsolete comment. Added value-only rewriting; candidate suite now 55/55 passes with preserved source anchors and label keys.
+- User provided actual source corpus F:/workspace/IELTS Atlas/ReadingPractice/PDF. Western celebrity file located; will supplement real corpus native verification.
+- Strict actual Western celebrity controlled-provider native chain passed on run-heading-presentation-2026-10-14T09-56-21-848Z:7 paragraph targets, drag+persist+actual reopened value x, normal publish,13 source answers in runtime. No sandbox/GPU bypass.
+- Small native regression already confirmed missing-field supplement with diagnostics off and13? (small fixture2) answer-page writes after total-only token usage. Remaining harness issues were animation timing, transient SQLite lock, and incorrect #/workspace route; fixed to real row clicks, wait500ms, busy_timeout.
+- First real DeepSeek bounded run reproduced 16,383 reasoning-only tokens and valid13 answer candidates with pageIndex1 instead of supplied5/6;0 applied. This is useful failed-product evidence, not a passed run. Added provider-task defaults, original-page prompt+validation and one constrained citation repair.
+- Full final suite before the last provider/page patch:1455 passed,16 ignored,1 excluded historical V1 block-count drift. Latest gateway66 passed,1 ignored. Auto-pipeline suite running.
+- Release installer first build completed but predates latest patches; a fresh final release build is underway. Debug build correctly rejected input drift caused by test addition; rebuilding after source freeze.
+- Real DeepSeek second run: candidate15.589s, answers2.644s;10 new answers plus3 candidate answers yields13/13. Later source review hit the50000-token test budget and quality blockers; verdict corrected to partial recognition success rather than full pass.
+- Latest small native regression passed10 assertions (default diagnostics off), including real drag/save/reopen and empty student heading targets. Screenshot exposed uppercase Roman label mismatch; fixed by preserving printed option case.
+- Final screenshot audit exposed UI total-only usage showing zero split. Added explicit total display and native assertion;22 focused frontend tests passed, final tsc/Vite build passed.
+- Investigated residual real Pearls blockers: A-K missing instruction alphabet produces false WORD_LIMIT_UNPARSED; paragraph-map matching-information authoring cannot compile because runtime expects explicit options. Fixed narrow source-backed runtime option materialization and A-K signature inference; runtime20 passed/1 ignored and signature18 passed.
+- Wrote QA evidence report. Release build now uses a recorded before-build input hash snapshot; no product source changes while that final build runs. Next steps: verify release hashes, run release UI regression and saved real draft recheck, package audit, record final installer.
+- Final release build completed with no source hash drift. Windows package audit passed; NSIS script includes bundled PDFium. InstallerSHA ef1b552e9f4e81d093cf2edca753267e8e2086da36d43cea23950f275f5dab59.
+- Release native regression11 assertions passed on run-user-bugs-2026-10-14T10-35-06-019Z, with default diagnostics off and no PDFium override. Final screenshot checked: blank heading targets before paragraphs and correct total-only usage500.
+- Saved actual DeepSeek draft copied into isolated root, profilesdisabled: original instruction saved unchanged via editor handler, both structural issues disappear, runtime probe passes,13answerspreserved; manual source review still blocks publishing. Record run-saved-review-2026-10-14T10-35-39-308Z. No additional paid requests.
+- Qualitymodule65 passed. Final QA documents genuine provider partial outcome, source review remaining, historical baseline exception, and crashnotreproduced. No user application installed or original user data rewritten.
+- Follow-up: corrected missing frontend preview behavior, preserved strict invalid-map/bank rejection, showed explicit timeout/evidence-page reasons for old failure records and retry receipts. Successful report supersedes any retained stale failure.
+- Added actual Pearls student preview A-G assertions, real preview answering without changing saved keys, and copied historical user failure UI regression. Full frontend552 passes; focused39 passes; tsc/Vite build passed. Rebuilt release after all source changes frozen; cancelled only own earlier rustc because it embedded code before synthetic-option control guards.

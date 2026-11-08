@@ -29,12 +29,15 @@ export interface AppSettingsV1 {
   developerMode: boolean;
   /** Per imported paper, count prompt and completion tokens together. */
   cloudTokenBudget: number;
+  /** 学生端的考试作答存储目录（含 snapshots/ 与 status/），只读；与 NAS 发布目录分开保存。 */
+  submissionsRoot: string;
 }
 
 export const DEFAULT_APP_SETTINGS: Readonly<AppSettingsV1> = Object.freeze({
   nasDestination: "",
   developerMode: false,
-  cloudTokenBudget: DEFAULT_CLOUD_TOKEN_BUDGET
+  cloudTokenBudget: DEFAULT_CLOUD_TOKEN_BUDGET,
+  submissionsRoot: ""
 });
 
 export function readAppSettings(): AppSettingsV1 {
@@ -48,7 +51,8 @@ export function readAppSettings(): AppSettingsV1 {
   return {
     nasDestination: (stored.nasDestination ?? legacyNas).trim(),
     developerMode: stored.developerMode === true,
-    cloudTokenBudget: normalizeCloudTokenBudget(stored.cloudTokenBudget)
+    cloudTokenBudget: normalizeCloudTokenBudget(stored.cloudTokenBudget),
+    submissionsRoot: typeof stored.submissionsRoot === "string" ? stored.submissionsRoot.trim() : ""
   };
 }
 
@@ -57,6 +61,7 @@ const listeners = new Set<(settings: AppSettingsV1) => void>();
 export function writeAppSettings(patch: Partial<AppSettingsV1>): AppSettingsV1 {
   const next = { ...readAppSettings(), ...patch };
   next.nasDestination = next.nasDestination.trim();
+  next.submissionsRoot = (next.submissionsRoot ?? "").trim();
   next.cloudTokenBudget = normalizeCloudTokenBudget(next.cloudTokenBudget);
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));

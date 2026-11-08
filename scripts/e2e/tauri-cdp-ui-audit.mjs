@@ -255,8 +255,9 @@ async function main() {
       return value;
     })()`);
     if (partSelect) {
-      await session.waitFor(`!!document.querySelector('[data-testid="library-part-chip-${partSelect}"]')`, { timeoutMs: 15000, label: "part-filter-chip" });
-      report.identity.partFilterExercised = partSelect;
+      // Part 筛选芯片已取消（组卷视图按 Part 分组）：断言题库行的 Part 徽标已更新。
+      await session.waitFor(`document.querySelector('[data-item-id="${itemId}"] [data-testid="library-row-part"]')?.textContent?.trim() === ${JSON.stringify(partSelect)}`, { timeoutMs: 15000, label: "row-part-badge" });
+      report.identity.partBadgeExercised = partSelect;
     }
     await capturePage(session, "library-imported", "题库（真实 PDF 已导入）", '[data-testid="library-page"]');
 
@@ -295,7 +296,7 @@ async function main() {
     await session.waitFor(`!!document.querySelector(${JSON.stringify(trashSelector)})`, { timeoutMs: 15000, label: "library-row-trash-action" });
     await session.clickSelectorWhenStable(trashSelector);
     await session.waitFor(`!document.querySelector(${JSON.stringify(`[data-item-id="${itemId}"]`)})`, { timeoutMs: 20000, label: "row-moved-to-trash" });
-    await session.clickSelectorWhenStable('[data-testid="library-tab-trash"]');
+    await session.clickSelectorWhenStable('[data-testid="library-trash-open"]');
     await capturePage(session, "recycle-bin", "回收站", '[data-testid="library-page"]');
 
     await session.evaluate(`(() => { location.hash = "#/library?modality=writing"; return true; })()`);

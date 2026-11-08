@@ -44,9 +44,14 @@ export interface ParagraphNodeV2 extends BaseContentNodeV2 {
   paragraphLabel?: string;
 }
 
+/** Multiplier of the default heading size; composes with student zoom. */
+export type FontScaleV2 = 0.9 | 1 | 1.15 | 1.3 | 1.5;
+export const FONT_SCALES_V2: readonly FontScaleV2[] = [0.9, 1, 1.15, 1.3, 1.5];
+
 export interface HeadingNodeV2 extends BaseContentNodeV2 {
   type: "heading";
   level: number;
+  fontScale?: FontScaleV2;
   children: ContentNodeV2[];
 }
 

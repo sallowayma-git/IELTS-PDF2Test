@@ -1,18 +1,27 @@
 import type { ReactNode } from "react";
 import type { RouteState } from "../app/router";
-import { go, libraryPath } from "../app/router";
+import { go } from "../app/router";
 import wonderLogo from "../assets/wonder-ielts-logo-square.png";
 
-// 极简外壳（计划 §16.3）：只有「题库」和「设置」两个一级入口。
-// 已删除：转化工具展开组、流水线 stepper、activeJob 技术条、category/frequency/错误数。
-// 各页面自己负责顶部栏，AppShell 不读取任何 job 状态。
+// 外壳：一级入口「导入 / 题库 / 数据 / 设置」。导入入口带角标（识别中 + 待检查 + 失败）。
+// 工作区是沉浸式全屏，不显示侧栏。
 const NAV = [
+  { label: "导入", short: "导", path: "/import", match: "import" as const },
   { label: "题库", short: "库", path: "/library", match: "library" as const },
+  { label: "数据", short: "数", path: "/data", match: "data" as const },
   { label: "设置", short: "设", path: "/settings", match: "settings" as const }
 ];
 
-export function AppShell({ route, children }: { route: RouteState; children: ReactNode }) {
-  // 工作区要的是最终考试界面的信息密度，外壳不套大圆角卡片，也不占用侧栏宽度。
+export function AppShell({
+  route,
+  importBadge,
+  children
+}: {
+  route: RouteState;
+  /** 导入角标；`undefined` 表示还没读到，不显示数字。 */
+  importBadge?: number;
+  children: ReactNode;
+}) {
   const immersive = route.name === "workspace";
 
   return (
@@ -20,7 +29,7 @@ export function AppShell({ route, children }: { route: RouteState; children: Rea
       {immersive ? null : (
         <aside className="sidebar">
           <div className="sidebar-header">
-            <button className="brand" onClick={() => go(libraryPath())}>
+            <button className="brand" onClick={() => go("/library")}>
               <img className="brand-mark" src={wonderLogo} alt="Wonder IELTS" />
               <span className="brand-copy">
                 <strong>IELTS Author</strong>
@@ -35,9 +44,13 @@ export function AppShell({ route, children }: { route: RouteState; children: Rea
                 className={route.name === entry.match ? "active" : ""}
                 onClick={() => go(entry.path)}
                 title={entry.label}
+                data-testid={`nav-${entry.match}`}
               >
                 <span className="nav-short">{entry.short}</span>
                 <span className="nav-label">{entry.label}</span>
+                {entry.match === "import" && importBadge ? (
+                  <span className="nav-badge" data-testid="nav-import-badge" aria-label={`${importBadge} 项待处理`}>{importBadge}</span>
+                ) : null}
               </button>
             ))}
           </nav>

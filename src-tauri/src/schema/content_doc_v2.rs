@@ -95,6 +95,12 @@ pub struct HeadingNodeV2 {
     #[serde(flatten)]
     pub base: BaseContentNodeV2,
     pub level: u8,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_font_scale"
+    )]
+    pub font_scale: Option<f64>,
     pub children: Vec<ContentNodeV2>,
 }
 
@@ -405,5 +411,17 @@ mod tests {
         };
         assert_eq!(node.paragraph_label.as_deref(), Some("A"));
         assert_eq!(encoded, labelled);
+    }
+}
+
+fn deserialize_font_scale<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<f64>, D::Error> {
+    let value = Option::<f64>::deserialize(deserializer)?;
+    match value {
+        Some(scale) if ![0.9, 1.0, 1.15, 1.3, 1.5].contains(&scale) => {
+            Err(serde::de::Error::custom("invalid fontScale"))
+        }
+        _ => Ok(value),
     }
 }

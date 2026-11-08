@@ -23,6 +23,15 @@ const listeningPart = (ordinal: number, taskIds: string[], audio?: { playable: b
   ({ ordinal, label: `Part ${ordinal}`, taskIds, audio }) as ListeningPartView;
 
 describe("reading nav model", () => {
+  it("uses canonical category for the single reading section", () => {
+    for (const category of ["P2", "P3"] as const) {
+      const [section] = buildQuestionNavModel({ ...baseInput(), readingCategory: category }).sections;
+      expect(section.name).toBe(`Part ${category.slice(1)}`);
+      expect(section.ordinal).toBe(Number(category.slice(1)));
+      expect(section.active).toBe(true);
+      expect(section.switchable).toBe(false);
+    }
+  });
   it("produces a single active Part 1 section in pane order", () => {
     const model = buildQuestionNavModel({
       ...baseInput(),

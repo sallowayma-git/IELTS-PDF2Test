@@ -77,6 +77,8 @@ export function useLibraryStore(): LibraryStore {
   const snapshotGeneration = useRef(0);
   const dirtyItems = useRef(new Set<string>());
   const refreshingItems = useRef(new Set<string>());
+  // 最近一次成功读到的 V2 仓库行（读取失败时沿用，见 load）。
+  const lastKnownItems = useRef<LibraryItemSummaryV2[]>([]);
 
   const refresh = useCallback(() => setTick((value) => value + 1), []);
 
@@ -92,9 +94,14 @@ export function useLibraryStore(): LibraryStore {
       }),
       listTrashedExams().catch(() => [] as LibraryExamSummary[]),
       // M1：V2 仓库行（标题/状态权威）；失败时退回旧三源合并。
-      listLibraryItems().catch((cause) => {
+      listLibraryItems().then((items) => {
+        lastKnownItems.current = items;
+        return items;
+      }).catch((cause) => {
+        // 瞬时读取失败不得把已知的 Part/标题抹掉：否则行的 part 变成 undefined，
+        // 组卷选择会被对齐步骤当成「Part 已改」而静默去掉（审计 A8）。
         console.error("[library] listLibraryItems failed", cause);
-        return [] as LibraryItemSummaryV2[];
+        return lastKnownItems.current;
       })
     ]);
     const merged = mergeRows(jobs, summaries, trashed, v2Items);
@@ -117,11 +124,16 @@ export function useLibraryStore(): LibraryStore {
           break;
         }
         if (dirtyItems.current.has(itemId)) continue;
-        const next = data ? buildRow(itemId, data.job ?? undefined, data.summary ?? undefined,
+        const built = data ? buildRow(itemId, data.job ?? undefined, data.summary ?? undefined,
           { inTrash: data.inTrash }, data.item ?? undefined) : undefined;
         optimistic.current = optimistic.current.filter((row) => row.id !== itemId);
         setRows((current) => {
           const remaining = current.filter((row) => row.id !== itemId);
+          // 单行读取没带回 V2 行时沿用原 Part（同 load 的理由）。
+          const previous = current.find((row) => row.id === itemId);
+          const next = built && built.part === undefined && previous?.part !== undefined
+            ? { ...built, part: previous.part }
+            : built;
           return (next ? [...remaining, next] : remaining)
             .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
         });

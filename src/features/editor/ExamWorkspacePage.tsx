@@ -2,16 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Undo2, Redo2, MoreHorizontal, FileSearch, X } from "lucide-react";
 import { command, getJob } from "../../api/tauriCommands";
 import { describeRetryOutcome, retryAnswerPageRecognition, retryProcessing, cancelProcessing, subscribeProcessing } from "../../api/processingClient";
-import { chooseExportDirectory } from "../../api/desktopDialogs";
-import { describePublishOutcome, publishItem, publishOutcomeKind, type PublishOutcomeKind } from "../../api/publishClient";
 import { getWorkspaceItem } from "../../api/workspaceClient";
 import { SOURCE_PURGED_EXPLANATION, saveToLibrary, sourceActionsAvailable } from "./finalVersion";
-import { go, libraryPath, type LibraryIntent } from "../../app/router";
+import { go, libraryPath, libraryPickPath, type LibraryIntent } from "../../app/router";
+import { StudentFontSizeControls, type StudentFontSize } from "../../exam-canvas/StudentReadingTools";
 import { ExamCanvas, type ExamCanvasStructureAction } from "../../exam-canvas/ExamCanvas";
 import { compileStructureAction } from "../../exam-canvas/structureActions";
 import { SelectionInspector } from "./SelectionInspector";
 import type { IeltsAuthoringIRV2, JobDetail } from "../../types";
-import { readAppSettings, writeAppSettings } from "../settings/appSettings";
+import { readAppSettings } from "../settings/appSettings";
 import { deriveActionableIssues, mergePublishGateIssues, type ActionableIssueV1 } from "./actionableIssues";
 import { getRecognitionDecision } from "../../api/recognitionClient";
 import {
@@ -22,7 +21,7 @@ import {
   type UserTaskActionV1,
   type UserTaskV1
 } from "./userTasks";
-import { compilePreviewSource, describePreviewPublishLimitation } from "./studentPreview";
+import { compilePreviewSource, describePreviewPublishLimitation, type PreviewCompileResult } from "./studentPreview";
 import { RecognitionPanel } from "./RecognitionPanel";
 import { useCanonicalEditor } from "./useCanonicalEditor";
 import { describeDeferredRemoteRefresh } from "./remoteVersion";
@@ -119,9 +118,6 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   const [busyAction, setBusyAction] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | undefined>();
   const [noticeDetail, setNoticeDetail] = useState<string | undefined>();
-  // 仅供验收脚本读取（`data-publish-outcome`），不渲染成文字。
-  // 绑定到当时那条提示文字：提示被别的消息替换后，这个值自动失效，不会残留。
-  const [publishOutcome, setPublishOutcome] = useState<{ text: string; kind: PublishOutcomeKind } | undefined>();
   const [titleEditing, setTitleEditing] = useState(false);
   const [preflight, setPreflight] = useState<PublishCheckResultV1 | undefined>();
   // 预检拉取失败必须让用户看见：`mergePublishGateIssues` 在 preflight 为 undefined 时
@@ -130,6 +126,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   // 窄窗（<980px）下两栏改为顶部 tab 切换，而不是把 passage 与 questions 堆成一长列。
   const [narrowPane, setNarrowPane] = useState<"passage" | "questions">("questions");
   // 编辑 / 学生预览。预览不是新页面，而是同一工作区里的另一个渲染模式。
+  const [studentFontSize, setStudentFontSize] = useState<StudentFontSize>("normal");
   const [mode, setMode] = useState<"edit" | "student">("edit");
   // 学生预览的作答状态重置令牌：草稿一变就重新挂载预览，避免把旧题面的作答带到新题面。
   const previewTokenRef = useRef(0);
@@ -203,9 +200,21 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   }, [itemId, editor.noteRemoteVersion]);
 
   const localIssues = useMemo(() => deriveActionableIssues(editor.draft), [editor.draft]);
-  // 学生预览：先走产品真正使用的编译器校验当前草稿。编译失败就**不**渲染预览，
+  // 学生预览：当前草稿过 Rust 编译器（P2 单一编译入口）。编译失败就**不**渲染预览，
   // 而是给出可定位的问题，避免用户对着过期画面继续编辑。
-  const preview = useMemo(() => compilePreviewSource(editor.draft), [editor.draft]);
+  const [preview, setPreview] = useState<PreviewCompileResult | undefined>();
+  useEffect(() => {
+    let stopped = false;
+    // 草稿引用进闭包：连续编辑时只有最后一次编译结果可以落状态，
+    // 旧的异步返回不得覆盖新草稿的结论（预览永远跟着最新草稿走）。
+    const draft = editor.draft;
+    void compilePreviewSource(draft).then((result) => {
+      if (!stopped) setPreview(result);
+    });
+    return () => {
+      stopped = true;
+    };
+  }, [editor.draft]);
   // 学生预览发现的「答案形式与题目不匹配」也并进同一份清单（预览里不再另列一份）。
   const previewIssues = useMemo<ActionableIssueV1[]>(
     () => (preview?.ok ? preview.summary.answerKeyIssues : []).map((item) => ({
@@ -434,7 +443,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   }, [itemId, editor.pendingCount, editor.saveState, editor.loading]);
 
   useEffect(() => {
-    if (intent === "publish") setNotice("点右上角「发布」把这道题发到 NAS。");
+    if (intent === "publish") setNotice("点右上角「去组卷发布」，到题库的组卷栏把这道题与另两篇阅读一起发布为当前试卷。");
   }, [intent]);
 
   /** 失败提示一律经用户文案层收敛；机器码/路径只进日志与开发者附注（audit A7-F04）。 */
@@ -446,7 +455,6 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   }
   function clearNotice() {
     setNotice(undefined);
-    setPublishOutcome(undefined);
     setNoticeDetail(undefined);
   }
 
@@ -466,27 +474,14 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
     }
   }
 
+  /**
+   * 单题发布已取消（契约 V1.1 第5条）：保存后把这道题带到题库的组卷栏预选，
+   * 由题库页统一发布为当前试卷。没有 Part 的题，题库页会提示先设 Part。
+   */
   async function publish() {
     await withBusy("publish", async () => {
       await editor.flush();
-      let destination = readAppSettings().nasDestination;
-      if (!destination) {
-        const picked = await chooseExportDirectory();
-        if (!picked) {
-          setNotice("请先在设置页选择 NAS 目录，或在这里选一次。");
-          return;
-        }
-        writeAppSettings({ nasDestination: picked });
-        destination = picked;
-      }
-      // 一次点击即发布：不预检、不列阻断、不二次确认。点击本身就是确认。
-      const outcome = await publishItem(itemId, destination);
-      const publishNotice = describePublishOutcome(outcome);
-      setNotice(publishNotice);
-      setPublishOutcome({ text: publishNotice, kind: publishOutcomeKind(outcome) });
-      // 发布提交后原文件会被删除：刷新「原文件是否还在」，并重读题稿（状态与质量块已变）。
-      refreshSourcePurged();
-      if (outcome.ok) editor.reload();
+      go(libraryPickPath(itemId));
     });
   }
 
@@ -545,10 +540,28 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
                   ? llmUsage.unknownUsageCalls > 0
                     ? "云端用量信息缺失，已停止该试卷后续云端请求。"
                     : `本次云端用量 ${formatTokens(llmUsage.totalTokens)} / ${formatTokens(llmUsage.tokenBudget)} tokens，已达到上限，后续云端请求已停止。`
-                  : `本次云端用量 ${formatTokens(llmUsage.promptTokens)} 输入 + ${formatTokens(llmUsage.completionTokens)} 输出 / ${formatTokens(llmUsage.tokenBudget)} tokens${llmUsage.cacheUsageAvailable ? ` · 缓存命中 ${formatTokens(llmUsage.cacheHitTokens)}` : ""}`}
+                  : llmUsage.totalTokens > llmUsage.promptTokens + llmUsage.completionTokens
+                    ? `本次云端用量 ${formatTokens(llmUsage.totalTokens)} / ${formatTokens(llmUsage.tokenBudget)} tokens（服务商未提供完整输入/输出明细）`
+                    : `本次云端用量 ${formatTokens(llmUsage.promptTokens)} 输入 + ${formatTokens(llmUsage.completionTokens)} 输出 / ${formatTokens(llmUsage.tokenBudget)} tokens${llmUsage.cacheUsageAvailable ? ` · 缓存命中 ${formatTokens(llmUsage.cacheHitTokens)}` : ""}`}
               </small>
             ) : null}
           </div>
+          {editor.draft && (!editor.draft.modality || editor.draft.modality === "reading") ? (
+            <div className="workspace-part-control">
+              <select
+                className="workspace-part-select"
+                aria-label="Part 归属"
+                data-testid="workspace-part-select"
+                value={editor.draft.exam.category}
+                disabled={cloudReviewing || editor.loading || editor.conflictRecovering}
+                onChange={(event) => {
+                  if (!cloudReviewing && !editor.loading && !editor.conflictRecovering) editor.applyPatch({ op: "setExamCategory", category: event.target.value as "P1" | "P2" | "P3" });
+                }}
+              >
+                {["P1", "P2", "P3"].map((part) => <option key={part} value={part}>{part}</option>)}
+              </select>
+            </div>
+          ) : null}
         </div>
 
         <div className="workspace-header-right">
@@ -593,7 +606,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             {/* 顶栏唯一的主操作：底色/悬停对齐基准的提交类按钮（见 workspace.css 的
                 .workspace-publish-btn）。data-testid 与点击行为不变。 */}
             <button className="workspace-publish-btn" data-testid="workspace-publish" disabled={Boolean(busyAction) || cloudReviewing} onClick={publish}>
-              {busyAction === "publish" ? "正在发布…" : "发布"}
+              {busyAction === "publish" ? "正在保存…" : "去组卷发布"}
             </button>
             <button aria-label="更多操作" aria-expanded={menuOpen} aria-haspopup="menu" title="更多操作" onClick={() => setMenuOpen((open) => !open)}><MoreHorizontal size={16} /></button>
           </div>
@@ -628,13 +641,10 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
         </div>
       </header>
 
-      {/* 子栏对应基准 .sub-header-bar：左侧粗体 Part 名，中间说明，右侧模式切换。
-          Part 名：阅读稿显示 READING · Part 1（题稿 IR 里没有 passage 编号字段，
-          单题工作区一份稿就是一个 Part，固定 Part 1）；听力稿显示 LISTENING，
-          Part 切换信息在底部题号导航，子栏不再追加。 */}
+      {/* 阅读 Part 来自权威稿 category；听力切换信息在底部题号导航。 */}
       <div className="workspace-sub-header">
         <span className="workspace-sub-header-label">
-          {editor.draft?.modality === "listening" ? "LISTENING" : "READING · Part 1"}
+          {editor.draft?.modality === "listening" ? "LISTENING" : `READING · Part ${(editor.draft?.exam.category ?? "P1").slice(1)}`}
         </span>
         <div className="workspace-mode-toggle" role="tablist" aria-label="编辑与学生预览">
           <button
@@ -654,6 +664,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
         </div>
         {/* 学生预览时说明区放修订提示与概要（原来在题面上方的通知带，data-testid 不变）；
             与已保存内容有差异时（level === "warning"）在行尾追加红色小标记，原因见 title。 */}
+        {mode === "student" ? <StudentFontSizeControls value={studentFontSize} onChange={setStudentFontSize} /> : null}
         <span className={`workspace-sub-header-meta${mode === "student" ? " is-preview" : ""}`}>
           {mode === "student" ? (
             <>
@@ -696,17 +707,18 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             className="ghost small"
             data-testid="workspace-cloud-review-stop"
             disabled={Boolean(busyAction)}
-            onClick={() => {
-              // cancel_requested_at 非空即解锁，且只停云端、保留当前正式稿（见 queue.rs 注释）。
+            onClick={() => void withBusy("stop-cloud", async () => {
+              // Unlock/retry only after the durable cancellation commits. An
+              // optimistic unlock races flush against the still-active lock.
+              await cancelProcessing(itemId);
               setCloudStopRequested(true);
-              void cancelProcessing(itemId).catch(() => {});
               setNotice("已请求停止云端校核，当前题稿保持不变。");
-            }}
+            })}
           >停止云端校核</button>
         </div>
       ) : null}
       {notice ? (
-        <p className="workspace-notice" role="status" data-publish-outcome={publishOutcome && publishOutcome.text === notice ? publishOutcome.kind : undefined}>
+        <p className="workspace-notice" role="status">
           {notice}
           {noticeDetail && noticeDetail !== notice && readAppSettings().developerMode ? (
             <small className="workspace-notice-detail">技术详情：{noticeDetail}</small>
@@ -1012,7 +1024,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             ) : null}
             {preview?.ok ? (
               // key 绑草稿版本令牌：草稿一变，预览的作答状态整体重置。
-              <ExamCanvas key={`student-preview-${previewToken}`} authoring={editor.draft} mode="student" locked={cloudReviewing} />
+              <ExamCanvas key={`student-preview-${previewToken}`} authoring={editor.draft} mode="student" studentFontSize={studentFontSize} locked={cloudReviewing} />
             ) : null}
           </div>
         ) : null}

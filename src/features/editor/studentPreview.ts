@@ -1,25 +1,22 @@
 import type { IeltsAuthoringIRV2 } from "../../types";
-import { buildReadingSourceV2FromAuthoring, validateAnswerKeyKinds } from "../../services/readingRuntimeV2";
-import { ReadingRuntimeError, type ReadingExamSourceV2 } from "../../types/reading-runtime-v2";
-import { buildListeningSourceV1FromAuthoring, ListeningRuntimeErrorV1 } from "../../services/listeningRuntimeV1";
-import type { ListeningExamSourceV1 } from "../../types/listening-runtime-v1";
+import { command } from "../../api/tauriCommands";
 
-// 学生预览的编译入口。
+// 学生预览的编译入口（P2 门禁收敛）。
 //
-// 预览**必须**走产品真正使用的那条编译路径：发布器把 `IeltsAuthoringIRV2` 编成运行时契约
-// （阅读 `ReadingExamSourceV2`、听力 `ListeningExamSourceV1`）后写进 NAS 包，学生端渲染的是
-// 编译产物。如果预览自己另做一份近似渲染，就会出现「预览能看、发布后被学生端拒绝」这类
-// 只在真机上暴露的问题。
+// 预览**必须**走产品真正使用的那条编译路径：学生端渲染的是 Rust 编译器
+// （`compile_reading_source_v2` / `compile_listening_source_v1`）的产物。这里直接
+// 调同一个 Rust 编译命令（`compile_authoring_preview`），不再在 TS 侧另做一份
+// 编译/校验——那份民办实现曾与 Rust 各说各话（Rust 修过的漏到 TS，用户照旧看到
+// `RUNTIME_OPTION_BANK_MISSING`）。
 //
-// 所以这里按稿件自身的 `modality` 分派到同一个编译器：
+// 按 `modality` 分派由 Rust 编译器自己做（稿件自身的 modality 决定目标契约），
+// 这里只负责把当前内存草稿交给它：
 //   - 编译失败（结构非法 / 热点越界 / 资源路径不安全 / Section 缺音频）→ 返回可定位的错误，
 //     **不**渲染预览，避免用户对着过期画面继续编辑；
 //   - 编译成功 → 交给共享的 ExamCanvas student 模式渲染，交互语义与学生端一致。
 //
-// 按 `modality` 分派而不是按形状猜测：一份丢了 Section 的听力卷必须**以听力的身份失败**，
-// 而不是被编成一份没有文章的「阅读稿」然后看起来通过了。
-//
-// 注意：编译成功**不等于**可发布。可发布还要过发布门禁，两者在界面上分开显示。
+// 注意：编译成功**不等于**可发布。可发布还要过发布门禁（P2 起：编译通过即可发布，
+// 其余为警告），两者在界面上分开显示。
 
 export interface PreviewCompileIssue {
   code: string;
@@ -28,8 +25,8 @@ export interface PreviewCompileIssue {
 }
 
 export type PreviewCompiledSource =
-  | { modality: "reading"; reading: ReadingExamSourceV2 }
-  | { modality: "listening"; listening: ListeningExamSourceV1 };
+  | { modality: "reading" }
+  | { modality: "listening" };
 
 export type PreviewCompileResult =
   | {
@@ -49,63 +46,64 @@ export type PreviewCompileResult =
     }
   | { ok: false; issue: PreviewCompileIssue };
 
-function compileIssue(error: unknown): PreviewCompileIssue {
-  if (error instanceof ReadingRuntimeError) {
-    return { code: error.code, targetId: error.targetId ?? "exam", message: error.message };
-  }
-  if (error instanceof ListeningRuntimeErrorV1) {
-    return { code: error.code, targetId: error.targetId ?? "exam", message: error.message };
-  }
-  const raw = error instanceof Error ? error.message : String(error);
-  return { code: "PREVIEW_COMPILE_FAILED", targetId: "exam", message: raw };
+interface RustPreviewCompileResult {
+  ok: boolean;
+  issues: PreviewCompileIssue[];
+  summary: {
+    modality: "reading" | "listening";
+    taskGroups: number;
+    slots: number;
+    assets: number;
+    answeredSlots: number;
+    listeningParts: number;
+    answerKeyIssues: PreviewCompileIssue[];
+  } | null;
 }
 
-/** 纯函数：编译当前草稿。不产生任何写入，也不读取学生答案。 */
-export function compilePreviewSource(draft: IeltsAuthoringIRV2 | undefined): PreviewCompileResult | undefined {
+function compileIssue(code: string, targetId: string, message: string): PreviewCompileIssue {
+  return { code, targetId, message };
+}
+
+/** 当前草稿过 Rust 编译器（不产生任何写入，也不读取学生答案）。 */
+export async function compilePreviewSource(
+  draft: IeltsAuthoringIRV2 | undefined
+): Promise<PreviewCompileResult | undefined> {
   if (!draft) return undefined;
+  let result: RustPreviewCompileResult;
   try {
-    const compiled: PreviewCompiledSource =
-      draft.modality === "listening"
-        ? { modality: "listening", listening: buildListeningSourceV1FromAuthoring(draft) }
-        : { modality: "reading", reading: buildReadingSourceV2FromAuthoring(draft) };
-    const source = compiled.modality === "listening" ? compiled.listening : compiled.reading;
-    const slots = Object.keys(source.answerSlots).length;
-    // 两份契约的资源清单在 TS 侧形状不同（阅读是 `Record<assetId, …>`，听力是数组）。
-    // 这是既有差异，不在本次改动范围内，这里如实分别计数。
-    const assetCount =
-      compiled.modality === "listening"
-        ? compiled.listening.assets.assets.length
-        : Object.keys(compiled.reading.assets.assets).length;
-    const answeredSlots = Object.values(source.answerKey).filter((value) => {
-      if (!value) return false;
-      if (value.kind === "text") return value.values.some((entry) => entry.trim().length > 0);
-      if (value.kind === "option") return value.labels.length > 0;
-      return false;
-    }).length;
-    // 编译通过 ≠ 学生端能收下。答案键类型不匹配时题面照样渲染，但真实学生端会在提交阶段
-    // 拒绝整份提交。这里如实带出来，让预览把「能看」和「能提交」分开说，不留假完成。
-    // `answerSlots` / `answerKey` 在两份契约里同名同形，所以两种稿子跑的是同一份判断。
-    const answerKeyIssues = validateAnswerKeyKinds(source).map((item) => ({
-      code: item.code,
-      targetId: item.targetId,
-      message: item.message
-    }));
-    return {
-      ok: true,
-      compiled,
-      summary: {
-        modality: compiled.modality,
-        taskGroups: source.taskGroups.length,
-        slots,
-        assets: assetCount,
-        answeredSlots,
-        listeningParts: compiled.modality === "listening" ? compiled.listening.parts.length : 0,
-        answerKeyIssues
-      }
-    };
+    result = await command<RustPreviewCompileResult>("compile_authoring_preview", {
+      authoring: draft
+    });
   } catch (error) {
-    return { ok: false, issue: compileIssue(error) };
+    const raw = error instanceof Error ? error.message : String(error);
+    return { ok: false, issue: compileIssue("PREVIEW_COMPILE_FAILED", "exam", raw) };
   }
+  if (!result?.ok || !result.summary) {
+    const first = result?.issues?.[0];
+    return {
+      ok: false,
+      issue: first
+        ? { code: first.code, targetId: first.targetId ?? "exam", message: first.message }
+        : compileIssue("PREVIEW_COMPILE_FAILED", "exam", "编译未通过。")
+    };
+  }
+  return {
+    ok: true,
+    compiled:
+      result.summary.modality === "listening"
+        ? { modality: "listening" }
+        : { modality: "reading" },
+    summary: {
+      modality: result.summary.modality,
+      taskGroups: result.summary.taskGroups,
+      slots: result.summary.slots,
+      assets: result.summary.assets,
+      answeredSlots: result.summary.answeredSlots,
+      listeningParts: result.summary.listeningParts,
+      // 编译通过即答案键类型一致（Rust 编译器逐槽位校验 interaction↔kind）。
+      answerKeyIssues: []
+    }
+  };
 }
 
 export interface PreviewPublishLimitation {

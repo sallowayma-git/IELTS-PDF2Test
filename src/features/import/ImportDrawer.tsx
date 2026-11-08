@@ -1,12 +1,22 @@
 import { useEffect, useState } from "react";
-import { listLlmProfiles } from "../../api/tauriCommands";
+import { getPipelineSettings, listLlmProfiles } from "../../api/tauriCommands";
 import { go } from "../../app/router";
 import { hasCloudConnection } from "../settings/settingsLogic";
 import { choosePdfFolderSources, chooseSourceFiles, type PickedPath } from "../../api/desktopDialogs";
 import { detectImportModality } from "../../api/listeningAudioClient";
+import { formatPageRanges, planImportSplit, SPLIT_CONFIDENCE_LABEL, SPLIT_SIGNAL_LABEL, type ImportSplitPreview } from "../../api/processingClient";
 import type { ImportRejection } from "./useImportFiles";
 import { ListeningAudioDialog } from "./ListeningAudioDialog";
 import { listeningCandidates, type ListeningCandidate, type ListeningImportDecision } from "./listeningAudioPlan";
+
+async function checkedSplitPreviews(paths: string[]): Promise<ImportSplitPreview[]> {
+  const previews = await planImportSplit(paths);
+  if (!Array.isArray(previews) || previews.some((plan) => !plan
+    || !Array.isArray(plan.segments) || !Array.isArray(plan.warnings))) {
+    throw new Error("invalid_split_preview");
+  }
+  return previews;
+}
 
 // 导入不再是独立页面，而是题库页上的抽屉（计划 §3.1 / §12.1）。
 // 用户只选文件；title 取文件名、modality 自动、parseMode 自动、云端沿用设置页开关。
@@ -18,7 +28,8 @@ export function ImportDrawer({
   error,
   rejected,
   onClose,
-  onImport
+  onImport,
+  mode = "drawer"
 }: {
   open: boolean;
   busy: boolean;
@@ -27,19 +38,36 @@ export function ImportDrawer({
   rejected: ImportRejection[];
   onClose: () => void;
   onImport: (files: PickedPath[], decisions?: Record<string, ListeningImportDecision>) => void;
+  /** `page`：作为导入一级页面的常驻面板（无遮罩、无关闭/取消，同一套选择与拆分逻辑）。 */
+  mode?: "drawer" | "page";
 }) {
+  const page = mode === "page";
   const [files, setFiles] = useState<PickedPath[]>([]);
   const [checking, setChecking] = useState(false);
   // 识别为听力的文件逐个确认；decisions 以源文件路径为键。
   const [queue, setQueue] = useState<ListeningCandidate<PickedPath>[]>([]);
   const [decisions, setDecisions] = useState<Record<string, ListeningImportDecision>>({});
+  // 整套卷子：一份 PDF 里识别到多篇时先让用户确认拆分（默认拆），每篇成为题库里独立的一行。
+  const [splitPlans, setSplitPlans] = useState<ImportSplitPreview[]>([]);
+  const [splitWarnings, setSplitWarnings] = useState<Array<{ path: string; warnings: string[] }>>([]);
+  const [splitReviewed, setSplitReviewed] = useState(false);
+  const [splitCheckPaths, setSplitCheckPaths] = useState<string[]>([]);
+  const [keepWhole, setKeepWhole] = useState<Set<string>>(new Set());
+  const [pendingCandidates, setPendingCandidates] = useState<ListeningCandidate<PickedPath>[]>([]);
+  // 真正送去导入的文件（已带上拆分选择）；听力逐个确认结束后用它。
+  const [prepared, setPrepared] = useState<PickedPath[]>([]);
   // `undefined` = 还没查到；查不到时不提示（不猜）。
   const [cloudConnected, setCloudConnected] = useState<boolean | undefined>();
+  const [cloudDirect, setCloudDirect] = useState(false);
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    listLlmProfiles()
-      .then((profiles) => { if (!cancelled) setCloudConnected(hasCloudConnection(profiles)); })
+    Promise.all([listLlmProfiles(), getPipelineSettings().catch(() => undefined)])
+      .then(([profiles, settings]) => { if (!cancelled) {
+        const connected = hasCloudConnection(profiles);
+        setCloudConnected(connected);
+        setCloudDirect(connected && (settings?.pipelineMode ?? "direct") === "direct");
+      } })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [open]);
@@ -48,6 +76,10 @@ export function ImportDrawer({
 
   const addFiles = (picked: PickedPath[]) => {
     if (!picked.length) return;
+    // 文件变了，拆分预览要重新检查。
+    setSplitPlans([]);
+    setSplitWarnings([]);
+    setSplitReviewed(false);
     setFiles((current) => {
       const byPath = new Map(current.map((file) => [file.path, file]));
       for (const file of picked) byPath.set(file.path, file);
@@ -55,43 +87,124 @@ export function ImportDrawer({
     });
   };
 
-  const remove = (path: string) => setFiles((current) => current.filter((file) => file.path !== path));
-
-  const close = () => {
-    setFiles([]);
-    setQueue([]);
-    setDecisions({});
-    onClose();
+  const remove = (path: string) => {
+    setFiles((current) => current.filter((file) => file.path !== path));
+    setSplitPlans([]);
+    setSplitWarnings([]);
+    setSplitReviewed(false);
   };
 
-  const start = async () => {
-    setChecking(true);
-    const detections = await detectImportModality(files.map((file) => file.path)).catch(() => []);
-    setChecking(false);
-    const candidates = listeningCandidates(files, detections);
+  const proceed = (ready: PickedPath[], candidates: ListeningCandidate<PickedPath>[], priorDecisions: Record<string, ListeningImportDecision> = {}) => {
+    setPrepared(ready);
     if (!candidates.length) {
-      onImport(files);
+      if (Object.keys(priorDecisions).length) onImport(ready, priorDecisions);
+      else onImport(ready);
       return;
     }
-    setDecisions({});
+    setDecisions(priorDecisions);
     setQueue(candidates);
   };
 
-  const decide = (decision: ListeningImportDecision) => {
+  const close = () => {
+    if (busy || checking) return;
+    setFiles([]);
+    setQueue([]);
+    setDecisions({});
+    setSplitPlans([]);
+    setSplitWarnings([]);
+    setSplitReviewed(false);
+    setKeepWhole(new Set());
+    setPendingCandidates([]);
+    setPrepared([]);
+    onClose();
+  };
+
+  const checkSplits = async (
+    ready: PickedPath[], candidates: ListeningCandidate<PickedPath>[],
+    priorDecisions: Record<string, ListeningImportDecision>, paths: string[], retry = false
+  ) => {
+    setChecking(true);
+    setPrepared(ready);
+    setDecisions(priorDecisions);
+    setSplitCheckPaths(paths);
+    let previews: ImportSplitPreview[];
+    try {
+      previews = await checkedSplitPreviews(paths);
+    } catch {
+      previews = paths.map((path) => ({ path, pageCount: 0, segments: [], answerPages: [],
+        unassignedPages: [], defaultSplit: false, warnings: ["分篇检查未完成，无法确认这份 PDF 是否含有多篇文章。请重新检查；继续将整份作为一条导入。"] }));
+    } finally {
+      setChecking(false);
+    }
+    const plans = previews.filter((plan) => plan.segments.length >= 2);
+    const warnings = previews.filter((plan) => plan.segments.length < 2 && plan.warnings.length);
+    if (plans.length || warnings.length) {
+      setPendingCandidates(candidates);
+      setKeepWhole(new Set(plans.filter((plan) => retry && splitPlans.some((old) => old.path === plan.path)
+        ? keepWhole.has(plan.path) : !plan.defaultSplit).map((plan) => plan.path)));
+      setSplitPlans(plans);
+      setSplitWarnings(warnings);
+      setSplitReviewed(true);
+      return;
+    }
+    setSplitPlans([]); setSplitWarnings([]); setSplitReviewed(false);
+    proceed(ready, candidates, priorDecisions);
+  };
+
+  const start = async () => {
+    if (splitReviewed) {
+      // 第二次点击 = 确认拆分选择。
+      const splitPaths = new Set(splitPlans.filter((plan) => !keepWhole.has(plan.path)).map((plan) => plan.path));
+      const ready = (prepared.length ? prepared : files).map((file) => (splitPaths.has(file.path) ? { ...file, splitPassages: true } : file));
+      setSplitPlans([]);
+      setSplitWarnings([]);
+      setSplitReviewed(false);
+      proceed(ready, pendingCandidates, decisions);
+      return;
+    }
+    setChecking(true);
+    setPrepared(files);
+    setDecisions({});
+    const detections = await detectImportModality(files.map((file) => file.path)).catch(() => []);
+    const candidates = listeningCandidates(files, Array.isArray(detections) ? detections : []);
+    // 听力条目本身就是一整套 Part 1–4（音频按 Part 绑定），只拆阅读。
+    const listeningPaths = new Set(candidates.map((candidate) => candidate.file.path));
+    const readingPdfs = files.filter((file) => !listeningPaths.has(file.path) && /\.pdf$/i.test(file.name));
+    if (cloudDirect) {
+      // Cloud owns article/test boundaries. The source batch stays intact and
+      // each returned document becomes its own editable library item.
+      setChecking(false);
+      proceed(files, candidates);
+      return;
+    }
+    await checkSplits(files, candidates, {}, readingPdfs.map((file) => file.path));
+  };
+
+  const decide = async (decision: ListeningImportDecision) => {
     const [current, ...rest] = queue;
     if (!current) return;
     const next = { ...decisions, [current.file.path]: decision };
     setDecisions(next);
     setQueue(rest);
-    if (!rest.length) onImport(files, next);
+    if (!rest.length) {
+      // The listening hint is provisional. PDFs explicitly switched back to
+      // reading must go through passage preflight before they can be imported.
+      const switched = prepared.filter((file) => next[file.path]?.modality === "reading" && /\.pdf$/i.test(file.name));
+      if (switched.length) {
+        if (cloudDirect) { onImport(prepared, next); return; }
+        await checkSplits(prepared, [], next, switched.map((file) => file.path));
+        return;
+      }
+      onImport(prepared, next);
+    }
   };
 
   const pending = queue[0];
 
   return (
-    <div className="drawer-scrim" role="presentation" onClick={busy ? undefined : close}>
+    <div className={page ? "drawer-scrim import-page" : "drawer-scrim"} role="presentation" onClick={page || busy || checking ? undefined : close}>
       <aside
-        className="drawer"
+        className={page ? "drawer import-page-card" : "drawer"}
         role="dialog"
         aria-modal="true"
         aria-label="导入 PDF 或 DOCX"
@@ -100,22 +213,23 @@ export function ImportDrawer({
       >
         <header className="drawer-head">
           <h2>导入题目</h2>
-          <button className="ghost small" onClick={close} disabled={busy} aria-label="关闭">×</button>
+          {page ? null : <button className="ghost small" onClick={close} disabled={busy || checking} aria-label="关闭">×</button>}
         </header>
 
         <div className="drawer-body">
           <p className="drawer-hint">选择一份或多份 PDF / DOCX / TXT / MD。标题默认取文件名，之后可以在题目里直接改。</p>
+          {cloudDirect ? <p className="drawer-hint" data-testid="import-cloud-multi">PDF 将自动分批识别；文件内有多篇文章时，云端会分别生成题稿并保存为多条。</p> : null}
           {cloudConnected === false ? (
             <p className="drawer-hint" data-testid="import-cloud-offline">
               未连接云端，仅本地识别 ·{" "}
-              <button className="ghost small" onClick={() => { close(); go("/settings"); }}>去连接</button>
+              <button className="ghost small" disabled={busy || checking} onClick={() => { close(); go("/settings"); }}>去连接</button>
             </p>
           ) : null}
           <div className="button-row">
-            <button className="ghost" data-testid="import-pick-files" disabled={busy} onClick={() => chooseSourceFiles().then(addFiles)}>
+            <button className="ghost" data-testid="import-pick-files" disabled={busy || checking} onClick={() => chooseSourceFiles().then(addFiles)}>
               选择文件
             </button>
-            <button className="ghost" data-testid="import-pick-folder" disabled={busy} onClick={() => choosePdfFolderSources().then(addFiles)}>
+            <button className="ghost" data-testid="import-pick-folder" disabled={busy || checking} onClick={() => choosePdfFolderSources().then(addFiles)}>
               选择 PDF 文件夹
             </button>
           </div>
@@ -125,7 +239,7 @@ export function ImportDrawer({
               {files.map((file) => (
                 <li key={file.path}>
                   <span className="file-name">{file.name}</span>
-                  <button className="ghost small" onClick={() => remove(file.path)} disabled={busy} aria-label={`移除 ${file.name}`}>
+                  <button className="ghost small" onClick={() => remove(file.path)} disabled={busy || checking} aria-label={`移除 ${file.name}`}>
                     移除
                   </button>
                 </li>
@@ -134,6 +248,87 @@ export function ImportDrawer({
           ) : (
             <p className="empty compact">尚未选择文件。</p>
           )}
+
+          {splitPlans.length ? (
+            <section className="split-plan-panel" data-testid="import-split-plan">
+              <p className="drawer-hint">
+                下面的文件里有整套卷子。拆分后每篇是题库里独立的一行，分别识别、编辑和发布；在题库里切换篇章即可。
+              </p>
+              {splitPlans.map((plan) => {
+                const name = files.find((file) => file.path === plan.path)?.name ?? plan.path;
+                const split = !keepWhole.has(plan.path);
+                return (
+                  <div key={plan.path} className="split-plan-file" data-testid="import-split-file">
+                    <label className="split-plan-toggle">
+                      <input
+                        type="checkbox"
+                        checked={split}
+                        disabled={busy || checking}
+                        data-testid="import-split-toggle"
+                        onChange={(event) => setKeepWhole((current) => {
+                          const next = new Set(current);
+                          if (event.target.checked) next.delete(plan.path); else next.add(plan.path);
+                          return next;
+                        })}
+                      />
+                      <span>
+                        <strong className="file-name">{name}</strong>
+                        {split ? ` · 识别到 ${plan.segments.length} 篇，拆成 ${plan.segments.length} 条` : ` · 识别到 ${plan.segments.length} 篇 · 不拆分，整份作为一条导入`}
+                      </span>
+                    </label>
+                    {!plan.defaultSplit ? (
+                      <p className="drawer-hint split-plan-warning" data-testid="import-split-weak">
+                        分篇信号不够一致，默认整份导入；核对下面的分篇后可以勾选拆分。
+                      </p>
+                    ) : null}
+                    <ul className="split-plan-segments">
+                      {plan.segments.map((segment) => (
+                        <li key={`${segment.label}-${segment.pages[0]}`} data-testid="import-split-segment">
+                          <div className="split-plan-segment-head">
+                            <strong>{segment.label}</strong>
+                            <span>第 {formatPageRanges(segment.pages)} 页</span>
+                            {segment.questionRange ? <span>题 {segment.questionRange[0]}–{segment.questionRange[1]}</span> : null}
+                            <span className={`split-confidence ${segment.confidence}`}>{SPLIT_CONFIDENCE_LABEL[segment.confidence]}</span>
+                          </div>
+                          <div className="split-plan-segment-meta">
+                            <span>依据：{segment.signals.map((signal) => SPLIT_SIGNAL_LABEL[signal] ?? signal).join("、") || "无"}</span>
+                            <span>
+                              {segment.answers.length
+                                ? `答案 ${segment.answers.length} 条（已从答案页按题号分出）`
+                                : segment.fallbackAnswerPages.length
+                                  ? `答案未能分出，附第 ${formatPageRanges(segment.fallbackAnswerPages)} 页答案页`
+                                  : "未找到答案"}
+                            </span>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                    {plan.warnings.map((warning) => (
+                      <p key={warning} className="drawer-hint split-plan-warning">{warning}</p>
+                    ))}
+                    {split && plan.unassignedPages.length ? (
+                      <p className="drawer-hint">第 {formatPageRanges(plan.unassignedPages)} 页不属于任何一篇（封面、说明、听力等），不会导入。</p>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </section>
+          ) : null}
+
+          {splitWarnings.length ? (
+            <section data-testid="import-split-warning" role="alert">
+              {splitWarnings.map((plan) => (
+                <div key={plan.path}>
+                  <strong className="file-name">{files.find((file) => file.path === plan.path)?.name ?? plan.path}</strong>
+                  {plan.warnings.map((warning) => <p key={warning} className="drawer-hint split-plan-warning">{warning}</p>)}
+                </div>
+              ))}
+              <p className="drawer-hint">继续导入时，这些文件会整份作为一条；如需分篇，请先核对原文件。</p>
+              <button className="ghost small" disabled={busy || checking} onClick={() => {
+                void checkSplits(prepared, pendingCandidates, decisions, splitCheckPaths, true);
+              }}>重新检查</button>
+            </section>
+          ) : null}
 
           {stageMessage ? (
             <div className="progress-panel" data-testid="import-stage">
@@ -153,14 +348,14 @@ export function ImportDrawer({
         </div>
 
         <footer className="drawer-foot">
-          <button className="ghost" onClick={close} disabled={busy}>取消</button>
+          {page ? null : <button className="ghost" onClick={close} disabled={busy || checking}>取消</button>}
           <button
             className="primary"
             data-testid="import-start"
             disabled={busy || checking || !files.length}
             onClick={start}
           >
-            {busy ? "正在建立条目…" : checking ? "正在检查文件…" : `开始导入${files.length > 1 ? ` ${files.length} 份` : ""}`}
+            {busy ? "正在建立条目…" : checking ? "正在检查文件…" : splitReviewed ? "确认导入" : `开始导入${files.length > 1 ? ` ${files.length} 份` : ""}`}
           </button>
         </footer>
       </aside>

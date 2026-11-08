@@ -8,5 +8,6 @@
 
 pub(crate) mod answer_page;
 pub(crate) mod commands;
+pub(crate) mod pdf_split;
 pub(crate) mod queue;
 pub(crate) mod scheduler;

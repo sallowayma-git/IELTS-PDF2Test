@@ -1,9 +1,11 @@
-// 产品路由只有三个主表面（计划 §3.1）：题库 / 题目工作区 / 设置。
+// 一级入口：导入 / 题库 / 数据 / 设置（数据模块见 features/data）。题目工作区是沉浸式子页面。
 //
 // 流水线内部阶段（source review、split、groups、llm-review、preview、export）不再是路由，
 // 它们变成题库行上的阶段状态和工作区内的局部问题。旧链接通过 legacyRedirect 一次性重定向，
 // 保留一个发行周期，只写日志，不出现在导航里。
-export type RouteName = "library" | "workspace" | "settings" | "legacy";
+import { parseDataView, type DataView } from "../features/data/dataRoute";
+
+export type RouteName = "import" | "library" | "workspace" | "settings" | "data" | "legacy";
 
 /** 兼容期内仍可通过 URL 到达、但不出现在导航中的旧页面（计划 §16.2 的兼容周期）。
  *  收敛期不能在替代能力落地前静默移除用户已有能力，因此这些页面保留在 `#/legacy/...`，
@@ -35,9 +37,13 @@ export interface RouteState {
   /** 题库条目 id。当前数据模型下 library item id 与 job id 相同（见 findings F12）。 */
   itemId?: string;
   intent?: LibraryIntent;
+  /** 题库组卷栏预选的题（编辑器「去组卷发布」带过来）。 */
+  pickItemId?: string;
   /** 题库题型子标签（reading | listening | writing | all）。承接被退休的 #/legacy/writing。 */
   modality?: string;
   legacyPage?: LegacyPageName;
+  /** 数据模块的子视图（#/data/...）。 */
+  data?: DataView;
 }
 
 /** 路径分段，忽略 query：`#/a/b?x=1` → `["a","b"]`。query 段不能当路径判断，否则
@@ -54,12 +60,12 @@ export function legacyRedirect(hash: string): string | undefined {
   if (head === "legacy") {
     // 写作创作页并入题库的写作子标签，不再是独立的逃生页面。
     if (second === "writing") return "/library?modality=writing";
-    return third ? `/items/${third}` : second === "import" ? "/library?import=1" : "/library";
+    return third ? `/items/${third}` : second === "import" ? "/import" : "/library";
   }
   if (head === "dashboard" || head === "phase5") return "/library";
   if (head === "jobs") {
     if (!second) return "/library";
-    if (second === "new") return "/library?import=1";
+    if (second === "new") return "/import";
     // /jobs/:id/(document|split|groups|llm-review|preview|authoring-v2|export) -> /items/:id
     return third === "export" ? `/items/${second}?publish=1` : `/items/${second}`;
   }
@@ -77,6 +83,13 @@ function parseIntent(value: string): LibraryIntent | undefined {
   return undefined;
 }
 
+/** 题库组卷预选，由 `?pick=` 携带（编辑器「去组卷发布」）。 */
+function parsePick(value: string): string | undefined {
+  const query = value.includes("?") ? value.slice(value.indexOf("?") + 1) : "";
+  if (!query) return undefined;
+  return new URLSearchParams(query).get("pick") ?? undefined;
+}
+
 /** 题库题型子标签，由 `?modality=` 携带（承接 #/legacy/writing 的重定向）。 */
 function parseModality(value: string): string | undefined {
   const query = value.includes("?") ? value.slice(value.indexOf("?") + 1) : "";
@@ -88,17 +101,21 @@ export function parseRoute(hash = window.location.hash): RouteState {
   const value = hash.replace(/^#\/?/, "");
   const intent = parseIntent(value);
   const modality = parseModality(value);
+  const pickItemId = parsePick(value);
   const parts = value.split(/[/?]/).filter(Boolean);
   if (!parts.length) return { name: "library" };
+  // 导入是一级入口（#/import）；旧的 ?import=1 意图也落到导入页。
+  if (parts[0] === "import" || intent === "import") return { name: "import" };
   if (parts[0] === "items" && parts[1]) return { name: "workspace", itemId: parts[1], intent };
   if (parts[0] === "settings") return { name: "settings" };
+  if (parts[0] === "data") return { name: "data", data: parseDataView(value) };
   if (parts[0] === "legacy") {
     const legacyPage = asLegacyPage(parts[1]);
     if (legacyPage) return { name: "legacy", legacyPage, itemId: parts[2], intent };
     return { name: "library", intent, modality };
   }
-  if (parts[0] === "library") return { name: "library", intent, modality };
-  return { name: "library", intent, modality };
+  if (parts[0] === "library") return { name: "library", intent, modality, pickItemId };
+  return { name: "library", intent, modality, pickItemId };
 }
 
 export function go(path: string): void {
@@ -106,7 +123,17 @@ export function go(path: string): void {
 }
 
 export function libraryPath(intent?: LibraryIntent): string {
-  return intent ? `/library?${intent}=1` : "/library";
+  if (intent === "import") return "/import";
+  return intent === "publish" ? "/library?publish=1" : "/library";
+}
+
+/** 编辑器「去组卷发布」：打开题库组卷视图并把这道题预选进它的 Part 组卷栏。 */
+export function libraryPickPath(itemId: string): string {
+  return `/library?publish=1&pick=${encodeURIComponent(itemId)}`;
+}
+
+export function importPath(): string {
+  return "/import";
 }
 
 export function workspacePath(itemId: string, intent?: LibraryIntent): string {
@@ -128,7 +155,7 @@ export function applyLegacyRedirect(hash = window.location.hash): boolean {
   const raw = hash.replace(/^#\/?/, "");
   const parts = routePathSegments(hash);
   // 新路由不重定向；#/legacy/writing 例外——它要被重定向到题库写作子标签。
-  if (parts[0] === "items" || parts[0] === "settings") return false;
+  if (parts[0] === "items" || parts[0] === "settings" || parts[0] === "import") return false;
   if (parts[0] === "library" && !parts[1]) return false;
   const target = legacyRedirect(hash);
   if (!target) return false;

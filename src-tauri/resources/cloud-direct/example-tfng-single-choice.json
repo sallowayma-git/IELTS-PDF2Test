@@ -1,0 +1,732 @@
+{
+  "meta": {
+    "title": "The Pearls",
+    "language": "en",
+    "category": "P1"
+  },
+  "passage": {
+    "content": [
+      {
+        "type": "heading",
+        "id": "passage-heading",
+        "level": 2,
+        "children": [
+          {
+            "type": "text",
+            "id": "passage-heading-text",
+            "text": "The Pearls"
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "id": "passage-paragraph-A",
+        "children": [
+          {
+            "type": "text",
+            "id": "passage-paragraph-A-text",
+            "text": "Pearls are formed inside the shells of certain molluscs. When a small irritant such as a grain of sand lodges in the soft tissue, the animal coats it with layers of a substance called nacre. Over several years these layers build up into the hard, lustrous object that jewellers value."
+          }
+        ],
+        "paragraphLabel": "A"
+      },
+      {
+        "type": "paragraph",
+        "id": "passage-paragraph-B",
+        "children": [
+          {
+            "type": "text",
+            "id": "passage-paragraph-B-text",
+            "text": "For most of history pearls were harvested by divers who prised open wild oysters by hand. The work was dangerous and the yield unpredictable, so a single large pearl could cost as much as a ship. Roman writers complained that the fashion for pearl jewellery drained the empire of silver."
+          }
+        ],
+        "paragraphLabel": "B"
+      },
+      {
+        "type": "paragraph",
+        "id": "passage-paragraph-C",
+        "children": [
+          {
+            "type": "text",
+            "id": "passage-paragraph-C-text",
+            "text": "In the late nineteenth century Japanese researchers learned to insert a small bead of mother-of-pearl into an oyster and let the animal coat it. Cultured pearls made the gem ordinary: by the 1930s a respectable necklace cost a month's wages rather than a fortune."
+          }
+        ],
+        "paragraphLabel": "C"
+      },
+      {
+        "type": "paragraph",
+        "id": "passage-paragraph-D",
+        "children": [
+          {
+            "type": "text",
+            "id": "passage-paragraph-D-text",
+            "text": "Modern farms now monitor water temperature, salinity and food supply to keep their oysters healthy. Some producers bleach or dye the harvest, a practice that buyers' associations have tried to regulate, with limited success."
+          }
+        ],
+        "paragraphLabel": "D"
+      }
+    ],
+    "paragraphMap": {
+      "A": "passage-paragraph-A",
+      "B": "passage-paragraph-B",
+      "C": "passage-paragraph-C",
+      "D": "passage-paragraph-D"
+    }
+  },
+  "taskGroups": [
+    {
+      "taskId": "group-1",
+      "taskType": "true_false_not_given",
+      "displayRange": {
+        "kind": "range",
+        "start": 1,
+        "end": 4
+      },
+      "instructions": [
+        {
+          "type": "paragraph",
+          "id": "group-1-instructions",
+          "children": [
+            {
+              "type": "text",
+              "id": "group-1-instructions-text",
+              "text": "Questions 1-4 Do the following statements agree with the information given in Reading Passage 1? In boxes 1-4 on your answer sheet, write TRUE if the statement agrees with the information, FALSE if the statement contradicts the information, NOT GIVEN if there is no information on this."
+            }
+          ]
+        }
+      ],
+      "responseGroups": [
+        {
+          "responseGroupId": "group-1-rg-1",
+          "kind": "choice",
+          "slotIds": [
+            "q1"
+          ],
+          "prompt": [
+            {
+              "type": "paragraph",
+              "id": "group-1-prompt-1",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "group-1-prompt-1-text",
+                  "text": "Pearls form when a mollusc coats an irritant with layers of nacre."
+                }
+              ]
+            }
+          ],
+          "options": [
+            {
+              "optionId": "group-1-fixed-true-1",
+              "label": "TRUE",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-1-fixed-true-1-text",
+                  "text": "TRUE"
+                }
+              ]
+            },
+            {
+              "optionId": "group-1-fixed-false-1",
+              "label": "FALSE",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-1-fixed-false-1-text",
+                  "text": "FALSE"
+                }
+              ]
+            },
+            {
+              "optionId": "group-1-fixed-not-given-1",
+              "label": "NOT GIVEN",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-1-fixed-not-given-1-text",
+                  "text": "NOT GIVEN"
+                }
+              ]
+            }
+          ],
+          "cardinality": {
+            "min": 1,
+            "max": 1,
+            "exact": 1
+          },
+          "assignment": "per_slot",
+          "scoringPolicy": "per_slot_binary",
+          "duplicatePolicy": "reject_submission",
+          "allowOptionReuse": true
+        },
+        {
+          "responseGroupId": "group-1-rg-2",
+          "kind": "choice",
+          "slotIds": [
+            "q2"
+          ],
+          "prompt": [
+            {
+              "type": "paragraph",
+              "id": "group-1-prompt-2",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "group-1-prompt-2-text",
+                  "text": "Roman writers admired the pearl trade for enriching the empire."
+                }
+              ]
+            }
+          ],
+          "options": [
+            {
+              "optionId": "group-1-fixed-true-2",
+              "label": "TRUE",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-1-fixed-true-2-text",
+                  "text": "TRUE"
+                }
+              ]
+            },
+            {
+              "optionId": "group-1-fixed-false-2",
+              "label": "FALSE",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-1-fixed-false-2-text",
+                  "text": "FALSE"
+                }
+              ]
+            },
+            {
+              "optionId": "group-1-fixed-not-given-2",
+              "label": "NOT GIVEN",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-1-fixed-not-given-2-text",
+                  "text": "NOT GIVEN"
+                }
+              ]
+            }
+          ],
+          "cardinality": {
+            "min": 1,
+            "max": 1,
+            "exact": 1
+          },
+          "assignment": "per_slot",
+          "scoringPolicy": "per_slot_binary",
+          "duplicatePolicy": "reject_submission",
+          "allowOptionReuse": true
+        },
+        {
+          "responseGroupId": "group-1-rg-3",
+          "kind": "choice",
+          "slotIds": [
+            "q3"
+          ],
+          "prompt": [
+            {
+              "type": "paragraph",
+              "id": "group-1-prompt-3",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "group-1-prompt-3-text",
+                  "text": "Cultured pearls were first produced in Europe."
+                }
+              ]
+            }
+          ],
+          "options": [
+            {
+              "optionId": "group-1-fixed-true-3",
+              "label": "TRUE",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-1-fixed-true-3-text",
+                  "text": "TRUE"
+                }
+              ]
+            },
+            {
+              "optionId": "group-1-fixed-false-3",
+              "label": "FALSE",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-1-fixed-false-3-text",
+                  "text": "FALSE"
+                }
+              ]
+            },
+            {
+              "optionId": "group-1-fixed-not-given-3",
+              "label": "NOT GIVEN",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-1-fixed-not-given-3-text",
+                  "text": "NOT GIVEN"
+                }
+              ]
+            }
+          ],
+          "cardinality": {
+            "min": 1,
+            "max": 1,
+            "exact": 1
+          },
+          "assignment": "per_slot",
+          "scoringPolicy": "per_slot_binary",
+          "duplicatePolicy": "reject_submission",
+          "allowOptionReuse": true
+        },
+        {
+          "responseGroupId": "group-1-rg-4",
+          "kind": "choice",
+          "slotIds": [
+            "q4"
+          ],
+          "prompt": [
+            {
+              "type": "paragraph",
+              "id": "group-1-prompt-4",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "group-1-prompt-4-text",
+                  "text": "All pearl producers now follow the buyers' associations' rules."
+                }
+              ]
+            }
+          ],
+          "options": [
+            {
+              "optionId": "group-1-fixed-true-4",
+              "label": "TRUE",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-1-fixed-true-4-text",
+                  "text": "TRUE"
+                }
+              ]
+            },
+            {
+              "optionId": "group-1-fixed-false-4",
+              "label": "FALSE",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-1-fixed-false-4-text",
+                  "text": "FALSE"
+                }
+              ]
+            },
+            {
+              "optionId": "group-1-fixed-not-given-4",
+              "label": "NOT GIVEN",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-1-fixed-not-given-4-text",
+                  "text": "NOT GIVEN"
+                }
+              ]
+            }
+          ],
+          "cardinality": {
+            "min": 1,
+            "max": 1,
+            "exact": 1
+          },
+          "assignment": "per_slot",
+          "scoringPolicy": "per_slot_binary",
+          "duplicatePolicy": "reject_submission",
+          "allowOptionReuse": true
+        }
+      ]
+    },
+    {
+      "taskId": "group-2",
+      "taskType": "single_choice",
+      "displayRange": {
+        "kind": "range",
+        "start": 5,
+        "end": 7
+      },
+      "instructions": [
+        {
+          "type": "paragraph",
+          "id": "group-2-instructions",
+          "children": [
+            {
+              "type": "text",
+              "id": "group-2-instructions-text",
+              "text": "Questions 5-7 Choose the correct letter, A, B, C or D. Write the correct letter in boxes 5-7 on your answer sheet."
+            }
+          ]
+        }
+      ],
+      "responseGroups": [
+        {
+          "responseGroupId": "group-2-rg-5",
+          "kind": "choice",
+          "slotIds": [
+            "q5"
+          ],
+          "prompt": [
+            {
+              "type": "paragraph",
+              "id": "group-2-prompt-5",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "group-2-prompt-5-text",
+                  "text": "What made pearls expensive in the past?"
+                }
+              ]
+            }
+          ],
+          "options": [
+            {
+              "optionId": "group-2-q5-opt-A",
+              "label": "A",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-2-q5-opt-A-text",
+                  "text": "Their colour"
+                }
+              ]
+            },
+            {
+              "optionId": "group-2-q5-opt-B",
+              "label": "B",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-2-q5-opt-B-text",
+                  "text": "The danger and uncertainty of diving"
+                }
+              ]
+            },
+            {
+              "optionId": "group-2-q5-opt-C",
+              "label": "C",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-2-q5-opt-C-text",
+                  "text": "Their weight"
+                }
+              ]
+            },
+            {
+              "optionId": "group-2-q5-opt-D",
+              "label": "D",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-2-q5-opt-D-text",
+                  "text": "Their rarity in fresh water"
+                }
+              ]
+            }
+          ],
+          "cardinality": {
+            "min": 1,
+            "max": 1,
+            "exact": 1
+          },
+          "assignment": "per_slot",
+          "scoringPolicy": "per_slot_binary",
+          "duplicatePolicy": "reject_submission",
+          "allowOptionReuse": true
+        },
+        {
+          "responseGroupId": "group-2-rg-6",
+          "kind": "choice",
+          "slotIds": [
+            "q6"
+          ],
+          "prompt": [
+            {
+              "type": "paragraph",
+              "id": "group-2-prompt-6",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "group-2-prompt-6-text",
+                  "text": "What changed the market in the 1930s?"
+                }
+              ]
+            }
+          ],
+          "options": [
+            {
+              "optionId": "group-2-q6-opt-A",
+              "label": "A",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-2-q6-opt-A-text",
+                  "text": "Cultured pearls"
+                }
+              ]
+            },
+            {
+              "optionId": "group-2-q6-opt-B",
+              "label": "B",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-2-q6-opt-B-text",
+                  "text": "New dyes"
+                }
+              ]
+            },
+            {
+              "optionId": "group-2-q6-opt-C",
+              "label": "C",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-2-q6-opt-C-text",
+                  "text": "Cheaper ships"
+                }
+              ]
+            },
+            {
+              "optionId": "group-2-q6-opt-D",
+              "label": "D",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-2-q6-opt-D-text",
+                  "text": "War in Europe"
+                }
+              ]
+            }
+          ],
+          "cardinality": {
+            "min": 1,
+            "max": 1,
+            "exact": 1
+          },
+          "assignment": "per_slot",
+          "scoringPolicy": "per_slot_binary",
+          "duplicatePolicy": "reject_submission",
+          "allowOptionReuse": true
+        },
+        {
+          "responseGroupId": "group-2-rg-7",
+          "kind": "choice",
+          "slotIds": [
+            "q7"
+          ],
+          "prompt": [
+            {
+              "type": "paragraph",
+              "id": "group-2-prompt-7",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "group-2-prompt-7-text",
+                  "text": "What do modern farms monitor?"
+                }
+              ]
+            }
+          ],
+          "options": [
+            {
+              "optionId": "group-2-q7-opt-A",
+              "label": "A",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-2-q7-opt-A-text",
+                  "text": "The age of divers"
+                }
+              ]
+            },
+            {
+              "optionId": "group-2-q7-opt-B",
+              "label": "B",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-2-q7-opt-B-text",
+                  "text": "Water conditions"
+                }
+              ]
+            },
+            {
+              "optionId": "group-2-q7-opt-C",
+              "label": "C",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-2-q7-opt-C-text",
+                  "text": "Jewellery prices"
+                }
+              ]
+            },
+            {
+              "optionId": "group-2-q7-opt-D",
+              "label": "D",
+              "content": [
+                {
+                  "type": "text",
+                  "id": "group-2-q7-opt-D-text",
+                  "text": "Roman records"
+                }
+              ]
+            }
+          ],
+          "cardinality": {
+            "min": 1,
+            "max": 1,
+            "exact": 1
+          },
+          "assignment": "per_slot",
+          "scoringPolicy": "per_slot_binary",
+          "duplicatePolicy": "reject_submission",
+          "allowOptionReuse": true
+        }
+      ]
+    }
+  ],
+  "answerSlots": {
+    "q1": {
+      "slotId": "q1",
+      "questionNumber": 1,
+      "displayLabel": "1",
+      "hostType": "prompt",
+      "hostNodeId": "group-1-prompt-1",
+      "interaction": "radio",
+      "participation": "scoring",
+      "confidence": 0.95
+    },
+    "q2": {
+      "slotId": "q2",
+      "questionNumber": 2,
+      "displayLabel": "2",
+      "hostType": "prompt",
+      "hostNodeId": "group-1-prompt-2",
+      "interaction": "radio",
+      "participation": "scoring",
+      "confidence": 0.95
+    },
+    "q3": {
+      "slotId": "q3",
+      "questionNumber": 3,
+      "displayLabel": "3",
+      "hostType": "prompt",
+      "hostNodeId": "group-1-prompt-3",
+      "interaction": "radio",
+      "participation": "scoring",
+      "confidence": 0.95
+    },
+    "q4": {
+      "slotId": "q4",
+      "questionNumber": 4,
+      "displayLabel": "4",
+      "hostType": "prompt",
+      "hostNodeId": "group-1-prompt-4",
+      "interaction": "radio",
+      "participation": "scoring",
+      "confidence": 0.95
+    },
+    "q5": {
+      "slotId": "q5",
+      "questionNumber": 5,
+      "displayLabel": "5",
+      "hostType": "prompt",
+      "hostNodeId": "group-2-prompt-5",
+      "interaction": "radio",
+      "participation": "scoring",
+      "confidence": 0.95
+    },
+    "q6": {
+      "slotId": "q6",
+      "questionNumber": 6,
+      "displayLabel": "6",
+      "hostType": "prompt",
+      "hostNodeId": "group-2-prompt-6",
+      "interaction": "radio",
+      "participation": "scoring",
+      "confidence": 0.95
+    },
+    "q7": {
+      "slotId": "q7",
+      "questionNumber": 7,
+      "displayLabel": "7",
+      "hostType": "prompt",
+      "hostNodeId": "group-2-prompt-7",
+      "interaction": "radio",
+      "participation": "scoring",
+      "confidence": 0.95
+    }
+  },
+  "answerKey": {
+    "q1": {
+      "kind": "option",
+      "labels": [
+        "TRUE"
+      ],
+      "assignment": "per_slot"
+    },
+    "q2": {
+      "kind": "option",
+      "labels": [
+        "FALSE"
+      ],
+      "assignment": "per_slot"
+    },
+    "q3": {
+      "kind": "option",
+      "labels": [
+        "FALSE"
+      ],
+      "assignment": "per_slot"
+    },
+    "q4": {
+      "kind": "option",
+      "labels": [
+        "NOT GIVEN"
+      ],
+      "assignment": "per_slot"
+    },
+    "q5": {
+      "kind": "option",
+      "labels": [
+        "B"
+      ],
+      "assignment": "per_slot"
+    },
+    "q6": {
+      "kind": "option",
+      "labels": [
+        "A"
+      ],
+      "assignment": "per_slot"
+    },
+    "q7": {
+      "kind": "option",
+      "labels": [
+        "B"
+      ],
+      "assignment": "per_slot"
+    }
+  },
+  "warnings": []
+}

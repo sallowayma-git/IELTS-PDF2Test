@@ -359,6 +359,23 @@ mod tests {
     }
 
     #[test]
+    fn font_scale_survives_compile_and_json_round_trip() {
+        let mut source = serde_json::to_value(complete_exam()).unwrap();
+        source["taskGroups"][0]["instructions"].as_array_mut().unwrap().push(json!({
+            "type": "heading", "id": "scaled-title", "level": 2, "fontScale": 1.3,
+            "sourceAnchors": [], "provenanceStatus": "user_edited",
+            "children": [{"type": "text", "id": "scaled-text", "text": "Reading title",
+                "sourceAnchors": [], "provenanceStatus": "source"}]
+        }));
+        let source: IeltsAuthoringIRV2 = serde_json::from_value(source).unwrap();
+        let runtime = compile_listening_source_v1(&source).expect("scaled heading compiles");
+        let json = serde_json::to_value(runtime).unwrap();
+        assert!(json.to_string().contains("\"fontScale\":1.3"));
+        let restored: IeltsAuthoringIRV2 = serde_json::from_slice(&serde_json::to_vec(&source).unwrap()).unwrap();
+        assert_eq!(restored, source);
+    }
+
+    #[test]
     fn a_four_part_paper_compiles_into_a_valid_listening_source() {
         let compiled = compile_listening_source_v1(&complete_exam()).expect("compiles");
         assert_eq!(compiled.schema_version, "ListeningExamSourceV1");

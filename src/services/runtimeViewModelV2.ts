@@ -1,4 +1,5 @@
 import type { IeltsAuthoringIRV2 } from "../types/ielts-authoring-v2";
+import { taskGroupsWithParagraphOptions } from "./paragraphOptionsV2";
 import type {
   ReadingInteractionModelV2,
   RuntimeTaskGroupV2,
@@ -30,7 +31,7 @@ export function buildRuntimeViewModelV2(authoring: IeltsAuthoringIRV2): RuntimeV
     examId: authoring.exam.examId,
     title: authoring.exam.title,
     passage: authoring.passage?.content ?? [],
-    taskGroups: authoring.taskGroups.map(runtimeTaskGroup),
+    taskGroups: taskGroupsWithParagraphOptions(authoring.taskGroups.map(runtimeTaskGroup), authoring.passage?.content ?? [], authoring.passage?.paragraphMap),
     answerSlots: authoring.answerSlots,
     answerKey: authoring.answerKey,
     questionOrder,

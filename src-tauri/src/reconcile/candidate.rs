@@ -1422,6 +1422,7 @@ pub(crate) fn candidate_semantic_view(candidate: &RecognitionCandidateV1) -> Val
 /// - 内容节点（`ContentNodeV2`）的 `id`，递归覆盖所有出现位置
 ///   （passage.content、instructions、stimulus、option content、figure/image 等）
 /// - `answer_slot` 内容节点的 `slotId`
+/// - `passage.paragraphMap` values (printed labels remain unchanged)
 /// - `listening.parts[].taskIds[]`（引用 `taskGroups[].taskId`，属草稿 id 空间；
 ///   证据：`schema/listening_runtime_v1.rs` 正是拿它去由 `task_groups[].taskId`
 ///   建的表里查）
@@ -1433,9 +1434,6 @@ pub(crate) fn candidate_semantic_view(candidate: &RecognitionCandidateV1) -> Val
 /// # 明确不重写
 /// - `sourceAnchors[].nodeIds[]`（源文档节点，重写会破坏溯源）
 /// - `sourceTableId`（`schema/content_doc_v2.rs` 指向**源文档**里的表，同理）
-/// - `paragraphMap`：键值语义在代码里**没有定义**（全仓只有 `reading_source_v2.rs`
-///   一次 `clone()`，从未用于查表），键到底是「标签→节点 id」还是「节点 id→标签」
-///   无从判断，猜着重写会改坏内容。**若日后定义了语义，需回来补。**
 /// - 任何非上述名单的字段（特别是正文 `text` 节点）
 ///
 /// - 纯函数：无 IO、无随机、无时间戳；同一输入必得同一输出。
@@ -1545,6 +1543,13 @@ fn rewrite_object(
                 if let Value::Array(items) = value {
                     for item in items.iter_mut() {
                         rewrite_scalar_ref(item, id_map, temp_ids, outcome);
+                    }
+                }
+            }
+            "paragraphMap" => {
+                if let Some(paragraphs) = value.as_object_mut() {
+                    for host in paragraphs.values_mut() {
+                        rewrite_scalar_ref(host, id_map, temp_ids, outcome);
                     }
                 }
             }
@@ -2039,9 +2044,11 @@ fn assign_node_ids(
                 });
                 id_map.insert(old.to_string(), stable);
             }
-            if let Some(children) = map.get("children") {
-                let canonical_children = canonical.and_then(|value| value.get("children"));
-                assign_node_ids(children, canonical_children, prefix, counter, id_map);
+            for key in ["children", "items", "rows", "cells", "caption", "steps"] {
+                if let Some(children) = map.get(key) {
+                    let canonical_children = canonical.and_then(|value| value.get(key));
+                    assign_node_ids(children, canonical_children, prefix, counter, id_map);
+                }
             }
         }
         _ => {}
@@ -2364,7 +2371,7 @@ fn instruction_source_anchors(instructions: &Value) -> Vec<Value> {
                         }
                     }
                 }
-                for key in ["children", "items", "rows", "cells", "caption"] {
+                for key in ["children", "items", "rows", "cells", "caption", "steps"] {
                     if let Some(child) = map.get(key) {
                         collect(child, output);
                     }
@@ -2382,7 +2389,7 @@ fn instruction_source_anchors(instructions: &Value) -> Vec<Value> {
 /// 内容节点的后端字段：`sourceAnchors` 缺省为空数组，`provenanceStatus` 一律由后端定为
 /// `source`（模型转写的是原文件内容；模型写什么来源标记都不采信——它无权声称
 /// `user_edited`，那会影响人工保护判定）。子节点递归处理。
-fn fill_content_node_defaults(value: &mut Value) {
+pub(crate) fn fill_content_node_defaults(value: &mut Value) {
     match value {
         Value::Array(items) => {
             for item in items.iter_mut() {
@@ -2401,7 +2408,7 @@ fn fill_content_node_defaults(value: &mut Value) {
                 map.insert("provenanceStatus".to_string(), json!("source"));
                 fill_noncritical_node_fields(&node_type, map);
             }
-            for key in ["children", "items", "rows", "cells", "caption"] {
+            for key in ["children", "items", "rows", "cells", "caption", "steps"] {
                 if let Some(child) = map.get_mut(key) {
                     fill_content_node_defaults(child);
                 }
@@ -2440,7 +2447,7 @@ fn fill_noncritical_node_fields(node_type: &str, map: &mut Map<String, Value>) {
     }
 }
 
-fn ensure_source_anchors(map: &mut Map<String, Value>) {
+pub(crate) fn ensure_source_anchors(map: &mut Map<String, Value>) {
     if !map
         .get("sourceAnchors")
         .map(Value::is_array)
@@ -3318,7 +3325,7 @@ fn apply_cloud_listening_parts(
     }
 }
 
-fn canonical_passage_paragraph_ids(canonical: &Value) -> BTreeSet<String> {
+pub(crate) fn canonical_passage_paragraph_ids(canonical: &Value) -> BTreeSet<String> {
     fn collect(value: &Value, ids: &mut BTreeSet<String>) {
         match value {
             Value::Array(items) => {
@@ -3361,7 +3368,8 @@ fn validate_cloud_passage_host_nodes(
     draft: &Value,
     canonical: &Value,
 ) -> CommandResult<()> {
-    let allowed = canonical_passage_paragraph_ids(canonical);
+    let mut allowed = canonical_passage_paragraph_ids(canonical);
+    allowed.extend(canonical_passage_paragraph_ids(draft));
     for (slot_id, slot) in draft
         .get("answerSlots")
         .and_then(Value::as_object)
@@ -3739,6 +3747,26 @@ pub(crate) fn normalize_cloud_authoring(
         );
     }
 
+    // Passage content is part of the cloud candidate too. Register its IDs
+    // before rewriting heading hosts, matching labelled paragraphs by label.
+    if let Some(content) = draft.pointer("/passage/content").and_then(Value::as_array) {
+        let cloud_map = draft.pointer("/passage/paragraphMap").and_then(Value::as_object);
+        let canonical_content = canonical.and_then(|value| value.pointer("/passage/content")).and_then(Value::as_array);
+        let canonical_map = canonical.and_then(|value| value.pointer("/passage/paragraphMap")).and_then(Value::as_object);
+        let mut counter = 0;
+        for node in content {
+            let node_id = node.get("id").and_then(Value::as_str);
+            let label = cloud_map.and_then(|map| map.iter().find(|(_, value)| value.as_str() == node_id).map(|(label, _)| label.as_str()));
+            let target_id = label.and_then(|label| canonical_map.and_then(|map| map.get(label))).and_then(Value::as_str);
+            let counterpart = canonical_content.and_then(|content| content.iter().find(|node| {
+                let existing = node.get("id").and_then(Value::as_str);
+                target_id.is_some_and(|target| existing == Some(target))
+                    || node_id.is_some_and(|original| existing == Some(original))
+            }));
+            assign_node_ids(node, counterpart, &format!("{}-passage", identity.batch_id), &mut counter, &mut id_map);
+        }
+    }
+
     // ── 5) 引用重写（全有或全无）──────────────────────────────────
     let outcome = rewrite_authoring_references(&mut draft, &id_map, &temp_ids);
     if !outcome.conflicts.is_empty() {
@@ -3779,10 +3807,12 @@ pub(crate) fn normalize_cloud_authoring(
     document.insert("jobId".to_string(), json!(identity.job_id));
     document.insert("exam".to_string(), identity.exam.clone());
     document.insert("modality".to_string(), json!(identity.modality));
-    let passage = canonical
-        .and_then(|value| value.get("passage"))
-        .filter(|passage| passage.is_object())
-        .or_else(|| draft.get("passage").filter(|passage| passage.is_object()));
+    // Preserve the complete recovered cloud passage. Local text is a fallback
+    // only when the response supplies no passage content; disagreements still
+    // go through source review and the canonical adoption guards.
+    let passage = draft.get("passage")
+        .filter(|passage| passage.get("content").and_then(Value::as_array).is_some_and(|content| !content.is_empty()))
+        .or_else(|| canonical.and_then(|value| value.get("passage")).filter(|passage| passage.is_object()));
     if let Some(passage) = passage {
         document.insert("passage".to_string(), passage.clone());
     }
@@ -5862,6 +5892,47 @@ mod cloud_authoring_tests {
     }
 
     #[test]
+    fn cloud_heading_can_target_its_own_recovered_passage_and_preserve_text() {
+        let canonical = golden_authoring();
+        let mut raw = cloud_draft(&[14], "heading-own-passage");
+        raw["taskGroups"][0]["taskType"] = json!("matching_headings");
+        raw["passage"] = json!({
+            "content":[paragraph("cloud-paragraph-a","cloud-paragraph-a-text","Recovered full paragraph A, including its ending.")],
+            "paragraphMap":{"A":"cloud-paragraph-a"},"sourceAnchors":[]
+        });
+        let slot = &mut raw["answerSlots"]["heading-own-passage-q14"];
+        slot["hostNodeId"] = json!("cloud-paragraph-a");
+        slot["hostType"] = json!("passage_paragraph");
+        slot["interaction"] = json!("dragdrop");
+        let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), &raw).unwrap();
+        let candidate = cloud_authoring_candidate_from_normalized(&identity(), normalized).unwrap();
+        let doc = serde_json::to_value(candidate.authoring).unwrap();
+        assert_eq!(nodes_text(&doc["passage"]["content"]), "Recovered full paragraph A, including its ending.");
+        let mapped = doc["passage"]["paragraphMap"]["A"].as_str().unwrap();
+        assert!(doc["answerSlots"].as_object().unwrap().values().any(|slot| slot["hostNodeId"].as_str() == Some(mapped)));
+    }
+
+    #[test]
+    fn flow_steps_keep_text_and_resolve_nested_ids_during_candidate_finalization() {
+        let mut raw = cloud_draft(&[14], "cloud-flow");
+        raw["taskGroups"][0]["stimulus"] = json!([{
+            "type":"flowchart","id":"cloud-chart","steps":[{
+                "type":"flow_step","id":"cloud-step","children":[{
+                    "type":"paragraph","id":"cloud-step-paragraph","children":[{
+                        "type":"text","id":"cloud-step-text","text":"Full step text at the end of the flowchart."
+                    }]
+                }]
+            }]
+        }]);
+        let normalized = normalize_cloud_authoring(&identity(), None, &raw).unwrap();
+        assert!(normalized.unresolved_references.is_empty(), "{:?}", normalized.unresolved_references);
+        let candidate = cloud_authoring_candidate_from_normalized(&identity(), normalized).unwrap();
+        let doc = serde_json::to_value(candidate.authoring).unwrap();
+        assert_eq!(doc.pointer("/taskGroups/0/stimulus/0/steps/0/children/0/children/0/text").unwrap(), "Full step text at the end of the flowchart.");
+        assert_ne!(doc.pointer("/taskGroups/0/stimulus/0/steps/0/id").unwrap(), "cloud-step");
+    }
+
+    #[test]
     fn cloud_authoring_accepts_identity_mappings_for_existing_stable_ids() {
         let canonical = golden_authoring();
         let raw = json!({"authoring": canonical.clone()});
@@ -6134,7 +6205,7 @@ mod cloud_authoring_tests {
         );
     }
 
-    /// 云端候选不重传原文：规范稿的 passage 和段落映射仍必须留在完整候选中。
+    /// Missing cloud passage falls back locally; supplied cloud text must survive for review.
     #[test]
     fn candidate_without_a_passage_inherits_the_authoritative_passage() {
         let canonical = golden_authoring();
@@ -6162,12 +6233,8 @@ mod cloud_authoring_tests {
             authoritative_passage,
             "candidate without passage must retain the canonical source passage"
         );
-        assert_eq!(
-            serde_json::to_value(candidate_with.authoring.passage.as_ref().unwrap())
-                .expect("passage serialises"),
-            authoritative_passage,
-            "cloud output must not replace the canonical source passage"
-        );
+        let recovered_passage = serde_json::to_value(candidate_with.authoring.passage.as_ref().unwrap()).unwrap();
+        assert_eq!(nodes_text(&recovered_passage["content"]), "A long passage body.");
 
         let differences = |candidate: &CloudAuthoringCandidateV1| {
             crate::cloud_repair::candidate_differences(
@@ -6175,10 +6242,10 @@ mod cloud_authoring_tests {
                 &serde_json::to_value(&candidate.authoring).unwrap(),
             )
         };
-        assert_eq!(
+        assert_ne!(
             differences(&candidate_without),
             differences(&candidate_with),
-            "差异清单不得依赖 passage"
+            "云端恢复的原文差异必须保留给来源校核"
         );
     }
 

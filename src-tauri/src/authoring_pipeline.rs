@@ -4789,7 +4789,9 @@ pub(crate) fn make_dynamic_split_candidates(
         passage_candidates: vec![PassageCandidateV1 {
             range: passage_range,
             title: infer_dynamic_passage_title(job, &passage_blocks),
-            category_hint: job.category.clone().unwrap_or_else(|| "P1".to_string()),
+            category_hint: crate::library::part_detection::import_reading_category(
+                job, &json!({"blocks": blocks, "groups": group_candidates})
+            ),
         }],
         question_group_candidates: group_candidates,
         answer_key_candidates: if answer_map.is_empty() {
@@ -8964,7 +8966,9 @@ pub(crate) fn make_dynamic_authoring_ir(
         exam: ExamMetaDraftV1 {
             exam_id,
             title: job.title.clone(),
-            category: job.category.clone().unwrap_or_else(|| "P1".to_string()),
+            category: crate::library::part_detection::import_reading_category(
+                job, &json!({"document": doc, "groups": groups, "answerKey": answer_key})
+            ),
             frequency: job
                 .frequency
                 .clone()
@@ -9035,6 +9039,28 @@ mod tests {
             current_step: WorkflowStep::Split,
             issue_counts: IssueCounts::default(),
         }
+    }
+
+    #[test]
+    fn reading_import_initializes_category_in_v1_and_canonical_v2() {
+        let mut job = test_job();
+        job.title = "P1 old title".to_string();
+        let doc = json!({"pages":[{"pageIndex":0,"blocks":[
+            {"blockId":"heading","text":"READING PASSAGE 3","bbox":[0,0,400,20]},
+            {"blockId":"body","text":"A passage about history.","bbox":[0,30,400,60]}
+        ]}]});
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        assert_eq!(split["passageCandidates"][0]["categoryHint"], "P3");
+        let v1 = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        assert_eq!(v1["exam"]["category"],"P3");
+        let v2 = crate::ielts_grammar::build_authoring_v2_shadow(&job,&v1,&split,Some(&doc),None).unwrap();
+        assert_eq!(v2["exam"]["category"],"P3");
+        assert!(v2["exam"]["examId"].as_str().unwrap().starts_with("p1-"));
+        job.title = "P2 filename".into();
+        let empty_split = json!({"passageCandidates":[], "questionGroupCandidates":[]});
+        assert_eq!(make_dynamic_authoring_ir(&job,&empty_split,None)["exam"]["category"],"P2");
+        job.title = "Unknown".into();
+        assert_eq!(make_dynamic_authoring_ir(&job,&empty_split,None)["exam"]["category"],"P1");
     }
 
     fn layout_block(

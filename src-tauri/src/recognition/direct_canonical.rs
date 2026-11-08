@@ -880,7 +880,7 @@ pub(crate) fn build_direct_canonical(
         .iter()
         .map(|line| line.source_anchor.clone())
         .collect::<Vec<_>>();
-    let passage_content = crate::ielts_grammar::reading::passage_nodes_with_layout(
+    let mut passage_content = crate::ielts_grammar::reading::passage_nodes_with_layout(
         &job.title,
         &passage_lines,
         passage_anchors.clone(),
@@ -889,6 +889,8 @@ pub(crate) fn build_direct_canonical(
     .into_iter()
     .filter(|node| node.get("type").and_then(Value::as_str) == Some("paragraph"))
     .collect::<Vec<_>>();
+    let instructions = graph.instruction_zones.iter().map(|zone| zone.text.as_str()).collect::<Vec<_>>().join(" ");
+    crate::ielts_grammar::reading::derive_declared_paragraph_labels(&mut passage_content, &instructions);
     let paragraph_map = crate::ielts_grammar::reading::paragraph_map_from_nodes(&passage_content);
     let passage = json!({
         "title": job.title,

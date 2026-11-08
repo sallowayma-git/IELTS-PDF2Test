@@ -176,7 +176,10 @@ function patchText(document: IeltsAuthoringIRV2, patch: Extract<AuthoringPatchV2
 function patchNodeAttrs(document: IeltsAuthoringIRV2, patch: Extract<AuthoringPatchV2, { op: "setNodeAttrs" }>): void {
   const node = findObjectById(document, patch.nodeId);
   if (!node) throw new Error(`AUTHORING_PATCH_NODE_NOT_FOUND:${patch.nodeId}`);
-  const allowed = new Set(["assetId", "rowSpan", "colSpan", "headerScope", "provenanceStatus", "align", "indentLevel", "level", "altText", "placeholder", "displayLabel", "inline", "label", "slotIds", "display", "crop"]);
+  const allowed = new Set(["assetId", "rowSpan", "colSpan", "headerScope", "provenanceStatus", "align", "indentLevel", "level", "fontScale", "altText", "placeholder", "displayLabel", "inline", "label", "slotIds", "display", "crop"]);
+  if ("fontScale" in patch.attrs && (node.type !== "heading" || ![0.9, 1, 1.15, 1.3, 1.5].includes(patch.attrs.fontScale as number))) {
+    throw new Error("AUTHORING_PATCH_FONT_SCALE_INVALID");
+  }
   for (const key of Object.keys(patch.attrs)) {
     if (!allowed.has(key)) throw new Error(`AUTHORING_PATCH_ATTR_NOT_ALLOWED:${key}`);
     node[key] = patch.attrs[key as keyof typeof patch.attrs];
@@ -406,6 +409,11 @@ export function applyAuthoringV2Patches(authoring: IeltsAuthoringIRV2, patches: 
   const document = structuredClone(authoring);
   for (const patch of patches) {
     switch (patch.op) {
+      case "setExamCategory":
+        if (document.modality && document.modality !== "reading") throw new Error("AUTHORING_PATCH_READING_REQUIRED");
+        if (!["P1", "P2", "P3"].includes(patch.category)) throw new Error("AUTHORING_PATCH_CATEGORY_INVALID");
+        document.exam.category = patch.category;
+        break;
       case "replaceText": patchText(document, patch); break;
       case "setNodeAttrs": patchNodeAttrs(document, patch); break;
       case "replaceContent": patchReplaceContent(document, patch); break;
@@ -468,6 +476,7 @@ function responseGroup(authoring: IeltsAuthoringIRV2, taskId: string, responseGr
 
 export function inverseAuthoringPatch(authoring: IeltsAuthoringIRV2, patch: AuthoringPatchV2): AuthoringPatchV2 | undefined {
   switch (patch.op) {
+    case "setExamCategory": return { op: "setExamCategory", category: authoring.exam.category ?? "P1" };
     case "replaceText": {
       const node = findObjectById(authoring, patch.nodeId);
       if (!node || typeof node.text !== "string") return undefined;

@@ -495,7 +495,7 @@
       "required": ["revision", "source", "humanVerified", "llmUsed", "updatedAt", "notes"],
       "properties": {
         "revision": { "type": "integer", "minimum": 0 },
-        "source": { "type": "string", "enum": ["auto_extract", "user", "migration", "cloud_candidate_adoption"] },
+        "source": { "type": "string", "enum": ["auto_extract", "user", "migration", "cloud_candidate_adoption", "cloud_direct"] },
         "humanVerified": { "type": "boolean" },
         "llmUsed": { "type": "boolean" },
         "updatedAt": { "type": "string", "format": "date-time" },

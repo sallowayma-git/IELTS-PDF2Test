@@ -495,6 +495,45 @@ pub(crate) fn retry(conn: &Connection, job_id: &str) -> CommandResult<bool> {
     Ok(updated > 0)
 }
 
+/// 直出失败回退本地链：把原因写进 progress（UI 可见），cloud_status 复位为
+/// `failed`——既是如实状态，也让「云端校核锁」立刻释放（锁判据含
+/// cloud_status ∈ {queued, running}），本地识别期间用户就能继续编辑。
+pub(crate) fn record_cloud_direct_fallback(
+    conn: &Connection,
+    job_id: &str,
+    reason: &str,
+) -> CommandResult<()> {
+    let now = Utc::now().to_rfc3339();
+    conn.execute(
+        "UPDATE processing_jobs_v2
+         SET cloud_status = 'failed',
+             progress_json = json_set(
+                 CASE WHEN json_valid(progress_json) THEN progress_json ELSE '{}' END,
+                 '$.cloudDirectFallback', ?2),
+             event_seq = event_seq + 1, updated_at = ?3
+         WHERE id = ?1",
+        params![job_id, reason, now],
+    )
+    .map_err(|error| format!("processing_cloud_direct_fallback:{error}"))?;
+    Ok(())
+}
+
+/// 直出成功：清掉上一轮回退留下的原因（否则 UI 会一直显示旧失败）。
+pub(crate) fn clear_cloud_direct_fallback(conn: &Connection, job_id: &str) -> CommandResult<()> {
+    let now = Utc::now().to_rfc3339();
+    conn.execute(
+        "UPDATE processing_jobs_v2
+         SET progress_json = json_remove(
+                 CASE WHEN json_valid(progress_json) THEN progress_json ELSE '{}' END,
+                 '$.cloudDirectFallback'),
+             event_seq = event_seq + 1, updated_at = ?2
+         WHERE id = ?1",
+        params![job_id, now],
+    )
+    .map_err(|error| format!("processing_cloud_direct_fallback_clear:{error}"))?;
+    Ok(())
+}
+
 /// 用户重试，并把云端设置换成**此刻**的（`cloud_profile_id = None` 表示现在没有可用云端）。
 ///
 /// 导入时写进 `progress_json` 的 `cloudEnabled` / `cloudProfileId` 是那一刻的快照；

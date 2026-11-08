@@ -42,6 +42,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use util::ensure_app_dirs;
+mod analytics;
 mod artifact_store;
 mod authoring_commands;
 mod authoring_pipeline;
@@ -51,6 +52,7 @@ mod authoring_validation;
 mod auto_pipeline;
 mod cleanup;
 mod cloud_adoption;
+mod cloud_direct;
 mod cloud_repair;
 mod cloud_selection;
 #[cfg(test)]
@@ -83,6 +85,7 @@ mod parser;
 mod pdf_facts_shadow;
 mod pdf_geometry;
 mod pdf_ingest;
+mod pipeline_settings;
 mod preview_commands;
 mod processing;
 #[cfg(test)]
@@ -105,6 +108,7 @@ mod validator;
 mod workflow_state;
 mod writing_store;
 use tauri::{AppHandle, Manager};
+use tauri_plugin_dialog::DialogExt;
 
 pub type CommandResult<T> = Result<T, String>;
 
@@ -941,10 +945,26 @@ async fn automation_source_files() -> CommandResult<Option<Vec<job_commands::Pic
 // ── M1：Workspace API（library/commands.rs 的薄壳，计划 §5.3 命令收敛）──
 
 #[tauri::command]
+fn get_app_build_info() -> Value {
+    json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "revision": env!("PDF2TEST_BUILD_REVISION"),
+        "dirty": env!("PDF2TEST_BUILD_DIRTY") == "true",
+        "builtAtUnix": env!("PDF2TEST_BUILD_TIME").parse::<u64>().unwrap_or(0),
+    })
+}
+
+#[tauri::command]
 async fn get_workspace_item(item_id: String, app: AppHandle) -> CommandResult<Value> {
     let root = app_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
-        library::commands::get_workspace_item_core(&root, &item_id)
+        let conn = library::repository::open_library_connection(&root)?;
+        let before = library::repository::current_edit_version(&conn, &item_id)?;
+        let result = library::commands::get_workspace_item_core(&root, &item_id)?;
+        if result.get("editVersion").and_then(Value::as_i64) > before {
+            let _ = processing::scheduler::notify_item_content_changed(&conn, &app, &item_id);
+        }
+        Ok(result)
     })
     .await
     .map_err(|error| format!("library_v2_join:{error}"))?
@@ -992,10 +1012,155 @@ async fn list_library_items(include_deleted: Option<bool>, app: AppHandle) -> Co
     let root = app_root(&app)?;
     let include_deleted = include_deleted.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
-        library::commands::list_library_items_core(&root, include_deleted)
+        let conn = library::repository::open_library_connection(&root)?;
+        let before = library::repository::list_items(&conn, include_deleted)?.into_iter()
+            .map(|row| (row.id, row.current_edit_version)).collect::<std::collections::HashMap<_,_>>();
+        let result = library::commands::list_library_items_core(&root, include_deleted)?;
+        for row in result.as_array().into_iter().flatten() {
+            if let Some(id) = row.get("id").and_then(Value::as_str) {
+                if row.get("currentEditVersion").and_then(Value::as_i64) > before.get(id).copied() {
+                    let _ = processing::scheduler::notify_item_content_changed(&conn, &app, id);
+                }
+            }
+        }
+        Ok(result)
     })
     .await
     .map_err(|error| format!("library_v2_join:{error}"))?
+}
+
+// ── 作者端「数据」模块（教师端第一阶段，见 analytics/）────────────────
+// 只读消费学生端作答快照；结果写本地 analytics.sqlite。作答数据目录由前端按参数传入。
+
+fn analytics_root_arg(submissions_root: &str) -> CommandResult<PathBuf> {
+    let trimmed = submissions_root.trim();
+    if trimmed.is_empty() {
+        return Err("ANALYTICS_ROOT_NOT_CONFIGURED".to_string());
+    }
+    Ok(PathBuf::from(trimmed))
+}
+
+#[tauri::command]
+async fn analytics_import_snapshots(
+    submissions_root: String,
+    app: AppHandle,
+) -> CommandResult<analytics::import::ImportReport> {
+    let root = app_root(&app)?;
+    let submissions = analytics_root_arg(&submissions_root)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut conn = analytics::open_analytics(&root)?;
+        analytics::import::import_submission_snapshots(&mut conn, &root, &submissions)
+    })
+    .await
+    .map_err(|error| format!("analytics_join:{error}"))?
+}
+
+#[tauri::command]
+async fn analytics_overview(
+    submissions_root: String,
+    app: AppHandle,
+) -> CommandResult<analytics::queries::Overview> {
+    let root = app_root(&app)?;
+    let submissions = submissions_root.trim().to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = analytics::open_analytics(&root)?;
+        let beacons = if submissions.is_empty() {
+            analytics::status::BeaconScan::default()
+        } else {
+            analytics::status::read_attempt_status(Path::new(&submissions))
+        };
+        analytics::queries::build_overview(&conn, &beacons)
+    })
+    .await
+    .map_err(|error| format!("analytics_join:{error}"))?
+}
+
+#[tauri::command]
+async fn analytics_exam(
+    batch_id: String,
+    paper_id: String,
+    app: AppHandle,
+) -> CommandResult<analytics::queries::ExamView> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = analytics::open_analytics(&root)?;
+        analytics::queries::build_exam_view(&conn, &batch_id, &paper_id)
+    })
+    .await
+    .map_err(|error| format!("analytics_join:{error}"))?
+}
+
+#[tauri::command]
+async fn analytics_student(
+    attempt_id: String,
+    app: AppHandle,
+) -> CommandResult<analytics::queries::StudentView> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = analytics::open_analytics(&root)?;
+        analytics::queries::build_student_view(&conn, &attempt_id)
+    })
+    .await
+    .map_err(|error| format!("analytics_join:{error}"))?
+}
+
+#[tauri::command]
+async fn analytics_question(
+    batch_id: String,
+    paper_id: String,
+    passage_index: i64,
+    question_id: String,
+    app: AppHandle,
+) -> CommandResult<analytics::queries::QuestionView> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = analytics::open_analytics(&root)?;
+        analytics::queries::build_question_view(&conn, &batch_id, &paper_id, passage_index, &question_id)
+    })
+    .await
+    .map_err(|error| format!("analytics_join:{error}"))?
+}
+
+/// 导出 Excel：弹保存对话框选路径；取消返回 None。自动化钩子 PDF2TEST_AUTOMATION_EXPORT_XLSX 可直接指定路径。
+#[tauri::command]
+async fn analytics_export_xlsx(
+    batch_id: String,
+    paper_id: String,
+    app: AppHandle,
+) -> CommandResult<Option<analytics::export::ExportSummary>> {
+    let root = app_root(&app)?;
+    let picked: Option<PathBuf> = match env::var("PDF2TEST_AUTOMATION_EXPORT_XLSX") {
+        Ok(path) if !path.trim().is_empty() => Some(PathBuf::from(path.trim())),
+        _ => {
+            let dialog_app = app.clone();
+            let paper_text = if paper_id.is_empty() { "旧套题".to_string() } else { paper_id.clone() };
+            let default_name = format!("{batch_id}-{paper_text}-成绩.xlsx");
+            tauri::async_runtime::spawn_blocking(move || {
+                let picked = dialog_app
+                    .dialog()
+                    .file()
+                    .set_title("导出 Excel")
+                    .set_file_name(default_name)
+                    .add_filter("Excel", &["xlsx"])
+                    .blocking_save_file();
+                match picked {
+                    Some(path) => path.into_path().map(Some).map_err(|error| error.to_string()),
+                    None => Ok(None),
+                }
+            })
+            .await
+            .map_err(|error| format!("analytics_dialog_join:{error}"))??
+        }
+    };
+    let Some(path) = picked else {
+        return Ok(None);
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = analytics::open_analytics(&root)?;
+        analytics::export::write_export(&conn, &batch_id, &paper_id, &path).map(Some)
+    })
+    .await
+    .map_err(|error| format!("analytics_join:{error}"))?
 }
 
 // ── 识别闭环：统一建议读取与人工决策（reconcile 的薄壳）──────────────
@@ -1012,7 +1177,13 @@ async fn get_library_item_processing(item_id: String, app: AppHandle) -> Command
 async fn get_library_row(item_id: String, app: AppHandle) -> CommandResult<Value> {
     let root = app_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
-        library_commands::get_library_row_core(&root, &item_id)
+        let conn = library::repository::open_library_connection(&root)?;
+        let before = library::repository::current_edit_version(&conn, &item_id)?;
+        let result = library_commands::get_library_row_core(&root, &item_id)?;
+        if result.pointer("/item/currentEditVersion").and_then(Value::as_i64) > before {
+            let _ = processing::scheduler::notify_item_content_changed(&conn, &app, &item_id);
+        }
+        Ok(result)
     }).await.map_err(|error| format!("library_row_join:{error}"))?
 }
 
@@ -1151,8 +1322,34 @@ async fn publish_items(
     input: nas_package_v2::PublishItemsInput,
     app: AppHandle,
 ) -> CommandResult<Value> {
+    // 契约 V1.1 第5条：生产命令只接受「组卷发布」。单题发布已取消，不带 paper 一律拒绝。
+    nas_package_v2::require_paper_for_publish(&input)?;
     let root = app_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || nas_package_v2::publish_items_core(&root, input))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+/// 题库页改名（单元格编辑保存）。校验与落库见 `library::commands::rename_library_item_core`。
+#[tauri::command]
+async fn rename_library_item(
+    item_id: String,
+    title: String,
+    base_version: i64,
+    app: AppHandle,
+) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        library::commands::rename_library_item_core(&root, &item_id, &title, base_version)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// 读取 NAS 上的「当前试卷」指针（不存在返回 null）。
+#[tauri::command]
+async fn get_current_paper(destination: String) -> CommandResult<Value> {
+    tauri::async_runtime::spawn_blocking(move || nas_package_v2::get_current_paper_core(&destination))
         .await
         .map_err(|error| error.to_string())?
 }
@@ -1164,6 +1361,37 @@ async fn import_files(
 ) -> CommandResult<Value> {
     let result = processing::commands::import_files_core(&app, input).await?;
     Ok(processing::commands::import_files_result_to_value(result))
+}
+
+/// 导入抽屉的「整套卷子」预览：逐文件给出按 Passage 拆分的计划（两篇以上才有段）。
+#[tauri::command]
+async fn plan_import_split(paths: Vec<String>, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    let previews = tauri::async_runtime::spawn_blocking(move || {
+        let previews = processing::pdf_split::preview_import_split(&paths);
+        // Preflight happens before jobs exist. Keep its result available for
+        // customer diagnostics without storing extracted document text.
+        let log = root.join("logs/import-split-preflight.jsonl");
+        if std::fs::create_dir_all(root.join("logs")).is_ok() {
+            if std::fs::metadata(&log).is_ok_and(|metadata| metadata.len() > 512 * 1024) {
+                let _ = std::fs::remove_file(&log);
+            }
+            let summaries: Vec<_> = previews.iter().map(|preview| json!({
+                "path": preview.path, "pageCount": preview.page_count,
+                "defaultSplit": preview.default_split, "warnings": preview.warnings,
+                "segments": preview.segments.iter().map(|segment| json!({
+                    "label": segment.label, "pages": segment.pages,
+                    "signals": segment.signals, "confidence": segment.confidence,
+                })).collect::<Vec<_>>()
+            })).collect();
+            let record = json!({ "at": chrono::Utc::now().to_rfc3339(), "previews": summaries });
+            let _ = util::append_text(&log, &(record.to_string() + "\n"));
+        }
+        previews
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    serde_json::to_value(previews).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1344,6 +1572,13 @@ async fn resolve_authoring_asset_preview(
     resolve_authoring_asset_preview_core(&root, &job_id, &asset_id)
 }
 
+/// 学生预览编译（P2）：当前草稿过同一个 Rust 编译器，预览与发布同一判定。
+#[tauri::command]
+async fn compile_authoring_preview(authoring: Value, app: AppHandle) -> CommandResult<Value> {
+    let _ = app_root(&app)?;
+    Ok(authoring_v2_commands::compile_authoring_preview_core(&authoring))
+}
+
 #[tauri::command]
 async fn export_authoring_v2(input: Value, app: AppHandle) -> CommandResult<Value> {
     let root = app_root(&app)?;
@@ -1381,6 +1616,24 @@ async fn save_diagnostics_settings(
     app: AppHandle,
 ) -> CommandResult<DiagnosticsSettings> {
     job_commands::save_diagnostics_settings_core(settings, app).await
+}
+
+/// 读取流水线模式（`direct` 默认 / `legacy` 旧链）。设置页用来展示与切换。
+#[tauri::command]
+async fn get_pipeline_settings(app: AppHandle) -> CommandResult<pipeline_settings::PipelineSettingsV1> {
+    let root = app_root(&app)?;
+    pipeline_settings::load_pipeline_settings(&root)
+}
+
+#[tauri::command]
+async fn save_pipeline_settings(
+    settings: pipeline_settings::PipelineSettingsV1,
+    app: AppHandle,
+) -> CommandResult<pipeline_settings::PipelineSettingsV1> {
+    let root = app_root(&app)?;
+    ensure_app_dirs(&root)?;
+    pipeline_settings::save_pipeline_settings(&root, &settings)?;
+    pipeline_settings::load_pipeline_settings(&root)
 }
 
 #[tauri::command]
@@ -1522,15 +1775,9 @@ async fn export_nas_library(input: Value, app: AppHandle) -> CommandResult<Value
     export_nas_library_core(&root, &input, true)
 }
 
-/// Opt-in Reading V2 package publisher.  The command is intentionally kept
-/// separate from the legacy export command so the V1 manifest path remains
-/// untouched while the lock/CAS/journal/manifest-last protocol is callable by
-/// the real authoring application (not only by unit tests).
-#[tauri::command]
-async fn publish_nas_package_v2(input: Value, app: AppHandle) -> CommandResult<Value> {
-    let root = app_root(&app)?;
-    nas_package_v2::publish_nas_package_v2_core(&root, input)
-}
+// 注意：不再注册 `publish_nas_package_v2` 命令。核心函数 `nas_package_v2::publish_nas_package_v2_core`
+// 会写根级 `resources/`、且不要求套题（paper），是已被 V1.1 取代的旧布局回流入口（审计 A3）；
+// 生产发布只走 `publish_items`（必须带 paper）。核心函数保留给测试使用。
 
 // ---------- 写作题库命令（独立模型，不污染阅读 ImportJob）----------
 #[tauri::command]
@@ -1764,7 +2011,14 @@ async fn set_library_item_part(
 ) -> CommandResult<bool> {
     let root = app_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
-        library::commands::set_library_item_part_core(&root, &item_id, label.as_deref())
+        let changed = library::commands::set_library_item_part_core(&root, &item_id, label.as_deref())?;
+        if changed {
+            let conn = library::repository::open_library_connection(&root)?;
+            // Same version notification as editor saves; dirty editors defer/recover
+            // through remoteVersion/conflictRecovery instead of losing local changes.
+            let _ = processing::scheduler::notify_item_content_changed(&conn, &app, &item_id);
+        }
+        Ok(changed)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1778,6 +2032,7 @@ pub fn run() {
         .setup(|app| {
             let root = app_root(app.handle()).map_err(Box::<dyn std::error::Error>::from)?;
             ensure_app_dirs(&root).map_err(Box::<dyn std::error::Error>::from)?;
+            diagnostics::install_worker_panic_log(root.clone());
             // 初始化题库 DB schema + 首次启动迁移既有 job 数据（幂等，失败不阻断启动）。
             let _ = library_commands::migrate_existing_into_library(&root);
             // M2：托管调度状态并启动调度循环（含启动恢复）。
@@ -1813,9 +2068,16 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             create_import_job,
+            get_app_build_info,
             get_workspace_item,
             apply_editor_commands,
             list_library_items,
+            analytics_import_snapshots,
+            analytics_overview,
+            analytics_exam,
+            analytics_student,
+            analytics_question,
+            analytics_export_xlsx,
             get_library_item_processing,
             get_library_row,
             get_recognition_decision,
@@ -1823,6 +2085,7 @@ pub fn run() {
             undo_cloud_repair,
             choose_cloud_comparison,
             import_files,
+            plan_import_split,
             listening_audio::commands::detect_import_modality,
             listening_audio::commands::bind_listening_audio,
             listening_audio::commands::bind_listening_audio_folder,
@@ -1832,6 +2095,8 @@ pub fn run() {
             listening_audio::commands::probe_listening_audio_files,
             listening_audio::commands::automation_audio_selection_from_env,
             publish_items,
+            rename_library_item,
+            get_current_paper,
             open_source_file,
             cancel_processing,
             retry_processing,
@@ -1858,12 +2123,15 @@ pub fn run() {
             get_authoring_v2,
             get_publish_preflight,
             resolve_authoring_asset_preview,
+            compile_authoring_preview,
             export_authoring_v2,
             render_group_html,
             list_llm_profiles,
             run_environment_preflight,
             get_diagnostics_settings,
             save_diagnostics_settings,
+            get_pipeline_settings,
+            save_pipeline_settings,
             get_job_artifact_status,
             save_llm_profile,
             delete_llm_profile,
@@ -1880,7 +2148,6 @@ pub fn run() {
             export_reading_assets,
             export_reading_js,
             export_nas_library,
-            publish_nas_package_v2,
             export_writing_library,
             create_writing_job,
             list_writing_jobs,
@@ -8249,11 +8516,13 @@ Answers
 
     #[test]
     fn export_core_publish_gate_failure_writes_no_export_or_cleanup() {
+        // P2 门禁收敛：未人工确认已降为警告（不再阻断导出），所以这条测试改用
+        // **真正的硬门禁**来钉「门禁失败 → 不写产物、不做清理」这条不变量：
+        // 题号不连续是 V1 校验错误（VALIDATION_ERROR），属编译/结构类硬阻断。
         let root = temp_test_root();
         let (job, mut ir) = make_publishable_fixture(&root);
-        if let Some(audit) = ir.get_mut("audit").and_then(Value::as_object_mut) {
-            audit.insert("humanVerified".to_string(), json!(false));
-        }
+        // 清掉试卷身份：V1 校验的 error 级判据（$.exam.examId 必填）。
+        ir["exam"]["examId"] = json!("");
         write_json(&job_dir(&root, &job.job_id).join("authoring-ir.json"), &ir).unwrap();
         let out_dir = root.join("blocked-export");
 
@@ -8265,8 +8534,8 @@ Answers
         )
         .unwrap_err();
 
-        assert!(error.contains("export_validation_failed"));
-        assert!(error.contains("$.audit.humanVerified"));
+        assert!(error.contains("export_validation_failed"), "{error}");
+        assert!(error.contains("$.exam.examId"), "{error}");
         assert!(!out_dir.exists());
         let job_path = job_dir(&root, &job.job_id);
         assert!(!job_path.join("cleanup-summary.json").exists());

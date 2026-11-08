@@ -339,6 +339,14 @@ mod tests {
             .iter()
             .any(|reason| reason.code == "RECOGNITION_CHOICE_UNRESOLVED")
     }
+    /// P2 门禁收敛后，「未选择的本地/云端差异」是**警告**而不是阻断
+    /// （唯一硬门禁是编译）。这个助手查警告通道。
+    fn warned(root: &std::path::Path, doc: &Value, scope: crate::authoring_validation::PublishScope) -> bool {
+        crate::authoring_validation::publish_verdict(root, "job-1", doc, Some(1), scope)
+            .warnings()
+            .iter()
+            .any(|warning| warning.code == "RECOGNITION_CHOICE_UNRESOLVED")
+    }
     #[test]
     fn selection_validation_ignores_missing_answers_but_rejects_new_dangling_references() {
         let current = fixture();
@@ -357,19 +365,30 @@ mod tests {
         assert!(!new_runtime_errors(&current, &broken).is_empty());
     }
     #[test]
-    fn publication_gate_blocks_only_units_repair_could_not_settle_until_the_choice_is_made() {
+    fn publication_gate_reports_only_units_repair_could_not_settle_as_warnings_until_the_choice_is_made() {
         use crate::authoring_validation::PublishScope::{CanonicalDirect, FullDerived};
         let (root, local, cloud, unit) = setup();
-        // 修复还没有裁定过的差异没有蓝绿对比，不拦发布。
-        assert!(!blocked(&root, &local, CanonicalDirect));
+        // 修复还没有裁定过的差异没有蓝绿对比：不警告。
+        assert!(!warned(&root, &local, CanonicalDirect));
         rule_unsettled(&root, &local, &cloud, vec![]);
-        assert!(blocked(&root, &local, CanonicalDirect));
-        assert!(blocked(&root, &local, FullDerived));
+        // P2 门禁收敛：未选择的差异是警告（内容质量问题），不是发布阻断。
+        assert!(warned(&root, &local, CanonicalDirect));
+        assert!(warned(&root, &local, FullDerived));
+        // 而且结论确实是 ready（唯一的硬门禁是编译，这份稿编译通过）。
+        assert!(crate::authoring_validation::publish_verdict(
+            &root,
+            "job-1",
+            &local,
+            Some(1),
+            CanonicalDirect
+        )
+        .is_ready());
         choose(&root, "job-1", &unit, "cloud", 1).unwrap();
         let conn = repository::open_library_connection(&root).unwrap();
         let (chosen, _) = repository::get_canonical_ds(&conn, "job-1").unwrap().unwrap();
-        assert!(!blocked(&root, &chosen, CanonicalDirect));
-        assert!(!blocked(&root, &chosen, FullDerived));
+        // 选定之后警告消失。
+        assert!(!warned(&root, &chosen, CanonicalDirect));
+        assert!(!warned(&root, &chosen, FullDerived));
         drop(conn);
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -387,6 +406,8 @@ mod tests {
         // 修复对编辑后的稿再次给出「无法定论」的裁定：按单元 id 与选择记录判定，不看内容指纹。
         rule_unsettled(&root, &edited, &cloud, vec![]);
         assert!(!blocked(&root, &edited, CanonicalDirect));
+        // 已选择过的单元连警告都不出（选择记录按单元 id 判定，不看内容指纹）。
+        assert!(!warned(&root, &edited, CanonicalDirect));
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
@@ -408,6 +429,8 @@ mod tests {
             "这些项仍是普通待办：{tasks:#?}"
         );
         assert!(!blocked(&root, &local, CanonicalDirect), "{tasks:#?}");
+        // 没有蓝绿选择界面的项连警告都不出：它们是普通待办，不是「待你选择」。
+        assert!(!warned(&root, &local, CanonicalDirect), "{tasks:#?}");
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]

@@ -1,0 +1,562 @@
+{
+  "meta": {
+    "title": "The Pearls",
+    "language": "en",
+    "category": "P1"
+  },
+  "passage": {
+    "content": [
+      {
+        "type": "heading",
+        "id": "passage-heading",
+        "level": 2,
+        "children": [
+          {
+            "type": "text",
+            "id": "passage-heading-text",
+            "text": "The Pearls"
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "id": "passage-paragraph-A",
+        "children": [
+          {
+            "type": "text",
+            "id": "passage-paragraph-A-text",
+            "text": "Pearls are formed inside the shells of certain molluscs. When a small irritant such as a grain of sand lodges in the soft tissue, the animal coats it with layers of a substance called nacre. Over several years these layers build up into the hard, lustrous object that jewellers value."
+          }
+        ],
+        "paragraphLabel": "A"
+      },
+      {
+        "type": "paragraph",
+        "id": "passage-paragraph-B",
+        "children": [
+          {
+            "type": "text",
+            "id": "passage-paragraph-B-text",
+            "text": "For most of history pearls were harvested by divers who prised open wild oysters by hand. The work was dangerous and the yield unpredictable, so a single large pearl could cost as much as a ship. Roman writers complained that the fashion for pearl jewellery drained the empire of silver."
+          }
+        ],
+        "paragraphLabel": "B"
+      },
+      {
+        "type": "paragraph",
+        "id": "passage-paragraph-C",
+        "children": [
+          {
+            "type": "text",
+            "id": "passage-paragraph-C-text",
+            "text": "In the late nineteenth century Japanese researchers learned to insert a small bead of mother-of-pearl into an oyster and let the animal coat it. Cultured pearls made the gem ordinary: by the 1930s a respectable necklace cost a month's wages rather than a fortune."
+          }
+        ],
+        "paragraphLabel": "C"
+      },
+      {
+        "type": "paragraph",
+        "id": "passage-paragraph-D",
+        "children": [
+          {
+            "type": "text",
+            "id": "passage-paragraph-D-text",
+            "text": "Modern farms now monitor water temperature, salinity and food supply to keep their oysters healthy. Some producers bleach or dye the harvest, a practice that buyers' associations have tried to regulate, with limited success."
+          }
+        ],
+        "paragraphLabel": "D"
+      }
+    ],
+    "paragraphMap": {
+      "A": "passage-paragraph-A",
+      "B": "passage-paragraph-B",
+      "C": "passage-paragraph-C",
+      "D": "passage-paragraph-D"
+    }
+  },
+  "taskGroups": [
+    {
+      "taskId": "group-1",
+      "taskType": "table_completion",
+      "displayRange": {
+        "kind": "range",
+        "start": 1,
+        "end": 3
+      },
+      "instructions": [
+        {
+          "type": "paragraph",
+          "id": "group-1-instructions",
+          "children": [
+            {
+              "type": "text",
+              "id": "group-1-instructions-text",
+              "text": "Questions 1-3 Complete the table below. Choose ONE WORD ONLY from the passage for each answer. Write your answers in boxes 1-3 on your answer sheet."
+            }
+          ]
+        }
+      ],
+      "stimulus": [
+        {
+          "type": "table",
+          "id": "group-1-table",
+          "rows": [
+            {
+              "type": "table_row",
+              "id": "group-1-row-header",
+              "cells": [
+                {
+                  "type": "table_cell",
+                  "id": "group-1-cell-h1",
+                  "rowSpan": 1,
+                  "colSpan": 1,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "group-1-cell-h1-text",
+                      "text": "Stage"
+                    }
+                  ],
+                  "headerScope": "column"
+                },
+                {
+                  "type": "table_cell",
+                  "id": "group-1-cell-h2",
+                  "rowSpan": 1,
+                  "colSpan": 1,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "group-1-cell-h2-text",
+                      "text": "What happens"
+                    }
+                  ],
+                  "headerScope": "column"
+                }
+              ]
+            },
+            {
+              "type": "table_row",
+              "id": "group-1-row-1",
+              "cells": [
+                {
+                  "type": "table_cell",
+                  "id": "group-1-cell-1a",
+                  "rowSpan": 1,
+                  "colSpan": 1,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "group-1-cell-1a-text",
+                      "text": "Irritant lodges"
+                    }
+                  ]
+                },
+                {
+                  "type": "table_cell",
+                  "id": "group-1-cell-1b",
+                  "rowSpan": 1,
+                  "colSpan": 1,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "group-1-cell-1b-text-0",
+                      "text": "The mollusc coats the grain with "
+                    },
+                    {
+                      "type": "answer_slot",
+                      "id": "slot-node-q1",
+                      "slotId": "q1",
+                      "displayLabel": "1",
+                      "inline": true,
+                      "placeholder": "answer"
+                    },
+                    {
+                      "type": "text",
+                      "id": "group-1-cell-1b-text-tail",
+                      "text": "."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "table_row",
+              "id": "group-1-row-2",
+              "cells": [
+                {
+                  "type": "table_cell",
+                  "id": "group-1-cell-2a",
+                  "rowSpan": 1,
+                  "colSpan": 1,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "group-1-cell-2a-text",
+                      "text": "Layers build up"
+                    }
+                  ]
+                },
+                {
+                  "type": "table_cell",
+                  "id": "group-1-cell-2b",
+                  "rowSpan": 1,
+                  "colSpan": 1,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "group-1-cell-2b-text-0",
+                      "text": "The object grows over several "
+                    },
+                    {
+                      "type": "answer_slot",
+                      "id": "slot-node-q2",
+                      "slotId": "q2",
+                      "displayLabel": "2",
+                      "inline": true,
+                      "placeholder": "answer"
+                    },
+                    {
+                      "type": "text",
+                      "id": "group-1-cell-2b-text-tail",
+                      "text": "."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "table_row",
+              "id": "group-1-row-3",
+              "cells": [
+                {
+                  "type": "table_cell",
+                  "id": "group-1-cell-3a",
+                  "rowSpan": 1,
+                  "colSpan": 1,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "group-1-cell-3a-text",
+                      "text": "Harvest"
+                    }
+                  ]
+                },
+                {
+                  "type": "table_cell",
+                  "id": "group-1-cell-3b",
+                  "rowSpan": 1,
+                  "colSpan": 1,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "group-1-cell-3b-text-0",
+                      "text": "Divers opened wild oysters by "
+                    },
+                    {
+                      "type": "answer_slot",
+                      "id": "slot-node-q3",
+                      "slotId": "q3",
+                      "displayLabel": "3",
+                      "inline": true,
+                      "placeholder": "answer"
+                    },
+                    {
+                      "type": "text",
+                      "id": "group-1-cell-3b-text-tail",
+                      "text": "."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "responseGroups": [
+        {
+          "responseGroupId": "group-1-responses",
+          "kind": "text_entry",
+          "slotIds": [
+            "q1",
+            "q2",
+            "q3"
+          ],
+          "prompt": [],
+          "cardinality": {
+            "min": 1,
+            "max": 1,
+            "exact": 1
+          },
+          "assignment": "per_slot",
+          "scoringPolicy": "per_slot_ielts_normalized",
+          "duplicatePolicy": "reject_submission",
+          "allowOptionReuse": false
+        }
+      ]
+    },
+    {
+      "taskId": "group-2",
+      "taskType": "flowchart_completion",
+      "displayRange": {
+        "kind": "range",
+        "start": 4,
+        "end": 6
+      },
+      "instructions": [
+        {
+          "type": "paragraph",
+          "id": "group-2-instructions",
+          "children": [
+            {
+              "type": "text",
+              "id": "group-2-instructions-text",
+              "text": "Questions 4-6 Complete the flow-chart below. Choose ONE WORD ONLY from the passage for each answer. Write your answers in boxes 4-6 on your answer sheet."
+            }
+          ]
+        }
+      ],
+      "stimulus": [
+        {
+          "type": "flowchart",
+          "id": "group-2-flowchart",
+          "steps": [
+            {
+              "type": "flow_step",
+              "id": "group-2-step-1",
+              "label": "1",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "group-2-step-1-text-0",
+                  "text": "Researchers insert a bead of "
+                },
+                {
+                  "type": "answer_slot",
+                  "id": "slot-node-q4",
+                  "slotId": "q4",
+                  "displayLabel": "4",
+                  "inline": true,
+                  "placeholder": "answer"
+                },
+                {
+                  "type": "text",
+                  "id": "group-2-step-1-text-tail",
+                  "text": " into an oyster."
+                }
+              ]
+            },
+            {
+              "type": "flow_step",
+              "id": "group-2-step-2",
+              "label": "2",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "group-2-step-2-text",
+                  "text": "The oyster coats the bead with nacre."
+                }
+              ]
+            },
+            {
+              "type": "flow_step",
+              "id": "group-2-step-3",
+              "label": "3",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "group-2-step-3-text-0",
+                  "text": "Farmers keep the oysters healthy by watching water "
+                },
+                {
+                  "type": "answer_slot",
+                  "id": "slot-node-q5",
+                  "slotId": "q5",
+                  "displayLabel": "5",
+                  "inline": true,
+                  "placeholder": "answer"
+                },
+                {
+                  "type": "text",
+                  "id": "group-2-step-3-text-tail",
+                  "text": " and food supply."
+                }
+              ]
+            },
+            {
+              "type": "flow_step",
+              "id": "group-2-step-4",
+              "label": "4",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "group-2-step-4-text-0",
+                  "text": "Some producers bleach the harvest, a practice that buyers' "
+                },
+                {
+                  "type": "answer_slot",
+                  "id": "slot-node-q6",
+                  "slotId": "q6",
+                  "displayLabel": "6",
+                  "inline": true,
+                  "placeholder": "answer"
+                },
+                {
+                  "type": "text",
+                  "id": "group-2-step-4-text-tail",
+                  "text": " have tried to regulate."
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "responseGroups": [
+        {
+          "responseGroupId": "group-2-responses",
+          "kind": "text_entry",
+          "slotIds": [
+            "q4",
+            "q5",
+            "q6"
+          ],
+          "prompt": [],
+          "cardinality": {
+            "min": 1,
+            "max": 1,
+            "exact": 1
+          },
+          "assignment": "per_slot",
+          "scoringPolicy": "per_slot_ielts_normalized",
+          "duplicatePolicy": "reject_submission",
+          "allowOptionReuse": false
+        }
+      ]
+    }
+  ],
+  "answerSlots": {
+    "q1": {
+      "slotId": "q1",
+      "questionNumber": 1,
+      "displayLabel": "1",
+      "hostType": "table_cell",
+      "hostNodeId": "group-1-cell-1b",
+      "interaction": "text",
+      "participation": "scoring",
+      "confidence": 0.95,
+      "constraints": {
+        "maxWords": 1
+      }
+    },
+    "q2": {
+      "slotId": "q2",
+      "questionNumber": 2,
+      "displayLabel": "2",
+      "hostType": "table_cell",
+      "hostNodeId": "group-1-cell-2b",
+      "interaction": "text",
+      "participation": "scoring",
+      "confidence": 0.95,
+      "constraints": {
+        "maxWords": 1
+      }
+    },
+    "q3": {
+      "slotId": "q3",
+      "questionNumber": 3,
+      "displayLabel": "3",
+      "hostType": "table_cell",
+      "hostNodeId": "group-1-cell-3b",
+      "interaction": "text",
+      "participation": "scoring",
+      "confidence": 0.95,
+      "constraints": {
+        "maxWords": 1
+      }
+    },
+    "q4": {
+      "slotId": "q4",
+      "questionNumber": 4,
+      "displayLabel": "4",
+      "hostType": "flow_step",
+      "hostNodeId": "group-2-step-1",
+      "interaction": "text",
+      "participation": "scoring",
+      "confidence": 0.95,
+      "constraints": {
+        "maxWords": 1
+      }
+    },
+    "q5": {
+      "slotId": "q5",
+      "questionNumber": 5,
+      "displayLabel": "5",
+      "hostType": "flow_step",
+      "hostNodeId": "group-2-step-3",
+      "interaction": "text",
+      "participation": "scoring",
+      "confidence": 0.95,
+      "constraints": {
+        "maxWords": 1
+      }
+    },
+    "q6": {
+      "slotId": "q6",
+      "questionNumber": 6,
+      "displayLabel": "6",
+      "hostType": "flow_step",
+      "hostNodeId": "group-2-step-4",
+      "interaction": "text",
+      "participation": "scoring",
+      "confidence": 0.95,
+      "constraints": {
+        "maxWords": 1
+      }
+    }
+  },
+  "answerKey": {
+    "q1": {
+      "kind": "text",
+      "values": [
+        "nacre"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q2": {
+      "kind": "text",
+      "values": [
+        "years"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q3": {
+      "kind": "text",
+      "values": [
+        "hand"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q4": {
+      "kind": "text",
+      "values": [
+        "mother-of-pearl"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q5": {
+      "kind": "text",
+      "values": [
+        "temperature"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q6": {
+      "kind": "text",
+      "values": [
+        "associations"
+      ],
+      "normalization": "ielts_default"
+    }
+  },
+  "warnings": []
+}

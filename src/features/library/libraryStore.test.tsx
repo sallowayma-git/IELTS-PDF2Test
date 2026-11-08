@@ -100,3 +100,28 @@ describe("library event reads", () => {
     expectFullCalls(2); consoleError.mockRestore();
   });
 });
+
+// 审计 A8：刷新读取瞬时失败或单行读取缺 V2 行时，已知的 Part 不得被抹掉
+// （否则组卷栏的选择会被对齐步骤当成「Part 已改」而去掉，表现为勾选后被取消）。
+describe("paper selection inputs survive partial reads", () => {
+  it("a failed V2 list on refresh keeps the Part labels already known", async () => {
+    const { result } = renderHook(useLibraryStore);
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.rows.find((r) => r.id === "item")?.part).toBe("P3");
+    mocks.listLibraryItems.mockRejectedValueOnce(new Error("transient"));
+    act(() => result.current.refresh());
+    await waitFor(() => expect(mocks.listLibraryItems).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.rows.find((r) => r.id === "item")?.part).toBe("P3");
+    expect(result.current.rows.find((r) => r.id === "item")?.title).toBe("Title item");
+  });
+
+  it("a single-row read that carries no V2 item keeps the previous Part", async () => {
+    const { result } = renderHook(useLibraryStore);
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    mocks.getLibraryRow.mockResolvedValueOnce({ job: null, summary: null, inTrash: false, item: null });
+    await emit("item", 2);
+    await waitFor(() => expect(mocks.getLibraryRow).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.rows.find((r) => r.id === "item")?.part).toBe("P3"));
+  });
+});

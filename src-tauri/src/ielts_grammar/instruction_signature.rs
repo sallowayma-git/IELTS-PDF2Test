@@ -428,12 +428,12 @@ fn infer_option_alphabet(lower: &str) -> Option<String> {
     if lower.contains("paragraphs") || lower.contains("sections") {
         return Some("paragraph_letters".to_string());
     }
-    // ② **本轮新增**的三种区间（a-f / a-h / a-j）放在分支**之后**。
+    // ② 后续补充的区间（a-f / a-h / a-j / a-k）放在分支**之后**。
     //    这样"新增严格只影响原本返回 `None` 的输入"：含 `paragraphs`/`sections` 的
     //    题干仍然走 `paragraph_letters`（它同样是 `Some`、非 null ⇒ 仍被判为选择型，
     //    `WORD_LIMIT_UNPARSED` 不会误报），也不会因此新增 `OPTION_ALPHABET_MISMATCH`
     //    约束。两条目标因此不冲突。
-    for (start, end) in [('a', 'f'), ('a', 'h'), ('a', 'j')] {
+    for (start, end) in [('a', 'f'), ('a', 'h'), ('a', 'j'), ('a', 'k')] {
         if let Some(alphabet) = alphabet_for(start, end) {
             return Some(alphabet);
         }
@@ -783,6 +783,8 @@ mod tests {
             ("Choose the correct letter, A-H.", "A-H"),
             ("Choose the correct letter, A-I.", "A-I"),
             ("Choose the correct letter, A-J.", "A-J"),
+            ("Complete the summary using the list of words, A-K, below. Write the correct letter, A-K.", "A-K"),
+            ("Write the correct letter, A–K.", "A-K"),
             // 空格与 en dash 两种写法都要认（PDF 常把连字符排成 en dash）。
             ("Choose the correct letter, A to H.", "A-H"),
             ("Choose the correct letter, A–H.", "A-H"),

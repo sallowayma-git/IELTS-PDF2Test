@@ -3,17 +3,16 @@ import type {
   CreateJobInput,
   DocumentIr,
   ExportNasLibraryInput,
-  ExportNasPackageV2Input,
   ExportReadingJsInput,
   ExportResult,
   ImportJob,
   JsExportResult,
   NasExportResult,
-  NasPackageV2PublishResult,
   JobFilter,
   JobMetaPatch,
   DiagnosticsSettings,
   DocumentIrV2OverlayResult,
+  PipelineSettingsV1,
   EnvironmentPreflightReport,
   LlmProfilePublic,
   LlmSuggestion,
@@ -208,8 +207,28 @@ export async function getDiagnosticsSettings(): Promise<DiagnosticsSettings> {
   return command("get_diagnostics_settings");
 }
 
+export interface AppBuildInfo {
+  version: string;
+  revision: string;
+  dirty: boolean;
+  builtAtUnix: number;
+}
+
+export async function getAppBuildInfo(): Promise<AppBuildInfo> {
+  return command("get_app_build_info");
+}
+
 export async function saveDiagnosticsSettings(settings: DiagnosticsSettings): Promise<DiagnosticsSettings> {
   return command("save_diagnostics_settings", { settings });
+}
+
+/** 读取流水线模式（云端直出 / 旧链）。读取失败时调用方按默认 `direct` 兜底。 */
+export async function getPipelineSettings(): Promise<PipelineSettingsV1> {
+  return command<PipelineSettingsV1>("get_pipeline_settings");
+}
+
+export async function savePipelineSettings(settings: PipelineSettingsV1): Promise<PipelineSettingsV1> {
+  return command<PipelineSettingsV1>("save_pipeline_settings", { settings });
 }
 
 export async function saveLlmProfile(input: SaveLlmProfileInput): Promise<LlmProfilePublic> {
@@ -295,12 +314,6 @@ export async function exportReadingJs(input: ExportReadingJsInput): Promise<JsEx
 
 export async function exportNasLibrary(input: ExportNasLibraryInput): Promise<NasExportResult> {
   return command("export_nas_library", { input });
-}
-
-/** Publish an already materialized ReadingExamSourceV2 through the real
- * Tauri NAS lock/CAS/staging/probe/manifest-last command. */
-export async function exportNasPackageV2(input: ExportNasPackageV2Input): Promise<NasPackageV2PublishResult> {
-  return command("publish_nas_package_v2", { input });
 }
 
 // ---------- 写作题库命令 ----------

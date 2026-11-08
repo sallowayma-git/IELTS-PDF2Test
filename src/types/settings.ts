@@ -57,6 +57,18 @@ export interface DiagnosticsSettings {
   keepFullProcessArtifacts: boolean;
 }
 
+/**
+ * 流水线模式（cloud-direct 方案 §2）：`direct` = 云端一次直出整份题稿（默认）；
+ * `legacy` = 现有本地首稿 + 云端候选合并链（行为不变）。导入时快照进 job，
+ * 切换设置不改变已在处理中的作业。
+ */
+export type PipelineMode = "direct" | "legacy";
+
+export interface PipelineSettingsV1 {
+  schemaVersion: "PipelineSettingsV1";
+  pipelineMode: PipelineMode;
+}
+
 export interface LlmSuggestionPatch {
   op?: string;
   path?: string;

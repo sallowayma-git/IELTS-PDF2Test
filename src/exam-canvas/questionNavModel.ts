@@ -4,7 +4,7 @@ import type { ListeningPartView } from "./listeningWorkspace";
 /**
  * 底部题号导航（QuestionNavBar）的数据推导，纯函数、可单测。
  *
- * - 阅读稿：只有一个 section，名称 "Part 1"，永远 active、不可切换（基准阅读页同款）。
+ * - 阅读稿：只有一个 section，名称由权威稿 category 决定，永远 active、不可切换。
  * - 听力稿：listeningParts 的**每个** Part 都是一个可切换 section（没有 Part → 题组映射的
  *   Part 与 visibleTaskIds 一样显示全部题组）；section 的题目集合与 ExamCanvas 的
  *   shownTaskIds（visibleTaskIds）显示语义保持一致，切 Part 就是
@@ -48,6 +48,7 @@ export interface QuestionNavModel {
 }
 
 export interface QuestionNavInput {
+  readingCategory?: "P1" | "P2" | "P3";
   mode: "author" | "student";
   taskGroups: readonly QuestionNavTaskGroup[];
   questionDisplayMap: Readonly<Record<string, string>>;
@@ -102,13 +103,14 @@ export function buildQuestionNavModel(input: QuestionNavInput): QuestionNavModel
 
   const parts = input.listeningParts;
   if (!parts?.length) {
-    // 阅读稿：单一 "Part 1"，永远 active、不可切换（基准阅读页同款）。
+    // 阅读稿：单一 Part，显示真实归属；不从 examId 或题号推断。
+    const ordinal = Number((input.readingCategory ?? "P1").slice(1));
     const questions = slotIds.map(questionOf);
     return {
       sections: [{
-        key: "part-1",
-        ordinal: 1,
-        name: "Part 1",
+        key: `part-${ordinal}`,
+        ordinal,
+        name: `Part ${ordinal}`,
         status: statusOf(questions),
         active: true,
         switchable: false,

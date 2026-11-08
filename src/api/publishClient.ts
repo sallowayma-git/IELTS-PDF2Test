@@ -24,10 +24,92 @@ export interface PublishBatchOutcome {
   destination: string;
   succeeded: PublishItemOutcome[];
   failed: PublishItemOutcome[];
+  /** 仅组卷发布（带 `paper`）时返回：当前试卷指针是否已更新。 */
+  paper?: PaperPublishResult;
+  /**
+   * 本次发布的顶层结论。`published`：清单与当前试卷都已更新；`published_with_warnings`：
+   * 已更新，但提交后有记录未完整写入（见 `warnings`）；`paper_pointer_stale`：清单已更新，
+   * 但当前试卷指针没写成，学生端仍是旧试卷；`paper_incomplete`：本次什么都没提交。
+   */
+  status?: "published" | "published_with_warnings" | "paper_pointer_stale" | "paper_incomplete";
+  /** 提交之后发生、但没有回滚包的问题（如发布记录写入失败、状态漂移）。 */
+  warnings?: unknown[];
+  batchId?: string;
+}
+
+/** 组卷请求（与后端 `PaperSpec` 同形，字段名不可改）。阅读三篇必填，听力可为空。 */
+export interface PaperSpec {
+  reading: { P1: string; P2: string; P3: string };
+  listening: Array<{ part: string; itemId: string }>;
+}
+
+/** 组卷结果。失败时当前试卷保持不变；清单里已发布的题照常保留。 */
+export type PaperPublishResult =
+  | { ok: true; paperId: string; publishedAt: string; batchId: string; reading: unknown[]; listening: unknown[] }
+  | { ok: false; code: "PAPER_INCOMPLETE"; missing: string[] }
+  | { ok: false; code: "PAPER_WRITE_FAILED"; message?: string };
+
+/** 清单已更新、但指针没写成：学生端仍是旧试卷。文案与产品约定一致，不得改成「发布成功」。 */
+export const PAPER_POINTER_STALE_NOTICE = "清单已更新，但学生端仍是旧试卷，请重试发布。";
+/** 另一次发布占着 NAS 上的发布锁：不得显示成「当前试卷没有更新」，提示后由调用方刷新当前试卷。 */
+export const PUBLISH_LOCK_BUSY_NOTICE = "另一次发布正在进行，请稍后查看当前试卷。";
+
+/**
+ * 组卷发布的结果文案。`titleOf` 把缺失的题目 id 译成名称，用户看到的是题名而不是 id。
+ * 组卷结果缺失（后端没返回 paper）时只说明当前试卷没有更新。
+ */
+export function describePaperPublishOutcome(outcome: PublishBatchOutcome, titleOf: (itemId: string) => string): string {
+  const paper = outcome.paper;
+  if (!paper) {
+    return outcome.status === "paper_pointer_stale" ? PAPER_POINTER_STALE_NOTICE : "当前试卷没有更新。";
+  }
+  if (paper.ok) {
+    const id = paper.paperId.slice(0, 8);
+    return outcome.warnings?.length
+      ? `当前试卷已发布（${id}），但有 ${outcome.warnings.length} 项记录未完整写入，请在 NAS 发布记录中核对。`
+      : `当前试卷已发布（${id}）`;
+  }
+  if (paper.code === "PAPER_INCOMPLETE") {
+    const names = paper.missing.map(titleOf).join("、");
+    return `试卷中有题目未能发布，当前试卷保持不变：${names}`;
+  }
+  return PAPER_POINTER_STALE_NOTICE;
+}
+
+/**
+ * 组卷发布的**唯一**顶层提示（审计 A5）。只按后端 `status` / 组卷结果给出一句话，
+ * 不再把「已发布 N 题」和「学生端仍是旧试卷」拼在一起：两者互相矛盾时以指针结果为准。
+ *
+ * - `paper_incomplete`：缺题，什么都没提交，旧试卷保持不变（列出缺失题名）。
+ * - `paper_pointer_stale`：清单已更新但指针没写成，学生端仍是旧试卷。
+ * - `published_with_warnings`：已发布，但提交后有记录未完整写入。
+ * - `published`：当前试卷已发布。
+ * - 发布锁忙（请求失败且带锁忙提示）：另一次发布进行中，不说成「没有更新」。
+ * - 其余失败：取第一条失败原因。
+ */
+export function describePublishResult(outcome: PublishBatchOutcome, titleOf: (itemId: string) => string): string {
+  const paper = outcome.paper;
+  if (outcome.status === "paper_incomplete" || (paper && !paper.ok && paper.code === "PAPER_INCOMPLETE")) {
+    const missing = paper && !paper.ok && paper.code === "PAPER_INCOMPLETE" ? paper.missing : [];
+    const names = missing.map(titleOf).join("、");
+    return names ? `试卷中有题目未能发布，当前试卷保持不变：${names}` : "试卷中有题目未能发布，当前试卷保持不变。";
+  }
+  if (outcome.status === "paper_pointer_stale" || (paper && !paper.ok)) return PAPER_POINTER_STALE_NOTICE;
+  if (paper?.ok) {
+    const id = paper.paperId.slice(0, 8);
+    if (outcome.status === "published_with_warnings" || outcome.warnings?.length) {
+      return `当前试卷已发布（${id}），但有 ${outcome.warnings?.length ?? 0} 项记录未完整写入，请在 NAS 发布记录中核对。`;
+    }
+    return `当前试卷已发布（${id}）`;
+  }
+  const firstFailure = outcome.failed[0]?.message;
+  if (firstFailure) return firstFailure;
+  return "当前试卷没有更新。";
 }
 
 /** 发布错误一律经用户文案层收敛；原始机器码不再直接渲染（audit A7-F04）。 */
 export function describePublishError(error: unknown): string {
+  if (String(error).includes("PUBLISH_REQUIRES_PAPER")) return "单题发布已取消，请到题库的组卷栏选三篇阅读后发布为当前试卷。";
   return toUserFacingError(error, "发布失败，请稍后重试。").userMessage;
 }
 
@@ -79,28 +161,38 @@ export function describeBatchPublishOutcome(outcome: PublishBatchOutcome): strin
 }
 
 /**
- * 一次点击发布：请求里总是带着放行确认（`confirmedAt` = 点击时间）。
- * 后端照常计算门禁；只有结论确实不是 Ready 时这份确认才被使用并记录为放行。
+ * 一次点击发布（P2 门禁收敛）。
+ *
+ * 前端**不再**永远带 `force`：发布判定收敛为「编译通过 = 可发布」，其余（答案未填、
+ * 低置信、保真度低、未人工确认）是编辑器与发布对话框里展示的警告。放行确认
+ * （`force`）随伪装一起去掉——它此前的唯一效果是让每次发布都被后端记成「用户放行」，
+ * 门禁结论被悄悄覆盖，审计里分不清用户到底确认过什么。
+ */
+/**
+ * 组卷发布（唯一的发布入口，契约 V1.1 第5条：单题发布已取消，后端不带 paper 会拒绝）。
+ *
+ * 前端**不**带 `force`：发布判定是「编译通过 = 可发布」，其余是编辑器里的警告。
  */
 export async function publishItems(
   itemIds: string[], destination: string,
-  onProgress?: (done: number, total: number, itemId: string) => void
+  onProgress?: (done: number, total: number, itemId: string) => void,
+  options?: { paper?: PaperSpec }
 ): Promise<PublishBatchOutcome> {
   if (!itemIds.length) return { destination, succeeded: [], failed: [] };
   onProgress?.(0, itemIds.length, itemIds[0]);
+  // 只有组卷时才带 `paper` 字段：请求体只含后端认识的字段（后端 deny_unknown_fields）。
+  const input: Record<string, unknown> = { itemIds, destination };
+  if (options?.paper) input.paper = options.paper;
   try {
-    const force = { confirmedAt: new Date().toISOString(), acknowledgedReasons: [] as string[] };
-    const result = await command<PublishBatchOutcome>("publish_items", { input: { itemIds, destination, force } });
+    const result = await command<PublishBatchOutcome>("publish_items", { input });
     onProgress?.(itemIds.length, itemIds.length, "");
     return result;
   } catch (error) {
+    const message = String(error).includes("nas_package_v2_lock_busy")
+      ? PUBLISH_LOCK_BUSY_NOTICE
+      : describePublishError(error);
     return { destination, succeeded: [], failed: itemIds.map((itemId) => ({
-      itemId, ok: false, message: describePublishError(error)
+      itemId, ok: false, message
     })) };
   }
-}
-
-export async function publishItem(itemId: string, destination: string): Promise<PublishItemOutcome> {
-  const batch = await publishItems([itemId], destination);
-  return batch.succeeded[0] ?? batch.failed[0];
 }
