@@ -92,15 +92,27 @@ async function authorPublish({ runDir, nasRoot, state, seed, label }) {
   const dataDir = path.join(runDir, "appdata", "data");
   if (seed) {
     state.seeded = [1, 2, 3].map((index) => seedReadingJob(dataDir, index, template, state.stamp));
+    const seeded=await runCapture("cargo",["test","--manifest-path","src-tauri/Cargo.toml","--lib","dump_backend_data_listening_fixture","--","--ignored","--nocapture"],{cwd:repoRoot,env:{...process.env,PDF2TEST_E2E_LISTENING_APP_ROOT:dataDir}});
+    fs.writeFileSync(path.join(runDir,"listening-seed.log"),seeded.stdout+seeded.stderr);
+    if(seeded.code!==0)throw new Error("真实听力夹具播种失败，见 listening-seed.log");
+    const line=seeded.stdout.split(/\r?\n/).find(s=>s.startsWith("E2E_LISTENING="));
+    if(!line)throw new Error("听力夹具没有返回标识");
+    state.listening=JSON.parse(line.slice("E2E_LISTENING=".length));
   }
-  const ids = state.seeded.map((job) => job.jobId);
+  const ids = [...state.seeded.map((job) => job.jobId),state.listening.jobId];
   const out = { label, ok: false, assertions: [] };
   const session = await launchTauriAppCdp({ exePath, runDir, extraBrowserArgs: extraArgs, quiet: true });
   try {
     const rows = await waitForRows(session, ids, 90000);
     const migrated = ids.every((id) => rows.some((row) => row.id === id));
-    out.assertions.push(["migrated", migrated, `题库预置条目=${ids.filter((id) => rows.some((r) => r.id === id)).length}/3`]);
+    out.assertions.push(["migrated", migrated, `题库预置条目=${ids.filter((id) => rows.some((r) => r.id === id)).length}/${ids.length}`]);
     if (!migrated) throw new Error("预置的三篇没有被启动迁移种进题库");
+    if (seed) {
+      const workspace=await session.invoke("get_workspace_item",{itemId:state.listening.jobId});
+      if(!workspace.ok)throw new Error(workspace.error);
+      const checked=await session.invoke("apply_editor_commands",{input:{itemId:state.listening.jobId,baseVersion:workspace.value.editVersion,requestId:`listening-ready-${state.stamp}`,commands:[{op:"setAnswer",slotId:Object.keys(state.listening.answers)[0],value:{kind:"text",values:["alpha"]}}]}});
+      if(!checked.ok)throw new Error(checked.error);
+    }
 
     await session.evaluate(`(() => {
       const raw = window.localStorage.getItem(${JSON.stringify(APP_SETTINGS_KEY)});
@@ -114,7 +126,7 @@ async function authorPublish({ runDir, nasRoot, state, seed, label }) {
     await session.waitFor(`!!document.querySelector('[data-testid="current-paper-card"]')`, { timeoutMs: 40000, label: `${label}-paper-card` });
 
     if (seed) {
-      for (const [index, id] of ids.entries()) {
+      for (const [index, id] of state.seeded.map(job=>job.jobId).entries()) {
         await session.waitFor(`!!document.querySelector('[data-item-id="${id}"] [data-testid="library-row-part-select"]')`, { timeoutMs: 20000, label: `part-select-${index}` });
         await setRowPart(session, id, PARTS[index]);
         const deadline = Date.now() + 15000;
@@ -125,7 +137,7 @@ async function authorPublish({ runDir, nasRoot, state, seed, label }) {
       }
     }
     const partRows = await libraryRows(session);
-    const partOf = ids.map((id) => partRows.find((r) => r.id === id)?.partLabel ?? null);
+    const partOf = state.seeded.map(job=>job.jobId).map((id) => partRows.find((r) => r.id === id)?.partLabel ?? null);
     out.assertions.push(["parts", PARTS.every((p, i) => partOf[i] === p), `Part=${JSON.stringify(partOf)}`]);
 
     await session.waitFor(`!!document.querySelector('[data-testid="paper-table"]')`, { timeoutMs: 15000, label: `${label}-paper-table` });
@@ -148,6 +160,7 @@ async function authorPublish({ runDir, nasRoot, state, seed, label }) {
         part: item.part, examId: item.examId, title: item.title, script: item.script,
         scriptSha256: item.scriptSha256, runtimeSha256: item.runtimeSha256, resourcesBase: item.entry?.resourcesBase,
       })),
+      listening:disk.pointer.listening,
     };
     out.ok = out.assertions.every(([, ok]) => ok);
   } catch (error) {
@@ -162,12 +175,21 @@ async function authorPublish({ runDir, nasRoot, state, seed, label }) {
 /** 在途钩子：同一套卷再发布一次（不重新预置；应用数据目录沿用，题库行与 Part 已在库中）。 */
 async function republishPhase({ runDir, nasRoot, resultFile }) {
   const state = readState(runDir);
-  const ids = state.seeded.map((job) => job.jobId);
+  const ids = [...state.seeded.map((job) => job.jobId),state.listening.jobId];
   const before = readPointer(nasRoot);
   const session = await launchTauriAppCdp({ exePath, runDir, extraBrowserArgs: extraArgs, quiet: true });
   const out = { label: "republish-in-flight", ok: false, before: { paperId: before.paperId, batchId: before.batchId }, assertions: [] };
   try {
     await waitForRows(session, ids, 90000);
+    const workspace = await session.invoke("get_workspace_item", { itemId: state.listening.jobId });
+    if (!workspace.ok) throw new Error(workspace.error);
+    const changedSlot = Object.keys(state.listening.answers)[0];
+    const edited = await session.invoke("apply_editor_commands", { input: {
+      itemId: state.listening.jobId, baseVersion: workspace.value.editVersion,
+      requestId: `in-flight-listening-${state.stamp}`,
+      commands: [{op:"setAnswer",slotId:changedSlot,value:{kind:"text",values:["beta"]}}],
+    }});
+    if (!edited.ok) throw new Error(edited.error);
     await session.evaluate(`(() => { window.location.hash = "#/library"; return true; })()`);
     await session.waitFor(`!!document.querySelector('[data-testid="paper-table"]')`, { timeoutMs: 40000, label: "republish-paper-table" });
     const rows = await libraryRows(session);
@@ -183,6 +205,7 @@ async function republishPhase({ runDir, nasRoot, resultFile }) {
     out.after = { paperId: disk.pointer.paperId, batchId: disk.pointer.batchId };
     out.assertions.push(["paperId-changed", disk.pointer.paperId !== before.paperId, `旧=${before.paperId} 新=${disk.pointer.paperId}`]);
     out.assertions.push(["batch-changed", disk.pointer.batchId !== before.batchId, `旧批次=${before.batchId} 新批次=${disk.pointer.batchId}`]);
+    out.assertions.push(["listening-answer-version-changed", disk.pointer.listening[0].runtimeSha256 !== before.listening[0].runtimeSha256, "真实编辑命令已将新卷一个听力答案改为 beta"]);
     out.ok = out.assertions.every(([, ok]) => ok);
   } catch (error) {
     out.error = String(error?.message ?? error);
@@ -216,7 +239,7 @@ function assertStudentArtifacts(report, state, submissionsRoot, paperA) {
       `meta.paperId=${m.paperId} 发布时=${paperA.paperId}`);
     recordAssertion(report, `S-4 ${base}-installId`, typeof m.installId === "string" && m.installId.length > 0,
       `installId=${m.installId}`);
-    recordAssertion(report, `S-5 ${base}-schema`, m.schemaVersion === "SubmissionSnapshotV1" && m.dbSchemaVersion === 1 && m.scorerVersion === "reading-scorer/1",
+    recordAssertion(report, `S-5 ${base}-schema`, m.schemaVersion === "SubmissionSnapshotV2" && m.dbSchemaVersion === 2 && m.scorerVersion === "reading-scorer/1",
       `schema=${m.schemaVersion} db=${m.dbSchemaVersion} scorer=${m.scorerVersion}`);
     const statusPath = path.join(statusDir, `${m.attemptId}.json`);
     const status = fs.existsSync(statusPath) ? JSON.parse(fs.readFileSync(statusPath, "utf8")) : null;
@@ -257,10 +280,12 @@ function fixtureKeyLabels() {
 }
 
 async function runStudent({ runDir, nasRoot, submissionsRoot, paperA, key, hookCommand }) {
+  const listeningAnswers=Object.fromEntries(Object.entries(readState(runDir).listening.answers).map(([slot,answer])=>[slot,answer.values?.[0]??answer.labels?.[0]]));
   const plan = {
     candidates: CANDIDATES.map((candidate) => ({
       candidateId: candidate.candidateId,
       candidateName: candidate.candidateName,
+      listening:{examId:paperA.listening[0].examId,answers:listeningAnswers},
       parts: PARTS.map((part, index) => ({
         part,
         title: paperA.reading[index].title,
@@ -286,6 +311,8 @@ async function runStudent({ runDir, nasRoot, submissionsRoot, paperA, key, hookC
     STUDENT_E2E_PAPERS_ROOT: nasRoot,
     STUDENT_E2E_SUBMISSIONS_ROOT: submissionsRoot,
     STUDENT_E2E_PLAN_FILE: planFile,
+    VITE_IELTS_LISTENING_V1:"1",
+    IELTS_LISTENING_V1:"1",
   };
   const started = Date.now();
   const result = await runCapture("python", ["-X", "utf8", STUDENT_FLOW], { cwd: STUDENT_REPO, env });
@@ -309,6 +336,8 @@ async function dataPhase({ runDir, submissionsRoot, paperA, report, expectations
   const shot = async (name) => { await session.screenshot(name).catch(() => null); };
   try {
     await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, { timeoutMs: 60000, label: "library" });
+    const settingsReply=await session.invoke("save_review_settings",{input:{operatorName:"全链路验收教师"}});
+    if(!settingsReply.ok)throw new Error(`操作人设置失败：${settingsReply.error}`);
     await session.evaluate(`(() => {
       const raw = window.localStorage.getItem(${JSON.stringify(APP_SETTINGS_KEY)});
       const settings = raw ? JSON.parse(raw) : {};
@@ -368,6 +397,45 @@ async function dataPhase({ runDir, submissionsRoot, paperA, report, expectations
     const exists = fs.existsSync(exportPath);
     const magic = exists ? fs.readFileSync(exportPath).subarray(0, 2).toString("latin1") : "";
     recordAssertion(report, "D-7 xlsx-written", exists && magic === "PK", `导出=${exportPath} exists=${exists} magic=${JSON.stringify(magic)}`);
+
+    const checked=await session.invoke("analytics_exam",{batchId:batch,paperId:paperA.paperId});
+    if(!checked.ok)throw new Error(checked.error);
+    const attemptId=checked.value.students.find(student=>student.candidateId===inFlight.candidateId)?.attemptId;
+    const detailReply=await session.invoke("get_attempt_detail",{attemptId});
+    if(!detailReply.ok)throw new Error(detailReply.error);
+    const detail=detailReply.value;
+    recordAssertion(report,"V2-detail-locked-context",detail.passages.length===3&&detail.passages.every(p=>!p.contentUnavailable&&p.passage&&p.answers.every(a=>!a.context.contentUnavailable&&a.context.taskGroups.length>0)),"原文与题干来自锁定版本内容快照");
+    recordAssertion(report,"V2-detail-answer-history",detail.answerEvents.some(e=>e.event_type==="answer_changed"),"真实改答事件已导入");
+    recordAssertion(report,"V2-detail-writing",detail.writings.some(w=>w.content?.includes("This writing submission")),"写作全文已导入");
+    recordAssertion(report,"V2-detail-listening",detail.listening.length===1&&detail.listeningAnswers.length===40,"听力40个slot已落库并导入");
+    recordAssertion(report,"V2-listening-old-pin-score",detail.listening[0]?.score_correct===40&&detail.listening[0]?.runtime_sha256===paperA.listening[0].runtimeSha256,"新卷答案已改，已锁卷考生仍按旧答案得40分");
+    const papers=await session.invoke("list_papers");
+    const archived=await session.invoke("get_paper",{paperId:paperA.paperId});
+    recordAssertion(report,"V2-paper-archive",papers.ok&&papers.value.n===2&&archived.ok&&archived.value.items.length===4&&archived.value.items.every(i=>i.content_available===1),"两次发布与四份锁定内容均有本地档案");
+    const listeningStats=await session.invoke("analytics_listening_exam",{batchId:batch,paperId:paperA.paperId});
+    recordAssertion(report,"V2-listening-statistics",listeningStats.ok&&listeningStats.value.n===3&&listeningStats.value.parts.length===4&&listeningStats.value.score.mean===40,"听力样本、Part、题型、分布与矩阵可查询");
+    const answer=detail.passages.flatMap(p=>p.answers.map(a=>({...a,passageIndex:p.passage_index}))).find(a=>a.is_correct===0);
+    if(!answer)throw new Error("验收考生缺少可改判的错题");
+    const override=await session.invoke("create_score_override",{input:{attemptId,passageIndex:answer.passageIndex,responseSlotId:answer.response_slot_id,newScore:answer.max_score,newIsCorrect:true,expectedVersion:detail.candidate.review_version,reason:"全链路人工改判验收"}});
+    if(!override.ok)throw new Error(override.error);
+    const after=await session.invoke("analytics_exam",{batchId:batch,paperId:paperA.paperId});
+    const studentAfter=after.value?.students.find(s=>s.attemptId===attemptId);
+    recordAssertion(report,"V2-override-statistics",studentAfter?.rawScore===inFlight.raw&&studentAfter?.effectiveScore===inFlight.raw+answer.max_score,"原始分保持，改判后的有效分已增加");
+    const rawView=await session.invoke("analytics_student",{attemptId,original:true});
+    const rawQuestion=await session.invoke("analytics_question",{batchId:batch,paperId:paperA.paperId,passageIndex:answer.passageIndex,questionId:answer.question_id,original:true});
+    recordAssertion(report,"V2-original-statistics-switch",rawView.ok&&rawView.value.effectiveScore===inFlight.raw&&rawQuestion.ok,"学生及单题统计可切回原始口径");
+    const writing=detail.writings.find(w=>w.content?.includes("This writing submission"));
+    const saved=await session.invoke("save_writing_grade",{input:{attemptId,writingSubmissionId:writing.writing_submission_id,taTr:6.5,cc:7,lr:6,gra:7,overallComment:"全链路写作人工评分",expectedVersion:0}});
+    if(!saved.ok)throw new Error(saved.error);
+    const reviewed=await session.invoke("review_writing_grade",{input:{gradeId:saved.value.grade_id,expectedVersion:saved.value.version}});
+    if(!reviewed.ok)throw new Error(reviewed.error);
+    const published=await session.invoke("publish_writing_grade",{input:{gradeId:reviewed.value.grade_id,expectedVersion:reviewed.value.version}});
+    recordAssertion(report,"V2-writing-published",published.ok&&published.value.status==="published"&&published.value.task_band===6.625,"写作四维均值与发布版本正确");
+    const exported=await session.invoke("analytics_export_xlsx",{batchId:batch,paperId:paperA.paperId});
+    recordAssertion(report,"V2-export-eight-sheets",exported.ok&&exported.value.sheets.length===8,"导出包含改判后成绩、写作成绩、听力");
+    const audit=await session.invoke("list_audit_log",{filter:{}});
+    const actions=audit.value?.items.map(item=>item.action)??[];
+    recordAssertion(report,"V2-audit",["create_score_override","publish_writing_grade","export_completed"].every(action=>actions.includes(action)),"改判、写作发布与导出均有审计");
 
     const settingsOk = await session.evaluate(`(async () => {
       window.location.hash = "#/settings";
@@ -440,7 +508,7 @@ async function main() {
   for (const [id, ok, detail] of pub.assertions) recordAssertion(report, `P-${id}`, ok, detail);
   if (!pub.ok) { recordAssertion(report, "P-x publish-aborted", false, pub.error ?? "publish failed"); return finish("failed"); }
   writeState(runDir, state);
-  const paperA = { paperId: pub.pointer.paperId, batchId: pub.pointer.batchId, reading: pub.pointer.reading };
+  const paperA = { paperId: pub.pointer.paperId, batchId: pub.pointer.batchId, reading: pub.pointer.reading,listening:pub.pointer.listening };
   state.paperA = paperA;
   writeState(runDir, state);
 

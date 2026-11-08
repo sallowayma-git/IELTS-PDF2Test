@@ -944,6 +944,20 @@ fn dump_backend_data_listening_fixture() {
     let conn=crate::library::repository::open_library_connection(&root).unwrap();
     let (mut ds,_)=crate::library::repository::get_canonical_ds(&conn,&item).unwrap().unwrap();
     for value in ds["answerKey"].as_object_mut().unwrap().values_mut(){*value=json!({"kind":"text","values":["alpha"]});}
+    // This acceptance seed must be an actual renderable paper, rather than the
+    // deliberately minimal compiler fixture used by the tests above.
+    let anchor=json!({"sourceFileId":"synthetic-listening","pageIndex":0,"nodeIds":["synthetic-instruction"],"extractionMode":"manual","sourceHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"});
+    for (slot_id,slot) in ds["answerSlots"].as_object_mut().unwrap(){
+        slot["hostNodeId"]=json!(format!("row-{slot_id}"));
+        slot["provenanceStatus"]=json!("manual");
+    }
+    for task in ds["taskGroups"].as_array_mut().unwrap(){
+        let task_id=task["taskId"].as_str().unwrap().to_string();
+        task["instructions"]=json!([{"type":"paragraph","id":format!("instruction-{task_id}"),"sourceAnchors":[anchor.clone()],"provenanceStatus":"manual","children":[{"type":"text","id":format!("instruction-text-{task_id}"),"text":"Write ONE WORD ONLY.","sourceAnchors":[],"provenanceStatus":"manual"}]}]);
+        task["instructionSignature"]["evidenceAnchors"]=json!([anchor.clone()]);
+        let slots:Vec<String>=task["responseGroups"].as_array().unwrap().iter().flat_map(|r|r["slotIds"].as_array().unwrap()).map(|v|v.as_str().unwrap().to_string()).collect();
+        task["stimulus"]=json!(slots.iter().map(|id|json!({"type":"paragraph","id":format!("row-{id}"),"sourceAnchors":[],"provenanceStatus":"manual","children":[{"type":"text","id":format!("text-{id}"),"text":format!("Recorded word {}: ",id.trim_start_matches('q')),"sourceAnchors":[],"provenanceStatus":"manual"},{"type":"answer_slot","id":format!("node-{id}"),"slotId":id,"displayLabel":id.trim_start_matches('q'),"inline":true,"sourceAnchors":[],"provenanceStatus":"manual"}]})).collect::<Vec<_>>());
+    }
     conn.execute("UPDATE library_items_v2 SET canonical_ds_json=?2 WHERE id=?1",rusqlite::params![item,serde_json::to_string(&ds).unwrap()]).unwrap();
     crate::library::repository::set_item_part(&conn,&item,Some("Part 1"),Some("manual")).unwrap();
     println!("E2E_LISTENING={}",json!({"jobId":item,"examId":"backend-data-listening","title":"Listening Paper","answers":ds["answerKey"]}));
