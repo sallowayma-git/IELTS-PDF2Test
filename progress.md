@@ -2624,3 +2624,25 @@ User approved plan and parallel agents. Clean baseline 4217459. Owners: root clo
 并发三个子代理开发后完成根代理集成。门槛后置、依赖单元部分采用、批量校核、蓝绿题组选择、旧阅读V1门槛退出、整轮撤销及日志保留已落地。独立答案页冲突进入同轮校核，来源缺失不默认为云端正确。
 
 最终 Rust 1,313 pass / 14 ignored；前端518 pass；前端和原生构建、本地schema契约检查、diff检查通过。当前源码NAS产物镜像22/22通过。真实原生验收因macOS缺WebView2驱动且Sky原生服务启动失败不能执行，真实学生provider缺编译产物。没有真实文档前后识别效果/费用对照数据。详细分层记录 docs/qa/cloud-convergence-2026-09-30.md。
+
+## 2026-10-14 investigation
+- Clean working tree at start, HEAD 32c1725.
+- Read workspace hook, CAS transaction, cloud lock, error UI and existing regression harness.
+- Requested full save message and edit target. Native CUA service unavailable.
+
+### Repair and validation results
+- Before fix, newly added async-race tests failed: second edit disappeared from the transmitted batch; late cloud load changed saved version 3 back to 2.
+- Added whole-passage rebase tests for shorter/longer cloud paragraphs and pending local edits. Added real command cloud-adoption/edit/save/reload test, expectedText rejection, concurrent snapshot read regression and empty-text canvas regression.
+- Final frontend suite: 552 passed / 54 files; TypeScript and Vite production build passed. Logs tmp/cloud-passage-all-frontend-tests.log and tmp/cloud-passage-build.log.
+- Rust full library suite: 1450 passed, 16 ignored; log tmp/cloud-passage-all-rust-tests.log. Existing compiler warnings remain.
+- Native UI inventory failed (Sky startup). Browser empty-span click had no hit area; added author placeholder and verified clicking it, writing and saving succeeds.
+- Tauri embedded debug build currently running (tmp/cloud-passage-native-build.log).
+
+- Tauri embedded debug build passed (58.67 s), executable src-tauri/target/debug/ielts-author-studio contains rebuilt production frontend and updated Rust backend. No install or DMG replacement performed.
+- git diff --check passed. No commits created.
+
+## Cloud review browsing follow-up
+- Implemented edit-only read-only UI while preserving scrolling, navigation, content selection and view/source controls. Added protection for inspector/audio inputs and in-progress drag gestures.
+- Added real-canvas read-only interaction tests and updated the comparison renderer's old inert assertion to read-only controls. Added lock-during-drag regression. Full frontend: 557 passed; check/build passed; git diff --check passed.
+- Test development errors: jsdom scroll spy was attached to the wrong target (fixed using findTargetElement); test fixture figure required display (added); old comparison test asserted inert (replaced with behavior-appropriate assertions). Temporary browser fixture lacked stimulus (initialized).
+- Browser controlled-IPC evidence: both panes scroll during review; question navigation and source drawer work; no edit/save on text click; editing available after simulated completion. Native Tauri debug build passed. Existing native UI validation gap remains explicitly recorded.

@@ -2702,6 +2702,38 @@ mod tests {
     }
 
     #[test]
+    fn passage_edits_after_cloud_adoption_save_clear_and_reload() {
+        use crate::library::commands::{apply_editor_commands_core, get_workspace_item_core};
+        use crate::library::repository::ApplyEditorCommandsInput;
+
+        let local_doc = candidate()["authoring"].clone();
+        let root = db_fixture(&local_doc);
+        let mut cloud = local_doc.clone();
+        cloud["passage"]["content"][0]["children"][0]["text"] = json!("Cloud reviewed passage.");
+        adopt_cloud_primary(&root, "job-1", "batch-1", 1, &cloud, None).unwrap();
+
+        for replacement in ["人工修改的原文 🌍", "", "   ", "Rewritten after clearing."] {
+            let workspace = get_workspace_item_core(&root, "job-1").unwrap();
+            let node = &workspace["ds"]["passage"]["content"][0]["children"][0];
+            let version = workspace["editVersion"].as_i64().unwrap();
+            let result = apply_editor_commands_core(&root, ApplyEditorCommandsInput {
+                item_id: "job-1".to_string(),
+                base_version: version,
+                request_id: Some(uuid::Uuid::new_v4().to_string()),
+                commands: vec![json!({"op":"replaceText", "nodeId":node["id"],
+                    "from":0, "to":node["text"].as_str().unwrap().chars().count(),
+                    "expectedText":node["text"], "text":replacement})],
+                title: None,
+            }).expect("cloud-reviewed passage remains editable, including clearing its text");
+            let reloaded = get_workspace_item_core(&root, "job-1").unwrap();
+            assert_eq!(reloaded["editVersion"], result["editVersion"]);
+            assert_eq!(reloaded["ds"]["passage"]["content"][0]["children"][0]["text"], replacement);
+            assert_eq!(reloaded["ds"]["passage"]["content"][0]["children"][0]["provenanceStatus"], "user_edited");
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn every_renderable_unit_enters_the_editor_even_when_misaligned_and_a_broken_unit_stays_local() {
         let local_doc = candidate()["authoring"].clone();
         let root = db_fixture(&local_doc);

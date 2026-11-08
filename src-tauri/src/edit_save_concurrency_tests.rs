@@ -86,6 +86,53 @@ fn is_lock_error(message: &str) -> bool {
         || lowered.contains("locked")
 }
 
+/// Workspace readers must never pair one version's metadata with another
+/// version's passage while a background writer commits.
+#[test]
+fn workspace_reads_keep_passage_title_version_and_journal_in_one_snapshot() {
+    use crate::library::commands::get_workspace_item_core;
+    let root = temp_root();
+    let id = "snapshot-item";
+    let mut ds = seed_ds("snapshot-1");
+    ds["passage"]["content"][0]["children"][0]["text"] = json!("snapshot-1");
+    let node_id = ds["passage"]["content"][0]["children"][0]["id"].clone();
+    let conn = open_library_connection(&root).unwrap();
+    upsert_item_shell(&conn, &UpsertItemInput { id, modality: "reading", title: "snapshot-1",
+        status: "ready", source_asset_id: None }).unwrap();
+    seed_canonical_ds(&conn, id, &ds.to_string(), "ready").unwrap();
+    drop(conn);
+
+    let writer_root = root.clone();
+    let writer = thread::spawn(move || {
+        let mut original = "snapshot-1".to_string();
+        for base in 1..=60 {
+            let next = format!("snapshot-{}", base + 1);
+            apply_editor_commands_core(&writer_root, ApplyEditorCommandsInput {
+                item_id: id.to_string(), base_version: base,
+                request_id: Some(uuid::Uuid::new_v4().to_string()),
+                commands: vec![json!({"op":"replaceText", "nodeId":node_id,
+                    "from":0, "to":original.chars().count(), "text":next})],
+                title: Some(next.clone()),
+            }).unwrap();
+            original = next;
+        }
+    });
+    for _ in 0..100 {
+        let workspace = get_workspace_item_core(&root, id).unwrap();
+        let version = workspace["editVersion"].as_i64().unwrap();
+        let expected = format!("snapshot-{version}");
+        assert_eq!(workspace["item"]["editVersion"], version);
+        assert_eq!(workspace["item"]["title"], expected);
+        assert_eq!(workspace["ds"]["exam"]["title"], expected);
+        assert_eq!(workspace["ds"]["passage"]["content"][0]["children"][0]["text"], expected);
+        if version > 1 {
+            assert_eq!(workspace["recentEdits"][0]["baseVersion"], version - 1);
+        }
+    }
+    writer.join().unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 /// 编辑保存（IMMEDIATE 事务）与后台双写（DEFERRED 先读后写）+ 连接抢开并发时，
 /// 全程不得出现锁错误，也不得丢写（每个条目最终版本 = 1 + 保存次数）。
 #[test]

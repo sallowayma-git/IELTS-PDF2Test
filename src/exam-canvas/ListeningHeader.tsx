@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { chooseAudioFiles } from "../api/desktopDialogs";
 import { bindListeningAudio, managedAudioUrl } from "../api/listeningAudioClient";
 import { addAudioEntries, describeIssues, formatDuration } from "../features/import/listeningAudioPlan";
@@ -36,30 +36,38 @@ export function ListeningHeader({
   mode,
   selectedPart,
   parts,
+  locked,
   onAudioChanged
 }: {
   itemId: string;
   mode: "author" | "student";
   selectedPart?: number;
   parts: ListeningPartView[];
+  locked?: boolean;
   onAudioChanged: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const lockedRef = useRef(locked);
+  lockedRef.current = locked;
 
   const current = parts.find((part) => part.ordinal === selectedPart) ?? parts[0];
   const noAudio = !parts.some((part) => part.audio);
 
   // 没有任何音频：选中的文件按自然顺序落到 Part 1..n；否则替换/补齐当前 Part。
   const addAudio = async () => {
+    if (lockedRef.current) return;
     const picked = await chooseAudioFiles();
-    if (!picked.length) return;
+    if (!picked.length || lockedRef.current) return;
     setBusy(true);
     setError(undefined);
     try {
       if (noAudio) {
         const ordered = addAudioEntries([], picked).entries;
-        for (const [index, entry] of ordered.entries()) await bindListeningAudio(itemId, index + 1, entry.path);
+        for (const [index, entry] of ordered.entries()) {
+          if (lockedRef.current) break;
+          await bindListeningAudio(itemId, index + 1, entry.path);
+        }
       } else {
         await bindListeningAudio(itemId, current.ordinal, picked[0]);
       }
@@ -77,7 +85,7 @@ export function ListeningHeader({
     <div className="listening-audio-row">
       <AudioPlayer part={current} />
       {mode === "author" ? (
-        <button type="button" className={noAudio ? "primary small" : "ghost small"} data-testid="listening-add-audio" disabled={busy} onClick={addAudio}>
+        <button type="button" className={noAudio ? "primary small" : "ghost small"} data-testid="listening-add-audio" disabled={busy || locked} onClick={addAudio}>
           {busy ? "正在保存音频…" : actionLabel}
         </button>
       ) : null}

@@ -4181,3 +4181,31 @@ Current scheduler adopts whole candidate using final hard failures; matched grou
 ## 云端主链最终发现（2026-09-30）
 
 新增语义差异不能把evidenceAnchors、默认false约束视为内容冲突；作答位完整性与答案/音频发布完整性必须区分。部分采用后，已采用单元对比冻结本地，未采用单元对比云端，原文采用需单独记录。独立答案页可能与本地和云端同时冲突，必须成为第三来源差异。撤销需包含完整必要路径差异、大段原文、数组重排及外置槽位；空失败运行不能隐藏上一轮有效撤销入口。
+
+## 2026-10-14 cloud-review edit/save investigation
+- get_workspace_item reads item metadata and canonical DS separately without a snapshot.
+- reload flushes first; failed flush prevents loading fresh data.
+- Cloud lock tests currently simulate unlock without any cloud version advancement.
+
+### Confirmed causes and fixes
+- Cloud rebase captured outgoing commands before an async fetch, then cleared the queue; edits made during the fetch were lost. Read commands/title after fetch and retain the latest title.
+- Late workspace reads could replace an already-saved newer revision. Ignore stale versions and defer responses while local edits remain unsaved.
+- Whole-node canvas edits used old character ranges after cloud rewrites: shorter text was dropped, longer text retained an unwanted suffix. Preserve expectedText in patches and recompile whole-node ranges against the latest paragraph; legacy partial patches retain their semantics. Client/server verify expectedText before mutating the node. Human version conflicts still require manual recovery.
+- Rust required_string rejected empty/whitespace replacement text. This caused persistent failures despite reload; allow any string while keeping size and type checks. Empty author text now has a clickable placeholder; student preview receives no placeholder.
+- Workspace metadata, content and journal now come from one SQLite read transaction, avoiding mixed versions during background writes.
+
+### Verification levels
+- Browser: real React workspace using explicit devFallback adapter. Edited original passage with Chinese/emoji, saved, reloaded and verified retained text; cleared text, saved/reloaded, then re-entered through the placeholder and saved. Screenshot artifacts/cloud-passage-save/browser-saved.png. No Rust IPC or live cloud in this browser run.
+- Rust command handlers: actual cloud candidate adoption + apply_editor_commands_core + get_workspace_item_core, covering Chinese/emoji, empty, whitespace and rewriting after clear. Separate concurrent writer/read regression verifies passage/title/version/journal coherence.
+- Native desktop end to end: NOT VERIFIED. Sky Computer Use service failed startup; existing CDP native harness requires Windows WebView2 on this macOS host. No claim about the user's specific source PDF, which was not supplied.
+
+## 2026-10-14 cloud review read-only follow-up
+- Root ExamCanvas has inert during review, suppressing all interaction including scroll and navigation.
+- Workspace already withholds canvas edit callbacks, but answers need explicit read-only/disabled controls and component-level guards.
+- Inspector outside canvas and listening audio replacement also need editing guards. Task actions only navigate/view; they should stay enabled.
+
+### Read-only implementation and evidence
+- Removed root inert. Canvas strips mutation callbacks when locked, blocks answer setters and drag commits, uses readOnly for text inputs and disabled for choice/select controls. Open text editors close when cloud review starts.
+- Listening audio controls remain usable for playback; upload/replacement is disabled, with an additional guard after the file chooser returns. Inspector remains visible/closable and its form controls are disabled. View/locate issue actions remain enabled; title editing, confirmations, choosing alternatives, save and publish remain disabled.
+- Browser test uses real App/ExamWorkspacePage/ExamCanvas with a controlled IPC adapter (tmp/cloud-readonly-workspace.html). While cloud status is running, left pane scrollTop advanced to 8036, right pane to 9352; clicking question 15 selected it; source drawer opened; clicking text produced no editor or save calls. Simulated completion removed the banner and enabled the original editor. Screenshot artifacts/cloud-readonly/scrolling-during-review.png. This is not live cloud/native Rust IPC evidence.
+- Full frontend 557 passed / 55 files, TypeScript and Vite build passed. Embedded Tauri debug executable rebuilt successfully (12.81 s). Native UI end to end remains unavailable due to the previously observed Sky startup failure.

@@ -32,11 +32,16 @@ pub(crate) fn get_workspace_item_core(root: &Path, item_id: &str) -> CommandResu
         false
     });
     align_reading_part_best_effort(&mut conn, item_id);
-    let Some(item) = get_item(&conn, item_id)? else {
+    // A cloud commit may happen between reads. Return metadata, canonical content
+    // and journal from one SQLite snapshot so the editor's CAS base matches its text.
+    let snapshot = conn.unchecked_transaction()
+        .map_err(|error| format!("library_v2_workspace_snapshot:{error}"))?;
+    let conn = &snapshot;
+    let Some(item) = get_item(conn, item_id)? else {
         return Err(format!("ITEM_NOT_FOUND:{item_id}"));
     };
     let (ds, issues) = if item.has_canonical_ds {
-        let (ds, _version) = get_canonical_ds(&conn, item_id)?.ok_or("ITEM_DS_CORRUPT")?;
+        let (ds, _version) = get_canonical_ds(conn, item_id)?.ok_or("ITEM_DS_CORRUPT")?;
         let issues = ds
             .pointer("/quality/issues")
             .cloned()
@@ -48,7 +53,7 @@ pub(crate) fn get_workspace_item_core(root: &Path, item_id: &str) -> CommandResu
     };
     // 题库保存：发布后原文件已删除的条目要让工作区知道——需要原文件的操作
     // （重新识别 / 云端修复 / 答案页重试）在界面上禁用并说明原因。
-    let final_version = super::final_version::final_version_status(&conn, item_id)?;
+    let final_version = super::final_version::final_version_status(conn, item_id)?;
     let source_purged = final_version
         .as_ref()
         .and_then(|status| status.get("sourcePurged"))
@@ -73,7 +78,7 @@ pub(crate) fn get_workspace_item_core(root: &Path, item_id: &str) -> CommandResu
         "seededByOnDemandMigration": seeded,
         // 最近的编辑来源（基线版本 + origin）。前端保存撞上冲突时据此判断是不是只被
         // 机器写入（云端修复 / 答案页识别）挤掉——是就自动重放，不逼用户二选一。
-        "recentEdits": recent_edit_origins(&conn, item_id)?
+        "recentEdits": recent_edit_origins(conn, item_id)?
     }))
 }
 

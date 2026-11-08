@@ -27,9 +27,10 @@ function RectFields({ value, onChange }: { value: Rect; onChange: (value: Rect) 
   </label>)}</div>;
 }
 
-export function SelectionInspector({ draft, selectedId, onPatch, onClose }: {
-  draft: IeltsAuthoringIRV2; selectedId?: string; onPatch: (patch: AuthoringPatchV2) => void; onClose: () => void;
+export function SelectionInspector({ draft, selectedId, onPatch: applyPatch, onClose, locked }: {
+  draft: IeltsAuthoringIRV2; selectedId?: string; onPatch: (patch: AuthoringPatchV2) => void; onClose: () => void; locked?: boolean;
 }) {
+  const onPatch = (patch: AuthoringPatchV2) => { if (!locked) applyPatch(patch); };
   const location = selectedId ? locateContentNode(draft, selectedId) : undefined;
   // Text clicks enter inline editing; expose the containing heading's size too.
   const parent = location?.parentId ? locateContentNode(draft, location.parentId)?.node : undefined;
@@ -40,6 +41,7 @@ export function SelectionInspector({ draft, selectedId, onPatch, onClose }: {
   return <aside className="workspace-selection" aria-label="选中内容设置">
     <header><strong>{media ? "图片与答案位置" : node.type === "heading" ? "标题" : "单元格"}</strong>
       <button className="ghost small" title="关闭设置" aria-label="关闭设置" onClick={onClose}><X size={16} /></button></header>
+    <fieldset className="workspace-selection-fields" disabled={locked}>
     {node.type === "heading" ? <label>字号<select aria-label="标题字号" value={node.fontScale ?? "default"} onChange={(event) => onPatch(event.target.value === "default"
       ? { op: "setNodeAttrs", nodeId: node.id, attrs: {}, removeAttrs: ["fontScale"] }
       : { op: "setNodeAttrs", nodeId: node.id, attrs: { fontScale: Number(event.target.value) as FontScaleV2 } })}>
@@ -89,5 +91,6 @@ export function SelectionInspector({ draft, selectedId, onPatch, onClose }: {
         <option value="none">无</option><option value="row">行表头</option><option value="column">列表头</option>
       </select></label>
     </> : null}
+    </fieldset>
   </aside>;
 }

@@ -16,6 +16,10 @@ describe("real question renderer comparison",()=>{
     expect(container.querySelector('.v2-author-tools')).toBeNull();
     expect(container.querySelector('#left, #right, #question-groups')).toBeNull();
     expect(container.querySelector('[data-testid="question-nav"]')).toBeNull();
-    expect(container.querySelectorAll('.cloud-comparison-preview [inert]')).toHaveLength(2);
+    expect(container.querySelectorAll('.cloud-comparison-preview [data-readonly="true"]')).toHaveLength(2);
+    expect(container.querySelector('.cloud-comparison-preview [inert]')).toBeNull();
+    container.querySelectorAll<HTMLInputElement>('.cloud-comparison-preview input').forEach((input) => {
+      expect(input.disabled || input.readOnly).toBe(true);
+    });
   });
 });

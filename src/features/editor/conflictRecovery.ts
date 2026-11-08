@@ -1,5 +1,6 @@
 import { applyAuthoringV2Patches } from "../../services/authoringV2Patches";
 import type { AuthoringPatchV2, IeltsAuthoringIRV2 } from "../../types";
+import { codePointLength, findEditorTextNode } from "../../exam-canvas/editorCommands";
 
 export interface ConflictRebaseResult {
   /** 以服务端最新版本为基线、重放本地未保存修改后的题稿。 */
@@ -14,7 +15,8 @@ export interface ConflictRebaseResult {
  * 保存冲突后的出路（计划 §9.10 / findings 冲突死路）。
  *
  * 编辑器遇到 `EDIT_VERSION_CONFLICT` 时，本地未保存的修改仍然有效，只是基线过期。
- * 这里把补丁按原顺序重放到服务端最新版本上：某条补丁因目标节点已被别处改动而
+ * 这里把补丁按原顺序重放到服务端最新版本上：整节点文字编辑保持整节点替换的意图；
+ * 某条补丁因目标节点已被删除或结构已被别处改动而
  * 无法应用时**停下**，已应用的部分继续保存，未应用的部分计入 `dropped` 由调用方
  * 明确告知用户——既不静默丢弃本地修改，也不覆盖服务端的新版本。
  */
@@ -24,8 +26,18 @@ export function rebasePendingPatches(
 ): ConflictRebaseResult {
   const applied: AuthoringPatchV2[] = [];
   let rebased = base;
-  for (const patch of patches) {
+  for (let patch of patches) {
     try {
+      // Canvas edits replace a whole text node. Cloud review may have changed its
+      // length: keeping the old range would reject a shorter paragraph or leave a
+      // suffix on a longer one. Only explicit whole-node edits can be retargeted;
+      // legacy partial ranges retain their existing semantics.
+      if (patch.op === "replaceText" && patch.expectedText !== undefined
+        && patch.from === 0 && patch.to === codePointLength(patch.expectedText)) {
+        const node = findEditorTextNode(rebased, patch.nodeId);
+        if (!node) throw new Error(`AUTHORING_PATCH_NODE_NOT_FOUND:${patch.nodeId}`);
+        patch = { ...patch, to: codePointLength(node.text), expectedText: node.text };
+      }
       rebased = applyAuthoringV2Patches(rebased, [patch]);
       applied.push(patch);
     } catch {
@@ -102,7 +114,7 @@ export type AutoRebaseOutcome =
  */
 export async function tryAutoRebase(input: {
   localBase: number;
-  outstanding: AuthoringPatchV2[];
+  outstanding: AuthoringPatchV2[] | (() => AuthoringPatchV2[]);
   fetchLatest: () => Promise<LatestWorkspaceV1>;
 }): Promise<AutoRebaseOutcome> {
   let latest: LatestWorkspaceV1;
@@ -115,5 +127,7 @@ export async function tryAutoRebase(input: {
   if (!conflictWasMachineOnly({ localBase: input.localBase, remoteVersion: latest.editVersion, recentEdits: latest.recentEdits })) {
     return { kind: "manual" };
   }
-  return { kind: "rebased", latest, rebase: rebasePendingPatches(latest.ds, input.outstanding) };
+  // Reading the latest draft is asynchronous; include edits queued while it was in flight.
+  const outstanding = typeof input.outstanding === "function" ? input.outstanding() : input.outstanding;
+  return { kind: "rebased", latest, rebase: rebasePendingPatches(latest.ds, outstanding) };
 }
