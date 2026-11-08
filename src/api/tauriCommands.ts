@@ -3,13 +3,11 @@ import type {
   CreateJobInput,
   DocumentIr,
   ExportNasLibraryInput,
-  ExportNasPackageV2Input,
   ExportReadingJsInput,
   ExportResult,
   ImportJob,
   JsExportResult,
   NasExportResult,
-  NasPackageV2PublishResult,
   JobFilter,
   JobMetaPatch,
   DiagnosticsSettings,
@@ -316,12 +314,6 @@ export async function exportReadingJs(input: ExportReadingJsInput): Promise<JsEx
 
 export async function exportNasLibrary(input: ExportNasLibraryInput): Promise<NasExportResult> {
   return command("export_nas_library", { input });
-}
-
-/** Publish an already materialized ReadingExamSourceV2 through the real
- * Tauri NAS lock/CAS/staging/probe/manifest-last command. */
-export async function exportNasPackageV2(input: ExportNasPackageV2Input): Promise<NasPackageV2PublishResult> {
-  return command("publish_nas_package_v2", { input });
 }
 
 // ---------- 写作题库命令 ----------

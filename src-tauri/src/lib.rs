@@ -1775,15 +1775,9 @@ async fn export_nas_library(input: Value, app: AppHandle) -> CommandResult<Value
     export_nas_library_core(&root, &input, true)
 }
 
-/// Opt-in Reading V2 package publisher.  The command is intentionally kept
-/// separate from the legacy export command so the V1 manifest path remains
-/// untouched while the lock/CAS/journal/manifest-last protocol is callable by
-/// the real authoring application (not only by unit tests).
-#[tauri::command]
-async fn publish_nas_package_v2(input: Value, app: AppHandle) -> CommandResult<Value> {
-    let root = app_root(&app)?;
-    nas_package_v2::publish_nas_package_v2_core(&root, input)
-}
+// 注意：不再注册 `publish_nas_package_v2` 命令。核心函数 `nas_package_v2::publish_nas_package_v2_core`
+// 会写根级 `resources/`、且不要求套题（paper），是已被 V1.1 取代的旧布局回流入口（审计 A3）；
+// 生产发布只走 `publish_items`（必须带 paper）。核心函数保留给测试使用。
 
 // ---------- 写作题库命令（独立模型，不污染阅读 ImportJob）----------
 #[tauri::command]
@@ -2154,7 +2148,6 @@ pub fn run() {
             export_reading_assets,
             export_reading_js,
             export_nas_library,
-            publish_nas_package_v2,
             export_writing_library,
             create_writing_job,
             list_writing_jobs,

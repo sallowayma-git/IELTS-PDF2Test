@@ -231,9 +231,12 @@ const flags = readFileSync(join(repoRoot, "src/config/featureFlags.ts"), "utf8")
 assert(flags.includes("runtimeSourceV2: true") && flags.includes("nasPackageV2: true"), "Reading runtime and NAS V2 must be enabled by default");
 // 2026-09-12：原 `structuredEditor` / `exportPage` 断言的目标文件（旧世代页面）已删除，断言退休。
 const tauriLib = readFileSync(join(repoRoot, "src-tauri/src/lib.rs"), "utf8");
-assert(tauriLib.includes("async fn publish_nas_package_v2") && tauriLib.includes("publish_nas_package_v2,"), "Phase 6 Tauri NAS V2 command is not wired into generate_handler");
+// 审计 A3：旧布局回流命令（写根级 resources/、不要求套题）已从 generate_handler 移除；生产只走 publish_items（带 paper）。
+assert(!tauriLib.includes("publish_nas_package_v2,") && !tauriLib.includes("async fn publish_nas_package_v2("), "legacy root-layout NAS V2 command must not be registered");
+assert(tauriLib.includes("pub(crate) fn publish_nas_package_v2_core") || tauriLib.includes("publish_nas_package_v2_core"), "NAS V2 core stays available for tests");
 const tauriApi = readFileSync(join(repoRoot, "src/api/tauriCommands.ts"), "utf8");
-assert(tauriApi.includes("export async function exportNasPackageV2") && tauriApi.includes('command("publish_nas_package_v2"'), "Phase 6 authoring API is missing exportNasPackageV2");
+assert(!tauriApi.includes('command("publish_nas_package_v2"'), "legacy publish_nas_package_v2 must not be invoked from the authoring API");
+assert(tauriApi.includes('command("publish_items"') || tauriApi.includes("publishItems"), "authoring API must publish through publish_items (paper required)");
 const authoringExport = readFileSync(join(repoRoot, "src-tauri/src/authoring_v2_commands.rs"), "utf8");
 assert(authoringExport.includes("materialize_authoring_assets") && authoringExport.includes("stage_file_with_hash") && authoringExport.includes("authoring_v2_asset_hash_mismatch"), "Phase 6 authoring export must materialize and verify runtime assets");
 const nasRoot = resolve(repoRoot, "../NAS");
