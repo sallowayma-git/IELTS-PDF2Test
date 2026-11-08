@@ -131,6 +131,7 @@ async function authorPublish({ runDir, nasRoot, state, seed, label }) {
     await session.waitFor(`!!document.querySelector('[data-testid="paper-table"]')`, { timeoutMs: 15000, label: `${label}-paper-table` });
     const stab = await ensureAllCheckedStable(session, ids);
     out.assertions.push(["checked", stab.stable, `勾选稳定=${stab.stable} 补点次数=${stab.rechecks} 状态=${JSON.stringify(stab.states)}`]);
+    out.assertions.push(["checked-no-recheck", stab.rechecks === 0, `补点次数必须为 0（勾选重置根因已修）：rechecks=${stab.rechecks}`]);
     out.rechecks = stab.rechecks;
     const message = await publishCurrentSelection(session, label);
     out.message = message;
@@ -174,6 +175,7 @@ async function republishPhase({ runDir, nasRoot, resultFile }) {
     out.assertions.push(["parts-persisted", partsOk, `Part 仍为 P1/P2/P3=${partsOk}`]);
     const stab = await ensureAllCheckedStable(session, ids);
     out.assertions.push(["checked", stab.stable, `勾选稳定=${stab.stable} 补点次数=${stab.rechecks} 状态=${JSON.stringify(stab.states)}`]);
+    out.assertions.push(["checked-no-recheck", stab.rechecks === 0, `补点次数必须为 0（勾选重置根因已修）：rechecks=${stab.rechecks}`]);
     out.message = await publishCurrentSelection(session, "republish-in-flight");
     out.assertions.push(["publish-message", String(out.message).includes("当前试卷已发布"), `界面提示=${JSON.stringify(out.message)}`]);
     const disk = checkPointerOnDisk(nasRoot);
@@ -269,11 +271,11 @@ async function runStudent({ runDir, nasRoot, submissionsRoot, paperA, key, hookC
   };
   const planFile = path.join(runDir, "student-plan.json");
   fs.writeFileSync(planFile, JSON.stringify(plan, null, 2));
-  // 测试环境补丁（绕过已知产品缺陷，报告中单列为 P0 D-DIR）：学生端「选择题库来源目录」只统计 manifest.js 同级的 .js，
-  // 而 V1.1 脚本位于 releases/<batch>/。仅在发布目录根放一个不被指针引用的空标记脚本，使选择通过；学生端实际加载仍只走指针。
-  // 设置 CHAIN_NO_ROOT_MARKER=1 可关闭补丁，复现产品缺陷。
+  // 可选测试补丁（默认关闭）。学生端「选择题库目录」已按 current-paper.json 校验 V1.1 发布目录，无需此标记。
+  // 仅当显式设置 CHAIN_MARKER_WORKAROUND=1 时，在发布目录根放一个不被指针引用的标记脚本，用于复现旧版目录校验缺陷。
+  // 启用时 workarounds 列表会记录它，报告中据此可见；默认运行 workarounds 应为空。
   const workarounds = [];
-  if (process.env.CHAIN_NO_ROOT_MARKER !== "1") {
+  if (process.env.CHAIN_MARKER_WORKAROUND === "1") {
     fs.writeFileSync(path.join(nasRoot, "zz-e2e-validation-marker.js"), "// e2e-only marker (test workaround for student directory validator, not referenced by current-paper.json). __READING_EXAM_DATA__\n");
     workarounds.push("root-exam-js-marker (zz-e2e-validation-marker.js)");
   }
