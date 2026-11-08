@@ -145,3 +145,11 @@ describe("validationIssueDisplay", () => {
     expect(view.detail).toBe("Some raw detail");
   });
 });
+
+describe("taskTypeLabel — 未标注题型（审计 A6）", () => {
+  it("unknown 与空值都显示为「题型未标注」，不暴露内部标识", () => {
+    expect(taskTypeLabel("unknown")).toBe("题型未标注");
+    expect(taskTypeLabel("")).toBe("题型未标注");
+    expect(taskTypeLabel(undefined)).toBe("题型未标注");
+  });
+});

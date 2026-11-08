@@ -7,7 +7,7 @@ use std::path::Path;
 use rusqlite::Connection;
 use rust_xlsxwriter::{Format, Workbook};
 
-use super::import::list_failed_imports;
+use super::import::list_failed_imports_for_group;
 use super::queries::{exam_view_from, load_attempts, AttemptRec, ExamView, Scope};
 use super::{display_answer, DISCLAIMER, HARD_CONCLUSION_MIN_N};
 use crate::CommandResult;
@@ -23,7 +23,7 @@ pub struct ExportSummary {
 /// 题型标识 → 中文（与前端 `src/utils/displayLabels.ts` 的 taskTypeLabels 保持一致）。
 pub fn task_type_label(kind: &str) -> String {
     let label = match kind {
-        "" => "题型未标注",
+        "" | "unknown" => "题型未标注",
         "single_choice" => "单选题",
         "multiple_choice" => "多选题",
         "true_false_not_given" => "判断题（TRUE / FALSE / NOT GIVEN）",
@@ -54,7 +54,7 @@ fn xerr(error: rust_xlsxwriter::XlsxError) -> String {
 pub fn write_export(conn: &Connection, batch_id: &str, paper_id: &str, path: &Path) -> CommandResult<ExportSummary> {
     let attempts = load_attempts(conn, &Scope::Group { batch_id, paper_id })?;
     let view = exam_view_from(batch_id, paper_id, &attempts);
-    let exceptions = list_failed_imports(conn)?;
+    let exceptions = list_failed_imports_for_group(conn, batch_id, paper_id)?;
 
     let mut workbook = Workbook::new();
     let bold = Format::new().set_bold();
@@ -149,11 +149,12 @@ fn write_scores(workbook: &mut Workbook, bold: &Format, view: &ExamView) -> Comm
 fn write_details(workbook: &mut Workbook, bold: &Format, attempts: &[AttemptRec]) -> CommandResult<()> {
     let sheet = workbook.add_worksheet();
     sheet.set_name("学生明细").map_err(xerr)?;
+    sheet.write_string(0, 0, DISCLAIMER).map_err(xerr)?;
     let headers = ["姓名", "卡号", "篇", "题号", "题型", "学生答案", "标准答案", "判分(1对0错)", "得分点数", "停留(ms)", "改答次数", "访问次数"];
     for (col, header) in headers.iter().enumerate() {
-        sheet.write_string_with_format(0, col as u16, *header, bold).map_err(xerr)?;
+        sheet.write_string_with_format(1, col as u16, *header, bold).map_err(xerr)?;
     }
-    let mut row = 1u32;
+    let mut row = 2u32;
     let mut ordered: Vec<&AttemptRec> = attempts.iter().filter(|a| a.is_valid()).collect();
     ordered.sort_by(|a, b| a.candidate_id.cmp(&b.candidate_id).then(a.attempt_id.cmp(&b.attempt_id)));
     for attempt in ordered {
@@ -188,6 +189,7 @@ fn write_questions(workbook: &mut Workbook, bold: &Format, view: &ExamView) -> C
     let sheet = workbook.add_worksheet();
     sheet.set_name("题目分析").map_err(xerr)?;
     sheet.write_string(0, 0, format!("N 为参与统计的有效人数；N < {HARD_CONCLUSION_MIN_N} 时不下「难题」结论。")).map_err(xerr)?;
+    sheet.write_string(1, 0, DISCLAIMER).map_err(xerr)?;
     let headers = ["篇", "题号", "题型", "N", "正确人数", "正确率", "结论"];
     for (col, header) in headers.iter().enumerate() {
         sheet.write_string_with_format(2, col as u16, *header, bold).map_err(xerr)?;
@@ -219,6 +221,7 @@ fn write_kinds(workbook: &mut Workbook, bold: &Format, view: &ExamView) -> Comma
     let sheet = workbook.add_worksheet();
     sheet.set_name("题型统计").map_err(xerr)?;
     sheet.write_string(0, 0, "分母为得分点数（答案行 weight 之和）。").map_err(xerr)?;
+    sheet.write_string(1, 0, DISCLAIMER).map_err(xerr)?;
     let headers = ["题型", "N", "得分点数", "得分点", "正确率"];
     for (col, header) in headers.iter().enumerate() {
         sheet.write_string_with_format(2, col as u16, *header, bold).map_err(xerr)?;
@@ -245,12 +248,13 @@ fn write_exceptions(
 ) -> CommandResult<()> {
     let sheet = workbook.add_worksheet();
     sheet.set_name("导入异常").map_err(xerr)?;
+    sheet.write_string(0, 0, DISCLAIMER).map_err(xerr)?;
     let headers = ["快照文件", "状态", "批次", "卷", "导入时间", "原因"];
     for (col, header) in headers.iter().enumerate() {
-        sheet.write_string_with_format(0, col as u16, *header, bold).map_err(xerr)?;
+        sheet.write_string_with_format(1, col as u16, *header, bold).map_err(xerr)?;
     }
     for (offset, record) in exceptions.iter().enumerate() {
-        let row = 1 + offset as u32;
+        let row = 2 + offset as u32;
         sheet.write_string(row, 0, &record.file).map_err(xerr)?;
         sheet.write_string(row, 1, &record.status).map_err(xerr)?;
         sheet.write_string(row, 2, record.batch_id.as_deref().unwrap_or("")).map_err(xerr)?;

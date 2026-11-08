@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use rusqlite::{params, Connection};
 use serde_json::json;
 
-use super::import::{import_submission_snapshots, ImportReport};
+use super::import::{
+    import_submission_snapshots, list_failed_imports, list_failed_imports_for_group, ImportReport,
+};
 use super::queries::{
     build_exam_view, build_overview, build_question_view, build_student_view, identity_issues, load_attempts,
     Scope,
@@ -134,6 +136,17 @@ struct FixPassage {
     pattern: &'static str,
 }
 
+/// 学生端 reading_suite_attempts.aggregate_json 的三种形态（契约 §1.1）。
+#[derive(Clone, Copy)]
+enum AggForm {
+    /// 交卷后的 SuiteAggregateV1：对象带 paperId，并保留锁定序列（数组，元素带 paperId）。
+    V11,
+    /// 旧形态：交卷时被覆盖成 {"passageCount":N}，不含 paperId。
+    Legacy,
+    /// 锁定序列数组本体（元素带 paperId）。
+    ArrayLocked,
+}
+
 struct FixAttempt {
     id: &'static str,
     terminal: &'static str,
@@ -142,6 +155,9 @@ struct FixAttempt {
     submitted: &'static str,
     passages: Vec<FixPassage>,
     writing: bool,
+    agg: AggForm,
+    /// 是否额外写 exam_kv 的 paper_id:<attemptId>（学生端锁卷时写入）。
+    kv_paper: bool,
 }
 
 fn kind_of(category: &str) -> &'static str {
@@ -169,6 +185,37 @@ fn sequential_passages(p1: &'static str, p2: &'static str, p3: &'static str) -> 
     ]
 }
 
+/// 锁定序列（学生端 ExamSuitePassage 形态，元素带 paperId）。
+fn locked_sequence(attempt: &FixAttempt) -> Vec<serde_json::Value> {
+    attempt
+        .passages
+        .iter()
+        .map(|passage| {
+            json!({
+                "index": passage.idx,
+                "assetId": format!("asset-{}-{}", attempt.id, passage.idx),
+                "examId": format!("exam-{}", passage.idx),
+                "title": format!("Passage {}", passage.idx + 1),
+                "category": passage.category,
+                "paperId": PAPER
+            })
+        })
+        .collect()
+}
+
+fn aggregate_json(attempt: &FixAttempt) -> serde_json::Value {
+    match attempt.agg {
+        AggForm::V11 => json!({
+            "schemaVersion": "SuiteAggregateV1",
+            "passageCount": attempt.passages.len(),
+            "paperId": PAPER,
+            "lockedSequence": locked_sequence(attempt)
+        }),
+        AggForm::Legacy => json!({ "passageCount": attempt.passages.len() }),
+        AggForm::ArrayLocked => json!(locked_sequence(attempt)),
+    }
+}
+
 /// 写一个学生端形态的终端库。
 fn write_terminal_db(path: &Path, attempts: &[FixAttempt]) {
     let _ = fs::remove_file(path);
@@ -191,7 +238,7 @@ fn write_terminal_db(path: &Path, attempts: &[FixAttempt]) {
                 attempt.id,
                 "2026-11-07T10:00:00+08:00",
                 attempt.submitted,
-                json!({ "passageCount": 3, "paperId": PAPER }).to_string()
+                aggregate_json(attempt).to_string()
             ],
         )
         .unwrap();
@@ -200,6 +247,13 @@ fn write_terminal_db(path: &Path, attempts: &[FixAttempt]) {
             params![format!("scorer_version:{}", attempt.id)],
         )
         .unwrap();
+        if attempt.kv_paper {
+            conn.execute(
+                "INSERT INTO exam_kv (key, value_json) VALUES (?1, ?2)",
+                params![format!("paper_id:{}", attempt.id), json!(PAPER).to_string()],
+            )
+            .unwrap();
+        }
         for passage in &attempt.passages {
             let total = passage.pattern.len() as f64;
             let correct = passage.pattern.chars().filter(|c| *c == 'T').count() as f64;
@@ -314,6 +368,44 @@ fn publish_snapshot(
     }
 }
 
+/// 与 publish_snapshot 相同，但 meta 的字段可用 extra 覆盖（异常路径：版本过新、安装不一致、批次不同等）。
+fn publish_snapshot_with_meta(
+    submissions: &Path,
+    terminal: &str,
+    attempt: &str,
+    db_bytes: &[u8],
+    exported_at: &str,
+    extra: serde_json::Value,
+) {
+    let dir = submissions.join("snapshots").join(terminal);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join(format!("{attempt}.sqlite")), db_bytes).unwrap();
+    let mut meta = json!({
+        "schemaVersion": "SubmissionSnapshotV1",
+        "terminalId": terminal,
+        "installId": null,
+        "attemptId": attempt,
+        "batchId": BATCH,
+        "paperId": PAPER,
+        "candidateId": "C-x",
+        "candidateName": "x",
+        "submittedAt": exported_at,
+        "exportedAt": exported_at,
+        "appVersion": "1.0.0",
+        "dbSchemaVersion": 1,
+        "scorerVersion": "reading-scorer/1",
+        "sizeBytes": db_bytes.len(),
+        "sha256": sha(db_bytes)
+    });
+    if let (Some(base), Some(over)) = (meta.as_object_mut(), extra.as_object()) {
+        for (key, value) in over {
+            base.insert(key.clone(), value.clone());
+        }
+    }
+    fs::write(dir.join(format!("{attempt}.meta.json")), meta.to_string()).unwrap();
+    fs::write(dir.join(format!("{attempt}.ready")), "").unwrap();
+}
+
 fn write_status(submissions: &Path, terminal: &str, attempt: &str, status: &str, cand: (&str, &str), updated: &str) {
     let dir = submissions.join("status").join(terminal);
     fs::create_dir_all(&dir).unwrap();
@@ -350,6 +442,8 @@ fn t1_attempts(a1_p3: &'static str) -> Vec<FixAttempt> {
     vec![
         FixAttempt {
             id: "A1",
+            agg: AggForm::V11,
+            kv_paper: false,
             terminal: "T1",
             cand_id: "C-001",
             cand_name: "张三",
@@ -360,6 +454,8 @@ fn t1_attempts(a1_p3: &'static str) -> Vec<FixAttempt> {
         },
         FixAttempt {
             id: "A2",
+            agg: AggForm::Legacy,
+            kv_paper: true,
             terminal: "T1",
             cand_id: "C-002",
             cand_name: "李四",
@@ -374,6 +470,8 @@ fn t2_attempts() -> Vec<FixAttempt> {
     vec![
         FixAttempt {
             id: "A3",
+            agg: AggForm::ArrayLocked,
+            kv_paper: false,
             terminal: "T2",
             cand_id: "C-002",
             cand_name: "李四四",
@@ -383,6 +481,8 @@ fn t2_attempts() -> Vec<FixAttempt> {
         },
         FixAttempt {
             id: "A4",
+            agg: AggForm::Legacy,
+            kv_paper: true,
             terminal: "T2",
             cand_id: "C-004",
             cand_name: "张三",
@@ -641,6 +741,8 @@ fn valid_only_when_all_passages_are_present() {
     // 只有一篇的 attempt：套题 total=3，篇数不足，不计入。
     let partial = vec![FixAttempt {
         id: "A20",
+        agg: AggForm::Legacy,
+        kv_paper: false,
         terminal: "T9",
         cand_id: "C-900",
         cand_name: "半套",
@@ -663,4 +765,171 @@ fn valid_only_when_all_passages_are_present() {
     assert_eq!(view.n, 0);
     assert_eq!(view.excluded.len(), 1);
     assert!(view.excluded[0].reason.contains("篇数不足"), "{:?}", view.excluded);
+}
+
+/// 回归（审计 A1）：同一终端 3 人依次考试，每人交卷后导出一份整库快照。
+/// 交卷后 aggregate 是旧形态 {"passageCount":3}，没有 exam_kv paper_id，套题归属只能来自快照 meta.paperId；
+/// 后面快照里的前序 attempt 不得被空 paperId 覆盖。
+#[test]
+fn same_terminal_sequential_exams_keep_paper_ids() {
+    let env = fresh_env("sequential");
+    let mut conn = open(&env);
+    let people = [
+        ("A31", "C-301", "王一", "2026-11-07T10:10:00+08:00", "2026-11-07T10:10:05+08:00"),
+        ("A32", "C-302", "王二", "2026-11-07T10:30:00+08:00", "2026-11-07T10:30:05+08:00"),
+        ("A33", "C-303", "王三", "2026-11-07T10:50:00+08:00", "2026-11-07T10:50:05+08:00"),
+    ];
+    let mut done: Vec<FixAttempt> = Vec::new();
+    for (id, cand, name, submitted, exported) in people {
+        done.push(FixAttempt {
+            id,
+            terminal: "T5",
+            cand_id: cand,
+            cand_name: name,
+            submitted,
+            passages: sequential_passages("TTFT", "TTTF", "FTTT"),
+            writing: false,
+            agg: AggForm::Legacy,
+            kv_paper: false,
+        });
+        let bytes = db_bytes(&format!("t5-{id}"), &done);
+        publish_snapshot(&env.submissions, "T5", id, &bytes, exported, false, true);
+        run_import(&env, &mut conn);
+    }
+    let rows: Vec<(String, String)> = conn
+        .prepare("SELECT attempt_id, paper_id FROM attempts ORDER BY attempt_id")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            ("A31".to_string(), PAPER.to_string()),
+            ("A32".to_string(), PAPER.to_string()),
+            ("A33".to_string(), PAPER.to_string()),
+        ]
+    );
+    let view = build_exam_view(&conn, BATCH, PAPER).unwrap();
+    assert_eq!(view.n, 3);
+    assert!(list_failed_imports(&conn).unwrap().is_empty());
+}
+
+/// 套题归属来源冲突（审计 A1）：exam_kv 与 aggregate 不一致 → 按优先级采用 exam_kv，并记入异常。
+#[test]
+fn paper_id_conflict_is_anomaly_and_priority_source_wins() {
+    let env = fresh_env("paper-conflict");
+    let mut conn = open(&env);
+    let attempts = vec![FixAttempt {
+        id: "A41",
+        terminal: "T6",
+        cand_id: "C-41",
+        cand_name: "冲突",
+        submitted: "2026-11-07T11:00:00+08:00",
+        passages: standard_passages("TTTT", "TTTT", "TTTT"),
+        writing: false,
+        agg: AggForm::V11,
+        kv_paper: false,
+    }];
+    let path = std::env::temp_dir().join(format!("analytics-conflict-{}.sqlite", uuid::Uuid::new_v4()));
+    write_terminal_db(&path, &attempts);
+    Connection::open(&path)
+        .unwrap()
+        .execute("INSERT INTO exam_kv (key, value_json) VALUES ('paper_id:A41', '\"paper-OTHER\"')", [])
+        .unwrap();
+    let bytes = fs::read(&path).unwrap();
+    let _ = fs::remove_file(&path);
+    publish_snapshot(&env.submissions, "T6", "A41", &bytes, "2026-11-07T11:00:05+08:00", false, true);
+
+    let report = run_import(&env, &mut conn);
+    assert_eq!(report.ok, 1, "{report:?}");
+    let paper: String = conn
+        .query_row("SELECT paper_id FROM attempts WHERE attempt_id = 'A41'", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(paper, "paper-OTHER");
+    let failed = list_failed_imports(&conn).unwrap();
+    assert!(
+        failed.iter().any(|r| r.error.as_deref().unwrap_or("").contains("套题归属来源不一致")),
+        "{failed:?}"
+    );
+}
+
+/// 快照版本过新（dbSchemaVersion > 作者端支持版本）→ 不导入，进异常队列。
+#[test]
+fn newer_db_schema_version_is_not_imported() {
+    let env = fresh_env("schema");
+    let mut conn = open(&env);
+    let bytes = db_bytes("schema", &t2_attempts());
+    publish_snapshot_with_meta(
+        &env.submissions,
+        "T2",
+        "A3",
+        &bytes,
+        "2026-11-07T11:40:05+08:00",
+        json!({ "dbSchemaVersion": 2 }),
+    );
+    let report = run_import(&env, &mut conn);
+    assert_eq!(report.failed, 1, "{report:?}");
+    assert_eq!(report.attempts_imported, 0);
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM attempts", [], |row| row.get(0)).unwrap();
+    assert_eq!(count, 0);
+    let failed = list_failed_imports(&conn).unwrap();
+    assert!(failed.iter().any(|r| r.error.as_deref().unwrap_or("").contains("请升级作者端")), "{failed:?}");
+}
+
+/// 同一 attemptId 来自另一台安装（installId 不同）→ 异常，已导入记录不被覆盖。
+#[test]
+fn same_attempt_from_other_install_is_not_overwritten() {
+    let env = fresh_env("install");
+    let mut conn = open(&env);
+    let first = db_bytes("inst-1", &t1_attempts("FFTF"));
+    publish_snapshot_with_meta(
+        &env.submissions,
+        "T1",
+        "A1",
+        &first,
+        "2026-11-07T11:10:05+08:00",
+        json!({ "installId": "install-X" }),
+    );
+    run_import(&env, &mut conn);
+    assert_eq!(build_student_view(&conn, "A1").unwrap().raw_score, 8.0);
+
+    let newer = db_bytes("inst-2", &t1_attempts("TTTT"));
+    publish_snapshot_with_meta(
+        &env.submissions,
+        "T1",
+        "A1",
+        &newer,
+        "2026-11-07T13:00:00+08:00",
+        json!({ "installId": "install-Y" }),
+    );
+    run_import(&env, &mut conn);
+    assert_eq!(build_student_view(&conn, "A1").unwrap().raw_score, 8.0);
+    let failed = list_failed_imports(&conn).unwrap();
+    assert!(failed.iter().any(|r| r.error.as_deref().unwrap_or("").contains("不同安装")), "{failed:?}");
+}
+
+/// 「导入异常」导出只含本批次/试卷的失败；其他批次的失败仍在总览异常里。
+#[test]
+fn exception_export_is_scoped_to_group() {
+    let env = fresh_env("scope");
+    seed_standard(&env);
+    let mut conn = open(&env);
+    run_import(&env, &mut conn);
+    let bytes = db_bytes("other", &t2_attempts());
+    publish_snapshot_with_meta(
+        &env.submissions,
+        "T9",
+        "A90",
+        &bytes,
+        "2026-11-07T12:30:00+08:00",
+        json!({ "batchId": "B-OTHER", "sha256": "0".repeat(64) }),
+    );
+    run_import(&env, &mut conn);
+    let all = list_failed_imports(&conn).unwrap();
+    assert!(all.iter().any(|r| r.file == "snapshots/T9/A90.sqlite"), "{all:?}");
+    let scoped = list_failed_imports_for_group(&conn, BATCH, PAPER).unwrap();
+    assert!(scoped.iter().all(|r| r.batch_id.as_deref() != Some("B-OTHER")), "{scoped:?}");
+    assert_eq!(scoped.len(), 3, "{scoped:?}");
 }

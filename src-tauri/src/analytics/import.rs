@@ -24,6 +24,8 @@ use sha2::{Digest, Sha256};
 use crate::CommandResult;
 
 pub const SNAPSHOT_SCHEMA_VERSION: &str = "SubmissionSnapshotV1";
+/// 作者端支持的学生端库结构版本（exam_kv.db_schema_version）。
+pub const SUPPORTED_DB_SCHEMA_VERSION: u64 = 1;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -175,6 +177,7 @@ struct MetaHints {
     batch_id: Option<String>,
     paper_id: Option<String>,
     exported_at: Option<String>,
+    install_id: Option<String>,
 }
 
 fn read_hints_best_effort(meta_path: &Path) -> MetaHints {
@@ -190,6 +193,7 @@ fn read_hints_best_effort(meta_path: &Path) -> MetaHints {
         batch_id: string_field(&meta, "batchId"),
         paper_id: string_field(&meta, "paperId"),
         exported_at: string_field(&meta, "exportedAt"),
+        install_id: string_field(&meta, "installId"),
     }
 }
 
@@ -206,12 +210,20 @@ fn import_one_inner(
     if meta.get("schemaVersion").and_then(Value::as_str) != Some(SNAPSHOT_SCHEMA_VERSION) {
         return Err("meta.json schemaVersion 不是 SubmissionSnapshotV1".into());
     }
+    // 版本过新：不导入，记入异常队列（契约 §1.1）。
+    let db_schema_version = meta.get("dbSchemaVersion").and_then(Value::as_u64).unwrap_or(1);
+    if db_schema_version > SUPPORTED_DB_SCHEMA_VERSION {
+        return Err(format!(
+            "快照版本过新（dbSchemaVersion={db_schema_version}，作者端支持至 {SUPPORTED_DB_SCHEMA_VERSION}），请升级作者端"
+        ));
+    }
     let hints = MetaHints {
         terminal_id: string_field(&meta, "terminalId"),
         attempt_id: string_field(&meta, "attemptId"),
         batch_id: string_field(&meta, "batchId"),
         paper_id: string_field(&meta, "paperId"),
         exported_at: string_field(&meta, "exportedAt"),
+        install_id: string_field(&meta, "installId"),
     };
     let expected_sha = string_field(&meta, "sha256")
         .map(|value| value.to_ascii_lowercase())
@@ -297,23 +309,20 @@ fn verify_and_import(
 
     let tx = conn.transaction().map_err(|error| error.to_string())?;
     let mut imported = 0usize;
+    // 异常（attemptId, 说明）：不影响其他 attempt 的导入，只进异常队列。
+    let mut anomalies: Vec<(String, String)> = source.paper_conflicts.clone();
     for attempt in &source.attempts {
-        let existing: Option<String> = tx
+        let existing: Option<(String, String, Option<String>, String)> = tx
             .query_row(
-                "SELECT exported_at FROM attempts WHERE attempt_id = ?1",
+                "SELECT exported_at, terminal_id, install_id, paper_id FROM attempts WHERE attempt_id = ?1",
                 params![attempt.attempt_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()
             .map_err(|error| error.to_string())?;
-        if let Some(existing_exported) = existing {
-            if !is_newer(exported_at, &existing_exported) {
-                continue;
-            }
-        }
-        // 套题 ID 按 attempt 归属：优先快照里的套题聚合，其次（仅对本快照指向的 attempt）meta.paperId。
+        // 套题 ID 按 attempt 归属：优先快照里的 exam_kv / 套题聚合 / 锁定序列，其次（仅对本快照指向的 attempt）meta.paperId。
         // 整库里别的 attempt 不能套用这份 meta 的 paperId。
-        let paper_id = source
+        let incoming_paper = source
             .paper_ids
             .get(&attempt.attempt_id)
             .cloned()
@@ -325,8 +334,52 @@ fn verify_and_import(
                 }
             })
             .unwrap_or_default();
-        write_attempt(&tx, attempt, &paper_id, &source, exported_at, &actual_sha, &file, now)?;
+        if let Some((existing_exported, existing_terminal, existing_install, existing_paper)) = existing {
+            let identity_conflict = if existing_terminal != attempt.terminal_id {
+                Some(format!(
+                    "同一 attemptId 来自不同终端（已导入 {existing_terminal}，本快照 {}），未覆盖",
+                    attempt.terminal_id
+                ))
+            } else {
+                match (existing_install.as_deref(), hints.install_id.as_deref()) {
+                    (Some(old), Some(new)) if old != new => {
+                        Some(format!("同一 attemptId 来自不同安装（已导入 {old}，本快照 {new}），未覆盖"))
+                    }
+                    _ => None,
+                }
+            };
+            if let Some(message) = identity_conflict {
+                if attempt.attempt_id == attempt_hint {
+                    return Err(message);
+                }
+                anomalies.push((attempt.attempt_id.clone(), message));
+                continue;
+            }
+            if !incoming_paper.is_empty() && !existing_paper.is_empty() && incoming_paper != existing_paper {
+                anomalies.push((
+                    attempt.attempt_id.clone(),
+                    format!("套题归属与已导入记录不一致（已导入 {existing_paper}，本快照 {incoming_paper}），保留已导入值"),
+                ));
+            }
+            if !is_newer(exported_at, &existing_exported) {
+                continue;
+            }
+        }
+        write_attempt(
+            &tx,
+            attempt,
+            &incoming_paper,
+            hints.install_id.as_deref(),
+            &source,
+            exported_at,
+            &actual_sha,
+            &file,
+            now,
+        )?;
         imported += 1;
+    }
+    for (attempt_id, message) in &anomalies {
+        record_anomaly(&tx, &file, attempt_id, hints, now, message)?;
     }
     let status = if imported > 0 { "ok" } else { "skipped" };
     let error = if imported > 0 {
@@ -354,6 +407,7 @@ fn write_attempt(
     tx: &rusqlite::Transaction,
     attempt: &SrcAttempt,
     paper_id: &str,
+    install_id: Option<&str>,
     source: &SourceDb,
     exported_at: &str,
     sha: &str,
@@ -369,10 +423,12 @@ fn write_attempt(
     tx.execute(
         "INSERT INTO attempts (attempt_id, terminal_id, batch_id, paper_id, candidate_id, candidate_name,
             checkin_at, started_at, submitted_at, status, app_version, scorer_version,
-            exported_at, sha256, source_file, imported_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+            exported_at, sha256, source_file, imported_at, install_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
          ON CONFLICT(attempt_id) DO UPDATE SET
-            terminal_id = excluded.terminal_id, batch_id = excluded.batch_id, paper_id = excluded.paper_id,
+            terminal_id = excluded.terminal_id, batch_id = excluded.batch_id,
+            paper_id = CASE WHEN attempts.paper_id <> '' THEN attempts.paper_id ELSE excluded.paper_id END,
+            install_id = COALESCE(attempts.install_id, excluded.install_id),
             candidate_id = excluded.candidate_id, candidate_name = excluded.candidate_name,
             checkin_at = excluded.checkin_at, started_at = excluded.started_at,
             submitted_at = excluded.submitted_at, status = excluded.status,
@@ -395,7 +451,8 @@ fn write_attempt(
             exported_at,
             sha,
             file,
-            now
+            now,
+            install_id
         ],
     )
     .map_err(|error| format!("写入 attempts 失败：{error}"))?;
@@ -515,6 +572,20 @@ fn write_attempt(
     Ok(())
 }
 
+/// 记一条 attempt 级异常（归属冲突、终端/安装不一致等）。文件键带 `#attempt:<id>`，与快照级记录互不覆盖。
+fn record_anomaly(
+    conn: &Connection,
+    file: &str,
+    attempt_id: &str,
+    hints: &MetaHints,
+    now: &str,
+    message: &str,
+) -> Result<(), String> {
+    let key = format!("{file}#attempt:{attempt_id}");
+    let attempt_hints = MetaHints { attempt_id: Some(attempt_id.to_string()), ..hints.clone() };
+    record_import(conn, &key, "anomaly", &attempt_hints, now, "failed", Some(message))
+}
+
 /// 写 import_snapshots。`conn` 既可以是连接也可以是事务（经 Deref 到 Connection）。
 fn record_import(
     conn: &Connection,
@@ -558,6 +629,8 @@ struct SourceDb {
     writings: Vec<SrcWriting>,
     scorer_versions: HashMap<String, String>,
     paper_ids: HashMap<String, String>,
+    /// (attemptId, 异常说明)：同一 attempt 的套题归属来源互相矛盾。
+    paper_conflicts: Vec<(String, String)>,
 }
 
 struct SrcAttempt {
@@ -792,27 +865,79 @@ fn read_source_db(path: &Path) -> Result<SourceDb, String> {
             scorer_versions.insert(attempt.attempt_id.clone(), text);
         }
     }
-    // paperId 不在 exam_attempts 里；新版本可能写在套题聚合 JSON。缺省为空（旧套题）。
+    // 套题归属（契约 §1.1）：每个 attempt 的 paperId 按来源优先级取值，不一致记入 paper_conflicts。
     let mut paper_ids = HashMap::new();
-    for suite in &suites {
-        let aggregate: Option<String> = conn
+    let mut paper_conflicts = Vec::new();
+    for attempt in &attempts {
+        let kv: Option<String> = conn
             .query_row(
-                "SELECT aggregate_json FROM reading_suite_attempts WHERE suite_attempt_id = ?1",
-                params![suite.suite_attempt_id],
+                "SELECT value_json FROM exam_kv WHERE key = ?1",
+                params![format!("paper_id:{}", attempt.attempt_id)],
                 |row| row.get(0),
             )
             .optional()
-            .map_err(|error| error.to_string())?
-            .flatten();
-        if let Some(paper) = aggregate
+            .map_err(|error| error.to_string())?;
+        let kv_paper = kv
             .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
-            .and_then(|value| value.get("paperId").and_then(Value::as_str).map(str::to_string))
-        {
-            paper_ids.insert(suite.attempt_id.clone(), paper);
+            .and_then(|value| value.as_str().map(str::trim).filter(|text| !text.is_empty()).map(str::to_string));
+        let mut candidates: Vec<String> = kv_paper.into_iter().collect();
+        for suite in suites.iter().filter(|suite| suite.attempt_id == attempt.attempt_id) {
+            let aggregate: Option<String> = conn
+                .query_row(
+                    "SELECT aggregate_json FROM reading_suite_attempts WHERE suite_attempt_id = ?1",
+                    params![suite.suite_attempt_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|error| error.to_string())?
+                .flatten();
+            if let Some(raw) = aggregate {
+                candidates.extend(paper_ids_from_aggregate(&raw));
+            }
+        }
+        if let Some(first) = candidates.first().cloned() {
+            if let Some(other) = candidates.iter().find(|candidate| **candidate != first) {
+                paper_conflicts.push((
+                    attempt.attempt_id.clone(),
+                    format!("套题归属来源不一致：{first} 与 {other}，已采用优先级最高的 {first}"),
+                ));
+            }
+            paper_ids.insert(attempt.attempt_id.clone(), first);
         }
     }
 
-    Ok(SourceDb { attempts, suites, passages, answers, writings, scorer_versions, paper_ids })
+    Ok(SourceDb { attempts, suites, passages, answers, writings, scorer_versions, paper_ids, paper_conflicts })
+}
+
+/// 从 reading_suite_attempts.aggregate_json 取 paperId（契约 §1.1 优先级 2、3）。
+/// 支持三种形态：SuiteAggregateV1 / 旧 `{"passageCount":N}`（无值）/ 锁定序列数组（元素带 paperId）。
+fn paper_ids_from_aggregate(raw: &str) -> Vec<String> {
+    let Ok(value) = serde_json::from_str::<Value>(raw) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut push = |item: Option<&Value>| {
+        if let Some(text) = item.and_then(Value::as_str).map(str::trim).filter(|text| !text.is_empty()) {
+            out.push(text.to_string());
+        }
+    };
+    match &value {
+        Value::Object(map) => {
+            push(map.get("paperId"));
+            if let Some(Value::Array(sequence)) = map.get("lockedSequence") {
+                for entry in sequence {
+                    push(entry.get("paperId"));
+                }
+            }
+        }
+        Value::Array(sequence) => {
+            for entry in sequence {
+                push(entry.get("paperId"));
+            }
+        }
+        _ => {}
+    }
+    out
 }
 
 fn query_rows<T, F>(conn: &Connection, sql: &str, mut map: F) -> Result<Vec<T>, String>
@@ -872,14 +997,34 @@ pub struct ImportRecord {
 }
 
 pub fn list_failed_imports(conn: &Connection) -> CommandResult<Vec<ImportRecord>> {
-    let mut statement = conn
-        .prepare(
-            "SELECT file, status, terminal_id, attempt_id, batch_id, paper_id, exported_at, imported_at, error
-             FROM import_snapshots WHERE status = 'failed' ORDER BY imported_at DESC, file",
-        )
-        .map_err(|error| error.to_string())?;
+    list_failed_imports_where(conn, None)
+}
+
+/// 只列出某一批次/试卷相关的异常（导出「导入异常」页用）。
+/// 试卷列为空（快照缺 paperId、旧套题）的异常仍归入该批次。
+pub fn list_failed_imports_for_group(
+    conn: &Connection,
+    batch_id: &str,
+    paper_id: &str,
+) -> CommandResult<Vec<ImportRecord>> {
+    list_failed_imports_where(conn, Some((batch_id, paper_id)))
+}
+
+fn list_failed_imports_where(conn: &Connection, group: Option<(&str, &str)>) -> CommandResult<Vec<ImportRecord>> {
+    let (filter, args): (&str, Vec<String>) = match group {
+        None => ("", Vec::new()),
+        Some((batch, paper)) => (
+            " AND batch_id = ?1 AND COALESCE(paper_id, '') IN (?2, '')",
+            vec![batch.to_string(), paper.to_string()],
+        ),
+    };
+    let sql = format!(
+        "SELECT file, status, terminal_id, attempt_id, batch_id, paper_id, exported_at, imported_at, error
+         FROM import_snapshots WHERE status = 'failed'{filter} ORDER BY imported_at DESC, file"
+    );
+    let mut statement = conn.prepare(&sql).map_err(|error| error.to_string())?;
     let rows = statement
-        .query_map([], |row| {
+        .query_map(rusqlite::params_from_iter(args.iter()), |row| {
             Ok(ImportRecord {
                 file: row.get(0)?,
                 status: row.get(1)?,

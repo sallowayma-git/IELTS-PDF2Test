@@ -44,7 +44,25 @@ pub fn open_analytics(app_root: &Path) -> CommandResult<Connection> {
 
 pub fn ensure_schema(conn: &Connection) -> CommandResult<()> {
     conn.execute_batch(ANALYTICS_SCHEMA_SQL)
-        .map_err(|error| format!("analytics_schema:{error}"))
+        .map_err(|error| format!("analytics_schema:{error}"))?;
+    // 旧版本分析库没有 install_id 列：补列（CREATE TABLE IF NOT EXISTS 不会改已有表）。
+    ensure_column(conn, "attempts", "install_id", "TEXT")
+}
+
+fn ensure_column(conn: &Connection, table: &str, column: &str, decl: &str) -> CommandResult<()> {
+    let mut statement = conn
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|error| format!("analytics_schema:{error}"))?;
+    let names: Vec<String> = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("analytics_schema:{error}"))?
+        .filter_map(Result::ok)
+        .collect();
+    if !names.iter().any(|name| name == column) {
+        conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl};"))
+            .map_err(|error| format!("analytics_schema:{error}"))?;
+    }
+    Ok(())
 }
 
 /// 本地分析库表结构。`paper_id` 为空（旧套题）时存空串，便于做分组键。
@@ -75,6 +93,7 @@ CREATE TABLE IF NOT EXISTS attempts (
   status TEXT NOT NULL,
   app_version TEXT,
   scorer_version TEXT,
+  install_id TEXT,
   exported_at TEXT NOT NULL,
   sha256 TEXT NOT NULL,
   source_file TEXT NOT NULL,
