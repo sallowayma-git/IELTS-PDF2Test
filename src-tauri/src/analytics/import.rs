@@ -25,7 +25,7 @@ use crate::CommandResult;
 
 pub const SNAPSHOT_SCHEMA_VERSION: &str = "SubmissionSnapshotV1";
 /// 作者端支持的学生端库结构版本（exam_kv.db_schema_version）。
-pub const SUPPORTED_DB_SCHEMA_VERSION: u64 = 1;
+pub const SUPPORTED_DB_SCHEMA_VERSION: u64 = 2;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -207,8 +207,8 @@ fn import_one_inner(
         .map_err(|error| format!("meta.json 不可读：{error}"))?;
     let meta: Value =
         serde_json::from_str(&meta_text).map_err(|error| format!("meta.json 解析失败：{error}"))?;
-    if meta.get("schemaVersion").and_then(Value::as_str) != Some(SNAPSHOT_SCHEMA_VERSION) {
-        return Err("meta.json schemaVersion 不是 SubmissionSnapshotV1".into());
+    if !matches!(meta.get("schemaVersion").and_then(Value::as_str), Some("SubmissionSnapshotV1" | "SubmissionSnapshotV2")) {
+        return Err("SNAPSHOT_VERSION:不支持的作答快照版本".into());
     }
     // 版本过新：不导入，记入异常队列（契约 §1.1）。
     let db_schema_version = meta.get("dbSchemaVersion").and_then(Value::as_u64).unwrap_or(1);

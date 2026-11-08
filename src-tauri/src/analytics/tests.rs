@@ -867,7 +867,7 @@ fn newer_db_schema_version_is_not_imported() {
         "A3",
         &bytes,
         "2026-11-07T11:40:05+08:00",
-        json!({ "dbSchemaVersion": 2 }),
+        json!({ "dbSchemaVersion": 3 }),
     );
     let report = run_import(&env, &mut conn);
     assert_eq!(report.failed, 1, "{report:?}");
@@ -932,4 +932,17 @@ fn exception_export_is_scoped_to_group() {
     let scoped = list_failed_imports_for_group(&conn, BATCH, PAPER).unwrap();
     assert!(scoped.iter().all(|r| r.batch_id.as_deref() != Some("B-OTHER")), "{scoped:?}");
     assert_eq!(scoped.len(), 3, "{scoped:?}");
+}
+
+#[test]
+fn local_v1_migration_preserves_facts_and_is_idempotent() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(super::ANALYTICS_SCHEMA_SQL).unwrap();
+    conn.execute("INSERT INTO attempts(attempt_id,terminal_id,batch_id,candidate_id,candidate_name,status,exported_at,sha256,source_file,imported_at) VALUES('legacy','t','b','c','学生','submitted','now','hash','file','now')", []).unwrap();
+    conn.execute("INSERT INTO answers(attempt_id,passage_index,question_id,is_correct,weight) VALUES('legacy',0,'slot',1,2)", []).unwrap();
+    ensure_schema(&conn).unwrap();
+    ensure_schema(&conn).unwrap();
+    let row: (String,f64,f64) = conn.query_row("SELECT response_slot_id,max_score,score FROM answers", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+    assert_eq!(row,("slot".into(),2.0,2.0));
+    assert_eq!(conn.query_row("SELECT candidate_name FROM attempts", [], |r| r.get::<_,String>(0)).unwrap(),"学生");
 }

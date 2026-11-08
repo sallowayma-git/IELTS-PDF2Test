@@ -75,3 +75,7 @@
 ```
 
 作者端用信标统计 已签到 / 进行中 / 已交卷 / 作废；用快照统计 已导入 / 有效计分。两者分开显示，不互相推断。
+
+## 3. V2 扩展
+
+见 [后端数据层 V2](2026-11-08-backend-data-v2-contract.md)。V2 使用 `schemaVersion: SubmissionSnapshotV2` 与 `dbSchemaVersion: 2`；布局、ready、hash、整库归属与重试规则不变。作者端同时兼容 V1/1 与 V2/2。

@@ -17,6 +17,7 @@ pub mod export;
 pub mod import;
 pub mod queries;
 pub mod status;
+pub mod schema_v2;
 #[cfg(test)]
 mod tests;
 
@@ -46,7 +47,8 @@ pub fn ensure_schema(conn: &Connection) -> CommandResult<()> {
     conn.execute_batch(ANALYTICS_SCHEMA_SQL)
         .map_err(|error| format!("analytics_schema:{error}"))?;
     // 旧版本分析库没有 install_id 列：补列（CREATE TABLE IF NOT EXISTS 不会改已有表）。
-    ensure_column(conn, "attempts", "install_id", "TEXT")
+    ensure_column(conn, "attempts", "install_id", "TEXT")?;
+    schema_v2::migrate(conn)
 }
 
 fn ensure_column(conn: &Connection, table: &str, column: &str, decl: &str) -> CommandResult<()> {

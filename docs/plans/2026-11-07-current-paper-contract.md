@@ -72,3 +72,7 @@
 
 - 学生端锁定套题时把每篇的 `examId`、`script`、`scriptSha256`、`runtimeSha256` 和 `paperId` 记进 lockedSequence；
   交卷判分按锁定的 `script` 读取并校验 `scriptSha256`（脚本在 `releases/<batchId>/` 下不可变），不按当时的 manifest。
+
+## V1.2 数据归档补充
+
+见 [后端数据层 V2](2026-11-08-backend-data-v2-contract.md)：指针格式不变，作者端本地冻结发布时的运行时 JSON 并存试卷档案；听力运行时门禁与阅读共用运行时版本常量。
