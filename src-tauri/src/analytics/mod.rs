@@ -20,8 +20,15 @@ pub mod status;
 mod schema_v2;
 pub(crate) mod records;
 mod import_extensions;
+pub mod review;
+pub mod writing_review;
+pub mod rejudge;
+pub mod detail;
+pub mod statistics;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod v2_tests;
 #[cfg(test)]
 mod snapshot_compat_tests;
 

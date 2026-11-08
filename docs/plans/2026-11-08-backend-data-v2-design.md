@@ -1,4 +1,4 @@
-# 后端数据模型 V2：契约与迁移设计草案
+# 后端数据模型 V2：契约与迁移设计
 
 状态：实施基准（2026-11-08）。现行契约已先追加 Snapshot V2 与 CurrentPaper V1.2 增量；代码按里程碑启用，完成状态见 progress。用户确认写作对外称“写作人工评分”，保留非官方声明；阅读/听力本轮不新增独立成绩发布，保留后续扩展。本轮“权限外”指终端/对象归属、状态、分值范围与 CAS，不引入账号体系。counted 仅控制可判分记录是否参与统计，不能把无效/失败考试变成有效成绩。
 
@@ -10,11 +10,11 @@
 
 学生原始分、教师复核、已发布结果是不同事实层。教师命令不修改学生答案/事件/判分原始行；重导入学生快照不删除教师事实。原始分与正确率带 N，沿用“机构模拟测试原始分，非 IELTS 官方成绩。”。
 
-## SubmissionSnapshotV2（待定稿的增量）
+## SubmissionSnapshotV2（生效增量）
 
 meta 沿用 V1 的完整字段，仅变更：`schemaVersion="SubmissionSnapshotV2"`、`dbSchemaVersion=2`。整库快照、三件套原子可见、ready 最后、hash/size、补发 pending、terminal/install 冲突、paperId 优先级均不变。不能只改常量就声称迁移完成。
 
-| schemaVersion | dbSchemaVersion | 作者消费建议 |
+| schemaVersion | dbSchemaVersion | 作者消费规则 |
 | --- | --- | --- |
 | SubmissionSnapshotV1 | 1 或历史缺省 | 保持旧解析与缺省规则；V2 增量为空/回填，不报成数据丢失 |
 | SubmissionSnapshotV2 | 2 | 要求必要新列/新表存在，字段和版本一致 |
@@ -41,9 +41,9 @@ meta 沿用 V1 的完整字段，仅变更：`schemaVersion="SubmissionSnapshotV
 
 听力当前链存在 manifest 加载与无持久锁定问题，故 M2 必须新增 attempt 的听力 pin（与阅读同次锁卷持久化完整 entry/script/hash，不只存 examId）。考试 API 拒绝请求路径中不属于已锁卷的 examId；恢复考试读已存 pin，不重新读取当前指针。无听力旧卷保持兼容。统一 runtime 版本常量，不再比较安装包版本。
 
-听力提交与最终交卷当前是两个独立服务。先定义听力完成事实的幂等事务，再明确最终交卷是否要求听力完成并在一致性快照中包含它；不能为听力新增第二张冲突的 attempt 最终回执。最终提交重试、事务失败回滚与 NAS 快照补发沿用现有语义。具体“锁卷何时发生/从哪个步骤恢复”由 C02 和 E04 证据共同定稿。
+听力提交与最终交卷当前是两个独立服务。先定义听力完成事实的幂等事务，再明确最终交卷是否要求听力完成并在一致性快照中包含它；不能为听力新增第二张冲突的 attempt 最终回执。最终提交重试、事务失败回滚与 NAS 快照补发沿用现有语义。锁卷在签到后、进入听力前调用 suite.start；恢复从该 attempt 的持久 pin 及 NAS 进度继续。
 
-## 作者本地数据归属（提议，C03 定稿）
+## 作者本地数据归属（C03 定稿）
 
 | 所有者 | 数据 | 迁移策略 |
 | --- | --- | --- |
@@ -53,7 +53,7 @@ meta 沿用 V1 的完整字段，仅变更：`schemaVersion="SubmissionSnapshotV
 
 NAS 文件与本地数据库无法用同一个 SQLite 事务原子提交。发布时先持久化内容证据及待提交批次；指针成功后更新本地 current/superseded 状态。指针已成功而本地失败时不能假报“未发布”或删除线上 release；报告“已发布、档案待修复”，启动恢复必须幂等。历史 JSON 可补建为 archive_state=unconfirmed 的非当前档案；只有实际指针或本地已确认事实能使其成为 confirmed，撤下时间记录本身不证明过去已提交。
 
-现有 NAS 历史是在指针前写入，因此“发现历史 JSON”不等于该卷曾发布成功。补建时对照实际指针、发布记录和撤下证据，不能将孤立历史都标为 current/superseded；无法证明的记录带异常/未确认状态。任务书仅列 current/superseded，是否增加 archive_state 或单独修复表须 C03 明确，不能把这种技术恢复态混作学生考试状态。
+现有 NAS 历史是在指针前写入，因此“发现历史 JSON”不等于该卷曾发布成功。补建时对照实际指针、发布记录和撤下证据，不能将孤立历史都标为 current/superseded；无法证明的记录带异常/未确认状态。采用独立 archive_state=confirmed/unconfirmed；status 仍保留 current/superseded，不混入学生考试状态。
 
 `item_content_snapshots` 主键 `(exam_id,runtime_sha256)`；保留编译出的完整 runtime source，不另算一个不同序列化方式的 hash。`paper_items` 保存 script/runtime/asset hashes 及 modality/part 归属；part 字符串不能充当唯一身份（如阅读和听力都可能出现 Part 1）。
 
@@ -69,7 +69,7 @@ passages 新增 highlights_json/note_text/timer_snapshot_json/runtime_sha256/scr
 
 V1/V2 的 Rust 夹具必须经真实学生服务/导出器生成，记录学生 HEAD、schema、生成命令及 hash。允许保留手写异常/损坏库测试，但它们只能证明异常处理，不能作为真实兼容证据。
 
-## 教师命令与并发（C04 待定稿）
+## 教师命令与并发（C04 定稿）
 
 所有新命令采用稳定错误码与中文消息，保持现有 analytics_* 兼容；列表/统计显式 N。操作人来自设置字符串，记审计但不当作认证。禁止客户端指定任意 SQLite/NAS 写入路径。
 
@@ -84,13 +84,12 @@ V1/V2 的 Rust 夹具必须经真实学生服务/导出器生成，记录学生 
 | list_writing_queue/list_audit_log | 稳定过滤、分页及 N，限定对象范围 |
 | analytics_export_xlsx 扩展 | 原始与有效分区分；加改判后/写作/听力表；导出事实记录成功/失败边界，不把取消保存报为成功 |
 
-写操作与其 audit_log 在同一 analytics 事务提交；CAS 冲突不留下半个操作或成功审计。单一 published 写作版本使用数据库唯一约束兜底；发布后的正文与批改事实保留历史，后续改稿创建新版本。公开阅读/听力成绩的独立发布实体仍是待确认项，不能用“当前有效 override”冒充已冻结发布结果。
+写操作与其 audit_log 在同一 analytics 事务提交；CAS 冲突不留下半个操作或成功审计。单一 published 写作版本使用数据库唯一约束兜底；发布后的正文与批改事实保留历史，后续改稿创建新版本。用户确认本轮仅复核与统计，公开阅读/听力成绩的独立发布实体留待后续。
 
 有效成绩查询集中实现，再供详情、分布、题型、难题、学生矩阵与 xlsx 复用；部分分以 score 求和，不再以 is_correct×weight 代替所有新题型。分母为 max_score/weight 的得分点和，N 是对应范围内参与统计的有效考生数量；跨 paper/runtime 的同题号不得混组。
 
-## 进入实现前的门槛
+## 实施状态与接口
 
-- C01–C04 状态从 DRAFT 改为定稿，生效契约有相应版本章节；先文档后源码。
-- 产品待确认项见 execution-plan：写作 Band 展示边界、权限外范围、成绩发布实体、作废恢复口径。
-- 主线程亲读即将修改的完整函数/模块；每个迁移都有旧库保全、重启幂等、失败回滚用例。
-- 所有产品结论来自本轮源码构建与真实 Tauri/Electron；缺构建依赖记不能运行，不用 CLI/schema 代替。
+C01–C04 已定稿并实现；命令 DTO、错误、CAS、N、审计和写作发布规则见 [命令接口](2026-11-08-backend-data-v2-command-contract.md)。教师操作身份来自独立 review_settings；本轮没有账号权限、名册 UI 或新增判卷页面。现有导出需要先通过设置命令填写操作人，页面接入属于后续前端任务。
+
+M1–M4 进度和本轮实际验证分层见 [里程碑报告](2026-11-08-backend-data-v2-milestones.md)。历史准备报告与原任务卡保留，不能当作当前实现状态。

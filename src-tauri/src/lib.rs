@@ -43,6 +43,7 @@ use std::{
 };
 use util::ensure_app_dirs;
 mod analytics;
+mod analytics_commands;
 mod artifact_store;
 mod authoring_commands;
 mod authoring_pipeline;
@@ -1079,12 +1080,17 @@ async fn analytics_overview(
 async fn analytics_exam(
     batch_id: String,
     paper_id: String,
+    original: Option<bool>,
     app: AppHandle,
 ) -> CommandResult<analytics::queries::ExamView> {
     let root = app_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         let conn = analytics::open_analytics(&root)?;
-        analytics::queries::build_exam_view(&conn, &batch_id, &paper_id)
+        if original.unwrap_or(false) {
+            let attempts=analytics::queries::load_attempts_mode(&conn,&analytics::queries::Scope::Group{batch_id:&batch_id,paper_id:&paper_id},true)?;
+            let mut view=analytics::queries::exam_view_from(&batch_id,&paper_id,&attempts);
+            view.listening=Some(analytics::statistics::listening(&conn,&batch_id,&paper_id,true)?);Ok(view)
+        }else{analytics::queries::build_exam_view(&conn, &batch_id, &paper_id)}
     })
     .await
     .map_err(|error| format!("analytics_join:{error}"))?
@@ -1093,12 +1099,16 @@ async fn analytics_exam(
 #[tauri::command]
 async fn analytics_student(
     attempt_id: String,
+    original: Option<bool>,
     app: AppHandle,
 ) -> CommandResult<analytics::queries::StudentView> {
     let root = app_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         let conn = analytics::open_analytics(&root)?;
-        analytics::queries::build_student_view(&conn, &attempt_id)
+        if original.unwrap_or(false){
+            let attempts=analytics::queries::load_attempts_mode(&conn,&analytics::queries::Scope::Attempt(&attempt_id),true)?;
+            attempts.first().map(analytics::queries::student_view_from).ok_or("ATTEMPT_NOT_FOUND: 考试不存在".into())
+        }else{analytics::queries::build_student_view(&conn, &attempt_id)}
     })
     .await
     .map_err(|error| format!("analytics_join:{error}"))?
@@ -1110,12 +1120,13 @@ async fn analytics_question(
     paper_id: String,
     passage_index: i64,
     question_id: String,
+    original: Option<bool>,
     app: AppHandle,
 ) -> CommandResult<analytics::queries::QuestionView> {
     let root = app_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         let conn = analytics::open_analytics(&root)?;
-        analytics::queries::build_question_view(&conn, &batch_id, &paper_id, passage_index, &question_id)
+        analytics::queries::build_question_view_mode(&conn, &batch_id, &paper_id, passage_index, &question_id,original.unwrap_or(false))
     })
     .await
     .map_err(|error| format!("analytics_join:{error}"))?
@@ -1157,7 +1168,13 @@ async fn analytics_export_xlsx(
     };
     tauri::async_runtime::spawn_blocking(move || {
         let conn = analytics::open_analytics(&root)?;
-        analytics::export::write_export(&conn, &batch_id, &paper_id, &path).map(Some)
+        let operator=analytics::review::operator(&root)?;
+        let target=format!("{batch_id}/{paper_id}");
+        analytics::review::audit(&conn,&operator,"export_started","export",&target,&Value::Null,&serde_json::json!({"path":path}),"导出成绩")?;
+        let result=analytics::export::write_export(&conn, &batch_id, &paper_id, &path);
+        let after=match &result{Ok(summary)=>serde_json::to_value(summary).map_err(|e|e.to_string())?,Err(e)=>serde_json::json!({"error":e})};
+        analytics::review::audit(&conn,&operator,if result.is_ok(){"export_completed"}else{"export_failed"},"export",&target,&Value::Null,&after,"导出成绩")?;
+        result.map(Some)
     })
     .await
     .map_err(|error| format!("analytics_join:{error}"))?
@@ -2086,6 +2103,26 @@ pub fn run() {
             analytics_student,
             analytics_question,
             analytics_export_xlsx,
+            analytics_commands::list_papers,
+            analytics_commands::analytics_listening_exam,
+            analytics_commands::get_paper,
+            analytics_commands::get_question_context,
+            analytics_commands::get_attempt_detail,
+            analytics_commands::list_overrides,
+            analytics_commands::list_audit_log,
+            analytics_commands::list_writing_queue,
+            analytics_commands::preview_rejudge,
+            analytics_commands::apply_rejudge,
+            analytics_commands::get_review_settings,
+            analytics_commands::save_review_settings,
+            analytics_commands::create_score_override,
+            analytics_commands::revoke_score_override,
+            analytics_commands::set_attempt_counted,
+            analytics_commands::save_writing_grade,
+            analytics_commands::review_writing_grade,
+            analytics_commands::publish_writing_grade,
+            analytics_commands::save_annotation,
+            analytics_commands::delete_annotation,
             get_library_item_processing,
             get_library_row,
             get_recognition_decision,
