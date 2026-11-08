@@ -25,7 +25,7 @@ use crate::CommandResult;
 
 pub const SNAPSHOT_SCHEMA_VERSION: &str = "SubmissionSnapshotV1";
 /// 作者端支持的学生端库结构版本（exam_kv.db_schema_version）。
-pub const SUPPORTED_DB_SCHEMA_VERSION: u64 = 1;
+pub const SUPPORTED_DB_SCHEMA_VERSION: u64 = 2;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -207,15 +207,20 @@ fn import_one_inner(
         .map_err(|error| format!("meta.json 不可读：{error}"))?;
     let meta: Value =
         serde_json::from_str(&meta_text).map_err(|error| format!("meta.json 解析失败：{error}"))?;
-    if meta.get("schemaVersion").and_then(Value::as_str) != Some(SNAPSHOT_SCHEMA_VERSION) {
-        return Err("meta.json schemaVersion 不是 SubmissionSnapshotV1".into());
-    }
+    let schema = meta.get("schemaVersion").and_then(Value::as_str).ok_or("快照缺少 schemaVersion")?;
     // 版本过新：不导入，记入异常队列（契约 §1.1）。
-    let db_schema_version = meta.get("dbSchemaVersion").and_then(Value::as_u64).unwrap_or(1);
+    let db_schema_version = match meta.get("dbSchemaVersion") {
+        None if schema == SNAPSHOT_SCHEMA_VERSION => 1,
+        Some(v) => v.as_u64().ok_or("快照 dbSchemaVersion 格式错误")?,
+        None => return Err("快照缺少 dbSchemaVersion".into()),
+    };
     if db_schema_version > SUPPORTED_DB_SCHEMA_VERSION {
         return Err(format!(
             "快照版本过新（dbSchemaVersion={db_schema_version}，作者端支持至 {SUPPORTED_DB_SCHEMA_VERSION}），请升级作者端"
         ));
+    }
+    if !matches!((schema, db_schema_version), ("SubmissionSnapshotV1", 1) | ("SubmissionSnapshotV2", 2)) {
+        return Err("快照 schemaVersion 与 dbSchemaVersion 不一致或不受支持".into());
     }
     let hints = MetaHints {
         terminal_id: string_field(&meta, "terminalId"),
@@ -250,6 +255,7 @@ fn import_one_inner(
         expected_size,
         &expected_sha,
         now,
+        db_schema_version,
     );
     let _ = fs::remove_file(&local_copy);
     result
@@ -266,6 +272,7 @@ fn verify_and_import(
     expected_size: u64,
     expected_sha: &str,
     now: &str,
+    db_schema_version: u64,
 ) -> Result<SnapshotOutcome, String> {
     let file = candidate.file_key.clone();
     let copy_bytes = fs::read(local_copy).map_err(|error| format!("读取临时副本失败：{error}"))?;
@@ -302,7 +309,7 @@ fn verify_and_import(
         });
     }
 
-    let source = read_source_db(local_copy)?;
+    let source = read_source_db(local_copy, db_schema_version)?;
     if !source.attempts.iter().any(|attempt| attempt.attempt_id == attempt_hint) {
         return Err(format!("快照内找不到已交卷的 attempt：{attempt_hint}"));
     }
@@ -569,6 +576,7 @@ fn write_attempt(
         )
         .map_err(|error| format!("写入 writings 失败：{error}"))?;
     }
+    source.extensions.apply(tx, id)?;
     Ok(())
 }
 
@@ -622,6 +630,7 @@ fn record_import(
 
 /// 快照库里读出的已交卷 attempt 及子表（只读副本）。
 struct SourceDb {
+    extensions: super::import_extensions::Extensions,
     attempts: Vec<SrcAttempt>,
     suites: Vec<SrcSuite>,
     passages: Vec<SrcPassage>,
@@ -703,7 +712,7 @@ struct SrcWriting {
 }
 
 /// 只读打开副本，读出已交卷的数据。失败即整份快照 failed。
-fn read_source_db(path: &Path) -> Result<SourceDb, String> {
+fn read_source_db(path: &Path, version: u64) -> Result<SourceDb, String> {
     let conn = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -719,7 +728,7 @@ fn read_source_db(path: &Path) -> Result<SourceDb, String> {
         &conn,
         "SELECT attempt_id, batch_id, terminal_id, candidate_id, candidate_name, checkin_at, started_at,
                 submitted_at, status, app_version
-         FROM exam_attempts WHERE status = 'submitted'",
+         FROM exam_attempts WHERE status IN ('submitted','failed')",
         |row| {
             Ok(SrcAttempt {
                 attempt_id: row.get(0)?,
@@ -906,7 +915,8 @@ fn read_source_db(path: &Path) -> Result<SourceDb, String> {
         }
     }
 
-    Ok(SourceDb { attempts, suites, passages, answers, writings, scorer_versions, paper_ids, paper_conflicts })
+    let extensions = super::import_extensions::Extensions::read(&conn, version)?;
+    Ok(SourceDb { extensions, attempts, suites, passages, answers, writings, scorer_versions, paper_ids, paper_conflicts })
 }
 
 /// 从 reading_suite_attempts.aggregate_json 取 paperId（契约 §1.1 优先级 2、3）。

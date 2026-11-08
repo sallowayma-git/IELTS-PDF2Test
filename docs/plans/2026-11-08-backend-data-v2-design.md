@@ -1,6 +1,6 @@
 # 后端数据模型 V2：契约与迁移设计草案
 
-状态：DRAFT，实施准备稿。既有 CurrentPaperV1/V1.1 与 SubmissionSnapshotV1/V1.1 继续生效。本稿在 C01–C04 核对定稿后，先更新生效契约，再修改源码；现在没有启用 V2。
+状态：实施基准（2026-11-08）。现行契约已先追加 Snapshot V2 与 CurrentPaper V1.2 增量；代码按里程碑启用，完成状态见 progress。用户确认写作对外称“写作人工评分”，保留非官方声明；阅读/听力本轮不新增独立成绩发布，保留后续扩展。本轮“权限外”指终端/对象归属、状态、分值范围与 CAS，不引入账号体系。counted 仅控制可判分记录是否参与统计，不能把无效/失败考试变成有效成绩。
 
 ## 不变量
 
@@ -51,7 +51,7 @@ meta 沿用 V1 的完整字段，仅变更：`schemaVersion="SubmissionSnapshotV
 | analytics.sqlite 原始镜像 | attempts/suites/passages/answers/writings 与事件/听力镜像 | 新增明确的本地 schema 版本，保留已有 install_id 的升级能力 |
 | analytics.sqlite 教师层 | writing_grades/annotations、score_overrides、rejudge_runs、audit_log、candidate_aliases、counted/exclude_reason | 独立表/教师字段所有权，学生重导入 SQL 不覆盖 |
 
-NAS 文件与本地数据库无法用同一个 SQLite 事务原子提交。发布时先持久化内容证据及待提交批次；指针成功后更新本地 current/superseded 状态。指针已成功而本地失败时不能假报“未发布”或删除线上 release；报告“已发布、档案待修复”，启动恢复必须幂等。
+NAS 文件与本地数据库无法用同一个 SQLite 事务原子提交。发布时先持久化内容证据及待提交批次；指针成功后更新本地 current/superseded 状态。指针已成功而本地失败时不能假报“未发布”或删除线上 release；报告“已发布、档案待修复”，启动恢复必须幂等。历史 JSON 可补建为 archive_state=unconfirmed 的非当前档案；只有实际指针或本地已确认事实能使其成为 confirmed，撤下时间记录本身不证明过去已提交。
 
 现有 NAS 历史是在指针前写入，因此“发现历史 JSON”不等于该卷曾发布成功。补建时对照实际指针、发布记录和撤下证据，不能将孤立历史都标为 current/superseded；无法证明的记录带异常/未确认状态。任务书仅列 current/superseded，是否增加 archive_state 或单独修复表须 C03 明确，不能把这种技术恢复态混作学生考试状态。
 

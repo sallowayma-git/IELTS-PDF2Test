@@ -867,7 +867,7 @@ fn newer_db_schema_version_is_not_imported() {
         "A3",
         &bytes,
         "2026-11-07T11:40:05+08:00",
-        json!({ "dbSchemaVersion": 2 }),
+        json!({ "dbSchemaVersion": 3 }),
     );
     let report = run_import(&env, &mut conn);
     assert_eq!(report.failed, 1, "{report:?}");

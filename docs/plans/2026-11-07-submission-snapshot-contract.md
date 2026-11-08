@@ -75,3 +75,20 @@
 ```
 
 作者端用信标统计 已签到 / 进行中 / 已交卷 / 作废；用快照统计 已导入 / 有效计分。两者分开显示，不互相推断。
+
+## 3. V2 增量（2026-11-08）
+
+新学生端输出 `schemaVersion: SubmissionSnapshotV2`、`dbSchemaVersion: 2`；作者端同时接受 V1/1（含历史缺省版本）与 V2/2，拒绝未知、畸形、不一致和过新版本。整库快照、只读源、ready 最后、pending 重试与身份冲突规则不变。
+
+终端库连接初始化在事务内升级到 v2，版本存入 exam_kv.db_schema_version；导出器读取真实版本，不替旧库虚标版本。新增 reading_answers.response_slot_id/max_score/score（旧 slot=question_id、max_score=weight、score 按原始 is_correct 回填，未知为 null）；exam_attempts.session_id/student_uuid/abandon_reason 可空。
+
+新增 answer_events，键 `(attempt_id,event_seq)`，含 client_event_id（attempt 内唯一、请求重试幂等）、event_type、passage_index、question_id、old/new_answer_json、wall_time、monotonic_ms、clock_id。event_seq 由服务端事务内分配；clock_id 区分 renderer 重启后的单调时钟。事件只经现有保存通道批量发送，保留内存队列；失败不使答案保存失败，不在本地持久化。只记录最终改答、Part/题目/应用焦点，不记录逐字按键或鼠标轨迹。
+
+新增 listening_attempts 和 listening_answers：前者按 attempt 唯一，保存 exam_id/source_revision、源 hash、时间、汇总、播放快照；后者按 attempt+slot_id 唯一，保存逐题学生/标准答案、对错及权重。听力提交事实事务落库且幂等，最终交卷仍只有原 attempt 回执；快照包含新表。
+
+作者端重导入仅刷新学生事实，不覆盖 counted/exclude_reason，不级联删除教师改判、写作批改、批注、重判及审计。教师操作另存，统计使用有效改判，可切原始分；原始学生行不被教师命令修改。
+
+V2 管理员作废事务提交后也导出就绪快照，meta.submittedAt 可为 null，源 attempt.status=failed；用于保留作废原因与已有原始作答，不创建最终交卷回执，不计入有效计分。作者同时导入 submitted/failed 的已结束事实；已签到/进行中仍仅由信标统计。
+### V2 听力统计补充
+
+`listening_answers` 同时保存可空 `part_id`，取自锁定源的 `parts[].taskIds` 与 slot 所属 task；`question_kind` 取该 task 的 `taskType`。旧快照无 part 时归入“未知 Part”，不根据题号猜测。该字段为向后兼容扩展。
