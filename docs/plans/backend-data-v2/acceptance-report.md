@@ -9,7 +9,7 @@
 - M1：作者端 `1a43569`，学生端 `a8be840`。
 - M2：学生端 `4ccf390`；证据保留 `91ed58e`；快速选项改答记录 `d77b617`。
 - M3：作者端 `ff8b7a8`。
-- M4：作者端当前 HEAD 的 reviewer/command/export 提交；所有提交均附指定 Co-Authored-By。
+- M4：作者端 `1ba34bc` 的 reviewer/command/export 提交；所有提交均附指定 Co-Authored-By。
 
 ## 实现与迁移
 
@@ -29,6 +29,7 @@
 |---|---|---|
 | 作者端 `npx tsc --noEmit` | 通过 | 类型检查 |
 | 作者端 `npx vitest run` | 65 文件 / 648 测试通过 | 前端单测 |
+| 作者端 `cargo check` | 通过（最终命令包装层编译） | 编译 |
 | 作者端 `cargo test -- --nocapture` | 1587 passed / 0 failed / 19 ignored；bin、doctest 通过 | Rust 全量；包含服务/命令核心 |
 | 作者端 `cargo test analytics:: --lib`（最终边界检查） | 20 passed / 0 failed / 1 ignored（显式夹具生成器） | 命令核心、迁移、真实产物导入 |
 | 作者端 `cargo test publish_final_tests --lib` | 38 passed / 0 failed；真实发布核心同时断言内容归档和旧卷撤下状态 | 发布命令处理层 |

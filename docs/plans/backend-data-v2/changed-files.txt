@@ -3,6 +3,7 @@ docs/plans/2026-11-07-submission-snapshot-contract.md
 docs/plans/2026-11-08-backend-data-v2-api.md
 docs/plans/2026-11-08-backend-data-v2-contract.md
 docs/plans/backend-data-v2/acceptance-report.md
+docs/plans/backend-data-v2/changed-files.txt
 docs/plans/backend-data-v2/findings.md
 docs/plans/backend-data-v2/progress.md
 docs/plans/backend-data-v2/task_plan.md
