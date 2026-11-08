@@ -35,6 +35,7 @@ pub struct PassageRec {
 
 #[derive(Debug, Clone)]
 pub struct AnswerRec {
+    pub score: f64,
     pub passage_index: i64,
     pub question_id: String,
     pub display_label: Option<String>,
@@ -97,6 +98,9 @@ pub enum Scope<'a> {
 
 /// 读取已交卷的 attempt 及其子记录，并算出有效性。
 pub fn load_attempts(conn: &Connection, scope: &Scope) -> CommandResult<Vec<AttemptRec>> {
+    load_attempts_with_mode(conn,scope,false)
+}
+pub fn load_attempts_with_mode(conn: &Connection, scope: &Scope, original: bool) -> CommandResult<Vec<AttemptRec>> {
     let mut attempts: Vec<AttemptRec> = Vec::new();
     {
         let mut statement = conn
@@ -190,7 +194,7 @@ pub fn load_attempts(conn: &Connection, scope: &Scope) -> CommandResult<Vec<Atte
         .prepare(
             "SELECT attempt_id, passage_index, question_id, display_label, question_kind, user_answer_json,
                     correct_answer_json, normalized_user_answer_json, is_correct, weight, elapsed_ms,
-                    change_count, visit_count
+                    change_count, visit_count, COALESCE(score,is_correct*weight,0)
              FROM answers ORDER BY attempt_id, passage_index, question_id",
         )
         .map_err(|error| error.to_string())?;
@@ -199,6 +203,7 @@ pub fn load_attempts(conn: &Connection, scope: &Scope) -> CommandResult<Vec<Atte
             Ok((
                 row.get::<_, String>(0)?,
                 AnswerRec {
+                    score: row.get(13)?,
                     passage_index: row.get(1)?,
                     question_id: row.get(2)?,
                     display_label: row.get(3)?,
@@ -247,6 +252,18 @@ pub fn load_attempts(conn: &Connection, scope: &Scope) -> CommandResult<Vec<Atte
 
     for attempt in &mut attempts {
         attempt.invalid_reason = validity(attempt);
+        let decision: (i64,i64,Option<String>)=conn.query_row("SELECT counted,counted_override,exclude_reason FROM attempts WHERE attempt_id=?1",[&attempt.attempt_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(|e|e.to_string())?;
+        if decision.1==1 && decision.0==0 {attempt.invalid_reason=Some(decision.2.unwrap_or_else(||"教师排除统计".into()));}
+        if !original {
+            let overrides=super::snapshot_v2::rows(conn,"SELECT * FROM score_overrides WHERE attempt_id=? AND modality='reading' AND revoked_at IS NULL",&[&attempt.attempt_id])?;
+            for item in overrides {
+                let index=item["passage_index"].as_i64().unwrap_or_default();
+                let slot=item["response_slot_id"].as_str().unwrap_or_default();
+                let delta=item["new_score"].as_f64().unwrap_or_default()-item["original_score"].as_f64().unwrap_or_default();
+                if let Some(p)=attempt.passages.iter_mut().find(|p|p.passage_index==index){p.correct+=delta;}
+                if let Some(a)=attempt.answers.iter_mut().find(|a|a.passage_index==index && a.question_id==slot){a.is_correct=item["new_is_correct"].as_i64();a.score=item["new_score"].as_f64().unwrap_or_default();}
+            }
+        }
     }
     Ok(attempts)
 }
@@ -625,6 +642,8 @@ pub fn exam_view_from(batch_id: &str, paper_id: &str, attempts: &[AttemptRec]) -
         question_kind: String,
         n: usize,
         correct: usize,
+        score:f64,
+        max_score:f64,
     }
     let mut qacc: BTreeMap<(i64, String), QAcc> = BTreeMap::new();
     let mut kind_acc: BTreeMap<String, (HashSet<String>, f64, f64)> = BTreeMap::new();
@@ -642,7 +661,11 @@ pub fn exam_view_from(batch_id: &str, paper_id: &str, attempts: &[AttemptRec]) -
                 question_kind: answer.question_kind.clone().unwrap_or_default(),
                 n: 0,
                 correct: 0,
+                score:0.0,
+                max_score:0.0,
             });
+            entry.score+=answer.score;
+            entry.max_score+=answer.weight;
             entry.n += 1;
             if graded == 1 {
                 entry.correct += 1;
@@ -651,9 +674,7 @@ pub fn exam_view_from(batch_id: &str, paper_id: &str, attempts: &[AttemptRec]) -
             let slot = kind_acc.entry(kind).or_insert_with(|| (HashSet::new(), 0.0, 0.0));
             slot.0.insert(attempt.attempt_id.clone());
             slot.1 += answer.weight;
-            if graded == 1 {
-                slot.2 += answer.weight;
-            }
+            slot.2 += answer.score;
         }
     }
     let part_label_of = |index: i64| part_labels.get(&index).cloned().unwrap_or_else(|| format!("P{}", index + 1));
@@ -667,7 +688,7 @@ pub fn exam_view_from(batch_id: &str, paper_id: &str, attempts: &[AttemptRec]) -
             question_kind: q.question_kind.clone(),
             n: q.n,
             correct_count: q.correct,
-            accuracy: ratio(q.correct as f64, q.n as f64),
+            accuracy: ratio(q.score, q.max_score),
             hard_conclusion: q.n >= HARD_CONCLUSION_MIN_N,
         })
         .collect();
@@ -975,6 +996,8 @@ pub fn build_question_view(
     let valid: Vec<&AttemptRec> = attempts.iter().filter(|a| a.is_valid()).collect();
     let mut n = 0usize;
     let mut correct = 0usize;
+    let mut score_sum=0.0;
+    let mut max_sum=0.0;
     let mut elapsed_sum = 0f64;
     let mut change_sum = 0f64;
     let mut display_label: Option<String> = None;
@@ -996,6 +1019,7 @@ pub fn build_question_view(
             if graded == 1 {
                 correct += 1;
             }
+            score_sum+=answer.score;max_sum+=answer.weight;
             elapsed_sum += answer.elapsed_ms as f64;
             change_sum += answer.change_count as f64;
             let text = display_answer(answer.normalized_user_answer_json.as_deref());
@@ -1028,7 +1052,7 @@ pub fn build_question_view(
         question_kind: question_kind.unwrap_or_default(),
         n,
         correct_count: correct,
-        accuracy: ratio(correct as f64, n as f64),
+        accuracy: ratio(score_sum, max_sum),
         hard_conclusion: n >= HARD_CONCLUSION_MIN_N,
         correct_answer: correct_answer.unwrap_or_else(|| "（未作答）".into()),
         avg_elapsed_ms: ratio(elapsed_sum, n as f64),

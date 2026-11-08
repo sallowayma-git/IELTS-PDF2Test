@@ -8,7 +8,7 @@ use rusqlite::Connection;
 use rust_xlsxwriter::{Format, Workbook};
 
 use super::import::list_failed_imports_for_group;
-use super::queries::{exam_view_from, load_attempts, AttemptRec, ExamView, Scope};
+use super::queries::{exam_view_from, load_attempts, load_attempts_with_mode, AttemptRec, ExamView, Scope};
 use super::{display_answer, DISCLAIMER, HARD_CONCLUSION_MIN_N};
 use crate::CommandResult;
 
@@ -52,7 +52,7 @@ fn xerr(error: rust_xlsxwriter::XlsxError) -> String {
 }
 
 pub fn write_export(conn: &Connection, batch_id: &str, paper_id: &str, path: &Path) -> CommandResult<ExportSummary> {
-    let attempts = load_attempts(conn, &Scope::Group { batch_id, paper_id })?;
+    let attempts = load_attempts_with_mode(conn, &Scope::Group { batch_id, paper_id }, true)?;
     let view = exam_view_from(batch_id, paper_id, &attempts);
     let exceptions = list_failed_imports_for_group(conn, batch_id, paper_id)?;
 
@@ -65,6 +65,9 @@ pub fn write_export(conn: &Connection, batch_id: &str, paper_id: &str, path: &Pa
         "题目分析".to_string(),
         "题型统计".to_string(),
         "导入异常".to_string(),
+        "改判后成绩".to_string(),
+        "写作成绩".to_string(),
+        "听力".to_string(),
     ];
 
     write_scores(&mut workbook, &bold, &view)?;
@@ -73,6 +76,14 @@ pub fn write_export(conn: &Connection, batch_id: &str, paper_id: &str, path: &Pa
     write_kinds(&mut workbook, &bold, &view)?;
     write_exceptions(&mut workbook, &bold, &wrap, &exceptions)?;
 
+    let effective=load_attempts(conn,&Scope::Group{batch_id,paper_id})?;
+    let corrected:Vec<serde_json::Value>=effective.iter().map(|a|serde_json::json!({"姓名":a.candidate_name,"卡号":a.candidate_id,"考试记录":a.attempt_id,"改判后得分":a.raw_score(),"满分":a.raw_total(),"计入统计":a.is_valid(),"说明":a.invalid_reason})).collect();
+    write_json_sheet(&mut workbook,"改判后成绩",&corrected,view.n)?;
+    let writings=super::snapshot_v2::rows(conn,"SELECT a.candidate_name AS 姓名,a.candidate_id AS 卡号,w.task_type AS 写作任务,g.ta_tr AS 任务回应,g.cc AS 衔接,g.lr AS 词汇,g.gra AS 语法,g.overall_comment AS 总评,g.status AS 批改状态,g.version AS 版本,g.grader AS 批改人 FROM writings w JOIN attempts a USING(attempt_id) LEFT JOIN writing_grades g ON g.attempt_id=w.attempt_id AND g.writing_submission_id=w.writing_submission_id AND g.status='published' WHERE a.batch_id=? AND a.paper_id=?",&[&batch_id,&paper_id])?;
+    let writing_n=writings.len();write_json_sheet(&mut workbook,"写作成绩",&writings,writing_n)?;
+    let listening=super::snapshot_v2::rows(conn,"SELECT a.candidate_name AS 姓名,a.candidate_id AS 卡号,r.slot_id AS 计分单元,r.user_answer_json AS 学生答案,r.correct_answer_json AS 标准答案,r.score AS 原始得分,COALESCE(o.new_score,r.score) AS 改判后得分,r.max_score AS 满分,a.counted AS 计入统计 FROM listening_answers r JOIN attempts a USING(attempt_id) LEFT JOIN score_overrides o ON o.attempt_id=r.attempt_id AND o.modality='listening' AND o.passage_index=-1 AND o.response_slot_id=r.slot_id AND o.revoked_at IS NULL WHERE a.batch_id=? AND a.paper_id=? ORDER BY a.attempt_id,r.slot_id",&[&batch_id,&paper_id])?;
+    let listening_n:usize=conn.query_row("SELECT COUNT(*) FROM listening_attempts l JOIN attempts a USING(attempt_id) WHERE a.batch_id=?1 AND a.paper_id=?2",rusqlite::params![batch_id,paper_id],|r|r.get(0)).map_err(|e|e.to_string())?;
+    write_json_sheet(&mut workbook,"听力",&listening,listening_n)?;
     workbook.save(path).map_err(xerr)?;
     Ok(ExportSummary {
         path: path.to_string_lossy().to_string(),
@@ -269,4 +280,34 @@ fn write_exceptions(
 
 fn paper_text(paper_id: &str) -> String {
     if paper_id.is_empty() { "旧套题".to_string() } else { paper_id.to_string() }
+}
+
+fn write_json_sheet(workbook:&mut Workbook,name:&str,rows:&[serde_json::Value],n:usize)->CommandResult<()> {
+    let sheet=workbook.add_worksheet();sheet.set_name(name).map_err(xerr)?;
+    sheet.write_string(0,0,format!("{name}（N={n}）")).map_err(xerr)?;
+    sheet.write_string(1,0,DISCLAIMER).map_err(xerr)?;
+    let columns:Vec<String>=rows.first().and_then(serde_json::Value::as_object).map(|o|o.keys().cloned().collect()).unwrap_or_default();
+    for (i,c) in columns.iter().enumerate(){sheet.write_string(3,i as u16,c).map_err(xerr)?;}
+    for (i,row) in rows.iter().enumerate(){for (j,col) in columns.iter().enumerate(){
+        let value=&row[col];
+        if let Some(n)=value.as_f64(){sheet.write_number(i as u32+4,j as u16,n).map_err(xerr)?;}
+        else {let text=value.as_str().map(str::to_string).unwrap_or_else(||if value.is_null(){String::new()}else{value.to_string()});sheet.write_string(i as u32+4,j as u16,text).map_err(xerr)?;}
+    }}Ok(())
+}
+
+/// Record the export attempt before touching the destination. Even an I/O failure
+/// or a later audit failure leaves a durable record of who initiated the export.
+pub fn write_export_audited(conn:&Connection,batch_id:&str,paper_id:&str,path:&Path,operator:&str)->CommandResult<ExportSummary>{
+    use serde_json::{json,Value};
+    super::review::audit(conn,operator,"export_xlsx_requested","paper",paper_id,&Value::Null,&json!({"batchId":batch_id,"path":path}),"导出机构模拟测试成绩")?;
+    match write_export(conn,batch_id,paper_id,path){
+        Ok(summary)=>{
+            super::review::audit(conn,operator,"export_xlsx","paper",paper_id,&Value::Null,&json!({"batchId":batch_id,"path":path,"n":summary.n}),"导出完成")?;
+            Ok(summary)
+        },
+        Err(error)=>{
+            let _=super::review::audit(conn,operator,"export_xlsx_failed","paper",paper_id,&Value::Null,&json!({"path":path,"error":error}),"导出失败");
+            Err(error)
+        }
+    }
 }

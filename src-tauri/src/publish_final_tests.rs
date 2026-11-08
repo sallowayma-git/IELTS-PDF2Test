@@ -1289,6 +1289,15 @@ fn paper_publish_points_current_paper_at_the_committed_manifest_entries() {
     assert!(history.is_file(), "历史留档缺失：{}", history.display());
     let history_value: Value = serde_json::from_slice(&fs::read(&history).unwrap()).unwrap();
     assert_eq!(history_value, current);
+    // The actual publish command must persist the exact locked runtime, not just a schema row.
+    let analytics=crate::analytics::open_analytics(&root).unwrap();
+    let archive=crate::analytics::archive::get(&analytics,current["paperId"].as_str().unwrap()).unwrap();
+    assert_eq!(archive["items"].as_array().unwrap().len(),3);
+    for part in current["reading"].as_array().unwrap(){
+        let content=crate::analytics::archive::content(&analytics,part["examId"].as_str().unwrap(),part["runtimeSha256"].as_str().unwrap()).unwrap();
+        assert_eq!(content["examId"],part["examId"]);
+    }
+    drop(analytics);
 
     // 临时文件不得残留在学生端目录里。
     let leftovers: Vec<_> = fs::read_dir(reading_root(&root))
@@ -1437,6 +1446,11 @@ fn second_paper_publish_replaces_the_manifest_instead_of_accumulating() {
     );
     let current: Value = serde_json::from_slice(&fs::read(current_paper_path(&root)).unwrap()).unwrap();
     assert_eq!(current["paperId"], second["paper"]["paperId"]);
+    let analytics=crate::analytics::open_analytics(&root).unwrap();
+    assert_eq!(analytics.query_row("SELECT COUNT(*) FROM papers",[],|r|r.get::<_,i64>(0)).unwrap(),2);
+    assert_eq!(analytics.query_row("SELECT COUNT(*) FROM papers WHERE status='current'",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+    assert_eq!(analytics.query_row("SELECT COUNT(*) FROM papers WHERE status='superseded' AND superseded_at IS NOT NULL",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+    drop(analytics);
     // 撤下的旧批次在 24 小时内保留（正在考试的学生仍锁定旧脚本）。
     assert!(reading_root(&root).join("releases").join(&first_batch).is_dir());
     assert!(reading_root(&root)

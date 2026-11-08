@@ -18,8 +18,18 @@ pub mod import;
 pub mod queries;
 pub mod status;
 pub mod schema_v2;
+pub mod snapshot_v2;
+pub mod archive;
+pub mod review;
+pub mod detail;
+pub mod commands;
+pub mod listening;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod v2_tests;
+#[cfg(test)]
+mod snapshot_tests;
 
 pub const ANALYTICS_DB_FILE: &str = "analytics.sqlite";
 /// 单题样本量低于这个数时，只显示人数，不下「难题」结论。
@@ -222,8 +232,3 @@ pub fn passage_label(category: Option<&str>, passage_index: i64) -> String {
         _ => format!("P{}", passage_index + 1),
     }
 }
-
-pub mod snapshot_v2;
-pub mod archive;
-#[cfg(test)]
-mod snapshot_tests;

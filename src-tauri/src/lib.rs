@@ -1079,12 +1079,14 @@ async fn analytics_overview(
 async fn analytics_exam(
     batch_id: String,
     paper_id: String,
+    original: Option<bool>,
     app: AppHandle,
 ) -> CommandResult<analytics::queries::ExamView> {
     let root = app_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         let conn = analytics::open_analytics(&root)?;
-        analytics::queries::build_exam_view(&conn, &batch_id, &paper_id)
+        { let attempts=analytics::queries::load_attempts_with_mode(&conn,&analytics::queries::Scope::Group{batch_id:&batch_id,paper_id:&paper_id},original.unwrap_or(false))?;
+        Ok(analytics::queries::exam_view_from(&batch_id,&paper_id,&attempts)) }
     })
     .await
     .map_err(|error| format!("analytics_join:{error}"))?
@@ -1126,9 +1128,11 @@ async fn analytics_question(
 async fn analytics_export_xlsx(
     batch_id: String,
     paper_id: String,
+    operator: Option<String>,
     app: AppHandle,
 ) -> CommandResult<Option<analytics::export::ExportSummary>> {
     let root = app_root(&app)?;
+    let operator=analytics::review::operator_name(&analytics::open_analytics(&root)?,operator.as_deref())?;
     let picked: Option<PathBuf> = match env::var("PDF2TEST_AUTOMATION_EXPORT_XLSX") {
         Ok(path) if !path.trim().is_empty() => Some(PathBuf::from(path.trim())),
         _ => {
@@ -1157,7 +1161,8 @@ async fn analytics_export_xlsx(
     };
     tauri::async_runtime::spawn_blocking(move || {
         let conn = analytics::open_analytics(&root)?;
-        analytics::export::write_export(&conn, &batch_id, &paper_id, &path).map(Some)
+        let summary=analytics::export::write_export_audited(&conn, &batch_id, &paper_id, &path, &operator)?;
+        Ok(Some(summary))
     })
     .await
     .map_err(|error| format!("analytics_join:{error}"))?
@@ -1348,8 +1353,13 @@ async fn rename_library_item(
 
 /// 读取 NAS 上的「当前试卷」指针（不存在返回 null）。
 #[tauri::command]
-async fn get_current_paper(destination: String) -> CommandResult<Value> {
-    tauri::async_runtime::spawn_blocking(move || nas_package_v2::get_current_paper_core(&destination))
+async fn get_current_paper(destination: String, app: AppHandle) -> CommandResult<Value> {
+    let root=app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut result=nas_package_v2::get_current_paper_core(&destination)?;
+        if let Err(error)=analytics::archive::recover(&root,&destination){result["archiveWarning"]=json!(error);}
+        Ok(result)
+    })
         .await
         .map_err(|error| error.to_string())?
 }
@@ -2072,6 +2082,26 @@ pub fn run() {
             get_workspace_item,
             apply_editor_commands,
             list_library_items,
+            analytics::commands::merge_candidate_identity,
+            analytics::commands::set_analytics_operator,
+            analytics::commands::analytics_listening,
+            analytics::commands::list_papers,
+            analytics::commands::get_paper,
+            analytics::commands::get_attempt_detail,
+            analytics::commands::get_question_context,
+            analytics::commands::list_overrides,
+            analytics::commands::list_writing_queue,
+            analytics::commands::list_audit_log,
+            analytics::commands::preview_rejudge,
+            analytics::commands::create_score_override,
+            analytics::commands::revoke_score_override,
+            analytics::commands::set_attempt_counted,
+            analytics::commands::save_writing_grade,
+            analytics::commands::apply_rejudge,
+            analytics::commands::review_writing_grade,
+            analytics::commands::publish_writing_grade,
+            analytics::commands::save_annotation,
+            analytics::commands::delete_annotation,
             analytics_import_snapshots,
             analytics_overview,
             analytics_exam,

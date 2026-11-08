@@ -37,10 +37,13 @@ import {
   readPointer, seedReadingJob, setRowPart, waitForRows,
 } from "./lib/paper-publish-steps.mjs";
 
+import { verifyBackendDataV2 } from "./lib/backend-data-v2-verification.mjs";
+
 const scriptPath = fileURLToPath(import.meta.url);
 const exePath = path.join(repoRoot, "src-tauri", "target", "debug", "ielts-author-studio.exe");
 const extraArgs = "--no-sandbox --disable-gpu";
 const SYNTHETIC_AUTHORING = path.join(repoRoot, "fixtures", "golden", "synthetic", "ielts", "early-approaches-authoring-v2.json");
+const LISTENING_FIXTURE = process.env.BACKEND_V2_LISTENING_FIXTURE_OUT || path.join(repoRoot,"artifacts","backend-v2-listening-fixture");
 const STUDENT_REPO = process.env.STUDENT_REPO || "F:\\workspace\\IELTS-wt-audit";
 const STUDENT_FLOW = path.join(STUDENT_REPO, "developer", "tests", "e2e", "student_exam_altu_electron_flow.py");
 const TERMINAL_ID = "TERM-ALTU-01";
@@ -93,7 +96,13 @@ async function authorPublish({ runDir, nasRoot, state, seed, label }) {
   if (seed) {
     state.seeded = [1, 2, 3].map((index) => seedReadingJob(dataDir, index, template, state.stamp));
   }
-  const ids = state.seeded.map((job) => job.jobId);
+  if (seed) {
+    const template=JSON.parse(fs.readFileSync(path.join(LISTENING_FIXTURE,"authoring.json"),"utf8"));
+    state.listening=seedReadingJob(dataDir,4,template,state.stamp);
+    const jobDir=path.join(dataDir,"jobs",state.listening.jobId);
+    fs.cpSync(path.join(LISTENING_FIXTURE,"audio"),path.join(jobDir,"audio"),{recursive:true});
+  }
+  const ids = [...state.seeded.map((job) => job.jobId),state.listening.jobId];
   const out = { label, ok: false, assertions: [] };
   const session = await launchTauriAppCdp({ exePath, runDir, extraBrowserArgs: extraArgs, quiet: true });
   try {
@@ -116,10 +125,10 @@ async function authorPublish({ runDir, nasRoot, state, seed, label }) {
     if (seed) {
       for (const [index, id] of ids.entries()) {
         await session.waitFor(`!!document.querySelector('[data-item-id="${id}"] [data-testid="library-row-part-select"]')`, { timeoutMs: 20000, label: `part-select-${index}` });
-        await setRowPart(session, id, PARTS[index]);
+        await setRowPart(session, id, index===3 ? "Part 1" : PARTS[index]);
         const deadline = Date.now() + 15000;
         while (Date.now() < deadline) {
-          if ((await libraryRows(session)).find((r) => r.id === id)?.partLabel === PARTS[index]) break;
+          if ((await libraryRows(session)).find((r) => r.id === id)?.partLabel === (index===3 ? "Part 1" : PARTS[index])) break;
           await sleep(500);
         }
       }
@@ -144,6 +153,7 @@ async function authorPublish({ runDir, nasRoot, state, seed, label }) {
       paperId: disk.pointer.paperId,
       batchId: disk.pointer.batchId,
       publishedAt: disk.pointer.publishedAt,
+      listening:disk.pointer.listening,
       reading: disk.pointer.reading.map((item) => ({
         part: item.part, examId: item.examId, title: item.title, script: item.script,
         scriptSha256: item.scriptSha256, runtimeSha256: item.runtimeSha256, resourcesBase: item.entry?.resourcesBase,
@@ -162,7 +172,7 @@ async function authorPublish({ runDir, nasRoot, state, seed, label }) {
 /** 在途钩子：同一套卷再发布一次（不重新预置；应用数据目录沿用，题库行与 Part 已在库中）。 */
 async function republishPhase({ runDir, nasRoot, resultFile }) {
   const state = readState(runDir);
-  const ids = state.seeded.map((job) => job.jobId);
+  const ids = [...state.seeded.map((job) => job.jobId),state.listening.jobId];
   const before = readPointer(nasRoot);
   const session = await launchTauriAppCdp({ exePath, runDir, extraBrowserArgs: extraArgs, quiet: true });
   const out = { label: "republish-in-flight", ok: false, before: { paperId: before.paperId, batchId: before.batchId }, assertions: [] };
@@ -216,7 +226,7 @@ function assertStudentArtifacts(report, state, submissionsRoot, paperA) {
       `meta.paperId=${m.paperId} 发布时=${paperA.paperId}`);
     recordAssertion(report, `S-4 ${base}-installId`, typeof m.installId === "string" && m.installId.length > 0,
       `installId=${m.installId}`);
-    recordAssertion(report, `S-5 ${base}-schema`, m.schemaVersion === "SubmissionSnapshotV1" && m.dbSchemaVersion === 1 && m.scorerVersion === "reading-scorer/1",
+    recordAssertion(report, `S-5 ${base}-schema`, m.schemaVersion === "SubmissionSnapshotV2" && m.dbSchemaVersion === 2 && m.scorerVersion === "reading-scorer/1",
       `schema=${m.schemaVersion} db=${m.dbSchemaVersion} scorer=${m.scorerVersion}`);
     const statusPath = path.join(statusDir, `${m.attemptId}.json`);
     const status = fs.existsSync(statusPath) ? JSON.parse(fs.readFileSync(statusPath, "utf8")) : null;
@@ -229,7 +239,7 @@ function assertStudentArtifacts(report, state, submissionsRoot, paperA) {
 
 /** 从快照 sqlite 读取锁定的 examId 与判分（只读）。 */
 function readLockedScores(sqlitePath, attemptId) {
-  const db = new DatabaseSync(sqlitePath);
+  const db = new DatabaseSync(sqlitePath,{readOnly:true});
   try {
     const suite = db.prepare("SELECT suite_attempt_id AS id, aggregate_json AS agg FROM reading_suite_attempts WHERE attempt_id = ?").get(attemptId);
     if (!suite) return null;
@@ -258,6 +268,8 @@ function fixtureKeyLabels() {
 
 async function runStudent({ runDir, nasRoot, submissionsRoot, paperA, key, hookCommand }) {
   const plan = {
+    backendDataV2:true,
+    listening:{answers:Object.fromEntries(Array.from({length:40},(_,i)=>[`q${i+1}`,"answer"]))},
     candidates: CANDIDATES.map((candidate) => ({
       candidateId: candidate.candidateId,
       candidateName: candidate.candidateName,
@@ -286,6 +298,8 @@ async function runStudent({ runDir, nasRoot, submissionsRoot, paperA, key, hookC
     STUDENT_E2E_PAPERS_ROOT: nasRoot,
     STUDENT_E2E_SUBMISSIONS_ROOT: submissionsRoot,
     STUDENT_E2E_PLAN_FILE: planFile,
+    VITE_IELTS_LISTENING_V1:"1",
+    IELTS_LISTENING_V1:"1",
   };
   const started = Date.now();
   const result = await runCapture("python", ["-X", "utf8", STUDENT_FLOW], { cwd: STUDENT_REPO, env });
@@ -308,6 +322,7 @@ async function dataPhase({ runDir, submissionsRoot, paperA, report, expectations
   });
   const shot = async (name) => { await session.screenshot(name).catch(() => null); };
   try {
+    await session.invoke("set_analytics_operator",{input:{operator:"跨仓库验收老师"}});
     await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, { timeoutMs: 60000, label: "library" });
     await session.evaluate(`(() => {
       const raw = window.localStorage.getItem(${JSON.stringify(APP_SETTINGS_KEY)});
@@ -382,6 +397,8 @@ async function dataPhase({ runDir, submissionsRoot, paperA, report, expectations
     report.consoleErrors = session.cdp.events
       .filter((e) => e.method === "Runtime.consoleAPICalled" && ["error", "assert"].includes(e.params?.type)).length;
     report.dataExportPath = exportPath;
+    const attempts=Object.values(assertStudentArtifacts(report,readState(runDir),submissionsRoot,paperA));
+    await verifyBackendDataV2(session,{paper:paperA,attempts,exportPath,assert:(id,ok,detail)=>recordAssertion(report,`V2-${id}`,ok,detail)});
   } catch (error) {
     recordAssertion(report, "D-x data-phase-exception", false, String(error?.message ?? error));
     await shot("chain-data-fail");
@@ -400,6 +417,7 @@ async function main() {
     return;
   }
 
+  if (!fs.existsSync(path.join(LISTENING_FIXTURE,"authoring.json"))) throw new CannotRunError("缺少听力权威稿夹具：设置 BACKEND_V2_LISTENING_FIXTURE_OUT 并运行 cargo test dump_backend_v2_listening_authoring -- --ignored --nocapture");
   if (!fs.existsSync(SYNTHETIC_AUTHORING)) throw new CannotRunError(`合成权威稿缺失：${SYNTHETIC_AUTHORING}`);
   if (!fs.existsSync(exePath)) throw new CannotRunError(`exe 不存在（先运行 node scripts/e2e/build-app.mjs）：${exePath}`);
   if (!fs.existsSync(STUDENT_FLOW)) throw new CannotRunError(`学生端仓库缺失（STUDENT_REPO=${STUDENT_REPO}）：${STUDENT_FLOW}`);
@@ -440,7 +458,7 @@ async function main() {
   for (const [id, ok, detail] of pub.assertions) recordAssertion(report, `P-${id}`, ok, detail);
   if (!pub.ok) { recordAssertion(report, "P-x publish-aborted", false, pub.error ?? "publish failed"); return finish("failed"); }
   writeState(runDir, state);
-  const paperA = { paperId: pub.pointer.paperId, batchId: pub.pointer.batchId, reading: pub.pointer.reading };
+  const paperA = { paperId: pub.pointer.paperId, batchId: pub.pointer.batchId, reading: pub.pointer.reading, listening:pub.pointer.listening };
   state.paperA = paperA;
   writeState(runDir, state);
 
@@ -449,6 +467,7 @@ async function main() {
   const key = fixtureKeyLabels();
   const student = await runStudent({ runDir, nasRoot, submissionsRoot, paperA, key, hookCommand });
   report.workarounds = student.workarounds;
+  recordAssertion(report,"S-v2 no-workarounds",student.workarounds.length===0,JSON.stringify(student.workarounds));
   report.steps.student = { code: student.code, seconds: student.seconds, status: student.parsed?.status ?? null, detail: student.parsed?.detail ?? null };
   recordAssertion(report, "S-0 student-flow-exit", student.code === 0 && student.parsed?.status === "pass",
     `退出码=${student.code} status=${student.parsed?.status ?? "n/a"} 耗时=${student.seconds}s${student.parsed?.status === "pass" ? "" : ` detail=${student.parsed?.detail ?? "见 student-run.stdout.log"}`}`);
