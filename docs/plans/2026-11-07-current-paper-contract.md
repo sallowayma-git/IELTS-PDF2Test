@@ -61,6 +61,13 @@
 4. **提交顺序与失败语义**：release 目录就位 → manifest 原子替换 → 指针原子替换（考试路径的提交点）。指针写失败或在其前崩溃：
    旧指针仍引用旧批次（旧批次文件未被清理，清理只在指针成功后执行），学生端照常按旧卷考试；作者端顶层结果必须是"未完成"状态，
    文案"学生端仍是旧试卷"。清理永不删除当前指针（无论新旧）引用的批次。
+6. **宽限期从"被撤下"起算**：批次不再被当前指针引用的那一刻（指针切换时）记录 `supersededAt`
+   （`.publish-control/superseded/<batchId>.json`）；清理按 `now - supersededAt >= 24h` 判定。无记录的历史批次在首次被发现
+   "不被当前指针引用"时补记 `supersededAt = now`，不立即删除。
+7. **带 `entry` 的部件必须完整**：学生端对带 `entry` 的部件强制要求 `schemaVersion`、`checksums.assetManifestSha256`、
+   位于 `releases/<batchId>/` 下的 `resourcesBase` 与 `assetManifest`；缺任一项即拒绝，不得回退到根级 `resources/`。
+   回退仅适用于 `entry` 缺失的 V1 指针。
+8. **运行时版本**：manifest/entry 的 `minimumRuntimeVersion` 与学生端"阅读运行时版本"常量比较（当前 0.2.0），不与安装包版本比较。
 5. **单题发布取消**：生产命令 `publish_items` 必须带 `paper`；不带 → `PUBLISH_REQUIRES_PAPER`。编辑器不再有单题发布。
 
 - 学生端锁定套题时把每篇的 `examId`、`script`、`scriptSha256`、`runtimeSha256` 和 `paperId` 记进 lockedSequence；
