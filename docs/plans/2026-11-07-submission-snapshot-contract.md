@@ -46,6 +46,16 @@
   reading_passages / reading_answers / writing_submissions / submission_receipts / exam_kv）。
 - `scorerVersion`：学生端判分逻辑版本常量，同时写进 `exam_kv` 的 `scorer_version:<attemptId>`。
 
+### 1.1 套题归属（V1.1，审计后补）
+
+- 学生端锁卷时在终端库 `exam_kv` 写 `paper_id:<attemptId>` = paperId（JSON 字符串；旧套题无 paperId 则不写）。
+- 交卷时 `reading_suite_attempts.aggregate_json` 不再覆盖成 `{"passageCount":N}`，而是
+  `{"schemaVersion":"SuiteAggregateV1","passageCount":N,"paperId":"... 或 null","lockedSequence":[锁定序列原样]}`。
+- 作者端取 paperId 的优先级：`exam_kv paper_id:<attemptId>` → aggregate 对象的 `paperId` → 锁定序列数组元素的 `paperId`
+  → 仅对 `meta.attemptId` 本身使用 `meta.paperId`。已存的非空 paperId 不得被空值覆盖；来源之间不一致记入导入异常。
+- 同一 attemptId 出现在不同 terminalId 或不同 installId 的快照中 → 记入导入异常，不覆盖已导入记录。
+- `dbSchemaVersion` 大于作者端支持的版本 → 记入导入异常（"快照版本过新，请升级作者端"），不导入。
+
 ## 2. 考试状态信标（用于"已签到 / 进行中"实时人数）
 
 签到、锁卷开始、交卷、作废时，学生端覆盖写一个小 JSON（临时文件 + rename，失败只记日志不影响考试）：
