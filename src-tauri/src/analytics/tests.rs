@@ -721,7 +721,7 @@ fn exam_without_snapshots_is_empty_and_schema_is_stable() {
 }
 
 #[test]
-fn export_writes_five_sheets_to_chosen_path() {
+fn export_writes_eight_sheets_to_chosen_path() {
     let env = fresh_env("export");
     seed_standard(&env);
     let mut conn = open(&env);
@@ -729,7 +729,10 @@ fn export_writes_five_sheets_to_chosen_path() {
     let out = env.app.join("exam-export.xlsx");
     let summary = write_export(&conn, BATCH, PAPER, &out).unwrap();
     assert_eq!(summary.n, 4);
-    assert_eq!(summary.sheets.len(), 5);
+    assert_eq!(summary.sheets.len(), 8);
+    assert!(summary.sheets.iter().any(|s|s=="改判后成绩"));
+    assert!(summary.sheets.iter().any(|s|s=="写作成绩"));
+    assert!(summary.sheets.iter().any(|s|s=="听力"));
     let bytes = fs::read(&out).unwrap();
     assert!(bytes.len() > 2000);
     assert_eq!(&bytes[0..2], b"PK", "xlsx is a zip container");
@@ -867,7 +870,7 @@ fn newer_db_schema_version_is_not_imported() {
         "A3",
         &bytes,
         "2026-11-07T11:40:05+08:00",
-        json!({ "dbSchemaVersion": 2 }),
+        json!({ "dbSchemaVersion": 3 }),
     );
     let report = run_import(&env, &mut conn);
     assert_eq!(report.failed, 1, "{report:?}");

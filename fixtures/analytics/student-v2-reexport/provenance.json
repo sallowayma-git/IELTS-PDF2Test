@@ -1,0 +1,25 @@
+{
+  "studentHead": "837b0786bb4b6844f202f00268d8c60a4de47d48",
+  "compiledCodeSha256": {
+    "MachineSubmissionStore": "12d17a592ffb938364f744c67bc5b214589dbfb78901c39f9cace672839050c8",
+    "ExamAttemptService": "068f36f7ce1e6539898138c560cc2b8f1aaa5425171279a473134713634f7cf3",
+    "ExamSuiteService": "4ff03a46fc11c80c67de7e1a6ed160dc5bbb1a235dbd91faec518ee2e1984f67",
+    "ExamReadingService": "89f5056739d948982ded75f618a2eec4fc86e13fbb087abcf4eb4664f55348ed",
+    "ExamWritingService": "83a4b03c337539aadb398fc6bcfa18fc31aa4fc7f33b3d03b06d7564f91e9617",
+    "ExamListeningService": "6ec4825f019a27d86a8618e72685baf2aae7b9b6ae3a8c98e8e7ab7565cfd67d",
+    "ExamFinalSubmitService": "39e3606077d8a1ece8ff95e312b0875ddabaf4a412d25f1b0a5a4bfc22a16725",
+    "SubmissionSnapshotService": "4677c9958f03c6e17381e47610b460675015797e1bda1ed78de55c6f0daf55bc"
+  },
+  "dbSchemaVersion": 2,
+  "attemptId": "attempt_442fae4d-f613-4998-a36f-21b231e132e3",
+  "suiteAttemptId": "suite-e0e06818-dc35-429b-acd1-44e45ae3a195",
+  "command": [
+    "C:\\Program Files\\nodejs\\node.exe",
+    "F:\\workspace\\IELTS-NASfor-WenDao-backend-data-v2\\developer\\tests\\tools\\generate-submission-fixtures.cjs",
+    "--output",
+    "../PDF2Test-backend-data-v2/fixtures/analytics/student-v2",
+    "--second-output",
+    "../PDF2Test-backend-data-v2/fixtures/analytics/student-v2-reexport"
+  ],
+  "method": "Real student checkin/suite/save/writing/listening/final-submit services and snapshot exporter; static providers; not product E2E"
+}

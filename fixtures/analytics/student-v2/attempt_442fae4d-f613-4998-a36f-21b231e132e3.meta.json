@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "SubmissionSnapshotV2",
+  "terminalId": "fixture-terminal",
+  "installId": "bca26c2b-c0a9-456d-8cbc-b0045b6f4a4a",
+  "attemptId": "attempt_442fae4d-f613-4998-a36f-21b231e132e3",
+  "batchId": "fixture-batch",
+  "paperId": "static-test-paper",
+  "candidateId": "FIXTURE-001",
+  "candidateName": "真实服务夹具",
+  "submittedAt": "2026-11-08T21:06:18.414Z",
+  "exportedAt": "2026-11-08T21:06:18.427Z",
+  "appVersion": "fixture",
+  "dbSchemaVersion": 2,
+  "scorerVersion": "reading-scorer/1",
+  "sizeBytes": 118784,
+  "sha256": "836dd61dc0eeb44ef5dedf18c0a2424249ff4b70da5e075702ca84273c968153"
+}

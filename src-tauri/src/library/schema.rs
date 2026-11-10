@@ -12,7 +12,7 @@ use rusqlite::Connection;
 use crate::CommandResult;
 
 /// 当前 V2 schema 版本。每次追加 DDL 时 +1，并在 [`migrations`] 增加对应步骤。
-pub(crate) const LIBRARY_V2_SCHEMA_VERSION: i64 = 10;
+pub(crate) const LIBRARY_V2_SCHEMA_VERSION: i64 = 11;
 
 pub(crate) fn ensure_v2_schema(conn: &Connection) -> CommandResult<()> {
     let transaction =
@@ -21,6 +21,7 @@ pub(crate) fn ensure_v2_schema(conn: &Connection) -> CommandResult<()> {
     let current: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|error| format!("library_v2_user_version:{error}"))?;
+    if current>LIBRARY_V2_SCHEMA_VERSION{return Err("LIBRARY_SCHEMA_TOO_NEW: 题库版本过新，请升级作者端".into());}
     let mut applied = current;
     for (version, statement) in migrations() {
         if applied < version {
@@ -127,6 +128,7 @@ fn migrations() -> Vec<(i64, &'static str)> {
             "ALTER TABLE library_items_v2 ADD COLUMN part_label TEXT;
              ALTER TABLE library_items_v2 ADD COLUMN part_source TEXT;",
         ),
+        (11, include_str!("paper_archive.sql")),
     ]
 }
 

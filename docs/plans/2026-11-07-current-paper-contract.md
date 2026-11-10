@@ -72,3 +72,9 @@
 
 - 学生端锁定套题时把每篇的 `examId`、`script`、`scriptSha256`、`runtimeSha256` 和 `paperId` 记进 lockedSequence；
   交卷判分按锁定的 `script` 读取并校验 `scriptSha256`（脚本在 `releases/<batchId>/` 下不可变），不按当时的 manifest。
+
+## V1.2 听力锁定增量（2026-11-08）
+
+同一次锁卷将 listening 的完整自包含 entry 与 paperId/batchId 持久化到 `exam_kv listening_pin:<attemptId>`。考试听力请求仅允许已锁定的 examId，内容、音频与判分按该 pin 的不可变脚本与 hash；恢复考试不重新选择当前 manifest。旧卷 listening=[] 时不强制听力。考试忽略环境变量的听力 examId，运行时版本与阅读共用常量，不比较安装包版本。练习目录路径不受影响。
+
+作者本地归档保存指针和 `(exam_id,runtime_sha256)` 编译内容；NAS 历史在指针前写入，历史存在本身不能证明发布成功。只有指针成功后将本地档案设 current 并撤下旧卷；孤立历史/缺源显式报告，不能用最新题库稿替代历史版本。

@@ -775,6 +775,10 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
                             "confirmedAt": publish_override.get("confirmedAt").cloned()}),
                         );
                     }
+                    let source_path = receipt.get("runtimePath").and_then(Value::as_str).ok_or("PUBLISH_RUNTIME_MISSING")?;
+                    let archive_source:Value=crate::util::read_json(Path::new(source_path))?;
+                    crate::library::paper_archive::store_content(&conn,&library_root,&exam_id,
+                        staged.entry["checksums"]["runtimeSha256"].as_str().ok_or("PUBLISH_RUNTIME_HASH_MISSING")?,&archive_source)?;
                     manifest.insert(exam_id.clone(), staged.entry);
                     outcomes.push(json!({"itemId": item_id, "ok": true, "examId": exam_id,
                         "editVersion": version, "manifestPath": paths.manifest_path, "assetCount": asset_count,
@@ -886,6 +890,12 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
             .and_then(|value| value.get("ok"))
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let archive_warning = if paper_written {
+            (|| -> CommandResult<()> {
+                let pointer:Value=crate::util::read_json(&reading_root.join(CURRENT_PAPER_FILE_NAME))?;
+                crate::library::paper_archive::record_pointer(&conn,&library_root,&pointer,&outcomes)
+            })().err()
+        } else { None };
         // 清理旧批次：只在指针成功之后执行；它永不删除当前磁盘指针引用的批次。
         let cleanup = paper_written.then(|| {
             cleanup_superseded_releases(&library_root, &reading_root, &manifest, &batch_id, Utc::now())
@@ -894,6 +904,7 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
         let mut value =
             json!({"destination": input.destination, "succeeded": succeeded, "failed": failed_items});
         let pointer_failed = input.paper.is_some() && !paper_written;
+        if let Some(error)=archive_warning {value["archiveWarning"]=json!({"code":"PAPER_ARCHIVE_PENDING","message":"试卷已发布，本地档案待修复","detail":error});}
         if let Some(paper_result) = paper_result {
             value["paper"] = paper_result;
         }

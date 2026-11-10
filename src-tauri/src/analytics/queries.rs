@@ -30,6 +30,7 @@ pub struct PassageRec {
     pub duration_sec: Option<i64>,
     pub gradable: bool,
     pub correct: f64,
+    pub original_correct: f64,
     pub total: f64,
 }
 
@@ -44,6 +45,8 @@ pub struct AnswerRec {
     pub normalized_user_answer_json: Option<String>,
     pub is_correct: Option<i64>,
     pub weight: f64,
+    pub score: Option<f64>,
+    pub original_score: Option<f64>,
     pub elapsed_ms: i64,
     pub change_count: i64,
     pub visit_count: i64,
@@ -79,8 +82,9 @@ impl AttemptRec {
         self.invalid_reason.is_none()
     }
     pub fn raw_score(&self) -> f64 {
-        self.passages.iter().map(|p| p.correct).sum()
+        self.passages.iter().map(|p| p.original_correct).sum()
     }
+    pub fn effective_score(&self) -> f64 { self.passages.iter().map(|p|p.correct).sum() }
     pub fn raw_total(&self) -> f64 {
         self.passages.iter().map(|p| p.total).sum()
     }
@@ -97,6 +101,9 @@ pub enum Scope<'a> {
 
 /// 读取已交卷的 attempt 及其子记录，并算出有效性。
 pub fn load_attempts(conn: &Connection, scope: &Scope) -> CommandResult<Vec<AttemptRec>> {
+    load_attempts_mode(conn,scope,false)
+}
+pub fn load_attempts_mode(conn: &Connection, scope: &Scope, original:bool) -> CommandResult<Vec<AttemptRec>> {
     let mut attempts: Vec<AttemptRec> = Vec::new();
     {
         let mut statement = conn
@@ -174,6 +181,7 @@ pub fn load_attempts(conn: &Connection, scope: &Scope) -> CommandResult<Vec<Atte
                     duration_sec: row.get(6)?,
                     gradable: row.get::<_, i64>(7)? != 0,
                     correct: row.get(8)?,
+                    original_correct: row.get(8)?,
                     total: row.get(9)?,
                 },
             ))
@@ -188,14 +196,18 @@ pub fn load_attempts(conn: &Connection, scope: &Scope) -> CommandResult<Vec<Atte
 
     let mut statement = conn
         .prepare(
-            "SELECT attempt_id, passage_index, question_id, display_label, question_kind, user_answer_json,
-                    correct_answer_json, normalized_user_answer_json, is_correct, weight, elapsed_ms,
-                    change_count, visit_count
-             FROM answers ORDER BY attempt_id, passage_index, question_id",
+            "SELECT a.attempt_id,a.passage_index,a.question_id,a.display_label,a.question_kind,a.user_answer_json,
+                    a.correct_answer_json,a.normalized_user_answer_json,COALESCE(o.new_is_correct,a.is_correct),COALESCE(a.max_score,a.weight),a.elapsed_ms,
+                    a.change_count,a.visit_count,COALESCE(o.new_score,a.score,CASE a.is_correct WHEN 1 THEN a.weight WHEN 0 THEN 0 END),COALESCE(a.score,CASE a.is_correct WHEN 1 THEN a.weight WHEN 0 THEN 0 END)
+             FROM answers a LEFT JOIN score_overrides o ON ?1=0 AND o.attempt_id=a.attempt_id AND o.modality='reading' AND o.passage_index=a.passage_index
+               AND o.response_slot_id=COALESCE(a.response_slot_id,a.question_id) AND o.revoked_at IS NULL
+               AND o.original_answer_json IS a.user_answer_json AND o.original_is_correct IS a.is_correct
+               AND o.original_score IS COALESCE(a.score,CASE a.is_correct WHEN 1 THEN a.weight WHEN 0 THEN 0 END)
+             ORDER BY a.attempt_id,a.passage_index,a.question_id",
         )
         .map_err(|error| error.to_string())?;
     let rows = statement
-        .query_map([], |row| {
+        .query_map([original as i64], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 AnswerRec {
@@ -211,6 +223,8 @@ pub fn load_attempts(conn: &Connection, scope: &Scope) -> CommandResult<Vec<Atte
                     elapsed_ms: row.get(10)?,
                     change_count: row.get(11)?,
                     visit_count: row.get(12)?,
+                    score: row.get(13)?,
+                    original_score: row.get(14)?,
                 },
             ))
         })
@@ -246,7 +260,13 @@ pub fn load_attempts(conn: &Connection, scope: &Scope) -> CommandResult<Vec<Atte
     }
 
     for attempt in &mut attempts {
+        for p in &mut attempt.passages {
+            p.correct=p.original_correct+attempt.answers.iter().filter(|a|a.passage_index==p.passage_index)
+                .map(|a|a.score.unwrap_or_default()-a.original_score.unwrap_or_default()).sum::<f64>();
+        }
         attempt.invalid_reason = validity(attempt);
+        let counted:(bool,Option<String>)=conn.query_row("SELECT counted,exclude_reason FROM attempts WHERE attempt_id=?1",[&attempt.attempt_id],|r|Ok((r.get(0)?,r.get(1)?))).map_err(|e|e.to_string())?;
+        if !counted.0 {attempt.invalid_reason=Some(counted.1.unwrap_or_else(||"教师设为不计入统计".into()));}
     }
     Ok(attempts)
 }
@@ -347,6 +367,10 @@ pub fn build_overview(conn: &Connection, beacons: &BeaconScan) -> CommandResult<
         row.last_submitted_at = max_opt(row.last_submitted_at.take(), attempt.submitted_at.clone());
     }
 
+    for failed in super::records::query(conn,"SELECT batch_id,paper_id,COUNT(*) n FROM attempts WHERE status='failed' GROUP BY batch_id,paper_id",&[])?{
+        let batch=failed["batch_id"].as_str().unwrap_or("");let paper=failed["paper_id"].as_str().unwrap_or("");
+        groups.entry((batch.to_string(),paper.to_string())).or_insert_with(||empty_row(batch,paper)).imported+=failed["n"].as_u64().unwrap_or(0) as usize;
+    }
     let exceptions = list_failed_imports(conn)?;
     for exception in &exceptions {
         if let (Some(batch), paper) = (exception.batch_id.clone(), exception.paper_id.clone().unwrap_or_default()) {
@@ -517,6 +541,7 @@ pub struct StudentRow {
     pub candidate_id: String,
     pub candidate_name: String,
     pub raw_score: f64,
+    pub effective_score: f64,
     pub raw_total: f64,
     pub accuracy: Option<f64>,
     /// 与 parts 一一对应的该篇得分点数。
@@ -528,6 +553,7 @@ pub struct StudentRow {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ExamView {
+    pub listening: Option<serde_json::Value>,
     pub batch_id: String,
     pub paper_id: String,
     pub n: usize,
@@ -546,7 +572,9 @@ pub struct ExamView {
 
 pub fn build_exam_view(conn: &Connection, batch_id: &str, paper_id: &str) -> CommandResult<ExamView> {
     let attempts = load_attempts(conn, &Scope::Group { batch_id, paper_id })?;
-    Ok(exam_view_from(batch_id, paper_id, &attempts))
+    let mut view=exam_view_from(batch_id, paper_id, &attempts);
+    view.listening=Some(super::statistics::listening(conn,batch_id,paper_id,false)?);
+    Ok(view)
 }
 
 pub fn exam_view_from(batch_id: &str, paper_id: &str, attempts: &[AttemptRec]) -> ExamView {
@@ -562,7 +590,7 @@ pub fn exam_view_from(batch_id: &str, paper_id: &str, attempts: &[AttemptRec]) -
         .collect();
 
     // 原始分统计。
-    let scores: Vec<f64> = valid.iter().map(|a| a.raw_score()).collect();
+    let scores: Vec<f64> = valid.iter().map(|a| a.effective_score()).collect();
     let totals: Vec<f64> = valid.iter().map(|a| a.raw_total()).collect();
     let max_total = totals.iter().cloned().fold(None, |acc: Option<f64>, v| Some(acc.map_or(v, |m| m.max(v))));
     let sum_scores: f64 = scores.iter().sum();
@@ -651,9 +679,7 @@ pub fn exam_view_from(batch_id: &str, paper_id: &str, attempts: &[AttemptRec]) -
             let slot = kind_acc.entry(kind).or_insert_with(|| (HashSet::new(), 0.0, 0.0));
             slot.0.insert(attempt.attempt_id.clone());
             slot.1 += answer.weight;
-            if graded == 1 {
-                slot.2 += answer.weight;
-            }
+            slot.2 += answer.score.unwrap_or_else(||if graded==1{answer.weight}else{0.0});
         }
     }
     let part_label_of = |index: i64| part_labels.get(&index).cloned().unwrap_or_else(|| format!("P{}", index + 1));
@@ -726,8 +752,9 @@ pub fn exam_view_from(batch_id: &str, paper_id: &str, attempts: &[AttemptRec]) -
             candidate_id: attempt.candidate_id.clone(),
             candidate_name: attempt.candidate_name.clone(),
             raw_score: attempt.raw_score(),
+            effective_score: attempt.effective_score(),
             raw_total: attempt.raw_total(),
-            accuracy: ratio(attempt.raw_score(), attempt.raw_total()),
+            accuracy: ratio(attempt.effective_score(), attempt.raw_total()),
             part_correct: part_indices.iter().map(|index| attempt.passage(*index).map(|p| p.correct)).collect(),
             submitted_at: attempt.submitted_at.clone(),
             total_duration_sec: {
@@ -738,6 +765,7 @@ pub fn exam_view_from(batch_id: &str, paper_id: &str, attempts: &[AttemptRec]) -
         .collect();
 
     ExamView {
+        listening:None,
         batch_id: batch_id.to_string(),
         paper_id: paper_id.to_string(),
         n: valid.len(),
@@ -819,6 +847,7 @@ pub struct StudentView {
     pub valid: bool,
     pub invalid_reason: Option<String>,
     pub raw_score: f64,
+    pub effective_score: f64,
     pub raw_total: f64,
     pub accuracy: Option<f64>,
     pub passages: Vec<StudentPassage>,
@@ -917,8 +946,9 @@ pub fn student_view_from(attempt: &AttemptRec) -> StudentView {
         valid: attempt.is_valid(),
         invalid_reason: attempt.invalid_reason.clone(),
         raw_score: attempt.raw_score(),
+        effective_score: attempt.effective_score(),
         raw_total: attempt.raw_total(),
-        accuracy: ratio(attempt.raw_score(), attempt.raw_total()),
+        accuracy: ratio(attempt.effective_score(), attempt.raw_total()),
         passages,
         overlap_note: if overlap.iter().any(|v| *v) {
             Some("部分篇章的作答时间区间重叠，用时可能重叠，仅供参考。".into())
@@ -971,7 +1001,14 @@ pub fn build_question_view(
     passage_index: i64,
     question_id: &str,
 ) -> CommandResult<QuestionView> {
-    let attempts = load_attempts(conn, &Scope::Group { batch_id, paper_id })?;
+    build_question_view_mode(conn,batch_id,paper_id,passage_index,question_id,false)
+}
+
+pub fn build_question_view_mode(
+    conn: &Connection, batch_id: &str, paper_id: &str, passage_index: i64,
+    question_id: &str, original: bool,
+) -> CommandResult<QuestionView> {
+    let attempts = load_attempts_mode(conn, &Scope::Group { batch_id, paper_id },original)?;
     let valid: Vec<&AttemptRec> = attempts.iter().filter(|a| a.is_valid()).collect();
     let mut n = 0usize;
     let mut correct = 0usize;
