@@ -230,19 +230,29 @@ fn question_heading_range(line: &str) -> Option<(u32, u32)> {
 /// 一行是「题号 + 短答案」吗（答案页的典型行；题干是长句，不算）。
 fn numbered_short_line(line: &str) -> bool {
     let normalized = normalize(line);
-    let digits: String = normalized.chars().take_while(char::is_ascii_digit).collect();
-    let Ok(number) = digits.parse::<u32>() else { return false };
+    let digits: String = normalized
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    let Ok(number) = digits.parse::<u32>() else {
+        return false;
+    };
     if !(1..=40).contains(&number) {
         return false;
     }
-    let rest = normalized[digits.len()..].trim_start_matches(['.', ')']).trim();
+    let rest = normalized[digits.len()..]
+        .trim_start_matches(['.', ')'])
+        .trim();
     let words = rest.split_whitespace().count();
     (1..=6).contains(&words)
 }
 
 fn is_prose_line(line: &str) -> bool {
     let words = line.split_whitespace().count();
-    words >= 9 && !line.trim_start().starts_with(|ch: char| ch.is_ascii_digit())
+    words >= 9
+        && !line
+            .trim_start()
+            .starts_with(|ch: char| ch.is_ascii_digit())
 }
 
 fn reading_band(number: u32) -> Option<u32> {
@@ -293,8 +303,14 @@ impl PageFeatures {
 }
 
 fn page_features(text: &str) -> PageFeatures {
-    let lines: Vec<&str> = text.lines().filter(|line| !line.trim().is_empty()).collect();
-    let mut features = PageFeatures { non_empty: lines.len(), ..Default::default() };
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    let mut features = PageFeatures {
+        non_empty: lines.len(),
+        ..Default::default()
+    };
     for (index, line) in lines.iter().enumerate() {
         if features.test.is_none() {
             features.test = test_heading(line);
@@ -304,7 +320,10 @@ fn page_features(text: &str) -> PageFeatures {
             // Only join unfinished heading fragments, never prose references.
             let mut heading = line.to_string();
             for next in lines.iter().skip(index + 1).take(2) {
-                if !matches!(squash(&heading).as_str(), "reading" | "readingpassage" | "passage") {
+                if !matches!(
+                    squash(&heading).as_str(),
+                    "reading" | "readingpassage" | "passage"
+                ) {
                     break;
                 }
                 heading.push(' ');
@@ -330,8 +349,13 @@ fn page_features(text: &str) -> PageFeatures {
         // spaces entirely. Preserve punctuation for the question range.
         if features.instruction.is_none() {
             let window: String = normalize(&lines[index..lines.len().min(index + 6)].join(" "))
-                .chars().filter(|ch| !ch.is_whitespace()).collect();
-            if let Some(at) = window.find("spendabout20minutes").or_else(|| window.find("spend20minutes")) {
+                .chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect();
+            if let Some(at) = window
+                .find("spendabout20minutes")
+                .or_else(|| window.find("spend20minutes"))
+            {
                 let tail = &window[at..];
                 let range = tail
                     .find("questions")
@@ -340,8 +364,12 @@ fn page_features(text: &str) -> PageFeatures {
                     let rest = &tail[pos + "readingpassage".len()..];
                     // "1onpages2and3" also occurs with missing inter-word spaces.
                     let number: String = rest.chars().take_while(char::is_ascii_digit).collect();
-                    ordinal_word(&number).or_else(|| ["one", "two", "three"].iter()
-                        .find(|word| rest.starts_with(**word)).and_then(|word| ordinal_word(word)))
+                    ordinal_word(&number).or_else(|| {
+                        ["one", "two", "three"]
+                            .iter()
+                            .find(|word| rest.starts_with(**word))
+                            .and_then(|word| ordinal_word(word))
+                    })
                 });
                 features.instruction = Some((passage, range, index));
             }
@@ -460,13 +488,18 @@ pub(crate) fn plan_from_page_texts(pages: &[String]) -> PdfSplitPlan {
                     || explicit.is_some_and(|n| last.explicit_passage != Some(n))
                     || (explicit.is_none() && last.seen_second_kind)
             });
-        let new_layout = kind == Some(first_kind)
-            && drafts.last().is_some_and(|last| last.seen_second_kind);
+        let new_layout =
+            kind == Some(first_kind) && drafts.last().is_some_and(|last| last.seen_second_kind);
         // A full declared question band is an independent boundary even when
         // prose/heading extraction failed. Partial task groups never trigger it.
-        let new_question_band = f.heading.is_none() && f.instruction.is_none()
-            && f.question_ranges.first().is_some_and(|range| matches!(range, (14, 26) | (27, 40))
-                && drafts.last().is_some_and(|last| last.range().is_some_and(|prev| prev.1 + 1 == range.0)));
+        let new_question_band = f.heading.is_none()
+            && f.instruction.is_none()
+            && f.question_ranges.first().is_some_and(|range| {
+                matches!(range, (14, 26) | (27, 40))
+                    && drafts
+                        .last()
+                        .is_some_and(|last| last.range().is_some_and(|prev| prev.1 + 1 == range.0))
+            });
         let starts = drafts.is_empty() && kind.is_some()
             || new_explicit
             || new_layout
@@ -476,7 +509,9 @@ pub(crate) fn plan_from_page_texts(pages: &[String]) -> PdfSplitPlan {
         if starts {
             let start_line = f.start_line().unwrap_or(0);
             let shares_start_page = start_line > HEADING_TOP_LINES
-                && drafts.last().is_some_and(|last| last.pages.last() == Some(&(page - 1)));
+                && drafts
+                    .last()
+                    .is_some_and(|last| last.pages.last() == Some(&(page - 1)));
             if shares_start_page {
                 if let Some(last) = drafts.last_mut() {
                     last.pages.push(page);
@@ -580,7 +615,10 @@ pub(crate) fn plan_from_page_texts(pages: &[String]) -> PdfSplitPlan {
         ordinal_in_test = if same_test { ordinal_in_test + 1 } else { 1 };
         let range = draft.range();
         let band = draft.band();
-        let passage = draft.explicit_passage.or(band).unwrap_or(ordinal_in_test.min(3));
+        let passage = draft
+            .explicit_passage
+            .or(band)
+            .unwrap_or(ordinal_in_test.min(3));
         let mut signals: Vec<String> = draft.signals.iter().map(|s| s.to_string()).collect();
         let numbering = match (previous.and_then(|p| p.1), range) {
             (Some(prev), Some(cur)) => cur.0 == prev.1 + 1 || cur.0 == 1,
@@ -599,21 +637,30 @@ pub(crate) fn plan_from_page_texts(pages: &[String]) -> PdfSplitPlan {
         if band_agrees {
             signals.push("band".to_string());
         }
-        let explicit = draft.signals.iter().any(|s| matches!(*s, "heading" | "instruction"));
+        let explicit = draft
+            .signals
+            .iter()
+            .any(|s| matches!(*s, "heading" | "instruction"));
         let conflict = draft.explicit_passage.is_some() && band.is_some() && !band_agrees;
         let label = match draft.test {
             Some(test) => format!("Test {test} · P{passage}"),
             None => format!("P{passage}"),
         };
         if conflict {
-            warnings.push(format!("{label}：标题写的是 Passage {passage}，题号范围却像另一篇，请核对。"));
+            warnings.push(format!(
+                "{label}：标题写的是 Passage {passage}，题号范围却像另一篇，请核对。"
+            ));
         }
         let corroborated = numbering || band_agrees || draft.signals.contains(&"layout");
         let confidence = if conflict {
             "low"
         } else if explicit && corroborated {
             "high"
-        } else if explicit || ((draft.signals.contains(&"layout") || draft.signals.contains(&"question_band")) && numbering && band_agrees) {
+        } else if explicit
+            || ((draft.signals.contains(&"layout") || draft.signals.contains(&"question_band"))
+                && numbering
+                && band_agrees)
+        {
             "medium"
         } else {
             "low"
@@ -640,10 +687,15 @@ pub(crate) fn plan_from_page_texts(pages: &[String]) -> PdfSplitPlan {
         .filter(|(_, flag)| **flag)
         .map(|(index, _)| index as u32 + 1)
         .collect();
-    assign_answers(pages, &features, &answer_pages, &mut segments, &mut warnings);
+    assign_answers(
+        pages,
+        &features,
+        &answer_pages,
+        &mut segments,
+        &mut warnings,
+    );
 
-    let default_split = segments.len() >= 2
-        && segments.iter().all(|s| s.confidence != "low");
+    let default_split = segments.len() >= 2 && segments.iter().all(|s| s.confidence != "low");
     PdfSplitPlan {
         page_count,
         segments,
@@ -671,7 +723,10 @@ fn section_heading(line: &str) -> Option<AnswerSection> {
     }
     if squashed.starts_with("listening") && !squashed.starts_with("listeningandreading") {
         Some(AnswerSection::Listening)
-    } else if squashed.starts_with("reading") || squashed.starts_with("academicreading") || squashed.starts_with("generaltrainingreading") {
+    } else if squashed.starts_with("reading")
+        || squashed.starts_with("academicreading")
+        || squashed.starts_with("generaltrainingreading")
+    {
         Some(AnswerSection::Reading)
     } else if squashed.starts_with("writing") || squashed.starts_with("speaking") {
         Some(AnswerSection::Other)
@@ -737,14 +792,20 @@ fn assign_answers(
         .filter_map(|s| s.pages.first().map(|first| (*first, s.test)))
         .collect();
     let positional_test = |page: u32| -> Option<u32> {
-        starts.iter().filter(|(first, _)| *first < page).last().and_then(|(_, test)| *test)
+        starts
+            .iter()
+            .filter(|(first, _)| *first < page)
+            .last()
+            .and_then(|(_, test)| *test)
     };
 
     // (Test, 答案页) 用于退回附页。
     let mut pages_by_test: Vec<(Option<u32>, u32)> = Vec::new();
     for page in answer_pages {
         let text = &pages[*page as usize - 1];
-        let mut test = features[*page as usize - 1].test.or_else(|| positional_test(*page));
+        let mut test = features[*page as usize - 1]
+            .test
+            .or_else(|| positional_test(*page));
         let mut section = AnswerSection::Unknown;
         let mut page_tests: Vec<Option<u32>> = vec![test];
         for line in text.lines().filter(|line| !line.trim().is_empty()) {
@@ -778,11 +839,15 @@ fn assign_answers(
             for (number, answer) in parse_answer_line(line) {
                 let target = segments.iter_mut().find(|s| {
                     (s.test.is_none() || test.is_none() || s.test == test)
-                        && s.question_range.is_some_and(|(a, b)| (a..=b).contains(&number))
+                        && s.question_range
+                            .is_some_and(|(a, b)| (a..=b).contains(&number))
                 });
                 if let Some(segment) = target {
                     if !segment.answers.iter().any(|a| a.number == number) {
-                        segment.answers.push(SplitAnswer { number, text: answer });
+                        segment.answers.push(SplitAnswer {
+                            number,
+                            text: answer,
+                        });
                     }
                 }
             }
@@ -827,7 +892,11 @@ fn assign_answers(
 fn text_poor_page(text: &str) -> bool {
     // Scans often have a selectable watermark/page number, so non-empty text
     // does not establish that the article or its heading was actually read.
-    text.chars().filter(char::is_ascii_alphabetic).take(40).count() < 40
+    text.chars()
+        .filter(char::is_ascii_alphabetic)
+        .take(40)
+        .count()
+        < 40
 }
 
 /// Two independent text readers. A failed/empty extraction is an unknown
@@ -844,7 +913,10 @@ pub(crate) fn plan_pdf_file(path: &Path) -> PdfSplitPlan {
     let primary = match pdf_extract::extract_text_by_pages(path) {
         Ok(pages) => pages,
         Err(error) => {
-            eprintln!("[import] split plan: text layer unreadable {}: {error}", path.display());
+            eprintln!(
+                "[import] split plan: text layer unreadable {}: {error}",
+                path.display()
+            );
             warnings.push("PDF 文本读取失败，分篇检查可能不完整。".to_string());
             Vec::new()
         }
@@ -856,7 +928,9 @@ pub(crate) fn plan_pdf_file(path: &Path) -> PdfSplitPlan {
                 let alternative = plan_from_page_texts(&pages);
                 // Keep each reader's page plan intact; concatenating their text
                 // would duplicate answer lines and manufacture boundary evidence.
-                if alternative.is_multi() && (!plan.is_multi() || (!plan.default_split && alternative.default_split)) {
+                if alternative.is_multi()
+                    && (!plan.is_multi() || (!plan.default_split && alternative.default_split))
+                {
                     plan = alternative;
                 } else if plan.page_count == 0 {
                     plan = alternative;
@@ -867,7 +941,10 @@ pub(crate) fn plan_pdf_file(path: &Path) -> PdfSplitPlan {
             }
             Err(error) => {
                 eprintln!("[import] split plan: PDFium unavailable: {error}");
-                warnings.push("备用 PDF 读取器不可用，分篇检查可能不完整；请检查是否使用了完整安装包。".to_string());
+                warnings.push(
+                    "备用 PDF 读取器不可用，分篇检查可能不完整；请检查是否使用了完整安装包。"
+                        .to_string(),
+                );
             }
         }
     }
@@ -895,20 +972,29 @@ pub(crate) fn write_segment_pdf(
 /// Native-library-independent page copier. Keep the original page tree and
 /// inherited resources, fonts, images and rotation; remove only unselected pages.
 fn subset_pdf_builtin(bytes: &[u8], pages: &[u32], original_count: u32) -> CommandResult<Vec<u8>> {
-    let mut document = lopdf::Document::load_mem(bytes).map_err(|error| format!("split_pdf_open:{error}"))?;
-    if document.get_pages().len() != original_count as usize || pages.is_empty()
-        || pages.iter().any(|page| *page == 0 || *page > original_count)
-        || pages.windows(2).any(|pair| pair[0] >= pair[1]) {
+    let mut document =
+        lopdf::Document::load_mem(bytes).map_err(|error| format!("split_pdf_open:{error}"))?;
+    if document.get_pages().len() != original_count as usize
+        || pages.is_empty()
+        || pages
+            .iter()
+            .any(|page| *page == 0 || *page > original_count)
+        || pages.windows(2).any(|pair| pair[0] >= pair[1])
+    {
         return Err("split_pdf_page_selection_invalid".into());
     }
-    let removed: Vec<u32> = (1..=original_count).filter(|page| !pages.contains(page)).collect();
+    let removed: Vec<u32> = (1..=original_count)
+        .filter(|page| !pages.contains(page))
+        .collect();
     document.delete_pages(&removed);
     document.prune_objects();
     if document.get_pages().len() != pages.len() {
         return Err("split_pdf_copy_incomplete".into());
     }
     let mut output = Vec::new();
-    document.save_to(&mut output).map_err(|error| format!("split_pdf_save:{error}"))?;
+    document
+        .save_to(&mut output)
+        .map_err(|error| format!("split_pdf_save:{error}"))?;
     Ok(output)
 }
 
@@ -959,9 +1045,14 @@ pub(crate) fn preview_import_split(paths: &[String]) -> Vec<ImportSplitPreview> 
 pub(crate) fn minimal_text_pdf(pages: &[&[&str]]) -> Vec<u8> {
     let mut objects: Vec<String> = Vec::new();
     let page_count = pages.len();
-    let kids: Vec<String> = (0..page_count).map(|i| format!("{} 0 R", 4 + i * 2)).collect();
+    let kids: Vec<String> = (0..page_count)
+        .map(|i| format!("{} 0 R", 4 + i * 2))
+        .collect();
     objects.push("<< /Type /Catalog /Pages 2 0 R >>".to_string());
-    objects.push(format!("<< /Type /Pages /Kids [{}] /Count {page_count} >>", kids.join(" ")));
+    objects.push(format!(
+        "<< /Type /Pages /Kids [{}] /Count {page_count} >>",
+        kids.join(" ")
+    ));
     objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string());
     for (index, lines) in pages.iter().enumerate() {
         let content_id = 5 + index * 2;
@@ -970,11 +1061,17 @@ pub(crate) fn minimal_text_pdf(pages: &[&[&str]]) -> Vec<u8> {
         ));
         let mut stream = String::from("BT /F1 10 Tf 12 TL 40 800 Td\n");
         for line in lines.iter() {
-            let escaped = line.replace('\\', "\\\\").replace('(', "\\(").replace(')', "\\)");
+            let escaped = line
+                .replace('\\', "\\\\")
+                .replace('(', "\\(")
+                .replace(')', "\\)");
             stream.push_str(&format!("({escaped}) Tj T*\n"));
         }
         stream.push_str("ET");
-        objects.push(format!("<< /Length {} >>\nstream\n{stream}\nendstream", stream.len()));
+        objects.push(format!(
+            "<< /Length {} >>\nstream\n{stream}\nendstream",
+            stream.len()
+        ));
     }
     let mut out = b"%PDF-1.4\n".to_vec();
     let mut offsets = Vec::new();
@@ -983,12 +1080,18 @@ pub(crate) fn minimal_text_pdf(pages: &[&[&str]]) -> Vec<u8> {
         out.extend_from_slice(format!("{} 0 obj\n{body}\nendobj\n", index + 1).as_bytes());
     }
     let xref = out.len();
-    out.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
+    out.extend_from_slice(
+        format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+    );
     for offset in offsets {
         out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
     }
     out.extend_from_slice(
-        format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1).as_bytes(),
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .as_bytes(),
     );
     out
 }
@@ -1014,14 +1117,23 @@ mod tests {
         lines.join("\n")
     }
     fn questions(range: &str, first: u32, count: u32) -> String {
-        let mut lines = vec![format!("Questions {range}"), "Do the following statements agree with the information given in the passage?".to_string()];
+        let mut lines = vec![
+            format!("Questions {range}"),
+            "Do the following statements agree with the information given in the passage?"
+                .to_string(),
+        ];
         for n in first..first + count {
-            lines.push(format!("{n} The writer says that this particular statement about the topic is accurate."));
+            lines.push(format!(
+                "{n} The writer says that this particular statement about the topic is accurate."
+            ));
         }
         lines.join("\n")
     }
     fn summary(plan: &PdfSplitPlan) -> Vec<(String, Vec<u32>, String)> {
-        plan.segments.iter().map(|s| (s.label.clone(), s.pages.clone(), s.confidence.clone())).collect()
+        plan.segments
+            .iter()
+            .map(|s| (s.label.clone(), s.pages.clone(), s.confidence.clone()))
+            .collect()
     }
 
     /// 标准剑桥版式：说明行 + 标题 + 正文 → 题目，三篇，末尾总答案（含听力区）。
@@ -1069,8 +1181,18 @@ mod tests {
         let p1 = &plan.segments[0];
         assert_eq!(p1.question_range, Some((1, 13)));
         assert_eq!(p1.answers.len(), 13);
-        assert!(p1.answers.iter().all(|a| a.text == "TRUE"), "听力区的答案不能进阅读：{:?}", p1.answers);
-        assert_eq!(plan.segments[1].answers.first(), Some(&SplitAnswer { number: 14, text: "C".into() }));
+        assert!(
+            p1.answers.iter().all(|a| a.text == "TRUE"),
+            "听力区的答案不能进阅读：{:?}",
+            p1.answers
+        );
+        assert_eq!(
+            plan.segments[1].answers.first(),
+            Some(&SplitAnswer {
+                number: 14,
+                text: "C".into()
+            })
+        );
         assert_eq!(plan.segments[2].answers.len(), 14);
         assert_eq!(plan.segments[2].answers[0].text, "NOT GIVEN");
         // 答案已按篇分出，子 PDF 不再附整页答案。
@@ -1093,7 +1215,11 @@ mod tests {
         assert_eq!(plan.segments.len(), 3);
         assert_eq!(plan.segments[1].pages, vec![3, 4]);
         assert_eq!(plan.segments[1].passage, 2);
-        assert!(plan.segments.iter().all(|s| s.confidence == "medium"), "{:?}", summary(&plan));
+        assert!(
+            plan.segments.iter().all(|s| s.confidence == "medium"),
+            "{:?}",
+            summary(&plan)
+        );
         assert!(plan.default_split);
     }
 
@@ -1149,23 +1275,43 @@ mod tests {
     fn several_tests_in_one_file_split_and_route_answers_by_test() {
         let mut pages = Vec::new();
         for test in 1..=2 {
-            pages.push(prose_page(&[&format!("Test {test}"), "READING PASSAGE 1"], "glass"));
+            pages.push(prose_page(
+                &[&format!("Test {test}"), "READING PASSAGE 1"],
+                "glass",
+            ));
             pages.push(page(&[&format!("Test {test}"), &questions("1-13", 1, 13)]));
-            pages.push(prose_page(&[&format!("Test {test}"), "READING PASSAGE 2"], "horses"));
-            pages.push(page(&[&format!("Test {test}"), &questions("14-26", 14, 13)]));
+            pages.push(prose_page(
+                &[&format!("Test {test}"), "READING PASSAGE 2"],
+                "horses",
+            ));
+            pages.push(page(&[
+                &format!("Test {test}"),
+                &questions("14-26", 14, 13),
+            ]));
         }
         let mut key = vec!["Answer Key".to_string()];
         for test in 1..=2 {
             key.push(format!("Test {test}"));
             key.push("Reading".to_string());
-            for n in 1..=26 { key.push(format!("{n} T{test}A{n}")); }
+            for n in 1..=26 {
+                key.push(format!("{n} T{test}A{n}"));
+            }
         }
         pages.push(key.join("\n"));
         let plan = plan_from_page_texts(&pages);
         let labels: Vec<_> = plan.segments.iter().map(|s| s.label.as_str()).collect();
-        assert_eq!(labels, ["Test 1 · P1", "Test 1 · P2", "Test 2 · P1", "Test 2 · P2"]);
+        assert_eq!(
+            labels,
+            ["Test 1 · P1", "Test 1 · P2", "Test 2 · P1", "Test 2 · P2"]
+        );
         assert_eq!(plan.segments[2].answers[0].text, "T2A1");
-        assert_eq!(plan.segments[1].answers[0], SplitAnswer { number: 14, text: "T1A14".into() });
+        assert_eq!(
+            plan.segments[1].answers[0],
+            SplitAnswer {
+                number: 14,
+                text: "T1A14".into()
+            }
+        );
         assert!(plan.default_split, "{:?}", plan.warnings);
     }
 
@@ -1176,12 +1322,21 @@ mod tests {
             questions("1-13", 1, 13),
             prose_page(&["READING PASSAGE 2"], "horses"),
             questions("14-26", 14, 13),
-            page(&["Answer Key", "1 A", "2 B", "3 C", "(table continues as an image)"]),
+            page(&[
+                "Answer Key",
+                "1 A",
+                "2 B",
+                "3 C",
+                "(table continues as an image)",
+            ]),
         ]);
         assert_eq!(plan.answer_pages, vec![5]);
         assert!(plan.segments.iter().all(|s| s.answers.is_empty()));
         assert_eq!(plan.pages_for(&plan.segments[1]), vec![3, 4, 5]);
-        assert!(plan.warnings.iter().any(|w| w.contains("答案页没能按题号分出")));
+        assert!(plan
+            .warnings
+            .iter()
+            .any(|w| w.contains("答案页没能按题号分出")));
     }
 
     #[test]
@@ -1192,7 +1347,10 @@ mod tests {
             parse_answer_line("1 TRUE 14 C"),
             vec![(1, "TRUE".to_string()), (14, "C".to_string())]
         );
-        assert_eq!(parse_answer_line("27 NOT GIVEN"), vec![(27, "NOT GIVEN".to_string())]);
+        assert_eq!(
+            parse_answer_line("27 NOT GIVEN"),
+            vec![(27, "NOT GIVEN".to_string())]
+        );
         assert!(parse_answer_line("Write your answers in boxes 1-5").is_empty());
     }
 
@@ -1214,9 +1372,25 @@ mod tests {
     #[test]
     fn fragmented_headings_and_wrapped_instructions_match_customer_layout() {
         let plan = plan_from_page_texts(&[
-            page(&["2", "READING", "PASSAGE", "1", "You should spend about 20 minutes on", "Questions 1-13, which are based on", "Reading Passage 1 on pages 2 and 3."]),
+            page(&[
+                "2",
+                "READING",
+                "PASSAGE",
+                "1",
+                "You should spend about 20 minutes on",
+                "Questions 1-13, which are based on",
+                "Reading Passage 1 on pages 2 and 3.",
+            ]),
             questions("1-13", 1, 13),
-            page(&["6", "READING", "PASSAGE", "2", "You should spend about 20 minutes on", "Questions 14-26, which are based on Reading", "Passage 2 on pages 6 and 7."]),
+            page(&[
+                "6",
+                "READING",
+                "PASSAGE",
+                "2",
+                "You should spend about 20 minutes on",
+                "Questions 14-26, which are based on Reading",
+                "Passage 2 on pages 6 and 7.",
+            ]),
             questions("14-26", 14, 13),
         ]);
         assert_eq!(plan.segments.len(), 2, "{:?}", summary(&plan));
@@ -1241,10 +1415,15 @@ mod tests {
     #[test]
     fn full_question_bands_can_suggest_split_without_prose_layout() {
         let plan = plan_from_page_texts(&[
-            questions("1-13", 1, 13), questions("14-26", 14, 13), questions("27-40", 27, 14),
+            questions("1-13", 1, 13),
+            questions("14-26", 14, 13),
+            questions("27-40", 27, 14),
         ]);
         assert_eq!(plan.segments.len(), 3, "{:?}", summary(&plan));
-        assert!(plan.segments[1].signals.iter().any(|s| s == "question_band"));
+        assert!(plan.segments[1]
+            .signals
+            .iter()
+            .any(|s| s == "question_band"));
         let single = plan_from_page_texts(&[questions("1-5", 1, 5), questions("6-13", 6, 8)]);
         assert_eq!(single.segments.len(), 1);
     }
@@ -1254,7 +1433,12 @@ mod tests {
         let bytes = minimal_text_pdf(&[&["first"], &["second"], &["third"]]);
         let mut source = lopdf::Document::load_mem(&bytes).unwrap();
         let page_ids: Vec<_> = source.get_pages().into_values().collect();
-        source.get_object_mut(page_ids[2]).unwrap().as_dict_mut().unwrap().set("Rotate", 90);
+        source
+            .get_object_mut(page_ids[2])
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("Rotate", 90);
         let mut bytes = Vec::new();
         source.save_to(&mut bytes).unwrap();
         let result = subset_pdf_builtin(&bytes, &[1, 3], 3).unwrap();
@@ -1262,7 +1446,18 @@ mod tests {
         assert_eq!(output.get_pages().len(), 2);
         assert_eq!(output.extract_text(&[1, 2]).unwrap().trim(), "first\nthird");
         let last = output.get_pages()[&2];
-        assert_eq!(output.get_object(last).unwrap().as_dict().unwrap().get(b"Rotate").unwrap().as_i64().unwrap(), 90);
+        assert_eq!(
+            output
+                .get_object(last)
+                .unwrap()
+                .as_dict()
+                .unwrap()
+                .get(b"Rotate")
+                .unwrap()
+                .as_i64()
+                .unwrap(),
+            90
+        );
         assert!(subset_pdf_builtin(&bytes, &[3, 1], 3).is_err());
         assert!(subset_pdf_builtin(&bytes, &[4], 3).is_err());
         assert!(subset_pdf_builtin(&bytes, &[1], 4).is_err());
@@ -1274,7 +1469,9 @@ mod tests {
         assert!(previews[0].segments.is_empty());
         assert!(!previews[0].warnings.is_empty());
         assert!(text_poor_page("6\nPublisher watermark"));
-        assert!(!text_poor_page("You should spend about twenty minutes on questions fourteen to twenty six"));
+        assert!(!text_poor_page(
+            "You should spend about twenty minutes on questions fourteen to twenty six"
+        ));
     }
 
     #[test]

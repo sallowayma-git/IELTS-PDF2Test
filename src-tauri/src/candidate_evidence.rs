@@ -336,10 +336,13 @@ mod tests {
         ] {
             let original = pages[0].clone();
             pages[0].push_str(&format!("\n{answers}"));
-            assert!(plan_pages(&pages, &plan)
-                .unwrap()
-                .iter()
-                .all(|scope| scope.contains(&1)), "Mixed question/answer page omitted: {answers}");
+            assert!(
+                plan_pages(&pages, &plan)
+                    .unwrap()
+                    .iter()
+                    .all(|scope| scope.contains(&1)),
+                "Mixed question/answer page omitted: {answers}"
+            );
             pages[0] = original;
         }
         pages[6].push_str("\n14 B");
@@ -355,7 +358,10 @@ mod tests {
             "Questions 1-13\n1 Choose the correct answer.",
             "READING PASSAGE 1\nQuestions 1-13\n1 Choose B",
         ] {
-            assert!(auxiliary_page(unknown), "Unclassified answer-like row omitted: {unknown}");
+            assert!(
+                auxiliary_page(unknown),
+                "Unclassified answer-like row omitted: {unknown}"
+            );
         }
         assert!(!auxiliary_page(
             "READING PASSAGE 1\nQuestions 1-13\n1 CHOOSE   the correct answer."

@@ -868,10 +868,17 @@ pub(crate) fn build_direct_canonical(
                     page_index: page_index as i32,
                     order: passage_lines.len(),
                     role: "passage".to_string(),
-                    bbox: line.get("bbox").and_then(Value::as_object).and_then(|bbox| Some([
-                        bbox.get("x")?.as_f64()?, bbox.get("y")?.as_f64()?,
-                        bbox.get("width")?.as_f64()?, bbox.get("height")?.as_f64()?,
-                    ])),
+                    bbox: line
+                        .get("bbox")
+                        .and_then(Value::as_object)
+                        .and_then(|bbox| {
+                            Some([
+                                bbox.get("x")?.as_f64()?,
+                                bbox.get("y")?.as_f64()?,
+                                bbox.get("width")?.as_f64()?,
+                                bbox.get("height")?.as_f64()?,
+                            ])
+                        }),
                 });
             }
         }
@@ -889,8 +896,16 @@ pub(crate) fn build_direct_canonical(
     .into_iter()
     .filter(|node| node.get("type").and_then(Value::as_str) == Some("paragraph"))
     .collect::<Vec<_>>();
-    let instructions = graph.instruction_zones.iter().map(|zone| zone.text.as_str()).collect::<Vec<_>>().join(" ");
-    crate::ielts_grammar::reading::derive_declared_paragraph_labels(&mut passage_content, &instructions);
+    let instructions = graph
+        .instruction_zones
+        .iter()
+        .map(|zone| zone.text.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    crate::ielts_grammar::reading::derive_declared_paragraph_labels(
+        &mut passage_content,
+        &instructions,
+    );
     let paragraph_map = crate::ielts_grammar::reading::paragraph_map_from_nodes(&passage_content);
     let passage = json!({
         "title": job.title,

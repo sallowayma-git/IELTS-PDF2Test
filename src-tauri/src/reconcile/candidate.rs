@@ -288,7 +288,10 @@ pub(crate) fn expand_natural_cloud_shape(raw: &Value) -> Value {
         let task_id = format!("cloud-task-{}", index + 1);
         let Some(rule) = task_presentation_rule(
             task_type,
-            object.get("optionBank").map(|bank| !bank.is_null()).unwrap_or(false),
+            object
+                .get("optionBank")
+                .map(|bank| !bank.is_null())
+                .unwrap_or(false),
         ) else {
             new_groups.push(group.clone());
             continue;
@@ -299,8 +302,7 @@ pub(crate) fn expand_natural_cloud_shape(raw: &Value) -> Value {
             .first()
             .map(crate::schema::task_presentation::wire_name)
             .unwrap_or_else(|| "prompt".to_string());
-        let response_group_kind =
-            crate::schema::task_presentation::wire_name(&rule.response_kind);
+        let response_group_kind = crate::schema::task_presentation::wire_name(&rule.response_kind);
         let group_answers = object.get("answers").cloned().unwrap_or_else(|| json!({}));
         let model_slots = object
             .get("slots")
@@ -2213,7 +2215,11 @@ fn assign_group_inner_ids(
                                     .get(cloud_response_id)
                                     .map(String::as_str)
                                     .unwrap_or(cloud_response_id);
-                                let base = if base.is_empty() { stable_task_id } else { base };
+                                let base = if base.is_empty() {
+                                    stable_task_id
+                                } else {
+                                    base
+                                };
                                 if label.is_empty() {
                                     format!("{base}-opt-{}", index + 1)
                                 } else {
@@ -2458,10 +2464,7 @@ pub(crate) fn ensure_source_anchors(map: &mut Map<String, Value>) {
 }
 
 /// 本地对象身份（`id` / `optionId` / `slotId`）→ 其非空来源锚点与 provenanceStatus。
-fn collect_local_provenance(
-    value: &Value,
-    index: &mut BTreeMap<String, (Value, Option<Value>)>,
-) {
+fn collect_local_provenance(value: &Value, index: &mut BTreeMap<String, (Value, Option<Value>)>) {
     match value {
         Value::Array(items) => {
             for item in items {
@@ -2492,10 +2495,7 @@ fn collect_local_provenance(
     }
 }
 
-fn apply_inherited_provenance(
-    value: &mut Value,
-    index: &BTreeMap<String, (Value, Option<Value>)>,
-) {
+fn apply_inherited_provenance(value: &mut Value, index: &BTreeMap<String, (Value, Option<Value>)>) {
     match value {
         Value::Array(items) => {
             for item in items.iter_mut() {
@@ -2696,8 +2696,8 @@ fn word_difference_count(local: &str, cloud: &str) -> usize {
     keys.extend(right.keys());
     keys.into_iter()
         .map(|key| {
-            (left.get(key).copied().unwrap_or(0) - right.get(key).copied().unwrap_or(0)).unsigned_abs()
-                as usize
+            (left.get(key).copied().unwrap_or(0) - right.get(key).copied().unwrap_or(0))
+                .unsigned_abs() as usize
         })
         .sum()
 }
@@ -3364,10 +3364,7 @@ pub(crate) fn canonical_passage_paragraph_ids(canonical: &Value) -> BTreeSet<Str
 
 /// Heading slots may point outside the cloud candidate, but only to a real paragraph
 /// node covered by the canonical local `paragraphMap`. Other external IDs are rejected.
-fn validate_cloud_passage_host_nodes(
-    draft: &Value,
-    canonical: &Value,
-) -> CommandResult<()> {
+fn validate_cloud_passage_host_nodes(draft: &Value, canonical: &Value) -> CommandResult<()> {
     let mut allowed = canonical_passage_paragraph_ids(canonical);
     allowed.extend(canonical_passage_paragraph_ids(draft));
     for (slot_id, slot) in draft
@@ -3380,7 +3377,9 @@ fn validate_cloud_passage_host_nodes(
             continue;
         }
         let Some(host_node_id) = slot.get("hostNodeId").and_then(Value::as_str) else {
-            return Err(format!("cloud_authoring_passage_host_node_missing:{slot_id}"));
+            return Err(format!(
+                "cloud_authoring_passage_host_node_missing:{slot_id}"
+            ));
         };
         if !allowed.contains(host_node_id) {
             return Err(format!(
@@ -3750,20 +3749,40 @@ pub(crate) fn normalize_cloud_authoring(
     // Passage content is part of the cloud candidate too. Register its IDs
     // before rewriting heading hosts, matching labelled paragraphs by label.
     if let Some(content) = draft.pointer("/passage/content").and_then(Value::as_array) {
-        let cloud_map = draft.pointer("/passage/paragraphMap").and_then(Value::as_object);
-        let canonical_content = canonical.and_then(|value| value.pointer("/passage/content")).and_then(Value::as_array);
-        let canonical_map = canonical.and_then(|value| value.pointer("/passage/paragraphMap")).and_then(Value::as_object);
+        let cloud_map = draft
+            .pointer("/passage/paragraphMap")
+            .and_then(Value::as_object);
+        let canonical_content = canonical
+            .and_then(|value| value.pointer("/passage/content"))
+            .and_then(Value::as_array);
+        let canonical_map = canonical
+            .and_then(|value| value.pointer("/passage/paragraphMap"))
+            .and_then(Value::as_object);
         let mut counter = 0;
         for node in content {
             let node_id = node.get("id").and_then(Value::as_str);
-            let label = cloud_map.and_then(|map| map.iter().find(|(_, value)| value.as_str() == node_id).map(|(label, _)| label.as_str()));
-            let target_id = label.and_then(|label| canonical_map.and_then(|map| map.get(label))).and_then(Value::as_str);
-            let counterpart = canonical_content.and_then(|content| content.iter().find(|node| {
-                let existing = node.get("id").and_then(Value::as_str);
-                target_id.is_some_and(|target| existing == Some(target))
-                    || node_id.is_some_and(|original| existing == Some(original))
-            }));
-            assign_node_ids(node, counterpart, &format!("{}-passage", identity.batch_id), &mut counter, &mut id_map);
+            let label = cloud_map.and_then(|map| {
+                map.iter()
+                    .find(|(_, value)| value.as_str() == node_id)
+                    .map(|(label, _)| label.as_str())
+            });
+            let target_id = label
+                .and_then(|label| canonical_map.and_then(|map| map.get(label)))
+                .and_then(Value::as_str);
+            let counterpart = canonical_content.and_then(|content| {
+                content.iter().find(|node| {
+                    let existing = node.get("id").and_then(Value::as_str);
+                    target_id.is_some_and(|target| existing == Some(target))
+                        || node_id.is_some_and(|original| existing == Some(original))
+                })
+            });
+            assign_node_ids(
+                node,
+                counterpart,
+                &format!("{}-passage", identity.batch_id),
+                &mut counter,
+                &mut id_map,
+            );
         }
     }
 
@@ -3810,9 +3829,19 @@ pub(crate) fn normalize_cloud_authoring(
     // Preserve the complete recovered cloud passage. Local text is a fallback
     // only when the response supplies no passage content; disagreements still
     // go through source review and the canonical adoption guards.
-    let passage = draft.get("passage")
-        .filter(|passage| passage.get("content").and_then(Value::as_array).is_some_and(|content| !content.is_empty()))
-        .or_else(|| canonical.and_then(|value| value.get("passage")).filter(|passage| passage.is_object()));
+    let passage = draft
+        .get("passage")
+        .filter(|passage| {
+            passage
+                .get("content")
+                .and_then(Value::as_array)
+                .is_some_and(|content| !content.is_empty())
+        })
+        .or_else(|| {
+            canonical
+                .and_then(|value| value.get("passage"))
+                .filter(|passage| passage.is_object())
+        });
     if let Some(passage) = passage {
         document.insert("passage".to_string(), passage.clone());
     }
@@ -4619,8 +4648,14 @@ mod tests {
         assert_eq!(groups[0]["slots"][0]["interaction"], "dragdrop");
         assert_eq!(groups[0]["slots"][0]["hostType"], "passage_paragraph");
         assert_eq!(groups[1]["responseGroups"].as_array().unwrap().len(), 2);
-        assert_eq!(groups[1]["responseGroups"][0]["slotIds"], json!(["cloud-q1"]));
-        assert_eq!(groups[1]["responseGroups"][1]["slotIds"], json!(["cloud-q2"]));
+        assert_eq!(
+            groups[1]["responseGroups"][0]["slotIds"],
+            json!(["cloud-q1"])
+        );
+        assert_eq!(
+            groups[1]["responseGroups"][1]["slotIds"],
+            json!(["cloud-q2"])
+        );
         assert_eq!(groups[2]["taskType"], "note_completion");
         assert!(
             groups[3].get("taskId").is_none(),
@@ -5907,9 +5942,16 @@ mod cloud_authoring_tests {
         let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), &raw).unwrap();
         let candidate = cloud_authoring_candidate_from_normalized(&identity(), normalized).unwrap();
         let doc = serde_json::to_value(candidate.authoring).unwrap();
-        assert_eq!(nodes_text(&doc["passage"]["content"]), "Recovered full paragraph A, including its ending.");
+        assert_eq!(
+            nodes_text(&doc["passage"]["content"]),
+            "Recovered full paragraph A, including its ending."
+        );
         let mapped = doc["passage"]["paragraphMap"]["A"].as_str().unwrap();
-        assert!(doc["answerSlots"].as_object().unwrap().values().any(|slot| slot["hostNodeId"].as_str() == Some(mapped)));
+        assert!(doc["answerSlots"]
+            .as_object()
+            .unwrap()
+            .values()
+            .any(|slot| slot["hostNodeId"].as_str() == Some(mapped)));
     }
 
     #[test]
@@ -5925,11 +5967,22 @@ mod cloud_authoring_tests {
             }]
         }]);
         let normalized = normalize_cloud_authoring(&identity(), None, &raw).unwrap();
-        assert!(normalized.unresolved_references.is_empty(), "{:?}", normalized.unresolved_references);
+        assert!(
+            normalized.unresolved_references.is_empty(),
+            "{:?}",
+            normalized.unresolved_references
+        );
         let candidate = cloud_authoring_candidate_from_normalized(&identity(), normalized).unwrap();
         let doc = serde_json::to_value(candidate.authoring).unwrap();
-        assert_eq!(doc.pointer("/taskGroups/0/stimulus/0/steps/0/children/0/children/0/text").unwrap(), "Full step text at the end of the flowchart.");
-        assert_ne!(doc.pointer("/taskGroups/0/stimulus/0/steps/0/id").unwrap(), "cloud-step");
+        assert_eq!(
+            doc.pointer("/taskGroups/0/stimulus/0/steps/0/children/0/children/0/text")
+                .unwrap(),
+            "Full step text at the end of the flowchart."
+        );
+        assert_ne!(
+            doc.pointer("/taskGroups/0/stimulus/0/steps/0/id").unwrap(),
+            "cloud-step"
+        );
     }
 
     #[test]
@@ -5985,22 +6038,31 @@ mod cloud_authoring_tests {
 
         // 模型伪造的 signature 一律不采信；证据只能来自 instruction 内容自身的来源锚点，
         // 且必须重绑到本次导入。cloudfix 后内容子节点也会从本地稿继承真实来源，证据可多于一条。
-        assert!(!evidence.is_empty(), "必须从 instructions 生成 signature evidence");
         assert!(
-            evidence.iter().all(|anchor| anchor["sourceFileId"] == "early-approaches-pdf"
-                && anchor["sourceHash"] == "a".repeat(64)
-                && anchor["extractionMode"] == "pdf_native"),
+            !evidence.is_empty(),
+            "必须从 instructions 生成 signature evidence"
+        );
+        assert!(
+            evidence
+                .iter()
+                .all(|anchor| anchor["sourceFileId"] == "early-approaches-pdf"
+                    && anchor["sourceHash"] == "a".repeat(64)
+                    && anchor["extractionMode"] == "pdf_native"),
             "所有证据锚点必须重绑到本次导入：{evidence:?}"
         );
         assert!(
-            evidence.iter().all(|anchor| anchor["pageIndex"] != json!(99)
-                && anchor["nodeIds"] != json!(["forged"])),
+            evidence
+                .iter()
+                .all(|anchor| anchor["pageIndex"] != json!(99)
+                    && anchor["nodeIds"] != json!(["forged"])),
             "模型伪造的 signature 证据不得被采信：{evidence:?}"
         );
         // instruction 段落自身给出的来源：节点引用保留、文件身份被纠正后仍在证据里。
         assert!(
-            evidence.iter().any(|anchor| anchor["nodeIds"] == json!(["source-instruction-node"])
-                && anchor["pageIndex"] == json!(2)),
+            evidence.iter().any(
+                |anchor| anchor["nodeIds"] == json!(["source-instruction-node"])
+                    && anchor["pageIndex"] == json!(2)
+            ),
             "instruction 自身的来源锚点应保留并重绑：{evidence:?}"
         );
     }
@@ -6089,14 +6151,16 @@ mod cloud_authoring_tests {
         overlapping["displayRange"] = json!({"kind":"set", "values":[15]});
         overlapping["responseGroups"][0]["responseGroupId"] = json!("cloud-rg-overlap");
         overlapping["responseGroups"][0]["slotIds"] = json!(["cloud-q15"]);
-        draft["taskGroups"].as_array_mut().unwrap().push(overlapping);
+        draft["taskGroups"]
+            .as_array_mut()
+            .unwrap()
+            .push(overlapping);
 
         let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), &draft)
             .expect("重复对齐应降级为显式歧义，而不是归一化失败");
         assert_eq!(normalized.status, ChainStatusV1::Partial);
         assert!(normalized.unresolved_references.iter().any(|entry| {
-            entry.contains("cloud-tg-overlap")
-                && entry.contains("canonical_group_already_matched")
+            entry.contains("cloud-tg-overlap") && entry.contains("canonical_group_already_matched")
         }));
 
         let candidate = cloud_authoring_candidate_from_normalized(&identity(), normalized)
@@ -6109,8 +6173,7 @@ mod cloud_authoring_tests {
             .collect::<BTreeSet<_>>();
         assert_eq!(task_ids.len(), candidate.authoring.task_groups.len());
         assert_ne!(
-            candidate.authoring.task_groups[0].task_id,
-            candidate.authoring.task_groups[1].task_id,
+            candidate.authoring.task_groups[0].task_id, candidate.authoring.task_groups[1].task_id,
             "第二个云端题组不得与首个题组复用本地 taskId"
         );
     }
@@ -6122,7 +6185,10 @@ mod cloud_authoring_tests {
         let mut overlapping = draft["taskGroups"][0].clone();
         overlapping["displayRange"] = json!({"kind":"set", "values":[15]});
         overlapping["responseGroups"][0]["slotIds"] = json!(["cloud-q15"]);
-        draft["taskGroups"].as_array_mut().unwrap().push(overlapping);
+        draft["taskGroups"]
+            .as_array_mut()
+            .unwrap()
+            .push(overlapping);
 
         let error = normalize_cloud_authoring(&identity(), Some(&canonical), &draft)
             .err()
@@ -6233,8 +6299,12 @@ mod cloud_authoring_tests {
             authoritative_passage,
             "candidate without passage must retain the canonical source passage"
         );
-        let recovered_passage = serde_json::to_value(candidate_with.authoring.passage.as_ref().unwrap()).unwrap();
-        assert_eq!(nodes_text(&recovered_passage["content"]), "A long passage body.");
+        let recovered_passage =
+            serde_json::to_value(candidate_with.authoring.passage.as_ref().unwrap()).unwrap();
+        assert_eq!(
+            nodes_text(&recovered_passage["content"]),
+            "A long passage body."
+        );
 
         let differences = |candidate: &CloudAuthoringCandidateV1| {
             crate::cloud_repair::candidate_differences(
@@ -6810,8 +6880,8 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
         });
         let raw = json!({ "authoring": draft });
 
-        let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), &raw)
-            .expect("标准化必须成功");
+        let normalized =
+            normalize_cloud_authoring(&identity(), Some(&canonical), &raw).expect("标准化必须成功");
         assert!(
             normalized.unresolved_references.is_empty(),
             "responseGroup 内联选项 id 未登记导致未解析引用：{:?}",
@@ -6853,17 +6923,21 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
         });
         let raw = json!({ "authoring": draft });
 
-        let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), &raw)
-            .expect("标准化必须成功");
+        let normalized =
+            normalize_cloud_authoring(&identity(), Some(&canonical), &raw).expect("标准化必须成功");
         for index in 0..3 {
             let anchors = normalized
                 .document
-                .pointer(&format!("/taskGroups/0/responseGroups/0/options/{index}/sourceAnchors"))
+                .pointer(&format!(
+                    "/taskGroups/0/responseGroups/0/options/{index}/sourceAnchors"
+                ))
                 .and_then(Value::as_array);
             assert!(
                 anchors.is_some_and(|a| !a.is_empty()),
                 "固定标签选项 {index} 应挂上题组区域的真实来源锚点：{:?}",
-                normalized.document.pointer(&format!("/taskGroups/0/responseGroups/0/options/{index}"))
+                normalized
+                    .document
+                    .pointer(&format!("/taskGroups/0/responseGroups/0/options/{index}"))
             );
         }
     }
@@ -6876,11 +6950,13 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
             "sourceFileId":"notes-pdf","pageIndex":1,"nodeIds":["line-notes"],
             "extractionMode":"pdf_native","sourceHash":"a".repeat(64)
         });
-        let local_slot = |q: u32| json!({
-            "type":"answer_slot","id":format!("local-notes-slot-q{q}"),
-            "sourceAnchors":[anchor.clone()],"provenanceStatus":"source",
-            "slotId":format!("q{q}"),"displayLabel":q.to_string(),"inline":true
-        });
+        let local_slot = |q: u32| {
+            json!({
+                "type":"answer_slot","id":format!("local-notes-slot-q{q}"),
+                "sourceAnchors":[anchor.clone()],"provenanceStatus":"source",
+                "slotId":format!("q{q}"),"displayLabel":q.to_string(),"inline":true
+            })
+        };
         let canonical = json!({
             "taskGroups":[{
                 "taskId":"local-notes",
@@ -6928,8 +7004,8 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
         });
         let raw = json!({ "authoring": draft });
 
-        let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), &raw)
-            .expect("标准化必须成功");
+        let normalized =
+            normalize_cloud_authoring(&identity(), Some(&canonical), &raw).expect("标准化必须成功");
 
         // 该组 stimulus 换成本地结构：每个题号都有唯一行内答案槽宿主。
         let stimulus = normalized
@@ -6961,4 +7037,3 @@ Questions 2 7 – 3 1\nQuestions 32-40\n";
         assert!(fallback.local_fragment.is_some() && fallback.cloud_fragment.is_some());
     }
 }
-

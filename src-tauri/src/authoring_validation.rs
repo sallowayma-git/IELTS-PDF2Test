@@ -514,35 +514,78 @@ pub(crate) fn publish_verdict(
         if listening {
             fn has_registered_visual(node: &Value, assets: &Value) -> bool {
                 match node {
-                    Value::Array(nodes) => nodes.iter().any(|n|has_registered_visual(n,assets)),
+                    Value::Array(nodes) => nodes.iter().any(|n| has_registered_visual(n, assets)),
                     Value::Object(object) => {
-                        let registered = matches!(object.get("type").and_then(Value::as_str),Some("figure"|"image"|"diagram"))
-                            && object.get("assetId").and_then(Value::as_str).is_some_and(|id|assets.as_array().into_iter().flatten().any(|a|a["assetId"].as_str()==Some(id)));
-                        registered || object.values().any(|n|has_registered_visual(n,assets))
+                        let registered = matches!(
+                            object.get("type").and_then(Value::as_str),
+                            Some("figure" | "image" | "diagram")
+                        ) && object
+                            .get("assetId")
+                            .and_then(Value::as_str)
+                            .is_some_and(|id| {
+                                assets
+                                    .as_array()
+                                    .into_iter()
+                                    .flatten()
+                                    .any(|a| a["assetId"].as_str() == Some(id))
+                            });
+                        registered || object.values().any(|n| has_registered_visual(n, assets))
                     }
-                    _ => false
+                    _ => false,
                 }
             }
             for group in authoring["taskGroups"].as_array().into_iter().flatten() {
-                if matches!(group["taskType"].as_str(),Some("plan_map_label_completion"|"diagram_label_completion")) && !has_registered_visual(&group["stimulus"],&authoring["assets"]) {
-                    builder.block("LISTENING_VISUAL_MISSING", "Assets", group["taskId"].as_str().map(str::to_string), "原卷地图/图示尚未补齐");
+                if matches!(
+                    group["taskType"].as_str(),
+                    Some("plan_map_label_completion" | "diagram_label_completion")
+                ) && !has_registered_visual(&group["stimulus"], &authoring["assets"])
+                {
+                    builder.block(
+                        "LISTENING_VISUAL_MISSING",
+                        "Assets",
+                        group["taskId"].as_str().map(str::to_string),
+                        "原卷地图/图示尚未补齐",
+                    );
                 }
             }
         }
-        let unresolved_answers: Vec<String> = authoring["answerSlots"].as_object().into_iter().flatten().filter_map(|(id,_)| {
-            let key = &authoring["answerKey"][id];
-            let resolved = match key["kind"].as_str() {
-                Some("text") => key["values"].as_array().is_some_and(|v| !v.is_empty() && v.iter().all(|s| s.as_str().is_some_and(|s| !s.trim().is_empty()))),
-                Some("option") => key["labels"].as_array().is_some_and(|v| !v.is_empty() && v.iter().all(|s| s.as_str().is_some_and(|s| !s.trim().is_empty()))),
-                _ => false,
-            };
-            (!resolved).then(|| id.clone())
-        }).collect();
+        let unresolved_answers: Vec<String> = authoring["answerSlots"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter_map(|(id, _)| {
+                let key = &authoring["answerKey"][id];
+                let resolved = match key["kind"].as_str() {
+                    Some("text") => key["values"].as_array().is_some_and(|v| {
+                        !v.is_empty()
+                            && v.iter()
+                                .all(|s| s.as_str().is_some_and(|s| !s.trim().is_empty()))
+                    }),
+                    Some("option") => key["labels"].as_array().is_some_and(|v| {
+                        !v.is_empty()
+                            && v.iter()
+                                .all(|s| s.as_str().is_some_and(|s| !s.trim().is_empty()))
+                    }),
+                    _ => false,
+                };
+                (!resolved).then(|| id.clone())
+            })
+            .collect();
         for slot_id in unresolved_answers {
             if listening {
-                builder.block("LISTENING_ANSWER_KEY_UNRESOLVED", "AnswerKey", uncoded_target(&slot_id), format!("{slot_id} 还没有答案，学生端无法加载"));
+                builder.block(
+                    "LISTENING_ANSWER_KEY_UNRESOLVED",
+                    "AnswerKey",
+                    uncoded_target(&slot_id),
+                    format!("{slot_id} 还没有答案，学生端无法加载"),
+                );
             } else {
-                builder.warn("ANSWER_MISSING", "AnswerKey", uncoded_target(&slot_id), format!("{slot_id} 还没有答案"));
+                builder.warn(
+                    "ANSWER_MISSING",
+                    "AnswerKey",
+                    uncoded_target(&slot_id),
+                    format!("{slot_id} 还没有答案"),
+                );
             }
         }
         for issue in unresolved_blocking_issues(authoring) {
@@ -746,59 +789,59 @@ pub(crate) fn publish_verdict(
 
     // 来源复核状态：两个范围都要（它是当前稿的事实，不是历史痕迹）。
     if !cloud_direct {
-    match crate::source_review::source_review_status_for_job(root, job_id) {
-        Err(error) => {
-            // P2 门禁收敛：来源复核读不到不再是阻断——唯一硬门禁是编译。
-            builder.warn("SOURCE_REVIEW_UNAVAILABLE", "SourceReview", None, error)
-        }
-        Ok(source_review) => {
-            if scope == PublishScope::FullDerived {
-                if source_review.get("schemaVersion").and_then(Value::as_str)
-                    != Some("SourceReviewV1")
-                    || source_review.get("jobId").and_then(Value::as_str) != Some(job_id)
-                {
-                    builder.block(
-                        "SOURCE_REVIEW_INVALID",
-                        "SourceReview",
-                        None,
-                        "source review status is not a SourceReviewV1 for this job",
-                    );
+        match crate::source_review::source_review_status_for_job(root, job_id) {
+            Err(error) => {
+                // P2 门禁收敛：来源复核读不到不再是阻断——唯一硬门禁是编译。
+                builder.warn("SOURCE_REVIEW_UNAVAILABLE", "SourceReview", None, error)
+            }
+            Ok(source_review) => {
+                if scope == PublishScope::FullDerived {
+                    if source_review.get("schemaVersion").and_then(Value::as_str)
+                        != Some("SourceReviewV1")
+                        || source_review.get("jobId").and_then(Value::as_str) != Some(job_id)
+                    {
+                        builder.block(
+                            "SOURCE_REVIEW_INVALID",
+                            "SourceReview",
+                            None,
+                            "source review status is not a SourceReviewV1 for this job",
+                        );
+                    }
+                    if source_review.get("stale").and_then(Value::as_bool) == Some(true) {
+                        builder.block(
+                            "SOURCE_REVIEW_STALE",
+                            "SourceReview",
+                            None,
+                            "source review is stale: the document changed after it was reviewed",
+                        );
+                    }
+                    if source_review.get("resolved").and_then(Value::as_bool) != Some(true) {
+                        builder.block(
+                            "SOURCE_REVIEW_UNRESOLVED",
+                            "SourceReview",
+                            None,
+                            "source review is not resolved",
+                        );
+                    }
                 }
-                if source_review.get("stale").and_then(Value::as_bool) == Some(true) {
-                    builder.block(
-                        "SOURCE_REVIEW_STALE",
+                for issue in crate::source_review::source_review_issues(&source_review) {
+                    // P2 门禁收敛：来源复核未处理是**内容质量**问题，降为警告。
+                    builder.warn(
+                        "SOURCE_REVIEW_ISSUE",
                         "SourceReview",
-                        None,
-                        "source review is stale: the document changed after it was reviewed",
-                    );
-                }
-                if source_review.get("resolved").and_then(Value::as_bool) != Some(true) {
-                    builder.block(
-                        "SOURCE_REVIEW_UNRESOLVED",
-                        "SourceReview",
-                        None,
-                        "source review is not resolved",
+                        issue
+                            .get("path")
+                            .and_then(Value::as_str)
+                            .map(ToString::to_string),
+                        issue
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .unwrap_or("来源复核未完成")
+                            .to_string(),
                     );
                 }
             }
-            for issue in crate::source_review::source_review_issues(&source_review) {
-                // P2 门禁收敛：来源复核未处理是**内容质量**问题，降为警告。
-                builder.warn(
-                    "SOURCE_REVIEW_ISSUE",
-                    "SourceReview",
-                    issue
-                        .get("path")
-                        .and_then(Value::as_str)
-                        .map(ToString::to_string),
-                    issue
-                        .get("message")
-                        .and_then(Value::as_str)
-                        .unwrap_or("来源复核未完成")
-                        .to_string(),
-                );
-            }
         }
-    }
     }
 
     // ── 必判的对等校验器：**没能执行 ≠ 通过** ────────────────────────────
@@ -930,16 +973,31 @@ mod tests {
 
     #[test]
     fn listening_requires_resolved_answers_even_with_valid_managed_media() {
-        let root=std::env::temp_dir().join(format!("listening-answer-gate-{}",uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("listening-answer-gate-{}", uuid::Uuid::new_v4()));
         crate::util::ensure_app_dirs(&root).unwrap();
-        let mut authoring=serde_json::to_value(crate::test_support::complete_listening_exam()).unwrap();
-        let job_id=authoring["jobId"].as_str().unwrap().to_string();
-        authoring["answerKey"]["q1"]=json!({"kind":"unresolved"});
+        let mut authoring =
+            serde_json::to_value(crate::test_support::complete_listening_exam()).unwrap();
+        let job_id = authoring["jobId"].as_str().unwrap().to_string();
+        authoring["answerKey"]["q1"] = json!({"kind":"unresolved"});
         authoring["answerKey"].as_object_mut().unwrap().remove("q2");
-        authoring["answerKey"]["q3"]=json!({"kind":"text","values":[],"normalization":"ielts_default"});
-        let verdict=publish_verdict(&root,&job_id,&authoring,Some(1),PublishScope::CanonicalDirect).to_value();
-        let blockers:Vec<_>=verdict["reasons"].as_array().unwrap().iter().filter(|r|r["code"]=="LISTENING_ANSWER_KEY_UNRESOLVED").collect();
-        assert!(blockers.len()>=3,"{verdict}");
+        authoring["answerKey"]["q3"] =
+            json!({"kind":"text","values":[],"normalization":"ielts_default"});
+        let verdict = publish_verdict(
+            &root,
+            &job_id,
+            &authoring,
+            Some(1),
+            PublishScope::CanonicalDirect,
+        )
+        .to_value();
+        let blockers: Vec<_> = verdict["reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["code"] == "LISTENING_ANSWER_KEY_UNRESOLVED")
+            .collect();
+        assert!(blockers.len() >= 3, "{verdict}");
     }
 
     fn error_issue(layer: &str, message: &str) -> Value {

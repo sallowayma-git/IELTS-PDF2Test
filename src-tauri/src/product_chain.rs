@@ -673,32 +673,51 @@ fn product_chain_same_pdf_paragraph_corpus() {
         attach_source(&root, &mut job, &format!("Files/{name}"), "MainQuestion");
         save_job(&root, &job).unwrap();
         let started = std::time::Instant::now();
-        run_auto_pipeline_core(&root, &job.job_id, Some(AutoPipelineInput {
-            profile_id: None,
-            confidence_threshold: Some(0.85),
-            parse_mode: None,
-            execution_mode: Some("localOnly".into()),
-            target: Some("editableDraft".into()),
-            allow_overwrite: Some(true),
-        })).expect("real PDF import command core must complete");
-        let session = get_authoring_v2_core(&root, &job.job_id)
-            .expect("authoring editor session must open");
+        run_auto_pipeline_core(
+            &root,
+            &job.job_id,
+            Some(AutoPipelineInput {
+                profile_id: None,
+                confidence_threshold: Some(0.85),
+                parse_mode: None,
+                execution_mode: Some("localOnly".into()),
+                target: Some("editableDraft".into()),
+                allow_overwrite: Some(true),
+            }),
+        )
+        .expect("real PDF import command core must complete");
+        let session =
+            get_authoring_v2_core(&root, &job.job_id).expect("authoring editor session must open");
         let authoring = &session["authoring"];
-        let paragraphs = authoring.pointer("/passage/content")
-            .and_then(Value::as_array).into_iter().flatten()
+        let paragraphs = authoring
+            .pointer("/passage/content")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
             .filter(|node| node["type"] == "paragraph")
-            .map(|node| json!({
-                "id": node["id"],
-                "text": crate::reconcile::candidate::nodes_text(node),
-                "anchors": node["sourceAnchors"],
-                "label": node["paragraphLabel"]
-            })).collect::<Vec<_>>();
-        assert!(!paragraphs.is_empty(), "{name}: real passage must survive import");
+            .map(|node| {
+                json!({
+                    "id": node["id"],
+                    "text": crate::reconcile::candidate::nodes_text(node),
+                    "anchors": node["sourceAnchors"],
+                    "label": node["paragraphLabel"]
+                })
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            !paragraphs.is_empty(),
+            "{name}: real passage must survive import"
+        );
         if name.starts_with("19.") {
-            assert!(paragraphs.iter().any(|paragraph| {
-                crate::reconcile::candidate::normalize_text(paragraph["text"].as_str().unwrap_or(""))
+            assert!(
+                paragraphs.iter().any(|paragraph| {
+                    crate::reconcile::candidate::normalize_text(
+                        paragraph["text"].as_str().unwrap_or(""),
+                    )
                     .contains("sugar maples can warn each other")
-            }), "the source paragraph wrapping below the picture must remain one paragraph");
+                }),
+                "the source paragraph wrapping below the picture must remain one paragraph"
+            );
         }
         results.push(json!({
             "file": name, "sha256": job.source_files[0].sha256,
@@ -1339,37 +1358,70 @@ fn product_chain_font_scale_persists_through_canonical_save_undo_redo_and_previe
     save_job(&root, &job).unwrap();
     let dir = job_dir(&root, &job.job_id);
     ensure_job_dirs(&dir).unwrap();
-    let mut authoring: Value = serde_json::from_slice(
-        &fs::read(workspace_path(READY_AUTHORING_FIXTURE)).unwrap(),
-    ).unwrap();
+    let mut authoring: Value =
+        serde_json::from_slice(&fs::read(workspace_path(READY_AUTHORING_FIXTURE)).unwrap())
+            .unwrap();
     authoring["jobId"] = json!(job.job_id);
-    authoring["passage"]["content"].as_array_mut().unwrap().insert(0, json!({
-        "type": "heading", "id": "font-scale-heading", "level": 2,
-        "sourceAnchors": [], "provenanceStatus": "derived",
-        "children": [{"type": "text", "id": "font-scale-text", "text": "Passage title",
-            "sourceAnchors": [], "provenanceStatus": "derived"}]
-    }));
+    authoring["passage"]["content"]
+        .as_array_mut()
+        .unwrap()
+        .insert(
+            0,
+            json!({
+                "type": "heading", "id": "font-scale-heading", "level": 2,
+                "sourceAnchors": [], "provenanceStatus": "derived",
+                "children": [{"type": "text", "id": "font-scale-text", "text": "Passage title",
+                    "sourceAnchors": [], "provenanceStatus": "derived"}]
+            }),
+        );
     write_json(&dir.join(AUTHORING_V2_SHADOW_FILE), &authoring).unwrap();
-    write_json(&dir.join(DOCUMENT_V2_SHADOW_FILE), &physical_shadow_for(&authoring)).unwrap();
+    write_json(
+        &dir.join(DOCUMENT_V2_SHADOW_FILE),
+        &physical_shadow_for(&authoring),
+    )
+    .unwrap();
     crate::library::commands::get_workspace_item_core(&root, &job.job_id).unwrap();
     for (base, command, expected) in [
-        (1, json!({"op":"setNodeAttrs","nodeId":"font-scale-heading","attrs":{"fontScale":1.3}}), json!(1.3)),
-        (2, json!({"op":"setNodeAttrs","nodeId":"font-scale-heading","attrs":{},"removeAttrs":["fontScale"]}), Value::Null),
-        (3, json!({"op":"setNodeAttrs","nodeId":"font-scale-heading","attrs":{"fontScale":1.3}}), json!(1.3)),
+        (
+            1,
+            json!({"op":"setNodeAttrs","nodeId":"font-scale-heading","attrs":{"fontScale":1.3}}),
+            json!(1.3),
+        ),
+        (
+            2,
+            json!({"op":"setNodeAttrs","nodeId":"font-scale-heading","attrs":{},"removeAttrs":["fontScale"]}),
+            Value::Null,
+        ),
+        (
+            3,
+            json!({"op":"setNodeAttrs","nodeId":"font-scale-heading","attrs":{"fontScale":1.3}}),
+            json!(1.3),
+        ),
     ] {
-        crate::library::commands::apply_editor_commands_core(&root,
+        crate::library::commands::apply_editor_commands_core(
+            &root,
             crate::library::repository::ApplyEditorCommandsInput {
-                item_id: job.job_id.clone(), base_version: base, request_id: None,
-                commands: vec![command], title: None,
-            }).expect("canonical patch must save");
-        let reopened = crate::library::commands::get_workspace_item_core(&root, &job.job_id).unwrap();
+                item_id: job.job_id.clone(),
+                base_version: base,
+                request_id: None,
+                commands: vec![command],
+                title: None,
+            },
+        )
+        .expect("canonical patch must save");
+        let reopened =
+            crate::library::commands::get_workspace_item_core(&root, &job.job_id).unwrap();
         let heading = reopened.pointer("/ds/passage/content/0").unwrap();
         assert_eq!(heading.get("fontScale").unwrap_or(&Value::Null), &expected);
     }
     let reopened = crate::library::commands::get_workspace_item_core(&root, &job.job_id).unwrap();
-    let preview = crate::authoring_v2_commands::compile_authoring_preview_core(reopened.get("ds").unwrap());
+    let preview =
+        crate::authoring_v2_commands::compile_authoring_preview_core(reopened.get("ds").unwrap());
     assert_eq!(preview["ok"], json!(true));
-    assert_eq!(reopened.pointer("/ds/passage/content/0/fontScale"), Some(&json!(1.3)));
+    assert_eq!(
+        reopened.pointer("/ds/passage/content/0/fontScale"),
+        Some(&json!(1.3))
+    );
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -1697,9 +1749,7 @@ fn publish_items_is_all_or_nothing_across_a_batch() {
             resource_dir.display()
         );
         assert!(
-            manifest.contains(&format!(
-                "./releases/{batch_id}/resources/batch-{index}"
-            )),
+            manifest.contains(&format!("./releases/{batch_id}/resources/batch-{index}")),
             "清单的资源路径必须指向本批次 releases 目录：{manifest}"
         );
         assert!(

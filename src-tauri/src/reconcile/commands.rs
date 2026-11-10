@@ -759,17 +759,20 @@ pub(crate) fn supersede_cloud_adopted_decisions(
             .question_numbers
             .iter()
             .any(|number| covered_question_numbers.contains(number));
-        let by_task = item
-            .target
-            .task_id
-            .as_deref()
-            .is_some_and(|task_id| adopted_task_ids.iter().any(|adopted| adopted.as_str() == task_id));
+        let by_task = item.target.task_id.as_deref().is_some_and(|task_id| {
+            adopted_task_ids
+                .iter()
+                .any(|adopted| adopted.as_str() == task_id)
+        });
         if !by_number && !by_task {
             continue;
         }
         item.status = DecisionStatusV1::Superseded;
         item.reason_code = reason::CLOUD_ADOPTED.to_string();
-        item.user_message = format!("{}（云端识别已采纳该内容，本地建议作废）", item.user_message);
+        item.user_message = format!(
+            "{}（云端识别已采纳该内容，本地建议作废）",
+            item.user_message
+        );
         store::set_decision_status(
             &conn,
             batch_id,
@@ -1759,7 +1762,8 @@ mod tests {
     /// 云端内容采纳后作废的本地识别决策不能被发布门禁当成未解决项拦截。
     #[test]
     fn cloud_adopted_supersession_leaves_nothing_for_the_publish_gate_to_block_on() {
-        let root = std::env::temp_dir().join(format!("pdf2test-supersede-{}", Uuid::new_v4().simple()));
+        let root =
+            std::env::temp_dir().join(format!("pdf2test-supersede-{}", Uuid::new_v4().simple()));
         ensure_app_dirs(&root).expect("app dirs");
         let item_id = "supersede-item";
         let canonical = canonical_from_golden(&original_option());
@@ -1777,35 +1781,56 @@ mod tests {
                 cloud_reason_code: None,
                 source_reason_code: None,
             },
-            items: vec![decision_item("slot-1", DecisionStatusV1::Open, DecisionResolutionV1::NeedsReview)],
-            summary: DecisionSummaryV1 { agreed: 0, auto_fixed: 0, needs_review: 1, unverifiable: 0 },
+            items: vec![decision_item(
+                "slot-1",
+                DecisionStatusV1::Open,
+                DecisionResolutionV1::NeedsReview,
+            )],
+            summary: DecisionSummaryV1 {
+                agreed: 0,
+                auto_fixed: 0,
+                needs_review: 1,
+                unverifiable: 0,
+            },
         };
         {
             let conn = open_library_connection(&root).expect("db");
             upsert_item_shell(
                 &conn,
-                &UpsertItemInput { id: item_id, modality: "reading", title: "t", status: "action_required", source_asset_id: None },
+                &UpsertItemInput {
+                    id: item_id,
+                    modality: "reading",
+                    title: "t",
+                    status: "action_required",
+                    source_asset_id: None,
+                },
             )
             .expect("shell");
-            seed_canonical_ds(&conn, item_id, &canonical.to_string(), "action_required").expect("canonical");
+            seed_canonical_ds(&conn, item_id, &canonical.to_string(), "action_required")
+                .expect("canonical");
             store::upsert_batch(&conn, &decision).expect("batch");
             store::replace_decision_items(&conn, &decision).expect("items");
         }
-        let superseded = supersede_cloud_adopted_decisions(&root, "batch-sup", &[1], &[]).expect("supersede");
+        let superseded =
+            supersede_cloud_adopted_decisions(&root, "batch-sup", &[1], &[]).expect("supersede");
         assert_eq!(superseded, 1);
         let conn = open_library_connection(&root).expect("db");
         let items = store::load_decision_items(&conn, "batch-sup").expect("items");
-        assert!(items
-            .iter()
-            .all(|item| !item.is_actionable()
-                && item.status == DecisionStatusV1::Superseded
-                && item.reason_code == reason::CLOUD_ADOPTED));
+        assert!(items.iter().all(|item| !item.is_actionable()
+            && item.status == DecisionStatusV1::Superseded
+            && item.reason_code == reason::CLOUD_ADOPTED));
         drop(conn);
         for scope in [
             crate::authoring_validation::PublishScope::CanonicalDirect,
             crate::authoring_validation::PublishScope::FullDerived,
         ] {
-            let verdict = crate::authoring_validation::publish_verdict(&root, item_id, &canonical, Some(1), scope);
+            let verdict = crate::authoring_validation::publish_verdict(
+                &root,
+                item_id,
+                &canonical,
+                Some(1),
+                scope,
+            );
             assert!(
                 !verdict
                     .reasons()

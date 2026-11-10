@@ -339,7 +339,6 @@ fn build_source_model(document_ir: &Value) -> Option<SourceModel> {
                 readable_len,
             });
         }
-
     }
 
     if key.is_empty() {
@@ -570,9 +569,7 @@ fn split_sentences(readable: &str) -> Vec<String> {
     for (idx, ch) in chars.iter().enumerate() {
         current.push(*ch);
         if matches!(ch, '.' | '!' | '?') {
-            let next_is_boundary = chars
-                .get(idx + 1)
-                .map_or(true, |next| next.is_whitespace());
+            let next_is_boundary = chars.get(idx + 1).map_or(true, |next| next.is_whitespace());
             if next_is_boundary {
                 let trimmed = current.trim();
                 if !trimmed.is_empty() {
@@ -881,17 +878,42 @@ fn collect_text_nodes(authoring: &Value) -> Vec<TextNodeInput> {
             .get("taskId")
             .and_then(Value::as_str)
             .map(str::to_string);
-        for node in group.get("instructions").and_then(Value::as_array).into_iter().flatten() {
+        for node in group
+            .get("instructions")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             push_node(&mut inputs, node, NodeKind::Instruction, &task_id, "id");
         }
-        for node in group.get("stimulus").and_then(Value::as_array).into_iter().flatten() {
+        for node in group
+            .get("stimulus")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             push_node(&mut inputs, node, NodeKind::Stimulus, &task_id, "id");
         }
-        for response in group.get("responseGroups").and_then(Value::as_array).into_iter().flatten() {
-            for node in response.get("prompt").and_then(Value::as_array).into_iter().flatten() {
+        for response in group
+            .get("responseGroups")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            for node in response
+                .get("prompt")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 push_node(&mut inputs, node, NodeKind::Prompt, &task_id, "id");
             }
-            for option in response.get("options").and_then(Value::as_array).into_iter().flatten() {
+            for option in response
+                .get("options")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 push_node(&mut inputs, option, NodeKind::Option, &task_id, "optionId");
             }
         }
@@ -1018,7 +1040,11 @@ fn align_node(
         });
     }
 
-    let mean = if non_trivial == 0 { 1.0 } else { sim_sum / non_trivial as f64 };
+    let mean = if non_trivial == 0 {
+        1.0
+    } else {
+        sim_sum / non_trivial as f64
+    };
     let sentence_count = non_trivial;
     // 云端为主：命中比例达标即视为该节点小差异、直接采用。凭空句不再逐节点硬阻断——是否
     // 整体采纳由题组比例（≥group_align_ratio）与原文凭空句容忍在文档级判定。
@@ -1207,7 +1233,8 @@ pub(crate) fn assess_alignment(
             }
             let gradable: Vec<&SentenceEval> = evals.iter().filter(|eval| !eval.trivial).collect();
             let take = gradable.len().div_ceil(4).clamp(1, 3);
-            for pick in sample_indices(config.sample_seed, &alignment.node_id, gradable.len(), take) {
+            for pick in sample_indices(config.sample_seed, &alignment.node_id, gradable.len(), take)
+            {
                 let eval = gradable[pick];
                 passage_pool.push((
                     fnv1a(config.sample_seed, &format!("{}#{pick}", alignment.node_id)),
@@ -1225,15 +1252,22 @@ pub(crate) fn assess_alignment(
                 *group_matched.entry(task_id.clone()).or_default() += alignment.matched_sentences;
                 *group_total.entry(task_id.clone()).or_default() += alignment.sentence_count;
                 if !alignment.aligned {
-                    group_reasons.entry(task_id.clone()).or_default().push(format!(
-                        "{} 节点 {} 命中 {}/{}，最弱相似度 {:.2}{}",
-                        alignment.kind_label,
-                        alignment.node_id,
-                        alignment.matched_sentences,
-                        alignment.sentence_count,
-                        alignment.min_similarity,
-                        if alignment.has_invented { "，含凭空句" } else { "" }
-                    ));
+                    group_reasons
+                        .entry(task_id.clone())
+                        .or_default()
+                        .push(format!(
+                            "{} 节点 {} 命中 {}/{}，最弱相似度 {:.2}{}",
+                            alignment.kind_label,
+                            alignment.node_id,
+                            alignment.matched_sentences,
+                            alignment.sentence_count,
+                            alignment.min_similarity,
+                            if alignment.has_invented {
+                                "，含凭空句"
+                            } else {
+                                ""
+                            }
+                        ));
                 }
             }
         }
@@ -1304,9 +1338,7 @@ pub(crate) fn assess_alignment(
     let passage_sample_misses: Vec<Value> = passage_pool
         .iter()
         .filter(|entry| entry.3 < config.sentence_threshold)
-        .map(|entry| {
-            json!({"nodeId": entry.1, "sentence": entry.2, "similarity": entry.3})
-        })
+        .map(|entry| json!({"nodeId": entry.1, "sentence": entry.2, "similarity": entry.3}))
         .collect();
     let passage_pass = passage_sample_total == 0
         || (passage_sample_matched as f64 / passage_sample_total as f64)
@@ -1328,10 +1360,13 @@ pub(crate) fn assess_alignment(
         let ok = ratio >= config.group_align_ratio;
         group_aligned.insert(task_id.clone(), ok);
         if !ok {
-            group_reasons.entry(task_id.clone()).or_default().push(format!(
-                "题组内容对齐比例 {:.2}（命中 {}/{}）低于 {:.2}",
-                ratio, matched, total, config.group_align_ratio
-            ));
+            group_reasons
+                .entry(task_id.clone())
+                .or_default()
+                .push(format!(
+                    "题组内容对齐比例 {:.2}（命中 {}/{}）低于 {:.2}",
+                    ratio, matched, total, config.group_align_ratio
+                ));
         }
     }
 
@@ -1569,9 +1604,14 @@ mod tests {
             .as_array_mut()
             .unwrap()
             .retain(|glyph| glyph["text"] != "v");
-        let result = report(&doc, &passage_authoring(&[("researcher", RESEARCHER_SENTENCE)]));
-        assert!(result.nodes[0].min_similarity < 1.0,
-            "Missing native characters must not produce exact evidence");
+        let result = report(
+            &doc,
+            &passage_authoring(&[("researcher", RESEARCHER_SENTENCE)]),
+        );
+        assert!(
+            result.nodes[0].min_similarity < 1.0,
+            "Missing native characters must not produce exact evidence"
+        );
     }
 
     #[test]
@@ -1646,7 +1686,9 @@ mod tests {
 
     #[test]
     fn out_of_reading_order_matches_are_detected() {
-        let filler: String = std::iter::repeat("neutral filler text here. ").take(12).collect();
+        let filler: String = std::iter::repeat("neutral filler text here. ")
+            .take(12)
+            .collect();
         let doc = source_doc(&[
             ("l1", "Alpha statement introduces the first idea."),
             ("l2", &filler),
@@ -1703,15 +1745,24 @@ mod tests {
             lines.push((format!("l{index}"), source));
             nodes.push((format!("p{index}"), cloud));
         }
-        let line_refs: Vec<(&str, &str)> = lines.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
-        let node_refs: Vec<(&str, &str)> = nodes.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+        let line_refs: Vec<(&str, &str)> = lines
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        let node_refs: Vec<(&str, &str)> = nodes
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
         (source_doc(&line_refs), passage_authoring(&node_refs))
     }
 
     #[test]
     fn passage_is_sampled_per_paragraph_capped_and_reproducible_by_seed() {
         let (doc, authoring) = many_paragraph_fixture(40, false);
-        let config = AlignmentConfig { sample_seed: 99, ..Default::default() };
+        let config = AlignmentConfig {
+            sample_seed: 99,
+            ..Default::default()
+        };
         let run = |config: &AlignmentConfig| match assess_alignment(&doc, &authoring, config) {
             AlignmentOutcome::Assessed(report) => report,
             AlignmentOutcome::NoTextLayer => panic!("fixture has a text layer"),
@@ -1724,21 +1775,47 @@ mod tests {
         assert_eq!(first.passage_sample_total, second.passage_sample_total);
         // 少于上限时每段至少抽 1 句、至多 3 句。
         let (small_doc, small_authoring) = many_paragraph_fixture(5, false);
-        let AlignmentOutcome::Assessed(small) = assess_alignment(&small_doc, &small_authoring, &config) else { panic!() };
-        assert!((5..=15).contains(&small.passage_sample_total), "{}", small.passage_sample_total);
+        let AlignmentOutcome::Assessed(small) =
+            assess_alignment(&small_doc, &small_authoring, &config)
+        else {
+            panic!()
+        };
+        assert!(
+            (5..=15).contains(&small.passage_sample_total),
+            "{}",
+            small.passage_sample_total
+        );
     }
 
     #[test]
     fn sampled_misses_below_eighty_percent_fail_the_passage_but_a_few_misses_do_not() {
         let (doc, bad) = many_paragraph_fixture(12, true);
-        let AlignmentOutcome::Assessed(report) = assess_alignment(&doc, &bad, &AlignmentConfig::default()) else { panic!() };
-        assert!(!report.passage_pass, "抽样命中率低于 80% 才把原文判为不合格");
-        assert_eq!(report.passage_sample_misses.len(), report.passage_sample_total);
+        let AlignmentOutcome::Assessed(report) =
+            assess_alignment(&doc, &bad, &AlignmentConfig::default())
+        else {
+            panic!()
+        };
+        assert!(
+            !report.passage_pass,
+            "抽样命中率低于 80% 才把原文判为不合格"
+        );
+        assert_eq!(
+            report.passage_sample_misses.len(),
+            report.passage_sample_total
+        );
         // 只有一段被改坏：抽样命中率仍 ≥80%，原文整体信任，坏句只是顾问级提示。
         let (doc, mut authoring) = many_paragraph_fixture(12, false);
         authoring["passage"]["content"][3]["text"] = json!("Completely unrelated invented filler sentence about nothing in the source. Another fabricated statement without counterpart.");
-        let AlignmentOutcome::Assessed(report) = assess_alignment(&doc, &authoring, &AlignmentConfig::default()) else { panic!() };
-        assert!(report.passage_pass, "{} / {}", report.passage_sample_matched, report.passage_sample_total);
+        let AlignmentOutcome::Assessed(report) =
+            assess_alignment(&doc, &authoring, &AlignmentConfig::default())
+        else {
+            panic!()
+        };
+        assert!(
+            report.passage_pass,
+            "{} / {}",
+            report.passage_sample_matched, report.passage_sample_total
+        );
     }
 
     #[test]
@@ -1791,7 +1868,10 @@ mod tests {
                 "The second paragraph reports the main experimental result.",
             ),
         ]);
-        assert!(!report(&doc, &partial).coverage_ok, "漏掉第三段应覆盖不达标");
+        assert!(
+            !report(&doc, &partial).coverage_ok,
+            "漏掉第三段应覆盖不达标"
+        );
 
         let full = passage_authoring(&[
             (
@@ -1855,7 +1935,10 @@ mod tests {
             &group("Match each heading to the correct paragraph below."),
         );
         assert_eq!(invented.group_aligned.get("g1"), Some(&false));
-        assert!(invented.group_reasons.get("g1").is_some_and(|r| !r.is_empty()));
+        assert!(invented
+            .group_reasons
+            .get("g1")
+            .is_some_and(|r| !r.is_empty()));
     }
 
     #[test]
@@ -1866,7 +1949,11 @@ mod tests {
         assert_eq!(a.len(), 3);
         let unique: BTreeSet<usize> = a.iter().copied().collect();
         assert_eq!(unique.len(), 3, "抽样下标应互不相同");
-        assert_ne!(a, sample_indices(1234, "node-y", 20, 3), "不同节点应取不同样本");
+        assert_ne!(
+            a,
+            sample_indices(1234, "node-y", 20, 3),
+            "不同节点应取不同样本"
+        );
     }
 
     // --- 9 份私有卷的真实文本层对齐（语料门控；缺卷或未开启时跳过）---
@@ -1929,10 +2016,20 @@ mod tests {
     fn ideal_passage_from_shadow(shadow: &Value) -> Value {
         let mut content = Vec::new();
         let mut counter = 0usize;
-        for page in shadow.get("pages").and_then(Value::as_array).into_iter().flatten() {
+        for page in shadow
+            .get("pages")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let mut line_text: BTreeMap<String, String> = BTreeMap::new();
             let mut line_order: Vec<String> = Vec::new();
-            for line in page.get("lines").and_then(Value::as_array).into_iter().flatten() {
+            for line in page
+                .get("lines")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 if let (Some(id), Some(text)) = (
                     line.get("id").and_then(Value::as_str),
                     line.get("text").and_then(Value::as_str),
@@ -2069,8 +2166,13 @@ mod tests {
                 }
                 AlignmentOutcome::Assessed(report) => {
                     assessed += 1;
-                    let anchor_total: usize = report.nodes.iter().map(|node| node.anchors.len()).sum();
-                    let passage_nodes = report.nodes.iter().filter(|n| n.kind_label == "passage").count();
+                    let anchor_total: usize =
+                        report.nodes.iter().map(|node| node.anchors.len()).sum();
+                    let passage_nodes = report
+                        .nodes
+                        .iter()
+                        .filter(|n| n.kind_label == "passage")
+                        .count();
                     table.push_str(&format!(
                         "{id} | 有 | {}/{} | {:.2} | {:.2} | {}({:.2}) | {} | {}\n",
                         report.passage_sentence_matched,
@@ -2082,7 +2184,11 @@ mod tests {
                         passage_nodes,
                         anchor_total,
                     ));
-                    if !(report.passage_pass && report.coverage_ok && report.monotonic && report.length_ratio_ok) {
+                    if !(report.passage_pass
+                        && report.coverage_ok
+                        && report.monotonic
+                        && report.length_ratio_ok)
+                    {
                         failures.push(format!(
                             "{id}: passage_pass={} coverage_ok={}({:.2}) monotonic={}(顺序比 {:.2}, 逆序 {}) length_ratio_ok={}({:.2})",
                             report.passage_pass, report.coverage_ok, report.coverage,
@@ -2095,8 +2201,9 @@ mod tests {
         }
         eprintln!("{table}");
         assert!(assessed >= 8, "至少 8 份卷应有可用文本层，实得 {assessed}");
-        assert!(failures.is_empty(), "忠实还原的候选不应被判失败：{failures:?}");
+        assert!(
+            failures.is_empty(),
+            "忠实还原的候选不应被判失败：{failures:?}"
+        );
     }
 }
-
-

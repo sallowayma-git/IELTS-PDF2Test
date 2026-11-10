@@ -139,8 +139,12 @@ fn append_wrapped_text(paragraph: &mut String, text: &str) {
     if paragraph.ends_with('\u{00ad}') {
         paragraph.pop();
     } else if !(paragraph.ends_with('-')
-        && paragraph[..paragraph.len() - 1].chars().last().is_some_and(char::is_alphanumeric)
-        && text.chars().next().is_some_and(char::is_lowercase)) {
+        && paragraph[..paragraph.len() - 1]
+            .chars()
+            .last()
+            .is_some_and(char::is_alphanumeric)
+        && text.chars().next().is_some_and(char::is_lowercase))
+    {
         paragraph.push(' ');
     }
     paragraph.push_str(text);
@@ -149,27 +153,60 @@ fn append_wrapped_text(paragraph: &mut String, text: &str) {
 /// Infer labels only from an explicit paragraph range and an exact paragraph count.
 /// Physical text and anchors are retained; the label assignment is derived evidence.
 pub(crate) fn derive_declared_paragraph_labels(nodes: &mut [Value], instructions: &str) -> bool {
-    if nodes.iter().any(|node| node.get("paragraphLabel").is_some()) { return false; }
+    if nodes
+        .iter()
+        .any(|node| node.get("paragraphLabel").is_some())
+    {
+        return false;
+    }
     let normalized = normalize_instruction_text(instructions).to_ascii_uppercase();
     let mut ranges = std::collections::BTreeSet::new();
-    for (_, suffix) in normalized.match_indices("PARAGRAPHS").map(|(i, _)| (i, &normalized[i + "PARAGRAPHS".len()..])) {
+    for (_, suffix) in normalized
+        .match_indices("PARAGRAPHS")
+        .map(|(i, _)| (i, &normalized[i + "PARAGRAPHS".len()..]))
+    {
         let suffix = suffix.trim_start();
-        let suffix = suffix.strip_prefix("LABELLED").or_else(|| suffix.strip_prefix("LABELED")).unwrap_or(suffix).trim_start();
+        let suffix = suffix
+            .strip_prefix("LABELLED")
+            .or_else(|| suffix.strip_prefix("LABELED"))
+            .unwrap_or(suffix)
+            .trim_start();
         let mut chars = suffix.chars();
-        let Some(first) = chars.next().filter(char::is_ascii_uppercase) else { continue; };
+        let Some(first) = chars.next().filter(char::is_ascii_uppercase) else {
+            continue;
+        };
         let rest = chars.as_str().trim_start();
-        let Some(rest) = rest.strip_prefix('-') else { continue; };
+        let Some(rest) = rest.strip_prefix('-') else {
+            continue;
+        };
         let mut chars = rest.trim_start().chars();
-        let Some(last) = chars.next().filter(char::is_ascii_uppercase) else { continue; };
-        if chars.next().is_some_and(char::is_alphabetic) { continue; }
+        let Some(last) = chars.next().filter(char::is_ascii_uppercase) else {
+            continue;
+        };
+        if chars.next().is_some_and(char::is_alphabetic) {
+            continue;
+        }
         ranges.insert((first as u8, last as u8));
     }
-    if ranges.len() != 1 { return false; }
+    if ranges.len() != 1 {
+        return false;
+    }
     let (first, last) = *ranges.iter().next().unwrap();
-    if first != b'A' || last < first { return false; }
-    let count = nodes.iter().filter(|node| node["type"] == "paragraph").count();
-    if count != usize::from(last - first + 1) { return false; }
-    for (index, node) in nodes.iter_mut().filter(|node| node["type"] == "paragraph").enumerate() {
+    if first != b'A' || last < first {
+        return false;
+    }
+    let count = nodes
+        .iter()
+        .filter(|node| node["type"] == "paragraph")
+        .count();
+    if count != usize::from(last - first + 1) {
+        return false;
+    }
+    for (index, node) in nodes
+        .iter_mut()
+        .filter(|node| node["type"] == "paragraph")
+        .enumerate()
+    {
         node["paragraphLabel"] = json!((first + index as u8) as char);
         node["provenanceStatus"] = json!("derived");
     }
@@ -571,7 +608,14 @@ mod tests {
 
     #[test]
     fn flattened_prefixes_support_all_twenty_six_labels() {
-        let lines = (b'A'..=b'Z').map(|c| line(&format!("p-{c}"), &format!("{} The paragraph text.", c as char))).collect::<Vec<_>>();
+        let lines = (b'A'..=b'Z')
+            .map(|c| {
+                line(
+                    &format!("p-{c}"),
+                    &format!("{} The paragraph text.", c as char),
+                )
+            })
+            .collect::<Vec<_>>();
         let nodes = passage_nodes("Passage", &lines, vec![]);
         let map = paragraph_map_from_nodes(&nodes);
         assert_eq!(map.as_object().unwrap().len(), 26);
@@ -584,21 +628,41 @@ mod tests {
         let mut lines = vec![line("title", "Maori Fish Hooks")];
         lines.extend((0..10).map(|i| line(&format!("p{i}"), "The paragraph text.")));
         let mut nodes = passage_nodes_with_layout("Maori Fish Hooks", &lines, vec![], true);
-        assert!(derive_declared_paragraph_labels(&mut nodes, "ten paragraphs labelled A-J"));
-        assert_eq!(paragraph_map_from_nodes(&nodes).as_object().unwrap().len(), 10);
+        assert!(derive_declared_paragraph_labels(
+            &mut nodes,
+            "ten paragraphs labelled A-J"
+        ));
+        assert_eq!(
+            paragraph_map_from_nodes(&nodes).as_object().unwrap().len(),
+            10
+        );
         assert_eq!(nodes[0]["type"], "heading");
     }
 
     #[test]
     fn declared_labels_require_exact_count_and_keep_real_node_ids() {
-        let lines = (0..10).map(|i| line(&format!("p{i}"), "The paragraph text.")).collect::<Vec<_>>();
+        let lines = (0..10)
+            .map(|i| line(&format!("p{i}"), "The paragraph text."))
+            .collect::<Vec<_>>();
         let mut nodes = passage_nodes("Passage", &lines, vec![]);
-        assert!(!derive_declared_paragraph_labels(&mut nodes, "The passage has nine paragraphs labelled A–I."));
+        assert!(!derive_declared_paragraph_labels(
+            &mut nodes,
+            "The passage has nine paragraphs labelled A–I."
+        ));
         assert_eq!(paragraph_map_from_nodes(&nodes), json!({}));
-        assert!(derive_declared_paragraph_labels(&mut nodes, "The reading passage has ten paragraphs labelled A–J."));
-        assert_eq!(paragraph_map_from_nodes(&nodes)["J"], "passage-paragraph-10");
+        assert!(derive_declared_paragraph_labels(
+            &mut nodes,
+            "The reading passage has ten paragraphs labelled A–J."
+        ));
+        assert_eq!(
+            paragraph_map_from_nodes(&nodes)["J"],
+            "passage-paragraph-10"
+        );
         assert_eq!(nodes[1]["provenanceStatus"], "derived");
-        assert!(!derive_declared_paragraph_labels(&mut nodes, "paragraphs labelled A–J"));
+        assert!(!derive_declared_paragraph_labels(
+            &mut nodes,
+            "paragraphs labelled A–J"
+        ));
     }
 
     #[test]

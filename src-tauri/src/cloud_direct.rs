@@ -197,9 +197,21 @@ pub(crate) fn run_exam_direct(
             chunked = true;
             calls += 1;
             if !is_listening(root, job_id) {
-                return multi::run_truncated_documents(root, &job, &source, &profile, &selected,
-                    &upload_path, &page_texts, &image_pages, api_key.as_deref(), calls, &evidence_warnings, !scoped)
-                    .map_err(|error| format!("cloud_direct_batch_truncated:{error}"));
+                return multi::run_truncated_documents(
+                    root,
+                    &job,
+                    &source,
+                    &profile,
+                    &selected,
+                    &upload_path,
+                    &page_texts,
+                    &image_pages,
+                    api_key.as_deref(),
+                    calls,
+                    &evidence_warnings,
+                    !scoped,
+                )
+                .map_err(|error| format!("cloud_direct_batch_truncated:{error}"));
             }
             let merged = run_truncated_chunks(
                 root,
@@ -225,8 +237,22 @@ pub(crate) fn run_exam_direct(
         if scoped {
             multi::keep_first_scoped_document(&mut raw);
         }
-        return multi::finish_batch(root, &job, &source, &profile, &selected, &upload_path,
-            &page_texts, &image_pages, api_key.as_deref(), raw, calls, chunked, &evidence_warnings, !scoped);
+        return multi::finish_batch(
+            root,
+            &job,
+            &source,
+            &profile,
+            &selected,
+            &upload_path,
+            &page_texts,
+            &image_pages,
+            api_key.as_deref(),
+            raw,
+            calls,
+            chunked,
+            &evidence_warnings,
+            !scoped,
+        );
     }
 
     let mut identity = DirectIdentity::new(&job, &source, root);
@@ -272,7 +298,8 @@ pub(crate) fn run_exam_direct(
                             compile_issues,
                             warnings: vec![format!("cloud_direct_repair_unusable:{error}")],
                             fidelity: None,
-                            additional_documents: Vec::new(), source_pages: Vec::new(),
+                            additional_documents: Vec::new(),
+                            source_pages: Vec::new(),
                         });
                     }
                 }
@@ -288,7 +315,8 @@ pub(crate) fn run_exam_direct(
                     compile_issues,
                     warnings,
                     fidelity: None,
-                    additional_documents: Vec::new(), source_pages: Vec::new(),
+                    additional_documents: Vec::new(),
+                    source_pages: Vec::new(),
                 });
             }
         }
@@ -323,7 +351,8 @@ pub(crate) fn run_exam_direct(
         compile_issues,
         warnings,
         fidelity,
-        additional_documents: Vec::new(), source_pages: Vec::new(),
+        additional_documents: Vec::new(),
+        source_pages: Vec::new(),
     })
 }
 
@@ -965,9 +994,20 @@ fn append_answer_evidence(
         images["pages"] = json!([]);
     }
     let dir = crate::util::job_dir(root, &job.job_id);
-    let mut index = texts.iter().map(|(n, _)| *n)
-        .chain(images["pages"].as_array().into_iter().flatten().filter_map(|p| p["pageIndex"].as_u64()).map(|n| n as usize))
-        .max().unwrap_or(0) + 1;
+    let mut index = texts
+        .iter()
+        .map(|(n, _)| *n)
+        .chain(
+            images["pages"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|p| p["pageIndex"].as_u64())
+                .map(|n| n as usize),
+        )
+        .max()
+        .unwrap_or(0)
+        + 1;
     for source in job.source_files.iter().filter(|s| s.role == "AnswerKey") {
         let path = dir.join("uploads").join(&source.stored_name);
         let ext = path
@@ -1289,7 +1329,10 @@ pub(crate) fn normalize_direct_output(
     // A reading article whose questions are not printed in the evidence is still
     // an editable draft (the human adds questions); only "nothing at all" fails.
     let has_passage_text = !identity.listening
-        && raw.pointer("/passage/content").and_then(Value::as_array).is_some_and(|content| !content.is_empty());
+        && raw
+            .pointer("/passage/content")
+            .and_then(Value::as_array)
+            .is_some_and(|content| !content.is_empty());
     let task_groups = raw
         .get("taskGroups")
         .and_then(Value::as_array)
@@ -2034,12 +2077,25 @@ pub(crate) fn normalize_direct_output(
     );
     let mut document = Value::Object(document);
     if !identity.listening {
-        let title = format!("{} {}",
-            identity.exam.get("title").and_then(Value::as_str).unwrap_or_default(),
-            identity.part_evidence.get("filename").and_then(Value::as_str).unwrap_or_default());
+        let title = format!(
+            "{} {}",
+            identity
+                .exam
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            identity
+                .part_evidence
+                .get("filename")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+        );
         let category = crate::library::part_detection::reading_part_from_document(
-            &title, &json!({"source": identity.part_evidence, "document": document})
-        ).map(|part| part.label).unwrap_or_else(|| "P1".to_string());
+            &title,
+            &json!({"source": identity.part_evidence, "document": document}),
+        )
+        .map(|part| part.label)
+        .unwrap_or_else(|| "P1".to_string());
         document["exam"]["category"] = json!(category);
     }
     if identity.listening {
@@ -2635,7 +2691,11 @@ fn write_direct_canonical_inner(
             // projection. Respect that evidence even if lazy alignment is
             // postponed by the running job's cloud lock.
             if item.modality == "reading" && item.part_source.as_deref() == Some("manual") {
-                if let Some(part) = item.part_label.as_deref().filter(|part| matches!(*part, "P1" | "P2" | "P3")) {
+                if let Some(part) = item
+                    .part_label
+                    .as_deref()
+                    .filter(|part| matches!(*part, "P1" | "P2" | "P3"))
+                {
                     merged["exam"]["category"] = json!(part);
                 }
             }
@@ -2954,10 +3014,16 @@ mod tests {
         assert_eq!(ds["exam"]["category"], "P3");
         assert_eq!(ds["exam"]["examId"], "p1-abcd1234");
         id.part_evidence = Value::Null;
-        assert_eq!(normalize_direct_output(&root, &raw, &id).unwrap()["exam"]["category"], "P1");
+        assert_eq!(
+            normalize_direct_output(&root, &raw, &id).unwrap()["exam"]["category"],
+            "P1"
+        );
         let mut range_raw = raw.clone();
         let replace_numbers = |value: &mut Value| {
-            let text = value.to_string().replace("q1", "q14").replace("q2", "q15")
+            let text = value
+                .to_string()
+                .replace("q1", "q14")
+                .replace("q2", "q15")
                 .replace("\"questionNumber\":1", "\"questionNumber\":14")
                 .replace("\"questionNumber\":2", "\"questionNumber\":15");
             *value = serde_json::from_str(&text).unwrap();
@@ -3396,12 +3462,16 @@ mod tests {
 
     fn batch_chat(output: Value) -> String {
         json!({"choices":[{"message":{"content":output.to_string()},"finish_reason":"stop"}],
-            "usage":{"prompt_tokens":100,"completion_tokens":100,"total_tokens":200}}).to_string()
+            "usage":{"prompt_tokens":100,"completion_tokens":100,"total_tokens":200}})
+        .to_string()
     }
 
     fn batch_document(title: &str, answer: &str) -> Value {
-        let reply: Value = serde_json::from_str(&direct_exam_with_prompt(title, "stop", &[1, 2])).unwrap();
-        let mut document: Value = serde_json::from_str(reply["choices"][0]["message"]["content"].as_str().unwrap()).unwrap();
+        let reply: Value =
+            serde_json::from_str(&direct_exam_with_prompt(title, "stop", &[1, 2])).unwrap();
+        let mut document: Value =
+            serde_json::from_str(reply["choices"][0]["message"]["content"].as_str().unwrap())
+                .unwrap();
         document["meta"]["title"] = json!(title);
         document["answerKey"]["q1"]["labels"] = json!([answer]);
         document
@@ -3413,50 +3483,137 @@ mod tests {
         crate::util::ensure_app_dirs(&root).unwrap();
         let first = batch_document("First article", "TRUE");
         let second = batch_document("Second article", "FALSE");
-        let service = controlled_service(vec![(batch_chat(json!({"documents":[
+        let service = controlled_service(vec![(
+            batch_chat(json!({"documents":[
             {"sourcePages":[1,2,3,4,5],"answerPages":[],"document":first},
             {"sourcePages":[6,7,8,9,10],"answerPages":[],"document":second}
-        ],"warnings":[]})),200)]);
+        ],"warnings":[]})),
+            200,
+        )]);
         let job = direct_job_with_named_fixture(&root, "chunked-reading-evidence.pdf");
         let profile_id = controlled_profile(&root, &service.base_url);
         let outcome = run_exam_direct(&root, &job.job_id, Some(&profile_id)).unwrap();
         assert_eq!(outcome.calls, 1);
         assert_eq!(outcome.additional_documents.len(), 1);
-        assert_eq!(outcome.document["answerKey"]["q1"]["labels"], json!(["TRUE"]));
-        assert_eq!(outcome.additional_documents[0].document["answerKey"]["q1"]["labels"], json!(["FALSE"]));
+        assert_eq!(
+            outcome.document["answerKey"]["q1"]["labels"],
+            json!(["TRUE"])
+        );
+        assert_eq!(
+            outcome.additional_documents[0].document["answerKey"]["q1"]["labels"],
+            json!(["FALSE"])
+        );
         assert!(outcome.compile_issues.is_empty());
         let conn = crate::library::repository::open_library_connection(&root).unwrap();
-        crate::library::repository::upsert_item_shell(&conn, &crate::library::repository::UpsertItemInput {
-            id:&job.job_id,modality:"reading",title:&job.title,status:"processing",source_asset_id:None,
-        }).unwrap();
-        crate::processing::queue::enqueue(&conn, &job.job_id, &job.job_id, &job.job_id, &json!({"cloudEnabled":true,"pipelineMode":"direct"})).unwrap();
-        crate::processing::queue::claim_next(&conn, "multi-worker").unwrap().unwrap();
+        crate::library::repository::upsert_item_shell(
+            &conn,
+            &crate::library::repository::UpsertItemInput {
+                id: &job.job_id,
+                modality: "reading",
+                title: &job.title,
+                status: "processing",
+                source_asset_id: None,
+            },
+        )
+        .unwrap();
+        crate::processing::queue::enqueue(
+            &conn,
+            &job.job_id,
+            &job.job_id,
+            &job.job_id,
+            &json!({"cloudEnabled":true,"pipelineMode":"direct"}),
+        )
+        .unwrap();
+        crate::processing::queue::claim_next(&conn, "multi-worker")
+            .unwrap()
+            .unwrap();
         let ids = persist_direct_documents(&root, &job.job_id, &outcome, "multi-worker").unwrap();
         assert_eq!(ids.len(), 2);
-        assert_eq!(crate::processing::queue::get_job(&conn, &job.job_id).unwrap().unwrap().stage, "ready_for_review");
-        assert!(!crate::processing::queue::request_cancel(&conn, &job.job_id).unwrap(), "the whole committed batch wins a later cancel");
+        assert_eq!(
+            crate::processing::queue::get_job(&conn, &job.job_id)
+                .unwrap()
+                .unwrap()
+                .stage,
+            "ready_for_review"
+        );
+        assert!(
+            !crate::processing::queue::request_cancel(&conn, &job.job_id).unwrap(),
+            "the whole committed batch wins a later cancel"
+        );
         let child = &ids[1];
-        let mut edited = crate::library::repository::get_canonical_ds(&conn, child).unwrap().unwrap().0;
+        let mut edited = crate::library::repository::get_canonical_ds(&conn, child)
+            .unwrap()
+            .unwrap()
+            .0;
         edited["exam"]["title"] = json!("Human edited child");
-        conn.execute("UPDATE library_items_v2 SET canonical_ds_json=?2 WHERE id=?1", rusqlite::params![child,edited.to_string()]).unwrap();
-        let mut parent_edited = crate::library::repository::get_canonical_ds(&conn, &job.job_id).unwrap().unwrap().0;
+        conn.execute(
+            "UPDATE library_items_v2 SET canonical_ds_json=?2 WHERE id=?1",
+            rusqlite::params![child, edited.to_string()],
+        )
+        .unwrap();
+        let mut parent_edited = crate::library::repository::get_canonical_ds(&conn, &job.job_id)
+            .unwrap()
+            .unwrap()
+            .0;
         parent_edited["exam"]["title"] = json!("Human edited parent");
-        conn.execute("UPDATE library_items_v2 SET canonical_ds_json=?2 WHERE id=?1", rusqlite::params![job.job_id,parent_edited.to_string()]).unwrap();
+        conn.execute(
+            "UPDATE library_items_v2 SET canonical_ds_json=?2 WHERE id=?1",
+            rusqlite::params![job.job_id, parent_edited.to_string()],
+        )
+        .unwrap();
         crate::processing::queue::retry_with_cloud(&conn, &job.job_id, Some(&profile_id)).unwrap();
-        crate::processing::queue::claim_next(&conn, "multi-worker").unwrap().unwrap();
-        assert_eq!(persist_direct_documents(&root, &job.job_id, &outcome, "multi-worker").unwrap(), ids);
-        assert_eq!(crate::library::repository::get_canonical_ds(&conn, &job.job_id).unwrap().unwrap().0["exam"]["title"], "Human edited parent");
-        assert_eq!(crate::library::repository::get_canonical_ds(&conn, child).unwrap().unwrap().0["exam"]["title"], "Human edited child");
-        assert_eq!(conn.query_row("SELECT count(*) FROM library_items_v2", [], |r| r.get::<_,u32>(0)).unwrap(), 2);
-        assert_eq!(crate::processing::queue::get_job(&conn, child).unwrap().unwrap().stage, "ready_for_review");
-        let mut texts: Vec<_> = (1..=10).map(|n|(n,format!("page {n}"))).collect();
+        crate::processing::queue::claim_next(&conn, "multi-worker")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            persist_direct_documents(&root, &job.job_id, &outcome, "multi-worker").unwrap(),
+            ids
+        );
+        assert_eq!(
+            crate::library::repository::get_canonical_ds(&conn, &job.job_id)
+                .unwrap()
+                .unwrap()
+                .0["exam"]["title"],
+            "Human edited parent"
+        );
+        assert_eq!(
+            crate::library::repository::get_canonical_ds(&conn, child)
+                .unwrap()
+                .unwrap()
+                .0["exam"]["title"],
+            "Human edited child"
+        );
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM library_items_v2", [], |r| r
+                .get::<_, u32>(0))
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            crate::processing::queue::get_job(&conn, child)
+                .unwrap()
+                .unwrap()
+                .stage,
+            "ready_for_review"
+        );
+        let mut texts: Vec<_> = (1..=10).map(|n| (n, format!("page {n}"))).collect();
         let mut images = json!({"pages":[]});
         assert!(multi::restrict_saved_scope(&root, child, &mut texts, &mut images).unwrap());
-        assert_eq!(texts.iter().map(|(n,_)|*n).collect::<Vec<_>>(), vec![6,7,8,9,10]);
-        std::fs::remove_file(crate::util::job_dir(&root, &job.job_id).join("cloud-direct-source.json")).unwrap();
-        let mut texts: Vec<_> = (1..=10).map(|n|(n,format!("page {n}"))).collect();
+        assert_eq!(
+            texts.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
+            vec![6, 7, 8, 9, 10]
+        );
+        std::fs::remove_file(
+            crate::util::job_dir(&root, &job.job_id).join("cloud-direct-source.json"),
+        )
+        .unwrap();
+        let mut texts: Vec<_> = (1..=10).map(|n| (n, format!("page {n}"))).collect();
         assert!(multi::restrict_saved_scope(&root, &job.job_id, &mut texts, &mut images).unwrap());
-        assert_eq!(texts.iter().map(|(n,_)|*n).collect::<Vec<_>>(), vec![1,2,3,4,5], "source scope survives a missing filesystem cache");
+        assert_eq!(
+            texts.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
+            vec![1, 2, 3, 4, 5],
+            "source scope survives a missing filesystem cache"
+        );
         assert!(persist_direct_documents(&root, &job.job_id, &outcome, "stale-worker").is_err());
         let _ = std::fs::remove_dir_all(root);
     }
@@ -3466,25 +3623,77 @@ mod tests {
         let root = temp_root("multi-lenient");
         crate::util::ensure_app_dirs(&root).unwrap();
         let job = direct_job_with_fixture(&root);
-        let texts = vec![(1,"First article".to_string()), (2,"Second article".to_string())];
+        let texts = vec![
+            (1, "First article".to_string()),
+            (2, "Second article".to_string()),
+        ];
         // A hallucinated page number is dropped with a warning; both articles stay.
         let mut output = json!({"documents":[{"sourcePages":[1],"answerPages":[42],"document":batch_document("A","TRUE")},
             {"sourcePages":[99],"document":batch_document("B","FALSE")} ]});
-        let multi::NormalizedBatch { outcomes: docs, warnings, .. } = multi::normalize_batch(&root,&job,&job.source_files[0],&output,&texts,&json!({})).unwrap();
+        let multi::NormalizedBatch {
+            outcomes: docs,
+            warnings,
+            ..
+        } = multi::normalize_batch(
+            &root,
+            &job,
+            &job.source_files[0],
+            &output,
+            &texts,
+            &json!({}),
+        )
+        .unwrap();
         assert_eq!(docs.len(), 2);
         assert_eq!(docs[0].source_pages, vec![1]);
-        assert!(warnings.iter().any(|w| w.contains("page_ignored") && w.contains("42")), "{warnings:?}");
-        assert!(warnings.iter().any(|w| w.contains("source_pages_missing")), "{warnings:?}");
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("page_ignored") && w.contains("42")),
+            "{warnings:?}"
+        );
+        assert!(
+            warnings.iter().any(|w| w.contains("source_pages_missing")),
+            "{warnings:?}"
+        );
         // One article the normalizer cannot use is skipped, not fatal.
         output["documents"][1]["document"] = json!({"meta":{"title":"Broken"}});
         output["documents"][1]["sourcePages"] = json!([2]);
-        let multi::NormalizedBatch { outcomes: docs, warnings, .. } = multi::normalize_batch(&root,&job,&job.source_files[0],&output,&texts,&json!({})).unwrap();
+        let multi::NormalizedBatch {
+            outcomes: docs,
+            warnings,
+            ..
+        } = multi::normalize_batch(
+            &root,
+            &job,
+            &job.source_files[0],
+            &output,
+            &texts,
+            &json!({}),
+        )
+        .unwrap();
         assert_eq!(docs.len(), 1);
-        assert_eq!(docs[0].document["jobId"], json!(job.job_id), "the surviving article keeps the placeholder item");
-        assert!(warnings.iter().any(|w| w.contains("document_skipped") && w.contains("Broken")), "{warnings:?}");
+        assert_eq!(
+            docs[0].document["jobId"],
+            json!(job.job_id),
+            "the surviving article keeps the placeholder item"
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("document_skipped") && w.contains("Broken")),
+            "{warnings:?}"
+        );
         // Only when nothing is usable does the batch fail.
         output["documents"][0]["document"] = json!({"meta":{"title":"Also broken"}});
-        assert!(multi::normalize_batch(&root,&job,&job.source_files[0],&output,&texts,&json!({})).is_err());
+        assert!(multi::normalize_batch(
+            &root,
+            &job,
+            &job.source_files[0],
+            &output,
+            &texts,
+            &json!({})
+        )
+        .is_err());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -3494,24 +3703,52 @@ mod tests {
         crate::util::ensure_app_dirs(&root).unwrap();
         // Pages 1-2 hold the article (> threshold); the first reply only claims 3-4.
         let service = controlled_service(vec![
-            (batch_chat(json!({"documents":[{"sourcePages":[3,4],"answerPages":[],"document":batch_document("Claimed","TRUE")}],"warnings":[]})),200),
-            (batch_chat(json!({"documents":[{"sourcePages":[1,2],"answerPages":[],"document":batch_document("Missed","FALSE")}],"warnings":[]})),200),
+            (
+                batch_chat(
+                    json!({"documents":[{"sourcePages":[3,4],"answerPages":[],"document":batch_document("Claimed","TRUE")}],"warnings":[]}),
+                ),
+                200,
+            ),
+            (
+                batch_chat(
+                    json!({"documents":[{"sourcePages":[1,2],"answerPages":[],"document":batch_document("Missed","FALSE")}],"warnings":[]}),
+                ),
+                200,
+            ),
         ]);
         let job = direct_job_with_named_fixture(&root, "demanding-reading-passage-3.pdf");
         let profile_id = controlled_profile(&root, &service.base_url);
         let outcome = run_exam_direct(&root, &job.job_id, Some(&profile_id)).unwrap();
-        assert_eq!(outcome.calls, 2, "one conversion plus one coverage follow-up");
+        assert_eq!(
+            outcome.calls, 2,
+            "one conversion plus one coverage follow-up"
+        );
         assert_eq!(outcome.additional_documents.len(), 1);
         // Physical order: the recovered article on pages 1-2 becomes the first item.
-        assert_eq!(outcome.document["answerKey"]["q1"]["labels"], json!(["FALSE"]));
-        let first = service.requests.recv_timeout(Duration::from_secs(5)).unwrap();
-        let followup = service.requests.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(
+            outcome.document["answerKey"]["q1"]["labels"],
+            json!(["FALSE"])
+        );
+        let first = service
+            .requests
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        let followup = service
+            .requests
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
         assert!(!first.contains("COVERAGE FOLLOW-UP"));
         assert!(followup.contains("COVERAGE FOLLOW-UP") && followup.contains("[1, 2]"));
         // Cache-friendly: the follow-up repeats the first request's pages and
         // does not resend the previously returned document body.
-        assert!(followup.contains("=== PAGE 1 (text layer)") && followup.contains("=== PAGE 4 (text layer)"));
-        assert!(!followup.contains("Statement 1 about pearls"), "previous document bodies must not be re-sent");
+        assert!(
+            followup.contains("=== PAGE 1 (text layer)")
+                && followup.contains("=== PAGE 4 (text layer)")
+        );
+        assert!(
+            !followup.contains("Statement 1 about pearls"),
+            "previous document bodies must not be re-sent"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -3520,16 +3757,34 @@ mod tests {
         let root = temp_root("multi-coverage-none");
         crate::util::ensure_app_dirs(&root).unwrap();
         let service = controlled_service(vec![
-            (batch_chat(json!({"documents":[{"sourcePages":[3,4],"answerPages":[],"document":batch_document("Claimed","TRUE")}],"warnings":[]})),200),
-            (batch_chat(json!({"documents":[],"warnings":["pages 1-2 are instructions"]})),200),
+            (
+                batch_chat(
+                    json!({"documents":[{"sourcePages":[3,4],"answerPages":[],"document":batch_document("Claimed","TRUE")}],"warnings":[]}),
+                ),
+                200,
+            ),
+            (
+                batch_chat(json!({"documents":[],"warnings":["pages 1-2 are instructions"]})),
+                200,
+            ),
         ]);
         let job = direct_job_with_named_fixture(&root, "demanding-reading-passage-3.pdf");
         let profile_id = controlled_profile(&root, &service.base_url);
         let outcome = run_exam_direct(&root, &job.job_id, Some(&profile_id)).unwrap();
         assert_eq!(outcome.calls, 2);
         assert!(outcome.additional_documents.is_empty());
-        assert!(outcome.warnings.iter().any(|w| w == "cloud_direct_pages_uncovered:1,2"), "{:?}", outcome.warnings);
-        assert!(outcome.warnings.iter().any(|w| w == "pages 1-2 are instructions"));
+        assert!(
+            outcome
+                .warnings
+                .iter()
+                .any(|w| w == "cloud_direct_pages_uncovered:1,2"),
+            "{:?}",
+            outcome.warnings
+        );
+        assert!(outcome
+            .warnings
+            .iter()
+            .any(|w| w == "pages 1-2 are instructions"));
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -3599,15 +3854,38 @@ mod tests {
         let root = temp_root("multi-no-questions");
         crate::util::ensure_app_dirs(&root).unwrap();
         let job = direct_job_with_fixture(&root);
-        let texts = vec![(1,"First article".to_string()), (2,"Second article".to_string())];
+        let texts = vec![
+            (1, "First article".to_string()),
+            (2, "Second article".to_string()),
+        ];
         let mut bare = batch_document("Article only", "TRUE");
-        bare["taskGroups"] = json!([]); bare["answerSlots"] = json!({}); bare["answerKey"] = json!({});
+        bare["taskGroups"] = json!([]);
+        bare["answerSlots"] = json!({});
+        bare["answerKey"] = json!({});
         let output = json!({"documents":[{"sourcePages":[1],"document":batch_document("A","TRUE")},
             {"sourcePages":[2],"document":bare}],"warnings":["Article only: questions not printed"]});
-        let multi::NormalizedBatch { outcomes, .. } = multi::normalize_batch(&root,&job,&job.source_files[0],&output,&texts,&json!({})).unwrap();
-        assert_eq!(outcomes.len(), 2, "an article without questions is still worth editing");
-        assert!(outcomes[1].compile_issues.is_empty(), "no compiler issue, so no repair round is spent re-adding questions");
-        assert!(outcomes[1].document["taskGroups"].as_array().unwrap().is_empty());
+        let multi::NormalizedBatch { outcomes, .. } = multi::normalize_batch(
+            &root,
+            &job,
+            &job.source_files[0],
+            &output,
+            &texts,
+            &json!({}),
+        )
+        .unwrap();
+        assert_eq!(
+            outcomes.len(),
+            2,
+            "an article without questions is still worth editing"
+        );
+        assert!(
+            outcomes[1].compile_issues.is_empty(),
+            "no compiler issue, so no repair round is spent re-adding questions"
+        );
+        assert!(outcomes[1].document["taskGroups"]
+            .as_array()
+            .unwrap()
+            .is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -3620,26 +3898,55 @@ mod tests {
         let groups = broken["taskGroups"].as_array().unwrap().clone();
         broken["taskGroups"] = json!([groups[0].clone(), groups[0].clone()]);
         let service = controlled_service(vec![
-            (batch_chat(json!({"documents":[
+            (
+                batch_chat(json!({"documents":[
                 {"sourcePages":[1,2,3,4,5],"answerPages":[],"document":good},
-                {"sourcePages":[6,7,8,9,10],"answerPages":[],"document":broken}],"warnings":[]})),200),
+                {"sourcePages":[6,7,8,9,10],"answerPages":[],"document":broken}],"warnings":[]})),
+                200,
+            ),
             // The repair returns only the one failed document.
-            (batch_chat(json!({"documents":[{"sourcePages":[6,7,8,9,10],"document":batch_document("Second article","FALSE")}]})),200),
+            (
+                batch_chat(
+                    json!({"documents":[{"sourcePages":[6,7,8,9,10],"document":batch_document("Second article","FALSE")}]}),
+                ),
+                200,
+            ),
         ]);
         let job = direct_job_with_named_fixture(&root, "chunked-reading-evidence.pdf");
         let profile_id = controlled_profile(&root, &service.base_url);
         let outcome = run_exam_direct(&root, &job.job_id, Some(&profile_id)).unwrap();
         assert_eq!(outcome.calls, 2);
         assert_eq!(outcome.additional_documents.len(), 1);
-        assert!(outcome.compile_issues.is_empty() && outcome.additional_documents[0].compile_issues.is_empty());
-        assert_eq!(outcome.document["answerKey"]["q1"]["labels"], json!(["TRUE"]));
-        assert_eq!(outcome.additional_documents[0].document["answerKey"]["q1"]["labels"], json!(["FALSE"]));
-        let first = service.requests.recv_timeout(Duration::from_secs(5)).unwrap();
-        let repair = service.requests.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(
+            outcome.compile_issues.is_empty()
+                && outcome.additional_documents[0].compile_issues.is_empty()
+        );
+        assert_eq!(
+            outcome.document["answerKey"]["q1"]["labels"],
+            json!(["TRUE"])
+        );
+        assert_eq!(
+            outcome.additional_documents[0].document["answerKey"]["q1"]["labels"],
+            json!(["FALSE"])
+        );
+        let first = service
+            .requests
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        let repair = service
+            .requests
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
         assert!(!first.contains("\"role\":\"assistant\""));
         assert!(repair.contains("\"role\":\"assistant\"") && repair.contains("REPAIR ROUND"));
-        assert!(repair.contains("Second article"), "the failed document is the previous assistant turn");
-        assert!(!repair.contains("First article"), "accepted documents are neither re-sent nor re-generated");
+        assert!(
+            repair.contains("Second article"),
+            "the failed document is the previous assistant turn"
+        );
+        assert!(
+            !repair.contains("First article"),
+            "accepted documents are neither re-sent nor re-generated"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -3710,10 +4017,13 @@ mod tests {
         crate::util::ensure_app_dirs(&root).unwrap();
         let service = controlled_service(vec![
             (direct_exam_with_prompt("Pearls.", "length", &[1, 2]), 200),
-            (batch_chat(json!({"documents":[
+            (
+                batch_chat(json!({"documents":[
                 {"sourcePages":[1,2,3,4,5],"answerPages":[],"title":"First test"},
                 {"sourcePages":[6,7,8,9,10],"answerPages":[],"title":"Second test"}
-            ],"warnings":[]})), 200),
+            ],"warnings":[]})),
+                200,
+            ),
             (
                 direct_exam_with_prompt("Pearls are formed inside oysters.", "stop", &[1, 2]),
                 200,
@@ -3730,7 +4040,10 @@ mod tests {
             .expect("chunked retry must succeed");
 
         assert!(outcome.chunked);
-        assert_eq!(outcome.calls, 4, "one truncated call, one boundary manifest, two complete documents");
+        assert_eq!(
+            outcome.calls, 4,
+            "one truncated call, one boundary manifest, two complete documents"
+        );
         assert!(
             outcome.compile_issues.is_empty(),
             "{:?}",
@@ -3741,8 +4054,17 @@ mod tests {
             2
         );
         assert_eq!(outcome.additional_documents.len(), 1);
-        assert_eq!(outcome.additional_documents[0].document["answerSlots"].as_object().unwrap().len(), 2);
-        assert_ne!(outcome.document["exam"]["examId"], outcome.additional_documents[0].document["exam"]["examId"]);
+        assert_eq!(
+            outcome.additional_documents[0].document["answerSlots"]
+                .as_object()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_ne!(
+            outcome.document["exam"]["examId"],
+            outcome.additional_documents[0].document["exam"]["examId"]
+        );
         assert!(outcome.additional_documents[0].compile_issues.is_empty());
         let first = service
             .requests
@@ -3756,11 +4078,20 @@ mod tests {
             .requests
             .recv_timeout(Duration::from_secs(5))
             .unwrap();
-        let chunk_b = service.requests.recv_timeout(Duration::from_secs(5)).unwrap();
+        let chunk_b = service
+            .requests
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
         assert!(!first.contains("OUTPUT MODE OVERRIDE"));
         assert!(manifest.contains("OUTPUT MODE OVERRIDE"));
-        assert!(chunk_a.contains("=== PAGE 1 (text layer)") && !chunk_a.contains("=== PAGE 6 (text layer)"));
-        assert!(chunk_b.contains("=== PAGE 6 (text layer)") && !chunk_b.contains("=== PAGE 1 (text layer)"));
+        assert!(
+            chunk_a.contains("=== PAGE 1 (text layer)")
+                && !chunk_a.contains("=== PAGE 6 (text layer)")
+        );
+        assert!(
+            chunk_b.contains("=== PAGE 6 (text layer)")
+                && !chunk_b.contains("=== PAGE 1 (text layer)")
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -4020,40 +4351,86 @@ mod tests {
         let mut old = normalize_direct_output(&root, &minimal_raw(), &id).unwrap();
         old["exam"]["category"] = json!("P1");
         let mut conn = open_library_connection(&root).unwrap();
-        upsert_item_shell(&conn, &UpsertItemInput {
-            id: &id.job_id, modality: "reading", title: "Test", status: "action_required", source_asset_id: None,
-        }).unwrap();
+        upsert_item_shell(
+            &conn,
+            &UpsertItemInput {
+                id: &id.job_id,
+                modality: "reading",
+                title: "Test",
+                status: "action_required",
+                source_asset_id: None,
+            },
+        )
+        .unwrap();
         seed_canonical_ds(&conn, &id.job_id, &old.to_string(), "action_required").unwrap();
-        apply_editor_commands_tx(&mut conn, &ApplyEditorCommandsInput {
-            item_id: id.job_id.clone(), base_version: 1, request_id: Some("manual-part".into()),
-            commands: vec![json!({"op":"setExamCategory","category":"P3"})], title: None,
-        }, &crate::authoring_v2_commands::apply_patch, &|_| Ok(())).unwrap();
+        apply_editor_commands_tx(
+            &mut conn,
+            &ApplyEditorCommandsInput {
+                item_id: id.job_id.clone(),
+                base_version: 1,
+                request_id: Some("manual-part".into()),
+                commands: vec![json!({"op":"setExamCategory","category":"P3"})],
+                title: None,
+            },
+            &crate::authoring_v2_commands::apply_patch,
+            &|_| Ok(()),
+        )
+        .unwrap();
         let protection = human_protected_targets(&conn, &id.job_id, &old).unwrap();
         assert!(protection.contains("$top:exam"));
         let mut incoming = old.clone();
-        incoming["passage"]["content"][0]["children"][0]["text"] = json!("Replacement machine passage.");
+        incoming["passage"]["content"][0]["children"][0]["text"] =
+            json!("Replacement machine passage.");
         let version = write_direct_canonical(&root, &id.job_id, &incoming).unwrap();
         let (saved, saved_version) = get_canonical_ds(&conn, &id.job_id).unwrap().unwrap();
         assert_eq!(saved_version, version);
         assert_eq!(version, 3);
         assert_eq!(saved["exam"]["category"], json!("P3"));
-        assert_eq!(saved["passage"]["content"][0]["children"][0]["text"], json!("Replacement machine passage."));
-        let projected: (String, String) = conn.query_row("SELECT part_label,part_source FROM library_items_v2 WHERE id=?1", [&id.job_id], |row| Ok((row.get(0)?,row.get(1)?))).unwrap();
+        assert_eq!(
+            saved["passage"]["content"][0]["children"][0]["text"],
+            json!("Replacement machine passage.")
+        );
+        let projected: (String, String) = conn
+            .query_row(
+                "SELECT part_label,part_source FROM library_items_v2 WHERE id=?1",
+                [&id.job_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
         assert_eq!(projected, ("P3".into(), "manual".into()));
-        assert_eq!(human_protected_targets(&conn, &id.job_id, &saved).unwrap(), protection);
+        assert_eq!(
+            human_protected_targets(&conn, &id.job_id, &saved).unwrap(),
+            protection
+        );
         let origin: String = conn.query_row("SELECT edit_origin FROM editor_journal_v1 WHERE library_item_id=?1 ORDER BY id DESC LIMIT 1", [&id.job_id], |row| row.get(0)).unwrap();
         assert_eq!(origin, "cloud_candidate_adoption");
         // No human protection on a separate item: ordinary machine Part changes still work.
         let other = "unprotected-reading";
-        upsert_item_shell(&conn, &UpsertItemInput { id: other, modality: "reading", title: "Other", status: "action_required", source_asset_id: None }).unwrap();
+        upsert_item_shell(
+            &conn,
+            &UpsertItemInput {
+                id: other,
+                modality: "reading",
+                title: "Other",
+                status: "action_required",
+                source_asset_id: None,
+            },
+        )
+        .unwrap();
         seed_canonical_ds(&conn, other, &old.to_string(), "action_required").unwrap();
         incoming["exam"]["category"] = json!("P2");
         write_direct_canonical(&root, other, &incoming).unwrap();
-        assert_eq!(get_canonical_ds(&conn, other).unwrap().unwrap().0["exam"]["category"], json!("P2"));
+        assert_eq!(
+            get_canonical_ds(&conn, other).unwrap().unwrap().0["exam"]["category"],
+            json!("P2")
+        );
         // Legacy manual projection also survives before lazy alignment/protection migration.
         set_item_part(&conn, other, Some("P3"), Some("manual")).unwrap();
         write_direct_canonical(&root, other, &incoming).unwrap();
-        assert_eq!(get_canonical_ds(&conn, other).unwrap().unwrap().0["exam"]["category"], json!("P3"));
+        assert_eq!(
+            get_canonical_ds(&conn, other).unwrap().unwrap().0["exam"]["category"],
+            json!("P3")
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

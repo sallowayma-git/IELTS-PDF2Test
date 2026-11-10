@@ -1338,14 +1338,26 @@ mod tests {
         // 云端跑成功：cloud 改为 succeeded，清掉 CLOUD_DISABLED。
         update_decision_cloud_stage(&root, "job-1", "batch-1", "succeeded", None).unwrap();
         let decision = read_json_opt(&path).unwrap().unwrap();
-        assert_eq!(decision.pointer("/chainStatus/cloud"), Some(&json!("succeeded")));
+        assert_eq!(
+            decision.pointer("/chainStatus/cloud"),
+            Some(&json!("succeeded"))
+        );
         assert_eq!(decision.pointer("/chainStatus/cloudReasonCode"), None);
 
         // 云端部分完成并带原因码：原因码如实写入。
-        update_decision_cloud_stage(&root, "job-1", "batch-1", "partial", Some("CLOUD_REPAIR_CANCELLED"))
-            .unwrap();
+        update_decision_cloud_stage(
+            &root,
+            "job-1",
+            "batch-1",
+            "partial",
+            Some("CLOUD_REPAIR_CANCELLED"),
+        )
+        .unwrap();
         let decision = read_json_opt(&path).unwrap().unwrap();
-        assert_eq!(decision.pointer("/chainStatus/cloud"), Some(&json!("partial")));
+        assert_eq!(
+            decision.pointer("/chainStatus/cloud"),
+            Some(&json!("partial"))
+        );
         assert_eq!(
             decision.pointer("/chainStatus/cloudReasonCode"),
             Some(&json!("CLOUD_REPAIR_CANCELLED"))

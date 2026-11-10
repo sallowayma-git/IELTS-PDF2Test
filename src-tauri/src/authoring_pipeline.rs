@@ -4790,7 +4790,8 @@ pub(crate) fn make_dynamic_split_candidates(
             range: passage_range,
             title: infer_dynamic_passage_title(job, &passage_blocks),
             category_hint: crate::library::part_detection::import_reading_category(
-                job, &json!({"blocks": blocks, "groups": group_candidates})
+                job,
+                &json!({"blocks": blocks, "groups": group_candidates}),
             ),
         }],
         question_group_candidates: group_candidates,
@@ -8967,7 +8968,8 @@ pub(crate) fn make_dynamic_authoring_ir(
             exam_id,
             title: job.title.clone(),
             category: crate::library::part_detection::import_reading_category(
-                job, &json!({"document": doc, "groups": groups, "answerKey": answer_key})
+                job,
+                &json!({"document": doc, "groups": groups, "answerKey": answer_key}),
             ),
             frequency: job
                 .frequency
@@ -9052,15 +9054,23 @@ mod tests {
         let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
         assert_eq!(split["passageCandidates"][0]["categoryHint"], "P3");
         let v1 = make_dynamic_authoring_ir(&job, &split, Some(&doc));
-        assert_eq!(v1["exam"]["category"],"P3");
-        let v2 = crate::ielts_grammar::build_authoring_v2_shadow(&job,&v1,&split,Some(&doc),None).unwrap();
-        assert_eq!(v2["exam"]["category"],"P3");
+        assert_eq!(v1["exam"]["category"], "P3");
+        let v2 =
+            crate::ielts_grammar::build_authoring_v2_shadow(&job, &v1, &split, Some(&doc), None)
+                .unwrap();
+        assert_eq!(v2["exam"]["category"], "P3");
         assert!(v2["exam"]["examId"].as_str().unwrap().starts_with("p1-"));
         job.title = "P2 filename".into();
         let empty_split = json!({"passageCandidates":[], "questionGroupCandidates":[]});
-        assert_eq!(make_dynamic_authoring_ir(&job,&empty_split,None)["exam"]["category"],"P2");
+        assert_eq!(
+            make_dynamic_authoring_ir(&job, &empty_split, None)["exam"]["category"],
+            "P2"
+        );
         job.title = "Unknown".into();
-        assert_eq!(make_dynamic_authoring_ir(&job,&empty_split,None)["exam"]["category"],"P1");
+        assert_eq!(
+            make_dynamic_authoring_ir(&job, &empty_split, None)["exam"]["category"],
+            "P1"
+        );
     }
 
     fn layout_block(

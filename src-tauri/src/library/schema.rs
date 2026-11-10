@@ -21,7 +21,9 @@ pub(crate) fn ensure_v2_schema(conn: &Connection) -> CommandResult<()> {
     let current: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|error| format!("library_v2_user_version:{error}"))?;
-    if current>LIBRARY_V2_SCHEMA_VERSION{return Err("LIBRARY_SCHEMA_TOO_NEW: 题库版本过新，请升级作者端".into());}
+    if current > LIBRARY_V2_SCHEMA_VERSION {
+        return Err("LIBRARY_SCHEMA_TOO_NEW: 题库版本过新，请升级作者端".into());
+    }
     let mut applied = current;
     for (version, statement) in migrations() {
         if applied < version {

@@ -333,7 +333,11 @@ mod tests {
         rulings["modelQuestions"] = json!(extra);
         store::write_repair_rulings(root, "job-1", "batch-1", &rulings).unwrap();
     }
-    fn blocked(root: &std::path::Path, doc: &Value, scope: crate::authoring_validation::PublishScope) -> bool {
+    fn blocked(
+        root: &std::path::Path,
+        doc: &Value,
+        scope: crate::authoring_validation::PublishScope,
+    ) -> bool {
         crate::authoring_validation::publish_verdict(root, "job-1", doc, Some(1), scope)
             .reasons()
             .iter()
@@ -341,7 +345,11 @@ mod tests {
     }
     /// P2 门禁收敛后，「未选择的本地/云端差异」是**警告**而不是阻断
     /// （唯一硬门禁是编译）。这个助手查警告通道。
-    fn warned(root: &std::path::Path, doc: &Value, scope: crate::authoring_validation::PublishScope) -> bool {
+    fn warned(
+        root: &std::path::Path,
+        doc: &Value,
+        scope: crate::authoring_validation::PublishScope,
+    ) -> bool {
         crate::authoring_validation::publish_verdict(root, "job-1", doc, Some(1), scope)
             .warnings()
             .iter()
@@ -365,7 +373,8 @@ mod tests {
         assert!(!new_runtime_errors(&current, &broken).is_empty());
     }
     #[test]
-    fn publication_gate_reports_only_units_repair_could_not_settle_as_warnings_until_the_choice_is_made() {
+    fn publication_gate_reports_only_units_repair_could_not_settle_as_warnings_until_the_choice_is_made(
+    ) {
         use crate::authoring_validation::PublishScope::{CanonicalDirect, FullDerived};
         let (root, local, cloud, unit) = setup();
         // 修复还没有裁定过的差异没有蓝绿对比：不警告。
@@ -385,7 +394,9 @@ mod tests {
         .is_ready());
         choose(&root, "job-1", &unit, "cloud", 1).unwrap();
         let conn = repository::open_library_connection(&root).unwrap();
-        let (chosen, _) = repository::get_canonical_ds(&conn, "job-1").unwrap().unwrap();
+        let (chosen, _) = repository::get_canonical_ds(&conn, "job-1")
+            .unwrap()
+            .unwrap();
         // 选定之后警告消失。
         assert!(!warned(&root, &chosen, CanonicalDirect));
         assert!(!warned(&root, &chosen, FullDerived));
@@ -399,9 +410,16 @@ mod tests {
         rule_unsettled(&root, &local, &cloud, vec![]);
         choose(&root, "job-1", &unit, "local", 1).unwrap();
         let conn = repository::open_library_connection(&root).unwrap();
-        let (mut edited, _) = repository::get_canonical_ds(&conn, "job-1").unwrap().unwrap();
-        edited["taskGroups"][0]["instructions"][0]["children"][0]["text"] = json!("Edited by the author afterwards");
-        conn.execute("UPDATE library_items_v2 SET canonical_ds_json = ?1 WHERE id = 'job-1'", [edited.to_string()]).unwrap();
+        let (mut edited, _) = repository::get_canonical_ds(&conn, "job-1")
+            .unwrap()
+            .unwrap();
+        edited["taskGroups"][0]["instructions"][0]["children"][0]["text"] =
+            json!("Edited by the author afterwards");
+        conn.execute(
+            "UPDATE library_items_v2 SET canonical_ds_json = ?1 WHERE id = 'job-1'",
+            [edited.to_string()],
+        )
+        .unwrap();
         drop(conn);
         // 修复对编辑后的稿再次给出「无法定论」的裁定：按单元 id 与选择记录判定，不看内容指纹。
         rule_unsettled(&root, &edited, &cloud, vec![]);
@@ -422,10 +440,14 @@ mod tests {
             &cloud,
             vec![json!({"message": "云端没能确认这一段", "targetId": "passage"})],
         );
-        let tasks = crate::cloud_repair::current_remaining_tasks(&root, "job-1", "job-1", "batch-1").unwrap();
+        let tasks =
+            crate::cloud_repair::current_remaining_tasks(&root, "job-1", "job-1", "batch-1")
+                .unwrap();
         assert!(
-            tasks.iter().any(|task| task["action"] == "review_difference"
-                && task.get("comparisonUnitId").is_none_or(Value::is_null)),
+            tasks
+                .iter()
+                .any(|task| task["action"] == "review_difference"
+                    && task.get("comparisonUnitId").is_none_or(Value::is_null)),
             "这些项仍是普通待办：{tasks:#?}"
         );
         assert!(!blocked(&root, &local, CanonicalDirect), "{tasks:#?}");
@@ -438,12 +460,18 @@ mod tests {
         let (root, local, cloud, unit) = setup();
         let task = json!({"userTaskId":"d","targetIds":[local["taskGroups"][0]["taskId"]],"action":"review_difference"});
         let plain = enrich_tasks(&root, "job-1", "job-1", "batch-1", vec![task.clone()]).unwrap();
-        assert!(plain[0].get("comparisonUnitId").is_none(), "没有经云端裁定的差异不展示蓝绿对比");
+        assert!(
+            plain[0].get("comparisonUnitId").is_none(),
+            "没有经云端裁定的差异不展示蓝绿对比"
+        );
         let mut reviewed = task.clone();
         reviewed["rulingReviewed"] = json!(true);
         let shown = enrich_tasks(&root, "job-1", "job-1", "batch-1", vec![reviewed]).unwrap();
         assert_eq!(shown[0]["comparisonUnitId"], unit);
-        assert_eq!(shown[0]["cloudCandidate"]["taskGroups"][0]["instructions"], cloud["taskGroups"][0]["instructions"]);
+        assert_eq!(
+            shown[0]["cloudCandidate"]["taskGroups"][0]["instructions"],
+            cloud["taskGroups"][0]["instructions"]
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]

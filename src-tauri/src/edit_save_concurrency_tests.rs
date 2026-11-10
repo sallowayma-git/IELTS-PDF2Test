@@ -33,8 +33,10 @@ const OPEN_CHURN_THREADS: usize = 2;
 const OPEN_CHURN_ITERS: usize = 220;
 
 fn temp_root() -> PathBuf {
-    let root =
-        std::env::temp_dir().join(format!("ielts-c1-concurrency-{}", uuid::Uuid::new_v4().simple()));
+    let root = std::env::temp_dir().join(format!(
+        "ielts-c1-concurrency-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
     std::fs::create_dir_all(&root).unwrap();
     root
 }
@@ -97,8 +99,17 @@ fn workspace_reads_keep_passage_title_version_and_journal_in_one_snapshot() {
     ds["passage"]["content"][0]["children"][0]["text"] = json!("snapshot-1");
     let node_id = ds["passage"]["content"][0]["children"][0]["id"].clone();
     let conn = open_library_connection(&root).unwrap();
-    upsert_item_shell(&conn, &UpsertItemInput { id, modality: "reading", title: "snapshot-1",
-        status: "ready", source_asset_id: None }).unwrap();
+    upsert_item_shell(
+        &conn,
+        &UpsertItemInput {
+            id,
+            modality: "reading",
+            title: "snapshot-1",
+            status: "ready",
+            source_asset_id: None,
+        },
+    )
+    .unwrap();
     seed_canonical_ds(&conn, id, &ds.to_string(), "ready").unwrap();
     drop(conn);
 
@@ -107,13 +118,18 @@ fn workspace_reads_keep_passage_title_version_and_journal_in_one_snapshot() {
         let mut original = "snapshot-1".to_string();
         for base in 1..=60 {
             let next = format!("snapshot-{}", base + 1);
-            apply_editor_commands_core(&writer_root, ApplyEditorCommandsInput {
-                item_id: id.to_string(), base_version: base,
-                request_id: Some(uuid::Uuid::new_v4().to_string()),
-                commands: vec![json!({"op":"replaceText", "nodeId":node_id,
+            apply_editor_commands_core(
+                &writer_root,
+                ApplyEditorCommandsInput {
+                    item_id: id.to_string(),
+                    base_version: base,
+                    request_id: Some(uuid::Uuid::new_v4().to_string()),
+                    commands: vec![json!({"op":"replaceText", "nodeId":node_id,
                     "from":0, "to":original.chars().count(), "text":next})],
-                title: Some(next.clone()),
-            }).unwrap();
+                    title: Some(next.clone()),
+                },
+            )
+            .unwrap();
             original = next;
         }
     });
@@ -124,7 +140,10 @@ fn workspace_reads_keep_passage_title_version_and_journal_in_one_snapshot() {
         assert_eq!(workspace["item"]["editVersion"], version);
         assert_eq!(workspace["item"]["title"], expected);
         assert_eq!(workspace["ds"]["exam"]["title"], expected);
-        assert_eq!(workspace["ds"]["passage"]["content"][0]["children"][0]["text"], expected);
+        assert_eq!(
+            workspace["ds"]["passage"]["content"][0]["children"][0]["text"],
+            expected
+        );
         if version > 1 {
             assert_eq!(workspace["recentEdits"][0]["baseVersion"], version - 1);
         }
@@ -155,7 +174,13 @@ fn concurrent_edit_saves_and_background_writes_never_hit_sqlite_busy() {
                 },
             )
             .unwrap());
-            assert!(seed_canonical_ds(&conn, &id, &seed_ds(&format!("Item {k}")).to_string(), "ready").unwrap());
+            assert!(seed_canonical_ds(
+                &conn,
+                &id,
+                &seed_ds(&format!("Item {k}")).to_string(),
+                "ready"
+            )
+            .unwrap());
         }
     }
 
@@ -179,11 +204,17 @@ fn concurrent_edit_saves_and_background_writes_never_hit_sqlite_busy() {
                 };
                 match apply_editor_commands_core(&root, input) {
                     Ok(value) => {
-                        base = value.pointer("/editVersion").and_then(Value::as_i64).unwrap_or(base);
+                        base = value
+                            .pointer("/editVersion")
+                            .and_then(Value::as_i64)
+                            .unwrap_or(base);
                     }
                     Err(error) => {
                         if is_lock_error(&error) {
-                            lock_errors.lock().unwrap().push(format!("editor[{k}]: {error}"));
+                            lock_errors
+                                .lock()
+                                .unwrap()
+                                .push(format!("editor[{k}]: {error}"));
                         } else {
                             panic!("unexpected editor save error: {error}");
                         }
@@ -205,7 +236,10 @@ fn concurrent_edit_saves_and_background_writes_never_hit_sqlite_busy() {
                 let record = library_item_record(&id, &format!("bg {b} rev {i}"));
                 if let Err(error) = db::upsert_library_item(&conn, &record) {
                     if is_lock_error(&error) {
-                        lock_errors.lock().unwrap().push(format!("bg_write[{b}]: {error}"));
+                        lock_errors
+                            .lock()
+                            .unwrap()
+                            .push(format!("bg_write[{b}]: {error}"));
                     } else {
                         panic!("unexpected background write error: {error}");
                     }
@@ -226,7 +260,10 @@ fn concurrent_edit_saves_and_background_writes_never_hit_sqlite_busy() {
                     }
                     Err(error) => {
                         if is_lock_error(&error) {
-                            lock_errors.lock().unwrap().push(format!("open_churn[{c}]: {error}"));
+                            lock_errors
+                                .lock()
+                                .unwrap()
+                                .push(format!("open_churn[{c}]: {error}"));
                         }
                     }
                 }
@@ -250,7 +287,9 @@ fn concurrent_edit_saves_and_background_writes_never_hit_sqlite_busy() {
     let conn = open_library_connection(&root).unwrap();
     for k in 0..EDITOR_ITEMS {
         let id = format!("edit-item-{k}");
-        let item = crate::library::repository::get_item(&conn, &id).unwrap().unwrap();
+        let item = crate::library::repository::get_item(&conn, &id)
+            .unwrap()
+            .unwrap();
         assert_eq!(
             item.current_edit_version,
             1 + EDITS_PER_ITEM as i64,

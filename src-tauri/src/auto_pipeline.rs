@@ -598,7 +598,10 @@ fn main_pdf_upload_path(root: &Path, job: &ImportJob) -> CommandResult<(SourceFi
 /// 云端链需要拒绝的是「没有可用源文件」，而不是「来源不是 PDF」——否则 DOCX
 /// 永远到不了模型，云端识别对 DOCX 形同不存在。非 PDF 的证据面改由
 /// [`document_ir_source_text`] 提供，见 [`generate_cloud_reading_outline`]。
-pub(crate) fn main_source_for_cloud(root: &Path, job: &ImportJob) -> CommandResult<(SourceFile, PathBuf)> {
+pub(crate) fn main_source_for_cloud(
+    root: &Path,
+    job: &ImportJob,
+) -> CommandResult<(SourceFile, PathBuf)> {
     let source = main_source_file(job)
         .cloned()
         .ok_or_else(|| "no_main_source_file".to_string())?;
@@ -793,7 +796,10 @@ fn local_name_of(name: &[u8]) -> &str {
     text.rsplit(':').next().unwrap_or("")
 }
 
-pub(crate) fn main_pdf_vision_extraction(root: &Path, job: &ImportJob) -> CommandResult<(Value, PathBuf)> {
+pub(crate) fn main_pdf_vision_extraction(
+    root: &Path,
+    job: &ImportJob,
+) -> CommandResult<(Value, PathBuf)> {
     let (_source, upload_path) = main_pdf_upload_path(root, job)?;
     let dir = job_dir(root, &job.job_id);
     let cache_dir = dir.join("cache").join("vision");
@@ -963,7 +969,13 @@ where
         Err(error) if error.starts_with("vision_answer_evidence_page_not_supplied:") => {
             let mut retry = input.clone();
             retry["repairNote"] = json!(error);
-            llm_gateway(root, &job.job_id, "extract_pdf_image_answers", &retry, api_key.as_deref())
+            llm_gateway(
+                root,
+                &job.job_id,
+                "extract_pdf_image_answers",
+                &retry,
+                api_key.as_deref(),
+            )
         }
         result => result,
     };
@@ -1204,8 +1216,10 @@ fn option_labels_in_source_case(canonical: &Value, slot_id: &str) -> BTreeSet<St
 }
 
 fn option_labels_for_slot(canonical: &Value, slot_id: &str) -> BTreeSet<String> {
-    option_labels_in_source_case(canonical, slot_id).into_iter()
-        .map(|label| label.to_ascii_uppercase()).collect()
+    option_labels_in_source_case(canonical, slot_id)
+        .into_iter()
+        .map(|label| label.to_ascii_uppercase())
+        .collect()
 }
 
 fn roman_label(value: u32) -> Option<String> {
@@ -1620,9 +1634,16 @@ pub(crate) fn answer_value_for_slot(
     // Validation is case-insensitive; storage/rendering must use the actual
     // option label (not uppercase Roman numerals that do not exist in the pool).
     let printed_labels = option_labels_in_source_case(canonical, slot_id);
-    let option_values = option_values.into_iter().map(|value| {
-        printed_labels.iter().find(|label| label.eq_ignore_ascii_case(&value)).cloned().unwrap_or(value)
-    }).collect::<Vec<_>>();
+    let option_values = option_values
+        .into_iter()
+        .map(|value| {
+            printed_labels
+                .iter()
+                .find(|label| label.eq_ignore_ascii_case(&value))
+                .cloned()
+                .unwrap_or(value)
+        })
+        .collect::<Vec<_>>();
     let assignment = response_group_for_slot(canonical, slot_id)
         .and_then(|response| response.get("assignment"))
         .and_then(Value::as_str)
@@ -3236,9 +3257,13 @@ fn candidate_request_with_one_repair(
                 &retry,
                 api_key,
             )
-            .map_err(|second_error| format!("cloud_authoring_candidate_repair_rejected:{second_error}"))?;
+            .map_err(|second_error| {
+                format!("cloud_authoring_candidate_repair_rejected:{second_error}")
+            })?;
             crate::llm_gateway::merge_authoring_candidate_supplement(partial, supplement, &retry)
-                .map_err(|repair_error| format!("cloud_authoring_candidate_repair_rejected:{repair_error}"))
+                .map_err(|repair_error| {
+                    format!("cloud_authoring_candidate_repair_rejected:{repair_error}")
+                })
         }
     }
 }
@@ -4445,10 +4470,19 @@ where
                     // Only a successful cloud answer candidate consumes this pre-answer draft.
                     // The actual scheduler runs localOnly, so avoid an unused full V2 build there.
                     let answer_constraint_document = build_authoring_v2_shadow(
-                        &job, &ir, &split, doc.as_ref(), physical_shadow.as_ref(),
-                    ).ok().or_else(|| {
-                        read_json_opt(&dir.join(AUTHORING_V2_SHADOW_ARTIFACT_FILE)).ok().flatten()
-                    }).unwrap_or_else(|| ir.clone());
+                        &job,
+                        &ir,
+                        &split,
+                        doc.as_ref(),
+                        physical_shadow.as_ref(),
+                    )
+                    .ok()
+                    .or_else(|| {
+                        read_json_opt(&dir.join(AUTHORING_V2_SHADOW_ARTIFACT_FILE))
+                            .ok()
+                            .flatten()
+                    })
+                    .unwrap_or_else(|| ir.clone());
                     let answer_count = candidate
                         .get("answers")
                         .and_then(Value::as_object)
@@ -4681,11 +4715,11 @@ where
             if let Some(quality) = written_quality {
                 quality
             } else {
-            // Direct-canonical and writer failures retain the independent gate build.
-            // Rebuild with the row's modality, not the reading default: the gate a
-            // listening paper reports must include its per-part audio issues, otherwise
-            // a paper with no bound audio would look ready.
-            match build_authoring_v2_shadow_for_modality(
+                // Direct-canonical and writer failures retain the independent gate build.
+                // Rebuild with the row's modality, not the reading default: the gate a
+                // listening paper reports must include its per-part audio issues, otherwise
+                // a paper with no bound audio would look ready.
+                match build_authoring_v2_shadow_for_modality(
                 &job,
                 &ir,
                 &split,
@@ -5560,7 +5594,10 @@ mod tests {
             ("docx", ExamModalityV2::Reading),
             ("pdf", ExamModalityV2::Listening),
         ] {
-            let root = std::env::temp_dir().join(format!("pdf2test-single-v2-build-{}", Uuid::new_v4().simple()));
+            let root = std::env::temp_dir().join(format!(
+                "pdf2test-single-v2-build-{}",
+                Uuid::new_v4().simple()
+            ));
             ensure_app_dirs(&root).unwrap();
             let mut job = sample_job();
             let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -5577,33 +5614,71 @@ mod tests {
             fs::copy(&fixture, dir.join("uploads").join(&source.stored_name)).unwrap();
             save_job(&root, &job).unwrap();
             let conn = crate::library::repository::open_library_connection(&root).unwrap();
-            crate::library::repository::upsert_item_shell(&conn, &crate::library::repository::UpsertItemInput {
-                id: &job.job_id, modality: if modality == ExamModalityV2::Listening { "listening" } else { "reading" },
-                title: &job.title, status: "working", source_asset_id: None,
-            }).unwrap();
+            crate::library::repository::upsert_item_shell(
+                &conn,
+                &crate::library::repository::UpsertItemInput {
+                    id: &job.job_id,
+                    modality: if modality == ExamModalityV2::Listening {
+                        "listening"
+                    } else {
+                        "reading"
+                    },
+                    title: &job.title,
+                    status: "working",
+                    source_asset_id: None,
+                },
+            )
+            .unwrap();
             drop(conn);
 
             let before = crate::ielts_grammar::authoring_build_count_for_test();
-            let report = run_auto_pipeline_core_with_gateway(&root, &job.job_id,
-                Some(AutoPipelineInput { execution_mode: Some("localOnly".into()), ..Default::default() }),
+            let report = run_auto_pipeline_core_with_gateway(
+                &root,
+                &job.job_id,
+                Some(AutoPipelineInput {
+                    execution_mode: Some("localOnly".into()),
+                    ..Default::default()
+                }),
                 |_, _, _, _, _| panic!("localOnly must not call the cloud"),
-            ).unwrap();
+            )
+            .unwrap();
             let count = crate::ielts_grammar::authoring_build_count_for_test() - before;
-            assert_eq!(count, 1, "{file_type} {modality:?}: default local import builds the final V2 document once");
-            let saved = read_json_opt(&dir.join(AUTHORING_V2_SHADOW_ARTIFACT_FILE)).unwrap().unwrap();
+            assert_eq!(
+                count, 1,
+                "{file_type} {modality:?}: default local import builds the final V2 document once"
+            );
+            let saved = read_json_opt(&dir.join(AUTHORING_V2_SHADOW_ARTIFACT_FILE))
+                .unwrap()
+                .unwrap();
             // Compare the complete persisted representation. serde_json's default float
             // decoder can round a DOCX bbox width (117.75999999999999 -> 117.76) on load;
             // subject the in-memory gate to that same wire round trip, without omitting
             // source anchors or accepting a tolerance in any quality field.
-            let gate_bytes = crate::schema::common::canonical_json_bytes(report.pointer("/quality/v2Gate").unwrap()).unwrap();
+            let gate_bytes = crate::schema::common::canonical_json_bytes(
+                report.pointer("/quality/v2Gate").unwrap(),
+            )
+            .unwrap();
             let persisted_gate: Value = serde_json::from_slice(&gate_bytes).unwrap();
-            assert_eq!(crate::schema::common::canonical_json_bytes(&persisted_gate).unwrap(),
+            assert_eq!(
+                crate::schema::common::canonical_json_bytes(&persisted_gate).unwrap(),
                 crate::schema::common::canonical_json_bytes(saved.get("quality").unwrap()).unwrap(),
-                "gate must use the final saved draft's quality");
-            assert_eq!(saved["modality"], json!(if modality == ExamModalityV2::Listening { "listening" } else { "reading" }));
+                "gate must use the final saved draft's quality"
+            );
+            assert_eq!(
+                saved["modality"],
+                json!(if modality == ExamModalityV2::Listening {
+                    "listening"
+                } else {
+                    "reading"
+                })
+            );
             if modality == ExamModalityV2::Listening {
                 assert!(saved.get("passage").is_none() || saved["passage"].is_null());
-                assert_ne!(saved["quality"]["state"], json!("ready"), "missing audio remains gated");
+                assert_ne!(
+                    saved["quality"]["state"],
+                    json!("ready"),
+                    "missing audio remains gated"
+                );
             }
             let _ = fs::remove_dir_all(root);
         }
@@ -6706,14 +6781,18 @@ mod tests {
 
     #[test]
     fn answer_attachment_page_number_gets_one_constrained_source_page_repair() {
-        let root = std::env::temp_dir().join(format!("answer-page-reference-repair-{}", Uuid::new_v4().simple()));
+        let root = std::env::temp_dir().join(format!(
+            "answer-page-reference-repair-{}",
+            Uuid::new_v4().simple()
+        ));
         ensure_app_dirs(&root).unwrap();
         let job = sample_job();
         save_job(&root, &job).unwrap();
         crate::llm_profiles::save_profiles(&root, &[json!({
             "profileId":"page-repair-test","provider":"OpenAiCompatible","model":"test","enabled":true
         })]).unwrap();
-        let extraction = json!({"pages":[{"pageIndex":5,"images":[{"path":"unused-by-fake-gateway"}]}]});
+        let extraction =
+            json!({"pages":[{"pageIndex":5,"images":[{"path":"unused-by-fake-gateway"}]}]});
         let mut calls = 0;
         let (candidate, _) = vision_answer_candidate_for_job(&root, &job, "page-repair-test", &extraction, &mut |_, _, command, input, _| {
             calls += 1;

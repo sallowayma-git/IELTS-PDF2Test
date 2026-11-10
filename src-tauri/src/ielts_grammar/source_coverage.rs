@@ -307,8 +307,12 @@ fn compact_glyph_spaced_digits(text: &str) -> String {
             }
             // Physical line boundaries separate a declaration from its first question.
             // Joining `Questions 1-13\n1 ...` creates a fictitious 1-131 range.
-            if next < chars.len() && chars[next].is_ascii_digit()
-                && !chars[index..next].iter().any(|ch| matches!(ch, '\n' | '\r')) {
+            if next < chars.len()
+                && chars[next].is_ascii_digit()
+                && !chars[index..next]
+                    .iter()
+                    .any(|ch| matches!(ch, '\n' | '\r'))
+            {
                 index = next;
                 continue;
             }

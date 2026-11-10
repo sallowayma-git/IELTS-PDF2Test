@@ -278,7 +278,8 @@ fn has_fill_verb_with_word(lower: &str, noun: &str) -> bool {
     let has_noun = lower
         .split(|ch: char| !ch.is_ascii_alphabetic())
         .any(|word| word == noun);
-    has_noun && (lower.contains("complete") || lower.contains("fill in") || lower.contains("fill-in"))
+    has_noun
+        && (lower.contains("complete") || lower.contains("fill in") || lower.contains("fill-in"))
 }
 
 fn has_numbered_inline_blank_sequence(text: &str) -> bool {
