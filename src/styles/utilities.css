@@ -56,3 +56,34 @@
 }
 
 .workspace-page .icon-button:hover { background: var(--paper-control-hover); }
+
+/* 管理界面共用控件；考试纸面的控件由自身契约管理。 */
+.shell:not(.shell-immersive) { font-size: 14px; line-height: 1.55; }
+.shell:not(.shell-immersive) :is(h1, h2, h3) { font-family: var(--font-ui); letter-spacing: -.02em; line-height: 1.35; font-weight: 650; }
+.shell:not(.shell-immersive) h1 { font-size: 28px; }
+.shell:not(.shell-immersive) h2 { font-size: 18px; }
+.shell:not(.shell-immersive) h3 { font-size: 15px; }
+.shell:not(.shell-immersive) :is(.primary, .ghost, .danger) {
+  min-height: 36px; padding: 8px 14px; border-radius: 6px; font-size: 14px; font-weight: 550;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+.shell:not(.shell-immersive) .ghost { background: var(--surface); }
+.shell:not(.shell-immersive) :is(.primary, .ghost, .danger):hover { transform: none; filter: none; }
+.shell:not(.shell-immersive) .primary:not(:disabled):hover { background: #145f4d; }
+.shell:not(.shell-immersive) .ghost:not(:disabled):hover { background: var(--surface-muted); border-color: var(--line-strong); }
+.shell:not(.shell-immersive) .danger:not(:disabled):hover { background: rgba(184, 75, 63, .08); }
+.shell:not(.shell-immersive) :is(.button-row button.small, button.small) { min-height: 30px; padding: 5px 10px; font-size: 12px; }
+.shell:not(.shell-immersive) label { color: var(--ink); font-weight: 500; }
+.shell:not(.shell-immersive) :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+  border-radius: 6px; padding: 8px 10px; background: var(--surface); font-weight: 400;
+}
+.shell:not(.shell-immersive) :is(input[type="checkbox"], input[type="radio"]) { accent-color: var(--accent); }
+.shell:not(.shell-immersive) .empty { margin: 0; padding: 16px 0; border: 0; border-radius: 0; background: transparent; font-size: 13px; }
+.shell:not(.shell-immersive) .status-pill { padding: 3px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; }
+.muted { color: var(--muted); }
+
+@media (prefers-reduced-motion: reduce) {
+  .shell:not(.shell-immersive) *, .shell:not(.shell-immersive) *::before, .shell:not(.shell-immersive) *::after {
+    animation-duration: .01ms !important; transition-duration: .01ms !important;
+  }
+}

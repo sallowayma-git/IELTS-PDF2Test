@@ -37,7 +37,7 @@ function QueueGroup({
   onSetPart: (id: string, label: string | null) => void;
 }) {
   return (
-    <section className="import-queue-group" data-testid={testid}>
+    <section className={`import-queue-group${rows.length ? " has-items" : " is-empty"}`} data-testid={testid}>
       <header className="paper-group-head">
         <h3>{title}</h3>
         <span className="paper-group-count">{rows.length} 项</span>
@@ -151,9 +151,12 @@ export function ImportPage() {
       />
 
       {store.error ? <p className="error-text">{toUserFacingError(store.error, "队列读取失败，请稍后重试。").userMessage}</p> : null}
-      <QueueGroup title="识别中" testid="import-group-working" rows={groups.working} emptyText="没有正在识别的题目。" onOpen={open} onTrash={trash} onRetry={retry} onSetPart={setPart} />
-      <QueueGroup title="待检查" testid="import-group-review" rows={groups.review} emptyText="没有待检查的题目。检查通过后会进入题库。" onOpen={open} onTrash={trash} onRetry={retry} onSetPart={setPart} />
-      <QueueGroup title="失败" testid="import-group-failed" rows={groups.failed} emptyText="没有失败的导入。" onOpen={open} onTrash={trash} onRetry={retry} onSetPart={setPart} />
+      <section className="import-queue" aria-label="导入进度">
+        <h2>导入进度</h2>
+        <QueueGroup title="识别中" testid="import-group-working" rows={groups.working} emptyText="没有正在识别的题目。" onOpen={open} onTrash={trash} onRetry={retry} onSetPart={setPart} />
+        <QueueGroup title="待检查" testid="import-group-review" rows={groups.review} emptyText="没有待检查的题目。检查通过后会进入题库。" onOpen={open} onTrash={trash} onRetry={retry} onSetPart={setPart} />
+        <QueueGroup title="失败" testid="import-group-failed" rows={groups.failed} emptyText="没有失败的导入。" onOpen={open} onTrash={trash} onRetry={retry} onSetPart={setPart} />
+      </section>
     </section>
   );
 }

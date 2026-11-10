@@ -1,31 +1,33 @@
 /* 设置表面（计划 §10.7 / §14）：单列主表单，最大宽度 720px，在 720-1600px 都是一列。 */
 
 .settings-page {
-  width: min(100%, 720px);
-  margin-inline: auto;
+  width: min(100%, 840px);
+  margin-inline: 0;
   min-width: 0;
   display: grid;
-  gap: 20px;
+  gap: 28px;
 }
 
 .settings-header h1 { font-size: clamp(24px, 3vw, 34px); }
 
 .settings-group {
   display: grid;
-  gap: 12px;
+  gap: 18px;
   min-width: 0;
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: rgba(255, 250, 240, 0.62);
+  padding: 24px 0 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
 }
 
 .settings-group h2 { font-size: 18px; }
+.settings-group > small { color: var(--muted); line-height: 1.6; }
 
-.settings-field { display: grid; gap: 6px; margin: 0; min-width: 0; color: var(--muted); font-weight: 700; }
+.settings-field { display: grid; gap: 6px; margin: 0; min-width: 0; color: var(--ink); font-weight: 500; }
 .settings-field input,
 .settings-field select { width: 100%; min-width: 0; }
-.settings-field small { color: var(--muted); font-weight: 400; }
+.settings-field small { color: var(--muted); font-weight: 400; font-size: 12px; line-height: 1.6; }
 
 .settings-toggle {
   display: grid;
@@ -35,12 +37,12 @@
   margin: 0;
   min-width: 0;
   color: var(--ink);
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .settings-toggle input { margin-top: 3px; }
 .settings-toggle span { display: grid; gap: 3px; min-width: 0; }
-.settings-toggle small { color: var(--muted); font-weight: 400; }
+.settings-toggle small { color: var(--muted); font-weight: 400; font-size: 12px; line-height: 1.6; }
 
 .settings-field-row {
   display: flex;
@@ -51,14 +53,15 @@
   min-width: 0;
 }
 
-.settings-field-label { display: grid; gap: 3px; min-width: 0; font-weight: 700; }
+.settings-field-label { display: grid; gap: 3px; min-width: 0; font-weight: 500; }
 .settings-field-label small { color: var(--muted); font-weight: 400; }
 
 .settings-notice {
   margin: 0;
   padding: 9px 12px;
-  border: 1px solid var(--accent);
-  border-radius: 10px;
+  border: 0;
+  border-left: 3px solid var(--accent);
+  border-radius: 0;
   background: rgba(31, 138, 112, 0.08);
   color: var(--ink);
 }
@@ -66,8 +69,9 @@
 .settings-preflight-alert {
   margin: 0;
   padding: 9px 12px;
-  border: 1px solid var(--danger);
-  border-radius: 10px;
+  border: 0;
+  border-left: 3px solid var(--danger);
+  border-radius: 0;
   background: rgba(184, 75, 63, 0.08);
   color: var(--danger);
 }
@@ -78,12 +82,12 @@
 
 .settings-advanced-toggle {
   justify-self: start;
-  padding: 8px 12px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.6);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--ink);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .settings-advanced { display: grid; gap: 12px; min-width: 0; padding-top: 4px; }

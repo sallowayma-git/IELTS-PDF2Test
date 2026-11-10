@@ -3,9 +3,12 @@
 .data-page {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 20px 24px 40px;
-  max-width: 1200px;
+  gap: 24px;
+  padding: 0 0 40px;
+  width: min(100%, 1280px);
+  margin-inline: auto;
+  min-width: 0;
+  container-type: inline-size;
   color: var(--ink);
   font-family: var(--font-ui);
 }
@@ -46,6 +49,7 @@
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
+  margin-bottom: 24px;
 }
 
 .data-toolbar-actions {
@@ -73,8 +77,9 @@
 .data-notice {
   margin: 0;
   padding: 8px 12px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
+  border: 0;
+  border-left: 3px solid var(--accent);
+  border-radius: 0;
   font-size: 13px;
   background: var(--paper);
 }
@@ -90,32 +95,37 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 10px;
-  padding: 24px;
-  border: 1px dashed var(--line-strong);
-  border-radius: 8px;
+  padding: 32px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
 }
 
 .data-batch-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  border-top: 1px solid var(--line);
 }
 
 .data-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px 16px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--paper);
-  box-shadow: var(--shadow);
+  display: grid;
+  grid-template-columns: minmax(150px, .7fr) minmax(0, 2fr) auto;
+  align-items: center;
+  gap: 20px;
+  min-width: 0;
+  padding: 20px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .data-card header {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 8px;
 }
 
@@ -128,7 +138,7 @@
 .data-chip {
   display: inline-block;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   font-size: 12px;
   color: var(--muted);
@@ -144,7 +154,8 @@
 .data-metrics {
   margin: 0;
   display: grid;
-  gap: 6px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
   font-size: 13px;
 }
 
@@ -154,13 +165,15 @@
 }
 
 .data-metrics dd {
-  margin: 0;
+  margin: 4px 0 0;
 }
 
 .data-section {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
+  min-width: 0;
+  margin-top: 28px;
 }
 
 .data-list {
@@ -173,9 +186,12 @@
 
 .data-table {
   width: 100%;
+  min-width: 640px;
   border-collapse: collapse;
   font-size: 13px;
 }
+.data-table-scroll { min-width: 0; max-width: 100%; overflow-x: auto; }
+.data-table-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 .data-table th,
 .data-table td {
@@ -204,7 +220,8 @@
 .data-stat-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 10px;
+  gap: 0;
+  border-block: 1px solid var(--line);
 }
 
 .data-stat {
@@ -212,10 +229,12 @@
   flex-direction: column;
   gap: 4px;
   padding: 12px 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--paper);
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
 }
+.data-stat:first-child { border-left: 0; }
 
 .data-stat-label {
   font-size: 12px;
@@ -234,16 +253,19 @@
 
 .data-two-col {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
   gap: 16px;
 }
 
 .data-histogram {
+  display: block;
   width: 100%;
   max-width: 960px;
-  height: auto;
+  height: 220px;
   overflow: visible;
 }
+.data-chart-scroll { min-width: 0; max-width: 100%; overflow-x: auto; }
+.data-chart-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 .data-histogram .data-bar {
   fill: var(--accent);
@@ -381,10 +403,17 @@ button.data-bar-row {
 }
 
 @media (max-width: 720px) {
-  .data-page {
-    padding: 16px;
-  }
   .data-bar-row {
     grid-template-columns: 1fr 2fr 44px;
   }
+}
+
+@container (max-width: 980px) {
+  .data-card { grid-template-columns: minmax(0, 1fr) auto; }
+  .data-card .data-metrics { grid-column: 1 / -1; grid-row: 2; }
+}
+@container (max-width: 540px) {
+  .data-metrics { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .data-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .data-stat { padding: 12px 8px; }
 }

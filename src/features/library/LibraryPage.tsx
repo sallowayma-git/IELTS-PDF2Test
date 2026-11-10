@@ -24,6 +24,10 @@ import {
   type ReadingPart
 } from "./paperSelection";
 import { WritingPanel } from "./WritingPanel";
+import {
+  LIBRARY_SECTIONS, READING_FILTERS, librarySectionPath, matchesReadingFilter,
+  resolveLibrarySection, resolveReadingFilter, type LibrarySection, type ReadingPartFilter
+} from "./libraryNavigation";
 
 // 题库一级页：只显示「可发布」与「已发布」。待检查、识别中、失败的题在「导入」页。
 // 唯一的发布动作是「发布为当前试卷」（替换语义）。回收站是右上角的次级入口。
@@ -41,13 +45,25 @@ export function replacedPaperTitles(paper: CurrentPaperV1 | null | undefined): s
   return [...paper.reading, ...paper.listening].map((entry) => entry.title);
 }
 
-export function LibraryPage({ intent, pickItemId }: { intent?: LibraryIntent; pickItemId?: string }) {
+export function LibraryPage({ intent, pickItemId, modality, part }: {
+  intent?: LibraryIntent; pickItemId?: string; modality?: string; part?: string;
+}) {
   const store = useLibraryStore();
+  const section = resolveLibrarySection(modality);
+  const [lastReadingFilter, setLastReadingFilter] = useState(() => resolveReadingFilter(part));
+  const readingFilter = section === "reading" ? resolveReadingFilter(part) : lastReadingFilter;
+  const [searches, setSearches] = useState({ reading: "", listening: "" });
+  const search = section === "writing" ? "" : searches[section];
+  useEffect(() => {
+    if (section === "reading") setLastReadingFilter(resolveReadingFilter(part));
+  }, [section, part]);
+  function navigateSection(next: LibrarySection, filter: ReadingPartFilter = readingFilter) {
+    go(librarySectionPath(next, filter));
+  }
   // 编辑器「去组卷发布」带来的预选题：每个 id 只应用一次，避免刷新时反复勾选。
   const appliedPick = useRef<string | undefined>(undefined);
   // 组卷发布的防重入：在 await 之前就占住，双击或快速重复点击只会发出一次请求。
   const paperBusy = useRef(false);
-  const [search, setSearch] = useState("");
   const [showTrash, setShowTrash] = useState(false);
   const [notice, setNotice] = useState<string | undefined>(
     intent === "publish" ? "在下面勾选三篇阅读（每个 Part 一篇），然后发布为当前试卷。" : undefined
@@ -96,6 +112,9 @@ export function LibraryPage({ intent, pickItemId }: { intent?: LibraryIntent; pi
       setNotice("这道题不在题库里，无法加入组卷。");
       return;
     }
+    if (row.modality === "reading" || row.modality === "listening") {
+      go(librarySectionPath(row.modality));
+    }
     if (row.modality === "reading" && isReadingPart(row.part)) {
       const part = row.part;
       setPaperSelection((current) =>
@@ -135,9 +154,11 @@ export function LibraryPage({ intent, pickItemId }: { intent?: LibraryIntent; pi
 
   /** 题库可见行：可发布 + 已发布（待检查不在这里），按标题搜索。 */
   const visibleRows = useMemo(
-    () => libraryRows(store.rows).filter((row) => matchesSearch(row, search)),
-    [store.rows, search]
+    () => libraryRows(store.rows).filter((row) => row.modality === section && matchesSearch(row, search)
+      && (section !== "reading" || matchesReadingFilter(row, readingFilter))),
+    [store.rows, search, section, readingFilter]
   );
+  const readingRows = libraryRows(store.rows).filter((row) => row.modality === "reading");
   const trashRows = useMemo(() => store.rows.filter((row) => row.inTrash), [store.rows]);
 
   // 发布目录：设置里选过就记住，否则追问一次。
@@ -323,17 +344,9 @@ export function LibraryPage({ intent, pickItemId }: { intent?: LibraryIntent; pi
         <div className="library-header-top">
           <div>
             <h1>题库</h1>
-            <p className="library-background-note">这里只显示可发布与已发布的题。待检查的题在「导入」页处理。</p>
+            <p className="library-background-note">按阅读、听力和写作管理题目。导入后待检查的题在「导入」页处理。</p>
           </div>
           <div className="button-row">
-            <input
-              className="library-search"
-              type="search"
-              placeholder="按标题搜索…"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              aria-label="按标题搜索题目"
-            />
             <button className="ghost small" data-testid="library-import" onClick={() => go("/import")}>导入</button>
             <button className="ghost small" data-testid="library-trash-open" onClick={() => setShowTrash(true)}>
               回收站（{trashRows.length}）
@@ -342,7 +355,15 @@ export function LibraryPage({ intent, pickItemId }: { intent?: LibraryIntent; pi
         </div>
       </header>
 
-      <CurrentPaperCard paper={currentPaper} destination={destination} error={currentPaperError} />
+      <nav className="library-section-nav" aria-label="题库分类">
+        {LIBRARY_SECTIONS.map(({ key, label }) => (
+          <a key={key} href={`#${librarySectionPath(key, readingFilter)}`}
+            aria-current={section === key ? "page" : undefined}
+            onClick={(event) => { event.preventDefault(); navigateSection(key); }}>
+            {label}
+          </a>
+        ))}
+      </nav>
       {store.error ? <p className="error-text">{toUserFacingError(store.error, "题库读取失败，请稍后重试。").userMessage}</p> : null}
       {notice ? (
         <p className="library-notice" data-testid="library-notice" role="status">
@@ -351,7 +372,26 @@ export function LibraryPage({ intent, pickItemId }: { intent?: LibraryIntent; pi
         </p>
       ) : null}
 
+      {section !== "writing" ? <>
+      <div className="library-controls library-workspace-controls">
+        <div className="library-filter-area">
+          <h2>{section === "reading" ? "阅读题库" : "听力题库"}</h2>
+          {section === "reading" ? <div className="library-part-filter" role="group" aria-label="阅读 Part 筛选">
+            {READING_FILTERS.map(({ key, label }) => (
+              <button key={key} className={`chip${readingFilter === key ? " is-active" : ""}`}
+                aria-pressed={readingFilter === key} onClick={() => navigateSection("reading", key)}>
+                {label}{" "}<span className="library-filter-count">{readingRows.filter((row) => matchesReadingFilter(row, key)).length}</span>
+              </button>
+            ))}
+          </div> : null}
+        </div>
+        <input className="library-search" type="search" placeholder={`搜索${section === "reading" ? "阅读" : "听力"}题目…`}
+          value={search} onChange={(event) => setSearches((current) => ({ ...current, [section]: event.target.value }))}
+          aria-label={`搜索${section === "reading" ? "阅读" : "听力"}题目`} />
+      </div>
+      {store.loading ? <p role="status">正在加载题库…</p> : null}
       <LibraryPaperTable
+        modality={section}
         rows={visibleRows}
         selection={paperSelection}
         hasCurrentPaper={Boolean(currentPaper)}
@@ -363,6 +403,9 @@ export function LibraryPage({ intent, pickItemId }: { intent?: LibraryIntent; pi
         onSetPart={setPart}
         onTrash={trash}
       />
+      <div className="library-publish-context">
+        <CurrentPaperCard paper={currentPaper} destination={destination} error={currentPaperError} />
+      </div>
       <PaperComposerBar
         selection={paperSelection}
         titleOf={(id) => store.rows.find((row) => row.id === id)?.title ?? id}
@@ -374,9 +417,9 @@ export function LibraryPage({ intent, pickItemId }: { intent?: LibraryIntent; pi
         onConfirm={publishPaper}
         onCancelConfirm={() => setConfirmation(undefined)}
       />
+      </> : null}
 
-      <section className="library-writing-section" data-testid="library-writing-section">
-        <header className="paper-group-head"><h3>写作</h3></header>
+      <section className="library-section-view library-writing-section" hidden={section !== "writing"} data-testid="library-writing-section">
         <WritingPanel refresh={store.refresh} />
       </section>
     </section>
