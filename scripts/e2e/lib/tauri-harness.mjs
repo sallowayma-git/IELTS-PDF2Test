@@ -521,7 +521,13 @@ export async function launchTauriApp({ exePath, pdfPath, keep = false, runPrefix
       // selenium-webdriver 4.x 远程会话强制要求 browserName；tauri-driver 模式下
       // 该值仅占位，实际被测对象由 tauri:options.application 指定。
       browserName: "wry",
-      "tauri:options": { application: exePath }
+      "tauri:options": {
+        application: exePath,
+        webviewOptions: {
+          userDataFolder: path.join(runDir, "appdata", "webview"),
+          additionalBrowserArguments: ["--remote-debugging-port=0"]
+        }
+      }
     };
     driver = await new Builder().usingServer(serverUrl).withCapabilities(capabilities).build();
     const windowHandle = (await driver.getAllWindowHandles())[0];

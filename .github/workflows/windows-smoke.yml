@@ -30,6 +30,11 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+
       - name: Install frontend dependencies
         run: npm ci
 
@@ -76,6 +81,11 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+
       - name: Install tauri-driver
         run: cargo install tauri-driver --locked
 
@@ -89,7 +99,7 @@ jobs:
         run: npx tauri build --debug --no-bundle
 
       - name: Real Tauri smoke (workspace-edit)
-        run: npm run e2e:tauri:workspace-edit
+        run: npm run e2e:tauri:workspace-edit -- --keep
 
       - name: Upload E2E artifacts on failure
         if: failure()

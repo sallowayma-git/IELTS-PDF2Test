@@ -6,3 +6,5 @@
 
 真实 Electron 主流程首轮通过，作者消费其快照后发现 highlights 为 NULL，追到学生 ExamReadingService 构造 rawSubmission 时未保留；已修复，不削弱断言。独立听力真实 UI 暴露 per_slot 的 cardinality 错用：三格文本组 exact=3 被逐格要求三答案。采用 B 的组级计数，9/9 听力→阅读→写作→最终 ready V2 快照实际通过。E2E 发布 fixture 改用真实 current-paper 锁卷契约，未绕过锁卷要求。
 作者全 Rust 1596 通过、19 忽略；前端663通过，生产构建通过。学生静态18/20通过，两项因本机无pwsh无法执行Windows脚本；真实macOS Electron不声称Windows kiosk。原有作者PR#5的远端失败已确认：旧surface基线、旧Rust格式、Windows并发编辑5次SQLite锁，以及Windows原生冒烟失败；不是V2业务验证的替代品。
+
+用户明确要求本轮修复门禁后合入。按gh-fix-ci流程核对GitHub日志，采用已授权方案，不重复要许可。合并已确认的UI PR#5至收敛分支（无冲突），一次验证与合入。现有Rust格式单独机械提交；审查当前数据/导入/题库面后更新旧surface基线，SQL注释不再误计为IF表。浏览器冒烟按独立导入页的任务创建/队列断言替换“抽屉关闭”，13步实际通过。Windows连接在任何PRAGMA之前设置30秒busy_timeout；首次schema检查与登记同锁，避免并发重复迁移。Windows原生驱动显式传递官方webviewOptions.userDataFolder和additionalBrowserArguments，保留失败产物，等待远端实际验证。
