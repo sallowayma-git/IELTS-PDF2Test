@@ -3,6 +3,23 @@ import { wrapRangeTextWithHighlight } from "./highlightDom";
 
 export type StudentFontSize = "normal" | "large" | "xlarge";
 
+function NoteEditor({ highlight, onSave, onClose }: { highlight: HTMLElement; onSave: (text: string) => void; onClose: () => void }) {
+  const [text, setText] = useState(highlight.dataset.note || "");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => textareaRef.current?.focus(), []);
+  const rect = highlight.getBoundingClientRect();
+  return <>
+    <div className="student-note-overlay" onClick={onClose} />
+    <div className="student-note-editor" style={{ top: Math.max(8, rect.bottom + 8), left: Math.max(8, rect.left) }}>
+      <textarea aria-label="Edit note" ref={textareaRef} placeholder="Add a note..." value={text} onChange={(e) => setText(e.target.value)} />
+      <div className="student-note-buttons">
+        <button type="button" onClick={() => { onSave(text); onClose(); }}>Save</button>
+        <button type="button" onClick={onClose}>Close</button>
+      </div>
+    </div>
+  </>;
+}
+
 export function StudentFontSizeControls({ value, onChange }: { value: StudentFontSize; onChange: (size: StudentFontSize) => void }) {
   return <div className="student-font-controls" role="group" aria-label="Text size">
     {(["normal", "large", "xlarge"] as const).map((size, index) => <button type="button" key={size} aria-label={`Text size ${size}`} aria-pressed={value === size} onClick={() => onChange(size)}>{["A−", "A", "A+"][index]}</button>)}
@@ -15,6 +32,7 @@ export function StudentReadingTools({ root, fontSize, onFontSizeChange }: {
 }) {
   const rangeRef = useRef<Range | null>(null);
   const activeRef = useRef<HTMLElement | null>(null);
+  const [noteEditor, setNoteEditor] = useState<HTMLElement | null>(null);
   const noteAreaRef = useRef<HTMLTextAreaElement>(null);
   const [notesOpen, setNotesOpen] = useState(false);
   const [noteText, setNoteText] = useState("");
@@ -37,7 +55,7 @@ export function StudentReadingTools({ root, fontSize, onFontSizeChange }: {
     };
     const clicked = (event: MouseEvent) => {
       const target = event.target as Element;
-      if (target.closest(".student-highlight-toolbar,.student-reading-toolbar,.student-notes-panel")) return;
+      if (target.closest(".student-highlight-toolbar,.student-reading-toolbar,.student-notes-panel,.student-note-editor,.student-note-overlay")) return;
       const highlight = target.closest<HTMLElement>(".hl");
       if (highlight && container.contains(highlight)) { activeRef.current = highlight; rangeRef.current = null; show(highlight.getBoundingClientRect(), true); }
       else if (window.getSelection()?.isCollapsed) setToolbar(undefined);
@@ -60,7 +78,7 @@ export function StudentReadingTools({ root, fontSize, onFontSizeChange }: {
   return <>
     <div className="student-reading-toolbar"><button type="button" aria-label="Note" aria-expanded={notesOpen} onClick={() => setNotesOpen(true)}>Note</button>{onFontSizeChange ? <StudentFontSizeControls value={fontSize} onChange={onFontSizeChange} /> : null}</div>
     {notesOpen ? <aside className="student-notes-panel" aria-label="Notes"><header><strong>Notes</strong><button type="button" onClick={() => setNotesOpen(false)}>Close</button></header><textarea ref={noteAreaRef} aria-label="Notes" value={noteText} onChange={event => setNoteText(event.target.value)} /></aside> : null}
-    {toolbar ? <div className="student-highlight-toolbar" role="toolbar" aria-label="Highlight selection" style={{ position: "fixed", top: toolbar.top, left: toolbar.left }} onPointerDown={(event) => event.preventDefault()}>
+    {toolbar ? <div className="student-highlight-toolbar" role="toolbar" aria-label="Text tools" style={{ position: "fixed", top: toolbar.top, left: toolbar.left }} onPointerDown={(event) => event.preventDefault()}>
       <button type="button" disabled={!!activeRef.current} onClick={() => { if (rangeRef.current) wrapRangeTextWithHighlight(rangeRef.current, { kind: "highlight" }); finish(); }}>Highlight</button>
       <button type="button" data-action="note" onClick={() => {
         const active = activeRef.current;
@@ -78,12 +96,14 @@ export function StudentReadingTools({ root, fontSize, onFontSizeChange }: {
         setNotesOpen(true);
         finish();
       }}>Note</button>
-      <button type="button" disabled={!toolbar.canRemove} onClick={() => {
+      {activeRef.current?.dataset.kind === "note" ? <button type="button" onClick={() => { setNotesOpen(false); setNoteEditor(activeRef.current); finish(); }}>Edit</button> : null}
+      <button type="button" aria-label="Remove highlight" disabled={!toolbar.canRemove} onClick={() => {
         const range = rangeRef.current;
         const targets = activeRef.current ? [activeRef.current] : [...root.current!.querySelectorAll<HTMLElement>(".hl")].filter((el) => range?.intersectsNode(el));
         targets.forEach((el) => el.replaceWith(...el.childNodes));
         finish();
-      }}>Remove highlight</button>
+      }}>Remove</button>
     </div> : null}
+    {noteEditor ? <NoteEditor highlight={noteEditor} onSave={(text) => { noteEditor.dataset.note = text; }} onClose={() => setNoteEditor(null)} /> : null}
   </>;
 }
