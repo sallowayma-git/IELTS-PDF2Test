@@ -1,7 +1,7 @@
 {
-  "recordedAt": "2026-11-10T22:19:44.861Z",
+  "recordedAt": "2026-11-10T22:25:32.678Z",
   "surface": {
-    "commitSha": "1fe136e73fce01abd32b4581153b8e5831074d7f",
+    "commitSha": "992804f8711d052ea7c06a34845ddee94888f862",
     "schemaHash": {
       "files": 49,
       "sha256": "91c001508f166e4196dad6b1ac8045e154fa231c964753bf632cd98b9aa158e8"
@@ -297,7 +297,7 @@
       "src/pages/UnifiedPreview.tsx": null,
       "src/pages/StructuredAuthoringEditorV2.tsx": null,
       "src/services/devFallbackBackend.ts": 176359,
-      "src-tauri/src/lib.rs": 507601,
+      "src-tauri/src/lib.rs": 509154,
       "src-tauri/src/authoring_pipeline.rs": 567533,
       "src-tauri/src/auto_pipeline.rs": 298064,
       "src-tauri/src/ielts_grammar/mod.rs": 157316
@@ -398,6 +398,14 @@
         "  productModules.src/exam-canvas: 13 -> 25 files",
         "  productModules.src/styles: 11 -> 12 files",
         "  schemaHash: 309fbdb2f4e2 (44 files) -> 91c001508f16 (49 files)"
+      ]
+    },
+    {
+      "at": "2026-11-10T22:25:32.675Z",
+      "commit": "992804f8711d052ea7c06a34845ddee94888f862",
+      "reason": "已审查单一V2与题库导航；新增仅Windows隔离debug自动化的显式WebView2选项，修复高权限CI忽略环境变量的问题，生产配置不变",
+      "driftSummary": [
+        "  fileSizes.src-tauri/src/lib.rs: 507601 -> 509154 B (+1553, 0.3%)"
       ]
     }
   ]

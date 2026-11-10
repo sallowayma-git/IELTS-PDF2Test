@@ -2124,6 +2124,35 @@ async fn set_library_item_part(
 }
 
 pub fn run() {
+    let context = tauri::generate_context!();
+    // Elevated WebView2 hosts ignore WEBVIEW2_* environment overrides. CI's
+    // isolated debug harness must pass its profile and arguments via the API.
+    // https://learn.microsoft.com/microsoft-edge/webview2/concepts/security
+    #[cfg(all(windows, debug_assertions))]
+    let context = {
+        let mut context = context;
+        if env::var_os("PDF2TEST_AUTOMATION_DATA_DIR").is_some() {
+            let args = env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS")
+                .ok()
+                .or_else(|| {
+                    (env::var("TAURI_WEBVIEW_AUTOMATION").as_deref() == Ok("true"))
+                        .then(|| "--remote-debugging-port=0".to_string())
+                });
+            if let Some(args) = args {
+                for window in &mut context.config_mut().app.windows {
+                    let defaults = window.additional_browser_args.take().unwrap_or_else(||
+                        "--autoplay-policy=no-user-gesture-required --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection".into());
+                    window.additional_browser_args = Some(format!(
+                        "{defaults} {args} --remote-debugging-address=127.0.0.1"
+                    ));
+                    window.data_directory =
+                        env::var_os("WEBVIEW2_USER_DATA_FOLDER").map(PathBuf::from);
+                }
+                eprintln!("[automation] configured isolated WebView2 profile and browser arguments through the API");
+            }
+        }
+        context
+    };
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -2293,7 +2322,7 @@ pub fn run() {
             empty_recycle_bin,
             set_library_item_part
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }
 

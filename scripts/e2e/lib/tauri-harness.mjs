@@ -651,11 +651,17 @@ export async function waitForRowText(driver, itemId, predicate, timeoutMs) {
  * 行点击与 processing 事件刷新竞态会产生 stale element（行重渲染），
  * 最多重试 3 次，每次重新定位——产品断言本身不变。 */
 export async function openWorkspaceForItem(driver, itemId) {
+  const selector = `[data-item-id="${itemId}"] .library-row-main, [data-testid="paper-row"][data-item-id="${itemId}"] .button-row button:first-child`;
+  // Unreviewed imports remain in the import queue; approved papers use the
+  // library table's Open action. Exercise the actual entry in either view.
+  if (!(await driver.findElements(By.css(selector))).length) {
+    await driver.executeScript("location.hash = '#/import';");
+  }
   let lastError = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       const row = await driver.wait(
-        until.elementLocated(By.css(`[data-item-id="${itemId}"] .library-row-main`)),
+        until.elementLocated(By.css(selector)),
         15000
       );
       await row.click();

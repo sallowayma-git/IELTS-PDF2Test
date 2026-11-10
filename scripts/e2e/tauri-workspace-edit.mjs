@@ -57,6 +57,24 @@ async function main() {
       return { url: await driver.getCurrentUrl() };
     });
 
+    await recordStep(driver, "review-operator-persists-through-settings", async () => {
+      await driver.executeScript("location.hash = '#/settings';");
+      const name = await driver.wait(until.elementLocated(By.css('[data-testid="review-operator-name"]')), 15000);
+      await driver.wait(until.elementIsEnabled(name), 15000);
+      await name.clear();
+      await name.sendKeys("E2E Teacher");
+      await driver.findElement(By.css('[data-testid="review-operator-save"]')).click();
+      await driver.wait(until.elementLocated(By.xpath("//*[@role='status' and contains(.,'操作人已保存')]")), 15000);
+      await driver.navigate().refresh();
+      await driver.wait(async () => {
+        const inputs = await driver.findElements(By.css('[data-testid="review-operator-name"]'));
+        return inputs.length && await inputs[0].getAttribute("value") === "E2E Teacher";
+      }, 15000);
+      await driver.executeScript("location.hash = '#/library';");
+      await driver.wait(until.elementLocated(By.css('[data-testid="library-page"]')), 15000);
+      return { persisted: true };
+    });
+
     await recordStep(driver, "import-pdf-via-folder-hook", async () => {
       const result = await importPdfViaFolderHook(driver);
       itemId = result.itemId;

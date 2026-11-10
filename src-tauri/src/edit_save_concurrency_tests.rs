@@ -41,6 +41,48 @@ fn temp_root() -> PathBuf {
     root
 }
 
+/// A finite writer that outlasts the old five-second wait must not make a
+/// concurrent save fail. The transaction itself is still executed only once.
+#[test]
+fn a_save_waits_for_a_slow_writer_without_losing_its_update() {
+    let root = temp_root();
+    let conn = open_library_connection(&root).unwrap();
+    conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let (ready, started) = std::sync::mpsc::channel();
+    let writer_root = root.clone();
+    let writer = thread::spawn(move || {
+        let conn = open_library_connection(&writer_root).unwrap();
+        ready.send(()).unwrap();
+        upsert_item_shell(
+            &conn,
+            &UpsertItemInput {
+                id: "waiting-save",
+                modality: "reading",
+                title: "Retained save",
+                status: "ready",
+                source_asset_id: None,
+            },
+        )
+    });
+    started
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .unwrap();
+    thread::sleep(std::time::Duration::from_secs(6));
+    conn.execute_batch("COMMIT").unwrap();
+    assert!(writer.join().unwrap().unwrap());
+    assert_eq!(
+        conn.query_row(
+            "SELECT title FROM library_items_v2 WHERE id='waiting-save'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "Retained save"
+    );
+    drop(conn);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 /// 用真实的 synthetic 权威稿夹具做种子——`validate_authoring` 会反序列化成
 /// `IeltsAuthoringIRV2`（要求 `examId` 等字段），手搓的极简稿过不了校验。
 fn seed_ds(title: &str) -> Value {

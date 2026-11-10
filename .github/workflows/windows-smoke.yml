@@ -99,7 +99,10 @@ jobs:
         run: npx tauri build --debug --no-bundle
 
       - name: Real Tauri smoke (workspace-edit)
-        run: npm run e2e:tauri:workspace-edit -- --keep
+        run: |
+          $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+          Write-Host "Elevated runner: $($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))"
+          npm run e2e:tauri:workspace-edit -- --keep
 
       - name: Upload E2E artifacts on failure
         if: failure()

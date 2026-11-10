@@ -36,10 +36,10 @@ export function ReviewOperatorSettings() {
   return <div>
     <label className="settings-field">
       操作人姓名
-      <input value={name} maxLength={100} disabled={busy} onChange={(event) => { setName(event.target.value); setSaved(false); }} />
+      <input data-testid="review-operator-name" value={name} maxLength={100} disabled={busy} onChange={(event) => { setName(event.target.value); setSaved(false); }} />
     </label>
     <small>用于记录成绩导出和批改操作，请填写实际操作人。</small>
-    <button className="ghost small" disabled={busy || !name.trim()} onClick={() => void save()}>保存操作人</button>
+    <button data-testid="review-operator-save" className="ghost small" disabled={busy || !name.trim()} onClick={() => void save()}>保存操作人</button>
     {saved ? <p role="status">操作人已保存</p> : null}
     {error ? <p className="error-text" role="alert">{error}</p> : null}
   </div>;
