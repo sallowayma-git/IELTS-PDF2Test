@@ -15,10 +15,11 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 18px 14px;
+  gap: 32px;
+  padding: 24px 14px;
   border-right: 1px solid var(--line);
-  background: rgba(255, 250, 240, 0.74);
+  background: var(--paper);
+  backdrop-filter: none;
   position: sticky;
   top: 0;
   height: 100vh;
@@ -41,7 +42,8 @@
 .brand-mark { width: 36px; height: 36px; flex: 0 0 auto; object-fit: contain; }
 .brand-copy { min-width: 0; }
 .brand strong, .brand small { display: block; overflow-wrap: anywhere; }
-.brand small { color: var(--muted); margin-top: 2px; }
+.brand strong { font-size: 16px; font-weight: 650; }
+.brand small { color: var(--muted); margin-top: 2px; font-size: 12px; }
 
 .primary-nav { display: grid; gap: 6px; min-width: 0; }
 
@@ -52,33 +54,27 @@
   min-width: 0;
   padding: 10px 12px;
   border: 0;
-  border-radius: 14px;
+  border-radius: 6px;
   background: transparent;
   color: var(--muted);
   text-align: left;
   transition: background 160ms ease, color 160ms ease;
 }
 
-.primary-nav button:hover,
-.primary-nav button.active {
-  background: var(--ink);
-  color: var(--paper-2);
-}
+.primary-nav button:hover { background: var(--surface-muted); color: var(--ink); }
+.primary-nav button.active { background: rgba(31, 138, 112, .1); color: var(--accent); font-weight: 650; }
 
 .nav-short {
-  width: 30px;
-  min-width: 30px;
-  height: 30px;
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
   display: grid;
   place-items: center;
-  border-radius: 10px;
-  background: rgba(19, 32, 29, 0.06);
-  font-size: 12px;
-  font-weight: 900;
+  background: transparent;
 }
 
 .primary-nav button.active .nav-short,
-.primary-nav button:hover .nav-short { background: rgba(255, 250, 240, 0.16); }
+.primary-nav button:hover .nav-short { background: transparent; }
 
 .nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -87,7 +83,7 @@
 /* 内容区不再是大圆角卡片 + overflow:hidden，改为纯内边距容器，长内容自然滚动。 */
 .app-main-content {
   min-width: 0;
-  padding: 20px clamp(16px, 2.2vw, 28px);
+  padding: 32px clamp(20px, 3vw, 48px);
 }
 
 .app-main-content.immersive { padding: 0; }
@@ -100,11 +96,22 @@
     height: auto;
     flex-direction: row;
     align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
   .primary-nav { grid-auto-flow: column; }
-  .nav-label { display: none; }
+  .primary-nav button { padding: 8px 10px; gap: 6px; }
+  .nav-label { display: inline; }
+}
+
+@media (max-width: 600px) {
+  .brand-copy { display: none; }
+  .primary-nav { gap: 2px; }
+  .primary-nav button { padding: 8px; font-size: 13px; }
+  .app-main-content { padding: 24px 16px; }
 }
 
 /* 兼容期旧页面横幅：只提示，不阻塞。 */

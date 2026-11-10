@@ -97,8 +97,9 @@ fn catastrophic_reasons(
         }
     }
     match alignment {
-        None if local_numbers.is_empty() => reasons
-            .push("原卷没有文本层，且没有本地题号可交叉核对，云端候选无法校验".to_string()),
+        None if local_numbers.is_empty() => {
+            reasons.push("原卷没有文本层，且没有本地题号可交叉核对，云端候选无法校验".to_string())
+        }
         Some(report)
             if report.passage_sentence_total >= 5
                 && report.passage_sentence_matched * 5 < report.passage_sentence_total =>
@@ -149,7 +150,9 @@ pub(crate) fn plan_adoption(
     local_authoring: Option<&Value>,
 ) -> CloudPrimaryPlan {
     match outcome {
-        AlignmentOutcome::NoTextLayer => plan_unverified_adoption(candidate, local, local_authoring),
+        AlignmentOutcome::NoTextLayer => {
+            plan_unverified_adoption(candidate, local, local_authoring)
+        }
         AlignmentOutcome::Assessed(report) => {
             plan_cloud_primary_adoption(candidate, local, report, local_authoring)
         }
@@ -230,7 +233,9 @@ fn plan_adoption_inner(
     let mut instruction_regions: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut prompt_regions: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for node in alignment.iter().flat_map(|report| report.nodes.iter()) {
-        let Some(task_id) = &node.task_id else { continue };
+        let Some(task_id) = &node.task_id else {
+            continue;
+        };
         let target = match node.kind_label {
             "instruction" => &mut instruction_regions,
             "prompt" | "option" => &mut prompt_regions,
@@ -343,7 +348,9 @@ fn plan_adoption_inner(
                 group_flags
                     .entry(task_id.to_string())
                     .or_default()
-                    .push(format!("题型强反证：说明判为 {detected}，云端声明 {declared}"));
+                    .push(format!(
+                        "题型强反证：说明判为 {detected}，云端声明 {declared}"
+                    ));
                 needs_cloud_review.push(serde_json::json!({
                     "taskId": task_id, "reason": "task_type_counterevidence",
                     "detected": detected, "declared": declared
@@ -411,7 +418,8 @@ fn plan_adoption_inner(
     // 进云端校核清单（否则会留下一份看似已采用、答案却缺失或自相矛盾的稿）。
     let answer_key = authoring.get("answerKey").and_then(Value::as_object);
     let answer_slots = authoring.get("answerSlots").and_then(Value::as_object);
-    let slot_in_group = |slot_id: &str| -> bool { !group_ids_owning_slot(authoring, slot_id).is_empty() };
+    let slot_in_group =
+        |slot_id: &str| -> bool { !group_ids_owning_slot(authoring, slot_id).is_empty() };
     let answer_resolved = |slot_id: &str| -> bool {
         answer_key
             .and_then(|map| map.get(slot_id))
@@ -627,9 +635,7 @@ fn recheck_task_type(group: &Value) -> TypeVerdict {
         .unwrap_or_default()
         .to_string();
     let text = group_instruction_text(group);
-    let Some(detected) =
-        crate::ielts_grammar::classify_instruction_task_type(&text)
-    else {
+    let Some(detected) = crate::ielts_grammar::classify_instruction_task_type(&text) else {
         return TypeVerdict::Accept;
     };
     let detected_wire = serde_json::to_value(&detected)
@@ -640,9 +646,15 @@ fn recheck_task_type(group: &Value) -> TypeVerdict {
         return TypeVerdict::Accept;
     }
     if is_strong_signature_type(&detected_wire) {
-        TypeVerdict::StrongCounter { detected: detected_wire, declared }
+        TypeVerdict::StrongCounter {
+            detected: detected_wire,
+            declared,
+        }
     } else {
-        TypeVerdict::Review { detected: detected_wire, declared }
+        TypeVerdict::Review {
+            detected: detected_wire,
+            declared,
+        }
     }
 }
 
@@ -679,8 +691,14 @@ fn agreeing_cloud_tasks(local_authoring: &Value, cloud_authoring: &Value) -> BTr
     };
     let mut disagreeing = BTreeSet::new();
     for difference in crate::cloud_repair::candidate_differences(local_authoring, cloud_authoring) {
-        let target_type = difference.get("targetType").and_then(Value::as_str).unwrap_or("");
-        let target_id = difference.get("targetId").and_then(Value::as_str).unwrap_or("");
+        let target_type = difference
+            .get("targetType")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let target_id = difference
+            .get("targetId")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         if target_type == "passage" {
             continue;
         }
@@ -707,7 +725,10 @@ fn agreeing_cloud_tasks(local_authoring: &Value, cloud_authoring: &Value) -> BTr
 
 /// 无文本层（扫描件、DOCX）没有对齐结果时的复核清单回退：逐题目单元比较本地稿与云端候选，
 /// 比较前做与对齐相同的规范化（字距、连字符、空白、引号），不含 passage，避免干净候选触发修复。
-pub(crate) fn unverified_review_entries(local_authoring: &Value, cloud_authoring: &Value) -> Vec<Value> {
+pub(crate) fn unverified_review_entries(
+    local_authoring: &Value,
+    cloud_authoring: &Value,
+) -> Vec<Value> {
     fn loosely_equal(left: &Value, right: &Value) -> bool {
         match (left, right) {
             (Value::String(a), Value::String(b)) => {
@@ -740,13 +761,24 @@ pub(crate) fn unverified_review_entries(local_authoring: &Value, cloud_authoring
                             == Some(response_group_id)
                     })
             })
-            .and_then(|group| group.get("taskId").and_then(Value::as_str).map(str::to_string))
+            .and_then(|group| {
+                group
+                    .get("taskId")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
     };
     let mut seen = BTreeSet::new();
     let mut entries = Vec::new();
     for difference in crate::cloud_repair::candidate_differences(local_authoring, cloud_authoring) {
-        let target_type = difference.get("targetType").and_then(Value::as_str).unwrap_or("");
-        let target_id = difference.get("targetId").and_then(Value::as_str).unwrap_or("");
+        let target_type = difference
+            .get("targetType")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let target_id = difference
+            .get("targetId")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         if target_type == "passage"
             || loosely_equal(
                 difference.get("canonical").unwrap_or(&Value::Null),
@@ -807,7 +839,10 @@ fn set_node_provenance(value: &mut Value, id: &str, anchors: &[Value]) -> bool {
             .any(|key| map.get(*key).and_then(Value::as_str) == Some(id));
         if matches {
             map.insert("sourceAnchors".to_string(), Value::Array(anchors.to_vec()));
-            map.insert("provenanceStatus".to_string(), Value::String("source".to_string()));
+            map.insert(
+                "provenanceStatus".to_string(),
+                Value::String("source".to_string()),
+            );
             return true;
         }
         for child in map.values_mut() {
@@ -817,7 +852,9 @@ fn set_node_provenance(value: &mut Value, id: &str, anchors: &[Value]) -> bool {
         }
         false
     } else if let Value::Array(items) = value {
-        items.iter_mut().any(|item| set_node_provenance(item, id, anchors))
+        items
+            .iter_mut()
+            .any(|item| set_node_provenance(item, id, anchors))
     } else {
         false
     }
@@ -848,7 +885,11 @@ fn stamp_alignment_provenance(merged: &mut Value, alignment: &AlignmentReport) {
         .into_iter()
         .flatten()
     {
-        let Some(task_id) = group.get("taskId").and_then(Value::as_str).map(str::to_string) else {
+        let Some(task_id) = group
+            .get("taskId")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+        else {
             continue;
         };
         if let Some(anchors) = group_evidence.get(&task_id) {
@@ -1835,7 +1876,9 @@ pub(crate) fn adopt_cloud_candidate(
         if let Some(assets) = current.get("assets") {
             merged["assets"] = assets.clone();
         }
-        let passage_adopted = merged.get("passage").is_some_and(|passage| !passage.is_null())
+        let passage_adopted = merged
+            .get("passage")
+            .is_some_and(|passage| !passage.is_null())
             && merged.get("passage") == cloud_authoring.get("passage");
         let local_only_task_ids: Vec<String> = comparison_units(&current, cloud_authoring)
             .into_iter()
@@ -2260,7 +2303,11 @@ mod tests {
         }
     }
 
-    fn cp_report(passage_pass: bool, groups: &[(&str, bool)], nodes: Vec<NodeAlignment>) -> AlignmentReport {
+    fn cp_report(
+        passage_pass: bool,
+        groups: &[(&str, bool)],
+        nodes: Vec<NodeAlignment>,
+    ) -> AlignmentReport {
         AlignmentReport {
             nodes,
             passage_pass,
@@ -2329,11 +2376,21 @@ mod tests {
         cloud["authoring"]["answerSlots"]["q14"]["hostType"] = json!("passage_paragraph");
         cloud["authoring"]["answerSlots"]["q14"]["hostNodeId"] = json!("invented-paragraph");
         let plan = plan_unverified_adoption(&cloud, &local(), None);
-        assert!(plan.document_reasons.is_empty(), "{:?}", plan.document_reasons);
-        assert!(plan.adoptable_task_ids.contains(&"early-approaches-q14-15".to_string()));
-        assert!(plan.flagged_groups.iter().any(|(id, reasons)| id
-            == "early-approaches-q14-15"
-            && reasons.iter().any(|reason| reason.contains("invented-paragraph"))));
+        assert!(
+            plan.document_reasons.is_empty(),
+            "{:?}",
+            plan.document_reasons
+        );
+        assert!(plan
+            .adoptable_task_ids
+            .contains(&"early-approaches-q14-15".to_string()));
+        assert!(plan
+            .flagged_groups
+            .iter()
+            .any(|(id, reasons)| id == "early-approaches-q14-15"
+                && reasons
+                    .iter()
+                    .any(|reason| reason.contains("invented-paragraph"))));
         assert_eq!(entries_with(&plan, "heading_host_unmapped").len(), 1);
     }
 
@@ -2346,15 +2403,37 @@ mod tests {
         }]);
         cloud["authoring"]["quality"]["hardFailures"] = json!(["PROVENANCE_MISSING"]);
         let plan = plan_unverified_adoption(&cloud, &local(), None);
-        assert!(plan.document_reasons.is_empty(), "{:?}", plan.document_reasons);
-        assert_eq!(plan.adoptable_task_ids, vec!["early-approaches-q14-15".to_string()]);
+        assert!(
+            plan.document_reasons.is_empty(),
+            "{:?}",
+            plan.document_reasons
+        );
+        assert_eq!(
+            plan.adoptable_task_ids,
+            vec!["early-approaches-q14-15".to_string()]
+        );
     }
 
     #[test]
     fn shared_region_between_instruction_and_prompt_is_not_a_swallowed_question() {
-        let candidate = cp_candidate(json!([tfng_group("g1", "q1")]), json!({"q1": {"slotId": "q1", "questionNumber": 1}}));
-        let mut instruction = cp_node("g1-i", "instruction", Some("g1"), &["shared-region", "line-1"], true);
-        let mut prompt = cp_node("p1", "prompt", Some("g1"), &["shared-region", "line-2"], true);
+        let candidate = cp_candidate(
+            json!([tfng_group("g1", "q1")]),
+            json!({"q1": {"slotId": "q1", "questionNumber": 1}}),
+        );
+        let mut instruction = cp_node(
+            "g1-i",
+            "instruction",
+            Some("g1"),
+            &["shared-region", "line-1"],
+            true,
+        );
+        let mut prompt = cp_node(
+            "p1",
+            "prompt",
+            Some("g1"),
+            &["shared-region", "line-2"],
+            true,
+        );
         instruction.source_line_ids = BTreeSet::from(["line-1".to_string()]);
         prompt.source_line_ids = BTreeSet::from(["line-2".to_string()]);
         let report = cp_report(true, &[("g1", true)], vec![instruction, prompt]);
@@ -2381,77 +2460,121 @@ mod tests {
                      "prompt": [{"id": "p2", "type": "text", "text": "cloud second question"}]}
                 ]
             }]);
-            let candidate = cp_candidate(groups, json!({
-                "q1": {"slotId": "q1", "questionNumber": 1},
-                "q2": {"slotId": "q2", "questionNumber": 2}
-            }));
+            let candidate = cp_candidate(
+                groups,
+                json!({
+                    "q1": {"slotId": "q1", "questionNumber": 1},
+                    "q2": {"slotId": "q2", "questionNumber": 2}
+                }),
+            );
             let mut suspect = cp_node(node_id, kind, Some("g1"), &["suspect-region"], true);
             suspect.sentence_count = 10;
             suspect.matched_sentences = 9;
             suspect.min_similarity = 0.55;
             suspect.mean_similarity = 0.955;
             suspect.has_invented = true;
-            let report = cp_report(true, &[("g1", true)], vec![
-                suspect, cp_node("p2", "prompt", Some("g1"), &["r2"], true),
-            ]);
+            let report = cp_report(
+                true,
+                &[("g1", true)],
+                vec![suspect, cp_node("p2", "prompt", Some("g1"), &["r2"], true)],
+            );
             let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1, 2]), &report, None);
-            assert!(plan.document_reasons.is_empty(), "{:?}", plan.document_reasons);
-            assert_eq!(plan.adoptable_task_ids, vec!["g1".to_string()], "对不上的单元也先进入编辑器");
+            assert!(
+                plan.document_reasons.is_empty(),
+                "{:?}",
+                plan.document_reasons
+            );
+            assert_eq!(
+                plan.adoptable_task_ids,
+                vec!["g1".to_string()],
+                "对不上的单元也先进入编辑器"
+            );
             assert!(plan.flagged_groups.iter().any(|(id, _)| id == "g1"));
             let targets = entries_with(&plan, "content_not_aligned");
-            assert_eq!(targets.len(), 1, "{kind} 的严重不符必须独立进复核：{:?}", plan.needs_cloud_review);
+            assert_eq!(
+                targets.len(),
+                1,
+                "{kind} 的严重不符必须独立进复核：{:?}",
+                plan.needs_cloud_review
+            );
             assert_eq!(targets[0].get("taskId").and_then(Value::as_str), Some("g1"));
-            assert_eq!(targets[0].get("nodeId").and_then(Value::as_str), Some(node_id));
-            assert_eq!(targets[0].get("slotId").and_then(Value::as_str), expected_slot);
+            assert_eq!(
+                targets[0].get("nodeId").and_then(Value::as_str),
+                Some(node_id)
+            );
+            assert_eq!(
+                targets[0].get("slotId").and_then(Value::as_str),
+                expected_slot
+            );
             assert_eq!(targets[0].get("similarity"), Some(&json!(0.55)));
         }
     }
 
     #[test]
     fn shared_option_with_severe_mismatch_is_reviewed_by_node_not_by_slot() {
-        let candidate = cp_candidate(json!([{
-            "taskId": "g1", "taskType": "true_false_not_given",
-            "instructions": [{"id": "i1", "type": "text", "text": TFNG_INSTRUCTION}],
-            "optionBank": {"options": [{"optionId": "bank-o1", "text": "shared choice"}]},
-            "responseGroups": [{"responseGroupId": "rg1", "slotIds": ["q1", "q2"]}]
-        }]), json!({
-            "q1": {"slotId": "q1", "questionNumber": 1},
-            "q2": {"slotId": "q2", "questionNumber": 2}
-        }));
+        let candidate = cp_candidate(
+            json!([{
+                "taskId": "g1", "taskType": "true_false_not_given",
+                "instructions": [{"id": "i1", "type": "text", "text": TFNG_INSTRUCTION}],
+                "optionBank": {"options": [{"optionId": "bank-o1", "text": "shared choice"}]},
+                "responseGroups": [{"responseGroupId": "rg1", "slotIds": ["q1", "q2"]}]
+            }]),
+            json!({
+                "q1": {"slotId": "q1", "questionNumber": 1},
+                "q2": {"slotId": "q2", "questionNumber": 2}
+            }),
+        );
         let mut suspect = cp_node("bank-o1", "option", Some("g1"), &["r1"], false);
         suspect.min_similarity = 0.59;
         let report = cp_report(true, &[("g1", true)], vec![suspect]);
         let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1, 2]), &report, None);
         assert_eq!(plan.adoptable_task_ids, vec!["g1".to_string()]);
-        assert!(plan.needs_cloud_review.iter().any(|entry| {
-            entry.get("reason").and_then(Value::as_str) == Some("content_not_aligned")
-                && entry.get("taskId").and_then(Value::as_str) == Some("g1")
-                && entry.get("nodeId").and_then(Value::as_str) == Some("bank-o1")
-                && entry.get("slotId").is_none()
-        }), "共享选项应按节点复核，不误绑单题：{:?}", plan.needs_cloud_review);
+        assert!(
+            plan.needs_cloud_review.iter().any(|entry| {
+                entry.get("reason").and_then(Value::as_str) == Some("content_not_aligned")
+                    && entry.get("taskId").and_then(Value::as_str) == Some("g1")
+                    && entry.get("nodeId").and_then(Value::as_str) == Some("bank-o1")
+                    && entry.get("slotId").is_none()
+            }),
+            "共享选项应按节点复核，不误绑单题：{:?}",
+            plan.needs_cloud_review
+        );
     }
 
     #[test]
     fn review_threshold_stays_at_point_six_and_group_ratio_alone_does_not_trigger_repair() {
-        let candidate = cp_candidate(json!([tfng_group("g1", "q1")]), json!({"q1": {"slotId": "q1", "questionNumber": 1}}));
+        let candidate = cp_candidate(
+            json!([tfng_group("g1", "q1")]),
+            json!({"q1": {"slotId": "q1", "questionNumber": 1}}),
+        );
         for similarity in [0.6, 0.7, 0.8] {
             let mut node = cp_node("g1-i", "instruction", Some("g1"), &["r1"], true);
             node.min_similarity = similarity;
             let report = cp_report(true, &[("g1", true)], vec![node]);
             let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1]), &report, None);
             assert_eq!(plan.adoptable_task_ids, vec!["g1".to_string()]);
-            assert!(plan.needs_cloud_review.is_empty(), "相似度 {similarity} 不应进入复核");
+            assert!(
+                plan.needs_cloud_review.is_empty(),
+                "相似度 {similarity} 不应进入复核"
+            );
         }
         // 组内对齐比例不足但没有任何严重不符的节点：原卷文字层提取误差，不触发修复。
         let report = cp_report(true, &[("g1", false)], vec![]);
         let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1]), &report, None);
         assert_eq!(plan.adoptable_task_ids, vec!["g1".to_string()]);
-        assert!(plan.needs_cloud_review.is_empty(), "{:?}", plan.needs_cloud_review);
+        assert!(
+            plan.needs_cloud_review.is_empty(),
+            "{:?}",
+            plan.needs_cloud_review
+        );
     }
 
     #[test]
     fn aligned_candidate_is_adopted_whole_with_an_empty_review_list() {
-        let candidate = cp_candidate(json!([tfng_group("g1", "q1")]), json!({"q1": {"slotId": "q1", "questionNumber": 1}}));
+        let candidate = cp_candidate(
+            json!([tfng_group("g1", "q1")]),
+            json!({"q1": {"slotId": "q1", "questionNumber": 1}}),
+        );
         let report = cp_report(
             true,
             &[("g1", true)],
@@ -2461,7 +2584,11 @@ mod tests {
             ],
         );
         let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1]), &report, None);
-        assert!(plan.document_reasons.is_empty(), "{:?}", plan.document_reasons);
+        assert!(
+            plan.document_reasons.is_empty(),
+            "{:?}",
+            plan.document_reasons
+        );
         assert!(plan.passage_flags.is_empty());
         assert_eq!(plan.adoptable_task_ids, vec!["g1".to_string()]);
         assert!(plan.flagged_groups.is_empty());
@@ -2470,14 +2597,25 @@ mod tests {
 
     #[test]
     fn passage_misses_are_advisory_and_a_failed_sample_is_one_passage_target() {
-        let candidate = cp_candidate(json!([tfng_group("g1", "q1")]), json!({"q1": {"slotId": "q1", "questionNumber": 1}}));
-        let mut report = cp_report(true, &[("g1", true)], vec![cp_node("g1-i", "instruction", Some("g1"), &["r1"], true)]);
+        let candidate = cp_candidate(
+            json!([tfng_group("g1", "q1")]),
+            json!({"q1": {"slotId": "q1", "questionNumber": 1}}),
+        );
+        let mut report = cp_report(
+            true,
+            &[("g1", true)],
+            vec![cp_node("g1-i", "instruction", Some("g1"), &["r1"], true)],
+        );
         report.passage_sample_misses = vec![
             json!({"nodeId": "p-1", "sentence": "x", "similarity": 0.4}),
             json!({"nodeId": "p-2", "sentence": "y", "similarity": 0.5}),
         ];
         let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1]), &report, None);
-        assert!(plan.needs_cloud_review.is_empty(), "抽样里对不上的句子只是顾问级提示：{:?}", plan.needs_cloud_review);
+        assert!(
+            plan.needs_cloud_review.is_empty(),
+            "抽样里对不上的句子只是顾问级提示：{:?}",
+            plan.needs_cloud_review
+        );
         assert_eq!(
             plan.review_records
                 .iter()
@@ -2486,24 +2624,53 @@ mod tests {
             2
         );
 
-        let report = cp_report(false, &[("g1", true)], vec![cp_node("g1-i", "instruction", Some("g1"), &["r1"], true)]);
+        let report = cp_report(
+            false,
+            &[("g1", true)],
+            vec![cp_node("g1-i", "instruction", Some("g1"), &["r1"], true)],
+        );
         let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1]), &report, None);
-        assert_eq!(plan.adoptable_task_ids, vec!["g1".to_string()], "原文抽样不过也不阻止题组进入编辑器");
+        assert_eq!(
+            plan.adoptable_task_ids,
+            vec!["g1".to_string()],
+            "原文抽样不过也不阻止题组进入编辑器"
+        );
         assert!(!plan.passage_flags.is_empty());
-        assert_eq!(entries_with(&plan, "passage_not_aligned").len(), 1, "整段原文只列一个复核目标");
-        assert!(plan.needs_cloud_review.iter().all(|entry| entry.get("nodeId").is_none()));
+        assert_eq!(
+            entries_with(&plan, "passage_not_aligned").len(),
+            1,
+            "整段原文只列一个复核目标"
+        );
+        assert!(plan
+            .needs_cloud_review
+            .iter()
+            .all(|entry| entry.get("nodeId").is_none()));
     }
 
     #[test]
     fn passage_order_coverage_and_length_deviations_are_diagnostics_not_repair_targets() {
-        let candidate = cp_candidate(json!([tfng_group("g1", "q1")]), json!({"q1": {"slotId": "q1", "questionNumber": 1}}));
-        let mut report = cp_report(true, &[("g1", true)], vec![cp_node("g1-i", "instruction", Some("g1"), &["r1"], true)]);
+        let candidate = cp_candidate(
+            json!([tfng_group("g1", "q1")]),
+            json!({"q1": {"slotId": "q1", "questionNumber": 1}}),
+        );
+        let mut report = cp_report(
+            true,
+            &[("g1", true)],
+            vec![cp_node("g1-i", "instruction", Some("g1"), &["r1"], true)],
+        );
         report.monotonic = false;
         report.coverage_ok = false;
         report.length_ratio_ok = false;
         let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1]), &report, None);
-        assert!(plan.needs_cloud_review.is_empty(), "{:?}", plan.needs_cloud_review);
-        assert!(plan.review_records.iter().any(|r| r["kind"] == "passage_structure_diagnostic"));
+        assert!(
+            plan.needs_cloud_review.is_empty(),
+            "{:?}",
+            plan.needs_cloud_review
+        );
+        assert!(plan
+            .review_records
+            .iter()
+            .any(|r| r["kind"] == "passage_structure_diagnostic"));
     }
 
     #[test]
@@ -2523,8 +2690,12 @@ mod tests {
         let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1]), &report, None);
         assert_eq!(plan.adoptable_task_ids, vec!["g1".to_string()]);
         assert!(
-            plan.needs_cloud_review.iter().any(|entry| entry.get("slotId").and_then(Value::as_str) == Some("q1")
-                && entry.get("reason").and_then(Value::as_str) == Some("answer_unresolved")),
+            plan.needs_cloud_review
+                .iter()
+                .any(
+                    |entry| entry.get("slotId").and_then(Value::as_str) == Some("q1")
+                        && entry.get("reason").and_then(Value::as_str) == Some("answer_unresolved")
+                ),
             "{:?}",
             plan.needs_cloud_review
         );
@@ -2534,24 +2705,50 @@ mod tests {
     fn strong_task_type_counterevidence_is_reviewed_but_the_group_is_still_adopted() {
         let mut group = tfng_group("g1", "q1");
         group["taskType"] = json!("single_choice");
-        let candidate = cp_candidate(json!([group]), json!({"q1": {"slotId": "q1", "questionNumber": 1}}));
-        let report = cp_report(true, &[("g1", true)], vec![cp_node("g1-i", "instruction", Some("g1"), &["r1"], true)]);
+        let candidate = cp_candidate(
+            json!([group]),
+            json!({"q1": {"slotId": "q1", "questionNumber": 1}}),
+        );
+        let report = cp_report(
+            true,
+            &[("g1", true)],
+            vec![cp_node("g1-i", "instruction", Some("g1"), &["r1"], true)],
+        );
         let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1]), &report, None);
         assert_eq!(plan.adoptable_task_ids, vec!["g1".to_string()]);
-        assert!(plan.flagged_groups.iter().any(|(id, reasons)| id == "g1" && reasons.iter().any(|r| r.contains("题型强反证"))));
+        assert!(plan
+            .flagged_groups
+            .iter()
+            .any(|(id, reasons)| id == "g1" && reasons.iter().any(|r| r.contains("题型强反证"))));
         assert_eq!(entries_with(&plan, "task_type_counterevidence").len(), 1);
     }
 
     #[test]
-    fn partial_question_coverage_is_reviewed_not_rejected_but_a_foreign_paper_keeps_the_local_draft() {
-        let candidate = cp_candidate(json!([tfng_group("g1", "q1")]), json!({"q1": {"slotId": "q1", "questionNumber": 1}}));
-        let report = cp_report(true, &[("g1", true)], vec![cp_node("g1-i", "instruction", Some("g1"), &["r1"], true)]);
+    fn partial_question_coverage_is_reviewed_not_rejected_but_a_foreign_paper_keeps_the_local_draft(
+    ) {
+        let candidate = cp_candidate(
+            json!([tfng_group("g1", "q1")]),
+            json!({"q1": {"slotId": "q1", "questionNumber": 1}}),
+        );
+        let report = cp_report(
+            true,
+            &[("g1", true)],
+            vec![cp_node("g1-i", "instruction", Some("g1"), &["r1"], true)],
+        );
         // 本地 1、2、3，云端只有 1 与 2 的一部分：覆盖 1/3 < 一半 ⇒ 明显不是同一份卷子。
         let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1, 2, 3]), &report, None);
-        assert!(plan.document_reasons.iter().any(|r| r.contains("整体不符")), "{:?}", plan.document_reasons);
+        assert!(
+            plan.document_reasons.iter().any(|r| r.contains("整体不符")),
+            "{:?}",
+            plan.document_reasons
+        );
         // 覆盖 1/2：不属于灾难性失败，缺失题号只进复核清单。
         let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1, 2]), &report, None);
-        assert!(plan.document_reasons.is_empty(), "{:?}", plan.document_reasons);
+        assert!(
+            plan.document_reasons.is_empty(),
+            "{:?}",
+            plan.document_reasons
+        );
         let uncovered = entries_with(&plan, "question_number_uncovered");
         assert_eq!(uncovered.len(), 1);
         assert_eq!(uncovered[0]["questionNumbers"], json!([2]));
@@ -2561,18 +2758,36 @@ mod tests {
             json!({"q1": {"slotId": "q1", "questionNumber": 1}, "q2": {"slotId": "q2", "questionNumber": 2}}),
         );
         let plan = plan_cloud_primary_adoption(&cloud_extra, &cp_local(&[1]), &report, None);
-        assert!(plan.document_reasons.is_empty(), "{:?}", plan.document_reasons);
+        assert!(
+            plan.document_reasons.is_empty(),
+            "{:?}",
+            plan.document_reasons
+        );
     }
 
     #[test]
     fn a_passage_that_barely_matches_the_source_is_a_catastrophic_failure() {
-        let candidate = cp_candidate(json!([tfng_group("g1", "q1")]), json!({"q1": {"slotId": "q1", "questionNumber": 1}}));
+        let candidate = cp_candidate(
+            json!([tfng_group("g1", "q1")]),
+            json!({"q1": {"slotId": "q1", "questionNumber": 1}}),
+        );
         let mut report = cp_report(false, &[("g1", true)], vec![]);
         report.passage_sentence_total = 20;
         report.passage_sentence_matched = 2;
         let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1]), &report, None);
-        assert!(plan.document_reasons.iter().any(|r| r.contains("不是同一份卷子")), "{:?}", plan.document_reasons);
-        let malformed = plan_cloud_primary_adoption(&json!({"authoring": null}), &cp_local(&[1]), &report, None);
+        assert!(
+            plan.document_reasons
+                .iter()
+                .any(|r| r.contains("不是同一份卷子")),
+            "{:?}",
+            plan.document_reasons
+        );
+        let malformed = plan_cloud_primary_adoption(
+            &json!({"authoring": null}),
+            &cp_local(&[1]),
+            &report,
+            None,
+        );
         assert!(!malformed.document_reasons.is_empty());
     }
 
@@ -2594,7 +2809,10 @@ mod tests {
         );
         let plan = plan_cloud_primary_adoption(&candidate, &cp_local(&[1]), &report, None);
         assert_eq!(plan.adoptable_task_ids, vec!["g1".to_string()]);
-        assert!(plan.flagged_groups.iter().any(|(id, reasons)| id == "g1" && reasons.iter().any(|r| r.contains("同一区域"))));
+        assert!(plan
+            .flagged_groups
+            .iter()
+            .any(|(id, reasons)| id == "g1" && reasons.iter().any(|r| r.contains("同一区域"))));
         assert_eq!(entries_with(&plan, "instruction_stem_overlap").len(), 1);
     }
 
@@ -2602,8 +2820,17 @@ mod tests {
     fn unit_where_cloud_equals_local_is_adopted_without_any_alignment_review() {
         let local_doc = candidate()["authoring"].clone();
         let task_id = "early-approaches-q14-15";
-        let instruction_id = local_doc["taskGroups"][0]["instructions"][0]["id"].as_str().unwrap().to_string();
-        let mut severe = cp_node(&instruction_id, "instruction", Some(task_id), &["r1"], false);
+        let instruction_id = local_doc["taskGroups"][0]["instructions"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let mut severe = cp_node(
+            &instruction_id,
+            "instruction",
+            Some(task_id),
+            &["r1"],
+            false,
+        );
         severe.min_similarity = 0.3;
         let report = cp_report(true, &[(task_id, false)], vec![severe.clone()]);
         let cloud = json!({"authoring": local_doc.clone()});
@@ -2615,24 +2842,63 @@ mod tests {
         );
         // 云端与本地不一致的同一单元仍按严重不符进复核。
         let mut changed = local_doc.clone();
-        changed["taskGroups"][0]["instructions"][0]["children"][0]["text"] = json!("Cloud rewrote the instruction");
-        let differing = plan_cloud_primary_adoption(&json!({"authoring": changed}), &local(), &report, Some(&local_doc));
-        assert_eq!(entries_with(&differing, "content_not_aligned").len(), 1, "{:?}", differing.needs_cloud_review);
+        changed["taskGroups"][0]["instructions"][0]["children"][0]["text"] =
+            json!("Cloud rewrote the instruction");
+        let differing = plan_cloud_primary_adoption(
+            &json!({"authoring": changed}),
+            &local(),
+            &report,
+            Some(&local_doc),
+        );
+        assert_eq!(
+            entries_with(&differing, "content_not_aligned").len(),
+            1,
+            "{:?}",
+            differing.needs_cloud_review
+        );
         // 原文抽样不过时，一致也不能免检。
         let failed_sample = cp_report(false, &[(task_id, false)], vec![severe]);
-        let not_trusted = plan_cloud_primary_adoption(&cloud, &local(), &failed_sample, Some(&local_doc));
+        let not_trusted =
+            plan_cloud_primary_adoption(&cloud, &local(), &failed_sample, Some(&local_doc));
         assert_eq!(entries_with(&not_trusted, "content_not_aligned").len(), 1);
     }
 
     #[test]
     fn scanned_source_is_adopted_with_structural_review_only_unless_nothing_can_cross_check_it() {
-        let candidate = cp_candidate(json!([tfng_group("g1", "q1")]), json!({"q1": {"slotId": "q1", "questionNumber": 1}}));
-        let plan = plan_adoption(&candidate, &cp_local(&[1]), &AlignmentOutcome::NoTextLayer, None);
-        assert!(plan.document_reasons.is_empty(), "{:?}", plan.document_reasons);
+        let candidate = cp_candidate(
+            json!([tfng_group("g1", "q1")]),
+            json!({"q1": {"slotId": "q1", "questionNumber": 1}}),
+        );
+        let plan = plan_adoption(
+            &candidate,
+            &cp_local(&[1]),
+            &AlignmentOutcome::NoTextLayer,
+            None,
+        );
+        assert!(
+            plan.document_reasons.is_empty(),
+            "{:?}",
+            plan.document_reasons
+        );
         assert_eq!(plan.adoptable_task_ids, vec!["g1".to_string()]);
-        assert!(plan.review_records.iter().any(|r| r["kind"] == "source_text_layer_unavailable"));
-        let blind = plan_adoption(&candidate, &cp_local(&[]), &AlignmentOutcome::NoTextLayer, None);
-        assert!(blind.document_reasons.iter().any(|r| r.contains("无法校验")), "{:?}", blind.document_reasons);
+        assert!(plan
+            .review_records
+            .iter()
+            .any(|r| r["kind"] == "source_text_layer_unavailable"));
+        let blind = plan_adoption(
+            &candidate,
+            &cp_local(&[]),
+            &AlignmentOutcome::NoTextLayer,
+            None,
+        );
+        assert!(
+            blind
+                .document_reasons
+                .iter()
+                .any(|r| r.contains("无法校验")),
+            "{:?}",
+            blind.document_reasons
+        );
     }
 
     #[test]
@@ -2640,19 +2906,26 @@ mod tests {
         let local_doc = candidate()["authoring"].clone();
         let mut cloud_doc = local_doc.clone();
         // 字距、连字符、空白、引号差异：原卷文字层提取误差，不进复核。
-        cloud_doc["taskGroups"][0]["instructions"][0]["children"][0]["text"] = json!(
-            local_doc["taskGroups"][0]["instructions"][0]["children"][0]["text"]
-                .as_str()
-                .unwrap()
-                .replace(' ', "  ")
-                .replace("which", "w h i c h")
+        cloud_doc["taskGroups"][0]["instructions"][0]["children"][0]["text"] = json!(local_doc
+            ["taskGroups"][0]["instructions"][0]["children"][0]["text"]
+            .as_str()
+            .unwrap()
+            .replace(' ', "  ")
+            .replace("which", "w h i c h"));
+        assert!(
+            unverified_review_entries(&local_doc, &cloud_doc).is_empty(),
+            "{:?}",
+            unverified_review_entries(&local_doc, &cloud_doc)
         );
-        assert!(unverified_review_entries(&local_doc, &cloud_doc).is_empty(), "{:?}", unverified_review_entries(&local_doc, &cloud_doc));
         // 答案真不一样：必须进复核，并定位到槽位。
         let mut answer_changed = local_doc.clone();
-        answer_changed["answerKey"]["q14"] = json!({"kind":"option","labels":["D"],"assignment":"unordered_set"});
+        answer_changed["answerKey"]["q14"] =
+            json!({"kind":"option","labels":["D"],"assignment":"unordered_set"});
         let entries = unverified_review_entries(&local_doc, &answer_changed);
-        assert!(entries.iter().any(|entry| entry["slotId"] == "q14"), "{entries:?}");
+        assert!(
+            entries.iter().any(|entry| entry["slotId"] == "q14"),
+            "{entries:?}"
+        );
         // passage 整体差异不进题目单元复核。
         let mut passage_changed = local_doc.clone();
         passage_changed["passage"]["title"] = json!("A different title");
@@ -2668,12 +2941,19 @@ mod tests {
                 {"id": "i2", "type": "text", "text": "y", "provenanceStatus": "model_inferred"}
             ]}]
         });
-        let report = cp_report(true, &[("g1", true)], vec![
-            cp_node("i1", "instruction", Some("g1"), &["r1"], true),
-            cp_node("i2", "instruction", Some("g1"), &["r2"], false),
-        ]);
+        let report = cp_report(
+            true,
+            &[("g1", true)],
+            vec![
+                cp_node("i1", "instruction", Some("g1"), &["r1"], true),
+                cp_node("i2", "instruction", Some("g1"), &["r2"], false),
+            ],
+        );
         stamp_alignment_provenance(&mut merged, &report);
-        assert_eq!(merged.pointer("/taskGroups/0/instructions/0/provenanceStatus"), Some(&json!("source")));
+        assert_eq!(
+            merged.pointer("/taskGroups/0/instructions/0/provenanceStatus"),
+            Some(&json!("source"))
+        );
         assert!(merged
             .pointer("/taskGroups/0/instructions/0/sourceAnchors")
             .and_then(Value::as_array)
@@ -2716,29 +2996,41 @@ mod tests {
             let workspace = get_workspace_item_core(&root, "job-1").unwrap();
             let node = &workspace["ds"]["passage"]["content"][0]["children"][0];
             let version = workspace["editVersion"].as_i64().unwrap();
-            let result = apply_editor_commands_core(&root, ApplyEditorCommandsInput {
-                item_id: "job-1".to_string(),
-                base_version: version,
-                request_id: Some(uuid::Uuid::new_v4().to_string()),
-                commands: vec![json!({"op":"replaceText", "nodeId":node["id"],
+            let result = apply_editor_commands_core(
+                &root,
+                ApplyEditorCommandsInput {
+                    item_id: "job-1".to_string(),
+                    base_version: version,
+                    request_id: Some(uuid::Uuid::new_v4().to_string()),
+                    commands: vec![json!({"op":"replaceText", "nodeId":node["id"],
                     "from":0, "to":node["text"].as_str().unwrap().chars().count(),
                     "expectedText":node["text"], "text":replacement})],
-                title: None,
-            }).expect("cloud-reviewed passage remains editable, including clearing its text");
+                    title: None,
+                },
+            )
+            .expect("cloud-reviewed passage remains editable, including clearing its text");
             let reloaded = get_workspace_item_core(&root, "job-1").unwrap();
             assert_eq!(reloaded["editVersion"], result["editVersion"]);
-            assert_eq!(reloaded["ds"]["passage"]["content"][0]["children"][0]["text"], replacement);
-            assert_eq!(reloaded["ds"]["passage"]["content"][0]["children"][0]["provenanceStatus"], "user_edited");
+            assert_eq!(
+                reloaded["ds"]["passage"]["content"][0]["children"][0]["text"],
+                replacement
+            );
+            assert_eq!(
+                reloaded["ds"]["passage"]["content"][0]["children"][0]["provenanceStatus"],
+                "user_edited"
+            );
         }
         std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn every_renderable_unit_enters_the_editor_even_when_misaligned_and_a_broken_unit_stays_local() {
+    fn every_renderable_unit_enters_the_editor_even_when_misaligned_and_a_broken_unit_stays_local()
+    {
         let local_doc = candidate()["authoring"].clone();
         let root = db_fixture(&local_doc);
         let mut cloud = local_doc.clone();
-        cloud["taskGroups"][0]["instructions"][0]["children"][0]["text"] = json!("Cloud rewrote the instruction");
+        cloud["taskGroups"][0]["instructions"][0]["children"][0]["text"] =
+            json!("Cloud rewrote the instruction");
         // 云端多出的一组引用了不存在的槽位：无法在编辑器渲染，必须留在本地一侧并报 deferred。
         cloud["taskGroups"].as_array_mut().unwrap().push(json!({
             "taskId": "broken-group", "taskType": "true_false_not_given",
@@ -2748,20 +3040,37 @@ mod tests {
         let report = cp_report(
             true,
             &[("early-approaches-q14-15", false)],
-            vec![cp_node("x", "instruction", Some("early-approaches-q14-15"), &["r1"], false)],
+            vec![cp_node(
+                "x",
+                "instruction",
+                Some("early-approaches-q14-15"),
+                &["r1"],
+                false,
+            )],
         );
-        let result = adopt_cloud_primary(&root, "job-1", "batch-1", 1, &cloud, Some(&report)).expect("adoption commits");
+        let result = adopt_cloud_primary(&root, "job-1", "batch-1", 1, &cloud, Some(&report))
+            .expect("adoption commits");
         assert!(result.passage_adopted, "云端原文随可渲染单元整体进入编辑器");
-        assert_eq!(result.adopted_task_ids, vec!["early-approaches-q14-15".to_string()], "对齐不合格的单元也要先采用云端内容");
+        assert_eq!(
+            result.adopted_task_ids,
+            vec!["early-approaches-q14-15".to_string()],
+            "对齐不合格的单元也要先采用云端内容"
+        );
         assert_eq!(result.deferred_task_ids, vec!["broken-group".to_string()]);
         let conn = crate::library::repository::open_library_connection(&root).unwrap();
-        let (saved, _) = crate::library::repository::get_canonical_ds(&conn, "job-1").unwrap().unwrap();
+        let (saved, _) = crate::library::repository::get_canonical_ds(&conn, "job-1")
+            .unwrap()
+            .unwrap();
         assert_eq!(
             saved["taskGroups"][0]["instructions"][0]["children"][0]["text"],
             "Cloud rewrote the instruction"
         );
         assert!(
-            !saved["taskGroups"].as_array().unwrap().iter().any(|group| group["taskId"] == "broken-group"),
+            !saved["taskGroups"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|group| group["taskId"] == "broken-group"),
             "无法渲染的单元不写进正式稿"
         );
         drop(conn);
@@ -2772,28 +3081,57 @@ mod tests {
     fn units_present_only_locally_are_reported_so_they_reach_review() {
         let base = candidate()["authoring"].clone();
         // 本地多出一个独立单元（ids 全部换一套）：云端候选没有它。
-        let rename = |text: String| text.replace("q14", "q44").replace("q15", "q45").replace("early-approaches", "other");
+        let rename = |text: String| {
+            text.replace("q14", "q44")
+                .replace("q15", "q45")
+                .replace("early-approaches", "other")
+        };
         let mut local_doc = base.clone();
-        let mut extra_group: Value = serde_json::from_str(&rename(serde_json::to_string(&base["taskGroups"][0]).unwrap())).unwrap();
+        let mut extra_group: Value = serde_json::from_str(&rename(
+            serde_json::to_string(&base["taskGroups"][0]).unwrap(),
+        ))
+        .unwrap();
         // 题号与材料都不同，才不会被并进同一个依赖单元。
         extra_group["stimulus"] = json!([]);
         extra_group["displayRange"] = json!({"kind": "set", "values": [44, 45]});
-        local_doc["taskGroups"].as_array_mut().unwrap().push(extra_group);
+        local_doc["taskGroups"]
+            .as_array_mut()
+            .unwrap()
+            .push(extra_group);
         for (from, to) in [("q14", "q44"), ("q15", "q45")] {
-            let slot: Value = serde_json::from_str(&rename(serde_json::to_string(&base["answerSlots"][from]).unwrap())).unwrap();
+            let slot: Value = serde_json::from_str(&rename(
+                serde_json::to_string(&base["answerSlots"][from]).unwrap(),
+            ))
+            .unwrap();
             local_doc["answerSlots"][to] = slot;
-            local_doc["answerSlots"][to]["questionNumber"] = json!(if to == "q44" { 44 } else { 45 });
+            local_doc["answerSlots"][to]["questionNumber"] =
+                json!(if to == "q44" { 44 } else { 45 });
             local_doc["answerKey"][to] = base["answerKey"][from].clone();
         }
         let root = db_fixture(&local_doc);
         let mut cloud = base.clone();
-        cloud["taskGroups"][0]["instructions"][0]["children"][0]["text"] = json!("Cloud rewrote the instruction");
-        let result = adopt_cloud_primary(&root, "job-1", "batch-1", 1, &cloud, None).expect("adoption commits");
-        assert_eq!(result.adopted_task_ids, vec!["early-approaches-q14-15".to_string()]);
-        assert_eq!(result.local_only_task_ids, vec!["other-q44-15".to_string()], "本地独有的单元保留并上报，不被静默删除");
+        cloud["taskGroups"][0]["instructions"][0]["children"][0]["text"] =
+            json!("Cloud rewrote the instruction");
+        let result = adopt_cloud_primary(&root, "job-1", "batch-1", 1, &cloud, None)
+            .expect("adoption commits");
+        assert_eq!(
+            result.adopted_task_ids,
+            vec!["early-approaches-q14-15".to_string()]
+        );
+        assert_eq!(
+            result.local_only_task_ids,
+            vec!["other-q44-15".to_string()],
+            "本地独有的单元保留并上报，不被静默删除"
+        );
         let conn = crate::library::repository::open_library_connection(&root).unwrap();
-        let (saved, _) = crate::library::repository::get_canonical_ds(&conn, "job-1").unwrap().unwrap();
-        assert!(saved["taskGroups"].as_array().unwrap().iter().any(|group| group["taskId"] == "other-q44-15"));
+        let (saved, _) = crate::library::repository::get_canonical_ds(&conn, "job-1")
+            .unwrap()
+            .unwrap();
+        assert!(saved["taskGroups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|group| group["taskId"] == "other-q44-15"));
         drop(conn);
         std::fs::remove_dir_all(root).unwrap();
     }

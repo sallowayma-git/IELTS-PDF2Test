@@ -13,12 +13,25 @@ use rusqlite::Connection;
 
 use crate::CommandResult;
 
+pub mod detail;
 pub mod export;
+mod immutable;
 pub mod import;
+mod import_extensions;
 pub mod queries;
+pub(crate) mod records;
+pub mod rejudge;
+pub mod review;
+mod schema_v2;
+#[cfg(test)]
+mod snapshot_compat_tests;
+pub mod statistics;
 pub mod status;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod v2_tests;
+pub mod writing_review;
 
 pub const ANALYTICS_DB_FILE: &str = "analytics.sqlite";
 /// 单题样本量低于这个数时，只显示人数，不下「难题」结论。
@@ -43,10 +56,7 @@ pub fn open_analytics(app_root: &Path) -> CommandResult<Connection> {
 }
 
 pub fn ensure_schema(conn: &Connection) -> CommandResult<()> {
-    conn.execute_batch(ANALYTICS_SCHEMA_SQL)
-        .map_err(|error| format!("analytics_schema:{error}"))?;
-    // 旧版本分析库没有 install_id 列：补列（CREATE TABLE IF NOT EXISTS 不会改已有表）。
-    ensure_column(conn, "attempts", "install_id", "TEXT")
+    schema_v2::migrate(conn).map_err(|error| format!("analytics_schema:{error}"))
 }
 
 fn ensure_column(conn: &Connection, table: &str, column: &str, decl: &str) -> CommandResult<()> {
@@ -174,7 +184,10 @@ pub struct ScoreInfo {
 
 pub fn parse_score_info(raw: &str) -> Option<ScoreInfo> {
     let value: serde_json::Value = serde_json::from_str(raw).ok()?;
-    let gradable = value.get("gradable").and_then(|v| v.as_bool()).unwrap_or(false);
+    let gradable = value
+        .get("gradable")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let correct = value.get("correct").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let total = value
         .get("total")
@@ -182,20 +195,35 @@ pub fn parse_score_info(raw: &str) -> Option<ScoreInfo> {
         .or_else(|| value.get("totalQuestions").and_then(|v| v.as_f64()))
         .unwrap_or(0.0);
     let percentage = value.get("percentage").and_then(|v| v.as_f64());
-    Some(ScoreInfo { gradable, correct, total, percentage })
+    Some(ScoreInfo {
+        gradable,
+        correct,
+        total,
+        percentage,
+    })
 }
 
 pub fn ratio(numerator: f64, denominator: f64) -> Option<f64> {
-    if denominator > 0.0 { Some(numerator / denominator) } else { None }
+    if denominator > 0.0 {
+        Some(numerator / denominator)
+    } else {
+        None
+    }
 }
 
 /// 把学生端存的答案 JSON 转成可读文本：字符串原样，数组用 " / " 连接，空值显示「未作答」。
 pub fn display_answer(raw: Option<&str>) -> String {
-    let Some(raw) = raw else { return "（未作答）".to_string() };
+    let Some(raw) = raw else {
+        return "（未作答）".to_string();
+    };
     match serde_json::from_str::<serde_json::Value>(raw) {
         Ok(serde_json::Value::Null) => "（未作答）".to_string(),
         Ok(serde_json::Value::String(text)) => {
-            if text.trim().is_empty() { "（未作答）".to_string() } else { text }
+            if text.trim().is_empty() {
+                "（未作答）".to_string()
+            } else {
+                text
+            }
         }
         Ok(serde_json::Value::Array(items)) => {
             let parts: Vec<String> = items
@@ -206,7 +234,11 @@ pub fn display_answer(raw: Option<&str>) -> String {
                 })
                 .filter(|text| !text.trim().is_empty())
                 .collect();
-            if parts.is_empty() { "（未作答）".to_string() } else { parts.join(" / ") }
+            if parts.is_empty() {
+                "（未作答）".to_string()
+            } else {
+                parts.join(" / ")
+            }
         }
         Ok(other) => other.to_string(),
         Err(_) => raw.to_string(),

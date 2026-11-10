@@ -1287,7 +1287,9 @@ fn process_fixture(root: &Path, fixture_id: &str, fixture: &Value) -> Result<Val
     // Every caller writes the same tmp/phase4-real-pdf-acceptance/<fixture> tree; concurrent
     // tests must not commit the shadow bundle into it at the same time.
     static OUTPUT_TREE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _output_tree = OUTPUT_TREE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _output_tree = OUTPUT_TREE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let metadata_path = root.join(
         fixture
             .get("metadataPath")
@@ -4067,18 +4069,30 @@ fn nine_private_pdfs_clean_candidate_review_targets_by_tier() {
             .and_then(|sha| sha.get(..16))
             .and_then(|prefix| u64::from_str_radix(prefix, 16).ok())
             .unwrap_or(0);
-        let config = AlignmentConfig { sample_seed: seed, ..Default::default() };
+        let config = AlignmentConfig {
+            sample_seed: seed,
+            ..Default::default()
+        };
         let outcome = assess_alignment(&physical, &authoring, &config);
-        let candidate = json!({"status": "succeeded", "unresolvedReferences": [], "authoring": authoring});
+        let candidate =
+            json!({"status": "succeeded", "unresolvedReferences": [], "authoring": authoring});
         let local = json!({"slots": authoring["answerSlots"].as_object().into_iter().flatten()
             .map(|(slot_id, slot)| json!({"slotId": slot_id, "questionNumber": slot["questionNumber"]}))
             .collect::<Vec<_>>()});
         let raw = plan_adoption(&candidate, &local, &outcome, None);
         let agreeing = plan_adoption(&candidate, &local, &outcome, Some(&authoring));
-        assert!(raw.document_reasons.is_empty(), "{id}: {:?}", raw.document_reasons);
+        assert!(
+            raw.document_reasons.is_empty(),
+            "{id}: {:?}",
+            raw.document_reasons
+        );
         let reason_of = |entry: &Value| entry["reason"].as_str().unwrap_or("").to_string();
-        let count = |plan: &crate::cloud_adoption::CloudPrimaryPlan, pick: &dyn Fn(&str) -> bool| {
-            plan.needs_cloud_review.iter().filter(|entry| pick(&reason_of(entry))).count()
+        let count = |plan: &crate::cloud_adoption::CloudPrimaryPlan,
+                     pick: &dyn Fn(&str) -> bool| {
+            plan.needs_cloud_review
+                .iter()
+                .filter(|entry| pick(&reason_of(entry)))
+                .count()
         };
         let tier1 = count(&raw, &|r| r == "passage_not_aligned");
         let tier3 = count(&raw, &|r| r == "content_not_aligned");
@@ -4093,13 +4107,20 @@ fn nine_private_pdfs_clean_candidate_review_targets_by_tier() {
         agreeing_residual.extend(residual.iter().map(|reason| format!("{id}:{reason}")));
         let sampled = match &outcome {
             AlignmentOutcome::Assessed(report) => {
-                format!("{}/{}", report.passage_sample_matched, report.passage_sample_total)
+                format!(
+                    "{}/{}",
+                    report.passage_sample_matched, report.passage_sample_total
+                )
             }
             AlignmentOutcome::NoTextLayer => "-".to_string(),
         };
         table.push_str(&format!(
             "{id} | {} | {sampled} | {tier1} | {tier2} | {tier3} | {unresolved} | {}\n",
-            if matches!(outcome, AlignmentOutcome::Assessed(_)) { "有" } else { "无" },
+            if matches!(outcome, AlignmentOutcome::Assessed(_)) {
+                "有"
+            } else {
+                "无"
+            },
             residual.len()
         ));
     }

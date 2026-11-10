@@ -25,7 +25,7 @@ use crate::CommandResult;
 
 pub const SNAPSHOT_SCHEMA_VERSION: &str = "SubmissionSnapshotV1";
 /// 作者端支持的学生端库结构版本（exam_kv.db_schema_version）。
-pub const SUPPORTED_DB_SCHEMA_VERSION: u64 = 1;
+pub const SUPPORTED_DB_SCHEMA_VERSION: u64 = 2;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -65,14 +65,20 @@ pub fn import_submission_snapshots(
     submissions_root: &Path,
 ) -> CommandResult<ImportReport> {
     let now = chrono::Utc::now().to_rfc3339();
-    let mut report = ImportReport { finished_at: now.clone(), ..ImportReport::default() };
+    let mut report = ImportReport {
+        finished_at: now.clone(),
+        ..ImportReport::default()
+    };
     let snapshots_dir = submissions_root.join("snapshots");
     if !snapshots_dir.is_dir() {
         return Ok(report);
     }
     report.snapshots_dir_found = true;
 
-    let tmp_dir = app_root.join("analytics-tmp");
+    // Each concurrent import owns its copies and cleanup.
+    let tmp_dir = app_root
+        .join("analytics-tmp")
+        .join(uuid::Uuid::new_v4().to_string());
     fs::create_dir_all(&tmp_dir).map_err(|error| format!("analytics_tmp:{error}"))?;
 
     for (candidate, ready) in scan_candidates(&snapshots_dir)? {
@@ -83,7 +89,15 @@ pub fn import_submission_snapshots(
             // 未就绪（缺 .ready）：不读取、不导入，只进异常队列；补齐 .ready 后下次导入会自动处理。
             let hints = read_hints_best_effort(&candidate.meta_path);
             let error = "缺少 .ready 标记：快照尚未就绪，已忽略".to_string();
-            let _ = record_import(conn, &candidate.file_key, "", &hints, &now, "failed", Some(&error));
+            let _ = record_import(
+                conn,
+                &candidate.file_key,
+                "",
+                &hints,
+                &now,
+                "failed",
+                Some(&error),
+            );
             SnapshotOutcome {
                 file: candidate.file_key.clone(),
                 status: "failed".into(),
@@ -120,7 +134,9 @@ fn scan_candidates(snapshots_dir: &Path) -> CommandResult<Vec<(Candidate, bool)>
             .unwrap_or_default();
         let mut ready = BTreeSet::new();
         let mut sqlite_stems = BTreeSet::new();
-        for entry in fs::read_dir(&terminal_dir).map_err(|error| format!("terminal_read:{error}"))? {
+        for entry in
+            fs::read_dir(&terminal_dir).map_err(|error| format!("terminal_read:{error}"))?
+        {
             let Ok(entry) = entry else { continue };
             let name = entry.file_name().to_string_lossy().to_string();
             // `.<name>.<rand>.partial` 等临时文件以点开头，一律忽略。
@@ -152,13 +168,26 @@ fn candidate_for(terminal_id: &str, terminal_dir: &Path, stem: &str) -> Candidat
     }
 }
 
-fn import_one(conn: &mut Connection, tmp_dir: &Path, candidate: &Candidate, now: &str) -> SnapshotOutcome {
+fn import_one(
+    conn: &mut Connection,
+    tmp_dir: &Path,
+    candidate: &Candidate,
+    now: &str,
+) -> SnapshotOutcome {
     match import_one_inner(conn, tmp_dir, candidate, now) {
         Ok(outcome) => outcome,
         Err(error) => {
             // 失败记录尽量保留 meta 里的批次/卷，异常队列才能按批次归属。
             let hints = read_hints_best_effort(&candidate.meta_path);
-            let _ = record_import(conn, &candidate.file_key, "", &hints, now, "failed", Some(&error));
+            let _ = record_import(
+                conn,
+                &candidate.file_key,
+                "",
+                &hints,
+                now,
+                "failed",
+                Some(&error),
+            );
             SnapshotOutcome {
                 file: candidate.file_key.clone(),
                 status: "failed".into(),
@@ -207,15 +236,26 @@ fn import_one_inner(
         .map_err(|error| format!("meta.json 不可读：{error}"))?;
     let meta: Value =
         serde_json::from_str(&meta_text).map_err(|error| format!("meta.json 解析失败：{error}"))?;
-    if meta.get("schemaVersion").and_then(Value::as_str) != Some(SNAPSHOT_SCHEMA_VERSION) {
-        return Err("meta.json schemaVersion 不是 SubmissionSnapshotV1".into());
-    }
+    let schema = meta
+        .get("schemaVersion")
+        .and_then(Value::as_str)
+        .ok_or("快照缺少 schemaVersion")?;
     // 版本过新：不导入，记入异常队列（契约 §1.1）。
-    let db_schema_version = meta.get("dbSchemaVersion").and_then(Value::as_u64).unwrap_or(1);
+    let db_schema_version = match meta.get("dbSchemaVersion") {
+        None if schema == SNAPSHOT_SCHEMA_VERSION => 1,
+        Some(v) => v.as_u64().ok_or("快照 dbSchemaVersion 格式错误")?,
+        None => return Err("快照缺少 dbSchemaVersion".into()),
+    };
     if db_schema_version > SUPPORTED_DB_SCHEMA_VERSION {
         return Err(format!(
             "快照版本过新（dbSchemaVersion={db_schema_version}，作者端支持至 {SUPPORTED_DB_SCHEMA_VERSION}），请升级作者端"
         ));
+    }
+    if !matches!(
+        (schema, db_schema_version),
+        ("SubmissionSnapshotV1", 1) | ("SubmissionSnapshotV2", 2)
+    ) {
+        return Err("快照 schemaVersion 与 dbSchemaVersion 不一致或不受支持".into());
     }
     let hints = MetaHints {
         terminal_id: string_field(&meta, "terminalId"),
@@ -233,12 +273,17 @@ fn import_one_inner(
         .and_then(Value::as_u64)
         .ok_or("meta.json 缺少 sizeBytes")?;
     let attempt_hint = hints.attempt_id.clone().ok_or("meta.json 缺少 attemptId")?;
-    let exported_at = hints.exported_at.clone().ok_or("meta.json 缺少 exportedAt")?;
+    let exported_at = hints
+        .exported_at
+        .clone()
+        .ok_or("meta.json 缺少 exportedAt")?;
 
     // 复制到本地临时目录（源 NAS 只读，写入只发生在本地）。
-    let source_bytes = fs::read(&candidate.sqlite_path).map_err(|error| format!("快照不可读：{error}"))?;
+    let source_bytes =
+        fs::read(&candidate.sqlite_path).map_err(|error| format!("快照不可读：{error}"))?;
     let local_copy = tmp_dir.join(format!("{}.sqlite", uuid::Uuid::new_v4()));
-    fs::write(&local_copy, &source_bytes).map_err(|error| format!("复制到临时目录失败：{error}"))?;
+    fs::write(&local_copy, &source_bytes)
+        .map_err(|error| format!("复制到临时目录失败：{error}"))?;
     drop(source_bytes);
     let result = verify_and_import(
         conn,
@@ -250,6 +295,7 @@ fn import_one_inner(
         expected_size,
         &expected_sha,
         now,
+        db_schema_version,
     );
     let _ = fs::remove_file(&local_copy);
     result
@@ -266,16 +312,22 @@ fn verify_and_import(
     expected_size: u64,
     expected_sha: &str,
     now: &str,
+    db_schema_version: u64,
 ) -> Result<SnapshotOutcome, String> {
     let file = candidate.file_key.clone();
     let copy_bytes = fs::read(local_copy).map_err(|error| format!("读取临时副本失败：{error}"))?;
     if copy_bytes.len() as u64 != expected_size {
-        return Err(format!("sizeBytes 不符：meta={expected_size} 实际={}", copy_bytes.len()));
+        return Err(format!(
+            "sizeBytes 不符：meta={expected_size} 实际={}",
+            copy_bytes.len()
+        ));
     }
     let actual_sha = sha256_hex(&copy_bytes);
     drop(copy_bytes);
     if actual_sha != expected_sha {
-        return Err(format!("sha256 不符：meta={expected_sha} 实际={actual_sha}"));
+        return Err(format!(
+            "sha256 不符：meta={expected_sha} 实际={actual_sha}"
+        ));
     }
 
     // 同一文件内容已成功导入 → skipped（只刷新导入时间，不重复写库）。
@@ -302,8 +354,12 @@ fn verify_and_import(
         });
     }
 
-    let source = read_source_db(local_copy)?;
-    if !source.attempts.iter().any(|attempt| attempt.attempt_id == attempt_hint) {
+    let source = read_source_db(local_copy, db_schema_version)?;
+    if !source
+        .attempts
+        .iter()
+        .any(|attempt| attempt.attempt_id == attempt_hint)
+    {
         return Err(format!("快照内找不到已交卷的 attempt：{attempt_hint}"));
     }
 
@@ -334,7 +390,9 @@ fn verify_and_import(
                 }
             })
             .unwrap_or_default();
-        if let Some((existing_exported, existing_terminal, existing_install, existing_paper)) = existing {
+        if let Some((existing_exported, existing_terminal, existing_install, existing_paper)) =
+            existing
+        {
             let identity_conflict = if existing_terminal != attempt.terminal_id {
                 Some(format!(
                     "同一 attemptId 来自不同终端（已导入 {existing_terminal}，本快照 {}），未覆盖",
@@ -342,9 +400,9 @@ fn verify_and_import(
                 ))
             } else {
                 match (existing_install.as_deref(), hints.install_id.as_deref()) {
-                    (Some(old), Some(new)) if old != new => {
-                        Some(format!("同一 attemptId 来自不同安装（已导入 {old}，本快照 {new}），未覆盖"))
-                    }
+                    (Some(old), Some(new)) if old != new => Some(format!(
+                        "同一 attemptId 来自不同安装（已导入 {old}，本快照 {new}），未覆盖"
+                    )),
                     _ => None,
                 }
             };
@@ -355,7 +413,10 @@ fn verify_and_import(
                 anomalies.push((attempt.attempt_id.clone(), message));
                 continue;
             }
-            if !incoming_paper.is_empty() && !existing_paper.is_empty() && incoming_paper != existing_paper {
+            if !incoming_paper.is_empty()
+                && !existing_paper.is_empty()
+                && incoming_paper != existing_paper
+            {
                 anomalies.push((
                     attempt.attempt_id.clone(),
                     format!("套题归属与已导入记录不一致（已导入 {existing_paper}，本快照 {incoming_paper}），保留已导入值"),
@@ -387,10 +448,21 @@ fn verify_and_import(
     } else {
         Some("快照中的 attempt 均不新于已导入版本（exportedAt 未更新）".to_string())
     };
-    record_import(&tx, &file, &actual_sha, hints, now, status, error.as_deref())?;
+    record_import(
+        &tx,
+        &file,
+        &actual_sha,
+        hints,
+        now,
+        status,
+        error.as_deref(),
+    )?;
     if imported > 0 {
-        tx.execute("DELETE FROM import_snapshots WHERE file = ?1 AND status = 'failed'", params![file])
-            .map_err(|error| error.to_string())?;
+        tx.execute(
+            "DELETE FROM import_snapshots WHERE file = ?1 AND status = 'failed'",
+            params![file],
+        )
+        .map_err(|error| error.to_string())?;
     }
     tx.commit().map_err(|error| error.to_string())?;
     Ok(SnapshotOutcome {
@@ -415,10 +487,14 @@ fn write_attempt(
     now: &str,
 ) -> Result<(), String> {
     let id = attempt.attempt_id.as_str();
+    let original = super::immutable::ImportedFacts::read(tx, id)?;
     // 子表整组替换：先清掉该 attempt 的旧子行，再 UPSERT 新快照的行。
     for table in ["answers", "passages", "writings", "suites"] {
-        tx.execute(&format!("DELETE FROM {table} WHERE attempt_id = ?1"), params![id])
-            .map_err(|error| error.to_string())?;
+        tx.execute(
+            &format!("DELETE FROM {table} WHERE attempt_id = ?1"),
+            params![id],
+        )
+        .map_err(|error| error.to_string())?;
     }
     tx.execute(
         "INSERT INTO attempts (attempt_id, terminal_id, batch_id, paper_id, candidate_id, candidate_name,
@@ -477,10 +553,18 @@ fn write_attempt(
         )
         .map_err(|error| format!("写入 suites 失败：{error}"))?;
     }
-    for passage in source.passages.iter().filter(|passage| passage.attempt_id == id) {
-        let score = crate::analytics::parse_score_info(&passage.score_info_json).ok_or_else(|| {
-            format!("score_info_json 无法解析（passage {}）", passage.passage_index)
-        })?;
+    for passage in source
+        .passages
+        .iter()
+        .filter(|passage| passage.attempt_id == id)
+    {
+        let score =
+            crate::analytics::parse_score_info(&passage.score_info_json).ok_or_else(|| {
+                format!(
+                    "score_info_json 无法解析（passage {}）",
+                    passage.passage_index
+                )
+            })?;
         tx.execute(
             "INSERT INTO passages (attempt_id, passage_index, suite_attempt_id, asset_id, exam_id, title, category,
                 started_at, ended_at, duration_sec, gradable, correct, total, percentage)
@@ -509,7 +593,11 @@ fn write_attempt(
         )
         .map_err(|error| format!("写入 passages 失败：{error}"))?;
     }
-    for answer in source.answers.iter().filter(|answer| answer.attempt_id == id) {
+    for answer in source
+        .answers
+        .iter()
+        .filter(|answer| answer.attempt_id == id)
+    {
         tx.execute(
             "INSERT INTO answers (attempt_id, passage_index, question_id, display_label, question_kind, control,
                 match_mode, user_answer_json, correct_answer_json, normalized_user_answer_json,
@@ -550,7 +638,11 @@ fn write_attempt(
         )
         .map_err(|error| format!("写入 answers 失败：{error}"))?;
     }
-    for writing in source.writings.iter().filter(|writing| writing.attempt_id == id) {
+    for writing in source
+        .writings
+        .iter()
+        .filter(|writing| writing.attempt_id == id)
+    {
         tx.execute(
             "INSERT INTO writings (attempt_id, writing_submission_id, task_type, word_count, started_at, submitted_at, duration_sec)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -569,6 +661,10 @@ fn write_attempt(
         )
         .map_err(|error| format!("写入 writings 失败：{error}"))?;
     }
+    source.extensions.apply(tx, id)?;
+    if let Some(original) = original {
+        original.verify(tx, id)?;
+    }
     Ok(())
 }
 
@@ -582,8 +678,19 @@ fn record_anomaly(
     message: &str,
 ) -> Result<(), String> {
     let key = format!("{file}#attempt:{attempt_id}");
-    let attempt_hints = MetaHints { attempt_id: Some(attempt_id.to_string()), ..hints.clone() };
-    record_import(conn, &key, "anomaly", &attempt_hints, now, "failed", Some(message))
+    let attempt_hints = MetaHints {
+        attempt_id: Some(attempt_id.to_string()),
+        ..hints.clone()
+    };
+    record_import(
+        conn,
+        &key,
+        "anomaly",
+        &attempt_hints,
+        now,
+        "failed",
+        Some(message),
+    )
 }
 
 /// 写 import_snapshots。`conn` 既可以是连接也可以是事务（经 Deref 到 Connection）。
@@ -622,6 +729,7 @@ fn record_import(
 
 /// 快照库里读出的已交卷 attempt 及子表（只读副本）。
 struct SourceDb {
+    extensions: super::import_extensions::Extensions,
     attempts: Vec<SrcAttempt>,
     suites: Vec<SrcSuite>,
     passages: Vec<SrcPassage>,
@@ -703,7 +811,7 @@ struct SrcWriting {
 }
 
 /// 只读打开副本，读出已交卷的数据。失败即整份快照 failed。
-fn read_source_db(path: &Path) -> Result<SourceDb, String> {
+fn read_source_db(path: &Path, version: u64) -> Result<SourceDb, String> {
     let conn = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -719,7 +827,7 @@ fn read_source_db(path: &Path) -> Result<SourceDb, String> {
         &conn,
         "SELECT attempt_id, batch_id, terminal_id, candidate_id, candidate_name, checkin_at, started_at,
                 submitted_at, status, app_version
-         FROM exam_attempts WHERE status = 'submitted'",
+         FROM exam_attempts WHERE status IN ('submitted','failed')",
         |row| {
             Ok(SrcAttempt {
                 attempt_id: row.get(0)?,
@@ -735,7 +843,10 @@ fn read_source_db(path: &Path) -> Result<SourceDb, String> {
             })
         },
     )?;
-    let submitted: HashSet<String> = attempts.iter().map(|attempt| attempt.attempt_id.clone()).collect();
+    let submitted: HashSet<String> = attempts
+        .iter()
+        .map(|attempt| attempt.attempt_id.clone())
+        .collect();
 
     let suites: Vec<SrcSuite> = query_rows(
         &conn,
@@ -879,9 +990,18 @@ fn read_source_db(path: &Path) -> Result<SourceDb, String> {
             .map_err(|error| error.to_string())?;
         let kv_paper = kv
             .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
-            .and_then(|value| value.as_str().map(str::trim).filter(|text| !text.is_empty()).map(str::to_string));
+            .and_then(|value| {
+                value
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+                    .map(str::to_string)
+            });
         let mut candidates: Vec<String> = kv_paper.into_iter().collect();
-        for suite in suites.iter().filter(|suite| suite.attempt_id == attempt.attempt_id) {
+        for suite in suites
+            .iter()
+            .filter(|suite| suite.attempt_id == attempt.attempt_id)
+        {
             let aggregate: Option<String> = conn
                 .query_row(
                     "SELECT aggregate_json FROM reading_suite_attempts WHERE suite_attempt_id = ?1",
@@ -906,7 +1026,18 @@ fn read_source_db(path: &Path) -> Result<SourceDb, String> {
         }
     }
 
-    Ok(SourceDb { attempts, suites, passages, answers, writings, scorer_versions, paper_ids, paper_conflicts })
+    let extensions = super::import_extensions::Extensions::read(&conn, version)?;
+    Ok(SourceDb {
+        extensions,
+        attempts,
+        suites,
+        passages,
+        answers,
+        writings,
+        scorer_versions,
+        paper_ids,
+        paper_conflicts,
+    })
 }
 
 /// 从 reading_suite_attempts.aggregate_json 取 paperId（契约 §1.1 优先级 2、3）。
@@ -917,7 +1048,11 @@ fn paper_ids_from_aggregate(raw: &str) -> Vec<String> {
     };
     let mut out = Vec::new();
     let mut push = |item: Option<&Value>| {
-        if let Some(text) = item.and_then(Value::as_str).map(str::trim).filter(|text| !text.is_empty()) {
+        if let Some(text) = item
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+        {
             out.push(text.to_string());
         }
     };
@@ -944,7 +1079,9 @@ fn query_rows<T, F>(conn: &Connection, sql: &str, mut map: F) -> Result<Vec<T>, 
 where
     F: FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
 {
-    let mut statement = conn.prepare(sql).map_err(|error| format!("查询失败：{error}"))?;
+    let mut statement = conn
+        .prepare(sql)
+        .map_err(|error| format!("查询失败：{error}"))?;
     let rows = statement
         .query_map([], |row| map(row))
         .map_err(|error| format!("查询失败：{error}"))?;
@@ -978,7 +1115,11 @@ fn string_field(value: &Value, key: &str) -> Option<String> {
 pub fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    hasher.finalize().iter().map(|byte| format!("{:02x}", byte)).collect()
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect()
 }
 
 /// 导入记录（异常队列用）。
@@ -1010,7 +1151,10 @@ pub fn list_failed_imports_for_group(
     list_failed_imports_where(conn, Some((batch_id, paper_id)))
 }
 
-fn list_failed_imports_where(conn: &Connection, group: Option<(&str, &str)>) -> CommandResult<Vec<ImportRecord>> {
+fn list_failed_imports_where(
+    conn: &Connection,
+    group: Option<(&str, &str)>,
+) -> CommandResult<Vec<ImportRecord>> {
     let (filter, args): (&str, Vec<String>) = match group {
         None => ("", Vec::new()),
         Some((batch, paper)) => (

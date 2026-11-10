@@ -265,23 +265,33 @@ pub(crate) fn differences_for_review_targets(
 ) -> Vec<Value> {
     let canonical_index = GroupIndex::build(canonical);
     let candidate_index = GroupIndex::build(candidate);
-    let owners: BTreeSet<Owner> = targets.iter().filter_map(|target| {
-        let (kind, id) = if let Some(slot) = target.get("slotId").and_then(Value::as_str) {
-            ("slot", slot)
-        } else if let Some(task) = target.get("taskId").and_then(Value::as_str) {
-            ("task_group", task)
-        } else {
-            return None;
-        };
-        Some(owner_of(&json!({"targetType": kind, "targetId": id}), &canonical_index, &candidate_index))
-    }).collect();
-    differences.into_iter().filter(|difference| {
-        let owner = owner_of(difference, &canonical_index, &candidate_index);
-        owners.iter().any(|wanted| match (&owner, wanted) {
-            (Owner::Groups(actual), Owner::Groups(wanted)) => !actual.is_disjoint(wanted),
-            _ => &owner == wanted,
+    let owners: BTreeSet<Owner> = targets
+        .iter()
+        .filter_map(|target| {
+            let (kind, id) = if let Some(slot) = target.get("slotId").and_then(Value::as_str) {
+                ("slot", slot)
+            } else if let Some(task) = target.get("taskId").and_then(Value::as_str) {
+                ("task_group", task)
+            } else {
+                return None;
+            };
+            Some(owner_of(
+                &json!({"targetType": kind, "targetId": id}),
+                &canonical_index,
+                &candidate_index,
+            ))
         })
-    }).collect()
+        .collect();
+    differences
+        .into_iter()
+        .filter(|difference| {
+            let owner = owner_of(difference, &canonical_index, &candidate_index);
+            owners.iter().any(|wanted| match (&owner, wanted) {
+                (Owner::Groups(actual), Owner::Groups(wanted)) => !actual.is_disjoint(wanted),
+                _ => &owner == wanted,
+            })
+        })
+        .collect()
 }
 
 /// 阻塞质量问题的归属：按 `targetIds` 找题组，找不到就是文档级。
@@ -1344,7 +1354,8 @@ pub(crate) fn compact_model_context(context: &Value) -> Value {
         .get_mut("differences")
         .and_then(Value::as_array_mut)
     {
-        for (index, (difference, pointers)) in differences.iter_mut().zip(replacements).enumerate() {
+        for (index, (difference, pointers)) in differences.iter_mut().zip(replacements).enumerate()
+        {
             if let Some(object) = difference.as_object_mut() {
                 // Wire aliases are deliberately scoped to this exact raw packet ordering.
                 // The backend resolves them against the unchanged local differences array.
@@ -1522,7 +1533,9 @@ fn bound_feedback_text(value: &mut Value) {
                     bound_text(child);
                 } else if key == "errors" {
                     if let Some(errors) = child.as_array_mut() {
-                        for error in errors { bound_text(error); }
+                        for error in errors {
+                            bound_text(error);
+                        }
                     }
                 } else {
                     bound_feedback_text(child);
@@ -1883,7 +1896,10 @@ mod tests {
         for side in ["canonical", "candidate"] {
             let pointer = diff[format!("{side}Ref")].as_str().unwrap();
             let original_text = context["differences"][0][side].as_str().unwrap();
-            assert_eq!(normalize_text(&nodes_text(compact.pointer(pointer).unwrap())), normalize_text(original_text));
+            assert_eq!(
+                normalize_text(&nodes_text(compact.pointer(pointer).unwrap())),
+                normalize_text(original_text)
+            );
         }
         assert_eq!(compact["sourceEvidence"], context["sourceEvidence"]);
         assert!(
@@ -1925,7 +1941,11 @@ mod tests {
         let observations = vec![json!({"status": "rejected", "errors": [long],
             "result": {"repairNote": long, "noteForModel": long, "sourceText": long}})];
         let (recent, _) = compact_model_observations(&json!({}), &observations, 12);
-        for text in [&recent[0]["errors"][0], &recent[0]["result"]["repairNote"], &recent[0]["result"]["noteForModel"]] {
+        for text in [
+            &recent[0]["errors"][0],
+            &recent[0]["result"]["repairNote"],
+            &recent[0]["result"]["noteForModel"],
+        ] {
             assert!(text.as_str().unwrap().chars().count() <= 2048);
             assert!(text.as_str().unwrap().contains("retained locally"));
         }
@@ -1998,11 +2018,23 @@ mod tests {
         ];
         let (recent, _) = compact_model_observations(&context, &observations, 12);
         assert_eq!(recent[0]["result"]["kind"], json!("pdf"));
-        assert_eq!(recent[0]["result"]["pagesRef"], json!("/sourceEvidence/pages"));
+        assert_eq!(
+            recent[0]["result"]["pagesRef"],
+            json!("/sourceEvidence/pages")
+        );
         assert!(recent[0]["result"].get("pages").is_none());
-        assert_eq!(recent[1]["result"]["imageRef"], json!("/sourceEvidence/regions/0/image"));
+        assert_eq!(
+            recent[1]["result"]["imageRef"],
+            json!("/sourceEvidence/regions/0/image")
+        );
         assert!(recent[1]["result"].get("image").is_none());
-        assert_eq!(observations[1]["result"]["image"]["dataUrl"].as_str().unwrap().len(), 4096);
+        assert_eq!(
+            observations[1]["result"]["image"]["dataUrl"]
+                .as_str()
+                .unwrap()
+                .len(),
+            4096
+        );
     }
 
     fn line(page: u32, index: usize, text: &str) -> SourceLine {
@@ -2215,14 +2247,31 @@ mod tests {
     fn review_targets_drive_packets_for_their_owning_group() {
         let canonical = canonical_paper();
         let source = index_with_pages(&[(1, &["1 TRUE"]), (2, &["8 B"])]);
-        let overlap =
-            difference("task_group", "tg-1-5", "instruction_stem_overlap", Value::Null, Value::Null);
-        let overlap_packets = plan(&canonical, &Value::Null, std::slice::from_ref(&overlap), &source);
-        assert_eq!(overlap_packets.len(), 1, "overlap 复核目标应生成一个包：{overlap_packets:#?}");
-        let unresolved =
-            difference("slot", "q6", "answer_unresolved", Value::Null, Value::Null);
-        let unresolved_packets =
-            plan(&canonical, &Value::Null, std::slice::from_ref(&unresolved), &source);
+        let overlap = difference(
+            "task_group",
+            "tg-1-5",
+            "instruction_stem_overlap",
+            Value::Null,
+            Value::Null,
+        );
+        let overlap_packets = plan(
+            &canonical,
+            &Value::Null,
+            std::slice::from_ref(&overlap),
+            &source,
+        );
+        assert_eq!(
+            overlap_packets.len(),
+            1,
+            "overlap 复核目标应生成一个包：{overlap_packets:#?}"
+        );
+        let unresolved = difference("slot", "q6", "answer_unresolved", Value::Null, Value::Null);
+        let unresolved_packets = plan(
+            &canonical,
+            &Value::Null,
+            std::slice::from_ref(&unresolved),
+            &source,
+        );
         assert_eq!(
             unresolved_packets.len(),
             1,

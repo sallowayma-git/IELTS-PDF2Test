@@ -34,7 +34,8 @@ pub(crate) fn get_workspace_item_core(root: &Path, item_id: &str) -> CommandResu
     align_reading_part_best_effort(&mut conn, item_id);
     // A cloud commit may happen between reads. Return metadata, canonical content
     // and journal from one SQLite snapshot so the editor's CAS base matches its text.
-    let snapshot = conn.unchecked_transaction()
+    let snapshot = conn
+        .unchecked_transaction()
         .map_err(|error| format!("library_v2_workspace_snapshot:{error}"))?;
     let conn = &snapshot;
     let Some(item) = get_item(conn, item_id)? else {
@@ -245,7 +246,9 @@ pub(crate) fn rename_library_item_core(
         return Err("LIBRARY_TITLE_EMPTY".to_string());
     }
     if trimmed.chars().count() > LIBRARY_TITLE_MAX_CHARS {
-        return Err(format!("LIBRARY_TITLE_TOO_LONG:max={LIBRARY_TITLE_MAX_CHARS}"));
+        return Err(format!(
+            "LIBRARY_TITLE_TOO_LONG:max={LIBRARY_TITLE_MAX_CHARS}"
+        ));
     }
     // 没有权威稿的旧条目先补齐（与发布路径相同的前置步骤），否则无处落版本号。
     migrate_single_item(root, item_id)?;
@@ -310,11 +313,18 @@ fn library_row_extras(
         .map_err(|error| format!("library_row_extras:{error}"))?;
     let mut extras = HashMap::new();
     for row in rows {
-        let (id, exam_id, types_json) = row.map_err(|error| format!("library_row_extras:{error}"))?;
+        let (id, exam_id, types_json) =
+            row.map_err(|error| format!("library_row_extras:{error}"))?;
         let question_types = types_json
             .and_then(|text| serde_json::from_str::<Vec<String>>(&text).ok())
             .unwrap_or_default();
-        extras.insert(id, LibraryRowExtras { question_types, exam_id });
+        extras.insert(
+            id,
+            LibraryRowExtras {
+                question_types,
+                exam_id,
+            },
+        );
     }
     Ok(extras)
 }
@@ -335,7 +345,9 @@ pub(crate) fn set_library_item_part_core(
 ) -> CommandResult<bool> {
     let mut conn = open_library_connection(root)?;
     let trimmed = label.map(str::trim).filter(|value| !value.is_empty());
-    let Some(row) = get_item(&conn, item_id)? else { return Ok(false); };
+    let Some(row) = get_item(&conn, item_id)? else {
+        return Ok(false);
+    };
     if row.modality == "reading" {
         if let Some(value) = trimmed {
             if !matches!(value, "P1" | "P2" | "P3") {
@@ -348,7 +360,9 @@ pub(crate) fn set_library_item_part_core(
         }
     }
     match trimmed {
-        Some(value) => super::repository::set_item_part(&conn, item_id, Some(value), Some("manual")),
+        Some(value) => {
+            super::repository::set_item_part(&conn, item_id, Some(value), Some("manual"))
+        }
         None => super::repository::set_item_part(&conn, item_id, None, None),
     }
 }
@@ -359,17 +373,32 @@ fn write_reading_part(
     manual: Option<&str>,
 ) -> CommandResult<()> {
     let (ds, version) = get_canonical_ds(conn, &row.id)?.ok_or("ITEM_DS_NOT_SEEDED")?;
-    if version != row.current_edit_version { return Err("EDIT_VERSION_CONFLICT:part_assignment".to_string()); }
+    if version != row.current_edit_version {
+        return Err("EDIT_VERSION_CONFLICT:part_assignment".to_string());
+    }
     let detected = compute_part_for_row(conn, row);
     let (category, source) = if let Some(label) = manual {
         (label.to_string(), "manual".to_string())
     } else {
         match detected {
             Some((Some(label), source)) => (label, source),
-            _ => (ds.pointer("/exam/category").and_then(Value::as_str).unwrap_or("P1").to_string(), PART_SOURCE_NONE.to_string()),
+            _ => (
+                ds.pointer("/exam/category")
+                    .and_then(Value::as_str)
+                    .unwrap_or("P1")
+                    .to_string(),
+                PART_SOURCE_NONE.to_string(),
+            ),
         }
     };
-    commit_reading_part(conn, row, version, &category, &source, super::repository::EditOrigin::Human)
+    commit_reading_part(
+        conn,
+        row,
+        version,
+        &category,
+        &source,
+        super::repository::EditOrigin::Human,
+    )
 }
 
 fn commit_reading_part(
@@ -381,13 +410,22 @@ fn commit_reading_part(
     origin: super::repository::EditOrigin,
 ) -> CommandResult<()> {
     let input = ApplyEditorCommandsInput {
-        item_id: row.id.clone(), base_version: version, request_id: None, title: None,
+        item_id: row.id.clone(),
+        base_version: version,
+        request_id: None,
+        title: None,
         commands: vec![json!({"op":"setExamCategory", "category":category})],
     };
     super::repository::apply_editor_commands_tx_with(
-        conn, &input, origin, None,
-        &apply_patch, &|ds| validate_authoring(ds),
-        &|tx, _| super::repository::set_item_part(tx, &row.id, Some(category), Some(source)).map(|_| ()),
+        conn,
+        &input,
+        origin,
+        None,
+        &apply_patch,
+        &|ds| validate_authoring(ds),
+        &|tx, _| {
+            super::repository::set_item_part(tx, &row.id, Some(category), Some(source)).map(|_| ())
+        },
     )?;
     Ok(())
 }
@@ -405,13 +443,25 @@ fn align_reading_part_best_effort(conn: &mut rusqlite::Connection, id: &str) {
 /// can repair the old import's default P1, without acquiring human protection.
 /// Other rows project canonical category. All content writes retain CAS and locks.
 fn align_reading_part(conn: &mut rusqlite::Connection, item_id: &str) -> CommandResult<()> {
-    let Some(row) = get_item(conn, item_id)? else { return Ok(()); };
-    if row.modality != "reading" || !row.has_canonical_ds { return Ok(()); }
-    let Some((ds, version)) = get_canonical_ds(conn, item_id)? else { return Ok(()); };
-    if version != row.current_edit_version { return Err("EDIT_VERSION_CONFLICT:part_alignment".to_string()); }
+    let Some(row) = get_item(conn, item_id)? else {
+        return Ok(());
+    };
+    if row.modality != "reading" || !row.has_canonical_ds {
+        return Ok(());
+    }
+    let Some((ds, version)) = get_canonical_ds(conn, item_id)? else {
+        return Ok(());
+    };
+    if version != row.current_edit_version {
+        return Err("EDIT_VERSION_CONFLICT:part_alignment".to_string());
+    }
     let category = ds.pointer("/exam/category").and_then(Value::as_str);
     if row.part_source.as_deref() == Some("manual") {
-        if let Some(label) = row.part_label.as_deref().filter(|v| matches!(*v, "P1" | "P2" | "P3")) {
+        if let Some(label) = row
+            .part_label
+            .as_deref()
+            .filter(|v| matches!(*v, "P1" | "P2" | "P3"))
+        {
             if category != Some(label) {
                 write_reading_part(conn, &row, Some(label))?;
             }
@@ -420,17 +470,28 @@ fn align_reading_part(conn: &mut rusqlite::Connection, item_id: &str) -> Command
         if super::repository::is_automatic_part_source(row.part_source.as_deref())
             && !super::repository::has_human_category_edit(conn, item_id)?
         {
-            if let Some(label) = row.part_label.as_deref()
+            if let Some(label) = row
+                .part_label
+                .as_deref()
                 .filter(|v| matches!(*v, "P1" | "P2" | "P3") && Some(*v) != category)
             {
-                return commit_reading_part(conn, &row, version, label,
-                    row.part_source.as_deref().unwrap(), super::repository::EditOrigin::PartBackfill);
+                return commit_reading_part(
+                    conn,
+                    &row,
+                    version,
+                    label,
+                    row.part_source.as_deref().unwrap(),
+                    super::repository::EditOrigin::PartBackfill,
+                );
             }
         }
         // 从未判定过（part_source 为 NULL）的行不在这里投影 exam.category：category 是派生元数据，
         // 不是证据（见 part_detection::reading_part_from_document）。先由 compute_part_for_row 按
         // 原文标题 / 题号范围 / 文件名判定，判不出才回落到 category（审计 A9）。
-        if let Some(category) = category.filter(|v| matches!(*v, "P1" | "P2" | "P3")).filter(|_| row.part_source.is_some()) {
+        if let Some(category) = category
+            .filter(|v| matches!(*v, "P1" | "P2" | "P3"))
+            .filter(|_| row.part_source.is_some())
+        {
             // Guard the projection against a concurrent save or new manual choice.
             conn.execute("UPDATE library_items_v2 SET part_label=?2, part_source=COALESCE(part_source,'canonical')
                 WHERE id=?1 AND current_edit_version=?3 AND (part_source IS NULL OR part_source != 'manual')",
@@ -452,14 +513,20 @@ fn compute_part_for_row(
 ) -> Option<(Option<String>, String)> {
     let (ds, _) = super::repository::get_canonical_ds(conn, &row.id).ok()??;
     if row.modality == "reading" {
-        return Some(match super::part_detection::reading_part_from_document(&row.title, &ds) {
-            Some(part) => (Some(part.label), part.source.as_str().to_string()),
-            // 判定证据都没有时才回落到规范稿的 category；来源仍是 sentinel「none」（判不出，不是自动判定）。
-            None => match ds.pointer("/exam/category").and_then(Value::as_str).filter(|v| matches!(*v, "P1" | "P2" | "P3")) {
-                Some(category) => (Some(category.to_string()), PART_SOURCE_NONE.to_string()),
-                None => (None, PART_SOURCE_NONE.to_string()),
+        return Some(
+            match super::part_detection::reading_part_from_document(&row.title, &ds) {
+                Some(part) => (Some(part.label), part.source.as_str().to_string()),
+                // 判定证据都没有时才回落到规范稿的 category；来源仍是 sentinel「none」（判不出，不是自动判定）。
+                None => match ds
+                    .pointer("/exam/category")
+                    .and_then(Value::as_str)
+                    .filter(|v| matches!(*v, "P1" | "P2" | "P3"))
+                {
+                    Some(category) => (Some(category.to_string()), PART_SOURCE_NONE.to_string()),
+                    None => (None, PART_SOURCE_NONE.to_string()),
+                },
             },
-        });
+        );
     }
     let (lines, numbers) = part_inputs_from_ds(&ds);
     let detected = crate::library::part_detection::detect_part(
@@ -524,15 +591,28 @@ fn part_inputs_from_ds(ds: &Value) -> (Vec<String>, Vec<u32>) {
 
 #[cfg(test)]
 mod part_sync_tests {
-    use super::*;
     use super::super::repository::{seed_canonical_ds, upsert_item_shell, UpsertItemInput};
+    use super::*;
 
     fn fixture(title: &str, modality: &str) -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!("part-sync-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let conn = open_library_connection(&root).unwrap();
-        upsert_item_shell(&conn, &UpsertItemInput { id: "item", modality, title, status: "ready", source_asset_id: None }).unwrap();
-        let mut ds: Value = serde_json::from_str(include_str!("../../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json")).unwrap();
+        upsert_item_shell(
+            &conn,
+            &UpsertItemInput {
+                id: "item",
+                modality,
+                title,
+                status: "ready",
+                source_asset_id: None,
+            },
+        )
+        .unwrap();
+        let mut ds: Value = serde_json::from_str(include_str!(
+            "../../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
+        ))
+        .unwrap();
         ds["exam"]["category"] = json!("P1");
         ds["exam"]["examId"] = json!("p1-stable");
         ds["exam"]["title"] = json!(title);
@@ -553,51 +633,109 @@ mod part_sync_tests {
         // the pre-existing V1 compatibility-quality migration. This regression
         // isolates failed Part alignment and still compares the entire document.
         invalid["quality"]["compilerProbes"]["v1Compatibility"]["status"] = json!("skipped");
-        invalid["passage"].as_object_mut().unwrap().remove("sourceAnchors");
+        invalid["passage"]
+            .as_object_mut()
+            .unwrap()
+            .remove("sourceAnchors");
         assert!(validate_authoring(&invalid).is_err());
-        upsert_item_shell(&conn, &UpsertItemInput { id:"bad", modality:"reading", title:"Legacy", status:"ready", source_asset_id:None }).unwrap();
-        seed_canonical_ds(&conn,"bad",&invalid.to_string(),"ready").unwrap();
-        super::super::repository::set_item_part(&conn,"bad",Some("P3"),Some("manual")).unwrap();
-        let before = get_canonical_ds(&conn,"bad").unwrap();
+        upsert_item_shell(
+            &conn,
+            &UpsertItemInput {
+                id: "bad",
+                modality: "reading",
+                title: "Legacy",
+                status: "ready",
+                source_asset_id: None,
+            },
+        )
+        .unwrap();
+        seed_canonical_ds(&conn, "bad", &invalid.to_string(), "ready").unwrap();
+        super::super::repository::set_item_part(&conn, "bad", Some("P3"), Some("manual")).unwrap();
+        let before = get_canonical_ds(&conn, "bad").unwrap();
         for _ in 0..2 {
-            let list = list_library_items_core(&root,false).unwrap();
-            assert_eq!(list.as_array().unwrap().len(),2);
-            let workspace = get_workspace_item_core(&root,"bad").unwrap();
-            assert_eq!(workspace["ds"],invalid);
-            assert_eq!(workspace["editVersion"],1);
-            assert_eq!(get_library_item_summary_core(&root,"bad").unwrap()["partLabel"],"P3");
-            assert_eq!(get_canonical_ds(&conn,"bad").unwrap(),before);
+            let list = list_library_items_core(&root, false).unwrap();
+            assert_eq!(list.as_array().unwrap().len(), 2);
+            let workspace = get_workspace_item_core(&root, "bad").unwrap();
+            assert_eq!(workspace["ds"], invalid);
+            assert_eq!(workspace["editVersion"], 1);
+            assert_eq!(
+                get_library_item_summary_core(&root, "bad").unwrap()["partLabel"],
+                "P3"
+            );
+            assert_eq!(get_canonical_ds(&conn, "bad").unwrap(), before);
         }
         // User actions still fail loudly and roll back; only opportunistic reads
         // get the best-effort wrapper.
-        assert!(set_library_item_part_core(&root,"bad",Some("P2")).unwrap_err().contains("AUTHORING_SCHEMA_INVALID"));
-        assert!(apply_editor_commands_core(&root,ApplyEditorCommandsInput {
-            item_id:"bad".into(),base_version:1,request_id:None,title:None,
-            commands:vec![json!({"op":"setExamCategory","category":"P2"})],
-        }).is_err());
-        assert_eq!(get_canonical_ds(&conn,"bad").unwrap(),before);
-        assert_eq!(get_item(&conn,"bad").unwrap().unwrap().part_label.as_deref(),Some("P3"));
+        assert!(set_library_item_part_core(&root, "bad", Some("P2"))
+            .unwrap_err()
+            .contains("AUTHORING_SCHEMA_INVALID"));
+        assert!(apply_editor_commands_core(
+            &root,
+            ApplyEditorCommandsInput {
+                item_id: "bad".into(),
+                base_version: 1,
+                request_id: None,
+                title: None,
+                commands: vec![json!({"op":"setExamCategory","category":"P2"})],
+            }
+        )
+        .is_err());
+        assert_eq!(get_canonical_ds(&conn, "bad").unwrap(), before);
+        assert_eq!(
+            get_item(&conn, "bad")
+                .unwrap()
+                .unwrap()
+                .part_label
+                .as_deref(),
+            Some("P3")
+        );
     }
 
     #[test]
     fn historical_automatic_part_repairs_once_without_human_protection() {
-        for source in ["title","content","range","filename"] {
+        for source in ["title", "content", "range", "filename"] {
             let root = fixture("Legacy", "reading");
             let conn = open_library_connection(&root).unwrap();
-            super::super::repository::set_item_part(&conn,"item",Some("P2"),Some(source)).unwrap();
-            let before_protection: Option<String> = conn.query_row("SELECT protected_edits_json FROM library_items_v2 WHERE id='item'",[],|row|row.get(0)).unwrap();
-            assert_eq!(list_library_items_core(&root,false).unwrap()[0]["partLabel"],"P2");
-            list_library_items_core(&root,false).unwrap();
-            get_workspace_item_core(&root,"item").unwrap();
-            get_library_item_summary_core(&root,"item").unwrap();
-            let (ds,version) = get_canonical_ds(&conn,"item").unwrap().unwrap();
-            assert_eq!((ds["exam"]["category"].as_str(),version),(Some("P2"),2));
-            assert_eq!(ds["exam"]["examId"],"p1-stable");
-            assert_eq!(get_item(&conn,"item").unwrap().unwrap().part_source.as_deref(),Some(source));
-            assert_eq!(recent_edit_origins(&conn,"item").unwrap()[0]["origin"],"part_backfill");
-            assert!(!super::super::repository::has_human_category_edit(&conn,"item").unwrap());
-            let after_protection: Option<String> = conn.query_row("SELECT protected_edits_json FROM library_items_v2 WHERE id='item'",[],|row|row.get(0)).unwrap();
-            assert_eq!(after_protection,before_protection);
+            super::super::repository::set_item_part(&conn, "item", Some("P2"), Some(source))
+                .unwrap();
+            let before_protection: Option<String> = conn
+                .query_row(
+                    "SELECT protected_edits_json FROM library_items_v2 WHERE id='item'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                list_library_items_core(&root, false).unwrap()[0]["partLabel"],
+                "P2"
+            );
+            list_library_items_core(&root, false).unwrap();
+            get_workspace_item_core(&root, "item").unwrap();
+            get_library_item_summary_core(&root, "item").unwrap();
+            let (ds, version) = get_canonical_ds(&conn, "item").unwrap().unwrap();
+            assert_eq!((ds["exam"]["category"].as_str(), version), (Some("P2"), 2));
+            assert_eq!(ds["exam"]["examId"], "p1-stable");
+            assert_eq!(
+                get_item(&conn, "item")
+                    .unwrap()
+                    .unwrap()
+                    .part_source
+                    .as_deref(),
+                Some(source)
+            );
+            assert_eq!(
+                recent_edit_origins(&conn, "item").unwrap()[0]["origin"],
+                "part_backfill"
+            );
+            assert!(!super::super::repository::has_human_category_edit(&conn, "item").unwrap());
+            let after_protection: Option<String> = conn
+                .query_row(
+                    "SELECT protected_edits_json FROM library_items_v2 WHERE id='item'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(after_protection, before_protection);
         }
     }
 
@@ -605,41 +743,85 @@ mod part_sync_tests {
     fn human_category_history_survives_pruning_and_prevents_automatic_override() {
         let root = fixture("Legacy", "reading");
         let mut conn = open_library_connection(&root).unwrap();
-        set_library_item_part_core(&root,"item",Some("P3")).unwrap();
+        set_library_item_part_core(&root, "item", Some("P3")).unwrap();
         for base_version in 2..204 {
-            super::super::repository::apply_editor_commands_tx(&mut conn,&ApplyEditorCommandsInput {
-                item_id:"item".into(),base_version,request_id:None,title:Some("Renamed".into()),commands:vec![],
-            },&apply_patch,&|ds|validate_authoring(ds)).unwrap();
+            super::super::repository::apply_editor_commands_tx(
+                &mut conn,
+                &ApplyEditorCommandsInput {
+                    item_id: "item".into(),
+                    base_version,
+                    request_id: None,
+                    title: Some("Renamed".into()),
+                    commands: vec![],
+                },
+                &apply_patch,
+                &|ds| validate_authoring(ds),
+            )
+            .unwrap();
         }
-        assert!(super::super::repository::has_human_category_edit(&conn,"item").unwrap());
-        let journal_count: i64 = conn.query_row("SELECT COUNT(*) FROM editor_journal_v1 WHERE library_item_id='item'",[],|row|row.get(0)).unwrap();
+        assert!(super::super::repository::has_human_category_edit(&conn, "item").unwrap());
+        let journal_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM editor_journal_v1 WHERE library_item_id='item'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert!(journal_count <= 201);
-        super::super::repository::set_item_part(&conn,"item",Some("P2"),Some("range")).unwrap();
-        let before = get_canonical_ds(&conn,"item").unwrap();
-        list_library_items_core(&root,false).unwrap();
-        assert_eq!(get_canonical_ds(&conn,"item").unwrap(),before);
-        assert_eq!(get_item(&conn,"item").unwrap().unwrap().part_label.as_deref(),Some("P3"));
+        super::super::repository::set_item_part(&conn, "item", Some("P2"), Some("range")).unwrap();
+        let before = get_canonical_ds(&conn, "item").unwrap();
+        list_library_items_core(&root, false).unwrap();
+        assert_eq!(get_canonical_ds(&conn, "item").unwrap(), before);
+        assert_eq!(
+            get_item(&conn, "item")
+                .unwrap()
+                .unwrap()
+                .part_label
+                .as_deref(),
+            Some("P3")
+        );
     }
 
     #[test]
     fn unrelated_save_preserves_legacy_auto_label_until_system_backfill_can_run() {
         let root = fixture("Legacy", "reading");
         let conn = open_library_connection(&root).unwrap();
-        super::super::repository::set_item_part(&conn,"item",Some("P2"),Some("range")).unwrap();
-        apply_editor_commands_core(&root,ApplyEditorCommandsInput {
-            item_id:"item".into(),base_version:1,request_id:None,title:Some("Renamed".into()),commands:vec![],
-        }).unwrap();
-        assert_eq!(get_item(&conn,"item").unwrap().unwrap().part_label.as_deref(),Some("P2"));
-        assert_eq!(get_canonical_ds(&conn,"item").unwrap().unwrap().0["exam"]["category"],"P1");
-        crate::processing::queue::enqueue(&conn,"job","item","source",&json!({})).unwrap();
+        super::super::repository::set_item_part(&conn, "item", Some("P2"), Some("range")).unwrap();
+        apply_editor_commands_core(
+            &root,
+            ApplyEditorCommandsInput {
+                item_id: "item".into(),
+                base_version: 1,
+                request_id: None,
+                title: Some("Renamed".into()),
+                commands: vec![],
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            get_item(&conn, "item")
+                .unwrap()
+                .unwrap()
+                .part_label
+                .as_deref(),
+            Some("P2")
+        );
+        assert_eq!(
+            get_canonical_ds(&conn, "item").unwrap().unwrap().0["exam"]["category"],
+            "P1"
+        );
+        crate::processing::queue::enqueue(&conn, "job", "item", "source", &json!({})).unwrap();
         conn.execute("UPDATE processing_jobs_v2 SET stage='cloud_recognition', cloud_status='running' WHERE id='job'",[]).unwrap();
-        list_library_items_core(&root,false).unwrap();
-        assert_eq!(get_canonical_ds(&conn,"item").unwrap().unwrap().1,2);
+        list_library_items_core(&root, false).unwrap();
+        assert_eq!(get_canonical_ds(&conn, "item").unwrap().unwrap().1, 2);
         conn.execute("UPDATE processing_jobs_v2 SET stage='ready_for_review', cloud_status='succeeded' WHERE id='job'",[]).unwrap();
-        list_library_items_core(&root,false).unwrap();
-        let (ds,version) = get_canonical_ds(&conn,"item").unwrap().unwrap();
-        assert_eq!((ds["exam"]["category"].as_str(),version),(Some("P2"),3));
-        assert_eq!(recent_edit_origins(&conn,"item").unwrap()[0]["origin"],"part_backfill");
+        list_library_items_core(&root, false).unwrap();
+        let (ds, version) = get_canonical_ds(&conn, "item").unwrap().unwrap();
+        assert_eq!((ds["exam"]["category"].as_str(), version), (Some("P2"), 3));
+        assert_eq!(
+            recent_edit_origins(&conn, "item").unwrap()[0]["origin"],
+            "part_backfill"
+        );
     }
 
     #[test]
@@ -654,57 +836,102 @@ mod part_sync_tests {
         let row = get_item(&conn, "item").unwrap().unwrap();
         assert_eq!(row.part_label.as_deref(), Some("P3"));
         assert_eq!(row.part_source.as_deref(), Some("manual"));
-        assert_eq!(recent_edit_origins(&conn, "item").unwrap()[0]["origin"], "human");
-        assert!(apply_editor_commands_core(&root, ApplyEditorCommandsInput { item_id:"item".into(), base_version:1,
-            request_id:None, title:None, commands:vec![json!({"op":"setExamCategory","category":"P1"})] }).unwrap_err().contains("EDIT_VERSION_CONFLICT"));
+        assert_eq!(
+            recent_edit_origins(&conn, "item").unwrap()[0]["origin"],
+            "human"
+        );
+        assert!(apply_editor_commands_core(
+            &root,
+            ApplyEditorCommandsInput {
+                item_id: "item".into(),
+                base_version: 1,
+                request_id: None,
+                title: None,
+                commands: vec![json!({"op":"setExamCategory","category":"P1"})]
+            }
+        )
+        .unwrap_err()
+        .contains("EDIT_VERSION_CONFLICT"));
         set_library_item_part_core(&root, "item", None).unwrap();
         let (ds, version) = get_canonical_ds(&conn, "item").unwrap().unwrap();
         assert_eq!(version, 3);
         assert_eq!(ds["exam"]["category"], "P2");
-        assert_eq!(get_item(&conn, "item").unwrap().unwrap().part_source.as_deref(), Some("filename"));
+        assert_eq!(
+            get_item(&conn, "item")
+                .unwrap()
+                .unwrap()
+                .part_source
+                .as_deref(),
+            Some("filename")
+        );
     }
 
     #[test]
     fn invalid_reading_label_rolls_back_and_unknown_clear_preserves_category() {
         let root = fixture("Unknown", "reading");
-        assert!(set_library_item_part_core(&root, "item", Some("Part 1")).unwrap_err().contains("READING_PART_INVALID"));
+        assert!(set_library_item_part_core(&root, "item", Some("Part 1"))
+            .unwrap_err()
+            .contains("READING_PART_INVALID"));
         let conn = open_library_connection(&root).unwrap();
-        assert_eq!(get_canonical_ds(&conn,"item").unwrap().unwrap().1,1);
+        assert_eq!(get_canonical_ds(&conn, "item").unwrap().unwrap().1, 1);
         set_library_item_part_core(&root, "item", Some("P3")).unwrap();
         set_library_item_part_core(&root, "item", None).unwrap();
         let (ds, version) = get_canonical_ds(&conn, "item").unwrap().unwrap();
-        assert_eq!(version,3);
-        assert_eq!(ds["exam"]["category"],"P3");
-        assert_eq!(get_item(&conn,"item").unwrap().unwrap().part_source.as_deref(),Some("none"));
+        assert_eq!(version, 3);
+        assert_eq!(ds["exam"]["category"], "P3");
+        assert_eq!(
+            get_item(&conn, "item")
+                .unwrap()
+                .unwrap()
+                .part_source
+                .as_deref(),
+            Some("none")
+        );
     }
 
     #[test]
     fn historical_manual_mismatch_aligns_once_and_editor_save_projects_to_library() {
         let root = fixture("24. P1 The Pearls", "reading");
         let conn = open_library_connection(&root).unwrap();
-        super::super::repository::set_item_part(&conn,"item",Some("P3"),Some("manual")).unwrap();
-        list_library_items_core(&root,false).unwrap();
-        get_workspace_item_core(&root,"item").unwrap();
-        list_library_items_core(&root,false).unwrap();
-        let (ds, version) = get_canonical_ds(&conn,"item").unwrap().unwrap();
-        assert_eq!(version,2);
-        assert_eq!(ds["exam"]["category"],"P3");
-        apply_editor_commands_core(&root, ApplyEditorCommandsInput { item_id:"item".into(), base_version:version,
-            request_id:None, title:None, commands:vec![json!({"op":"setExamCategory","category":"P2"})] }).unwrap();
-        let row = get_item(&conn,"item").unwrap().unwrap();
-        assert_eq!(row.part_label.as_deref(),Some("P2"));
-        assert_eq!(row.title,"24. P1 The Pearls");
+        super::super::repository::set_item_part(&conn, "item", Some("P3"), Some("manual")).unwrap();
+        list_library_items_core(&root, false).unwrap();
+        get_workspace_item_core(&root, "item").unwrap();
+        list_library_items_core(&root, false).unwrap();
+        let (ds, version) = get_canonical_ds(&conn, "item").unwrap().unwrap();
+        assert_eq!(version, 2);
+        assert_eq!(ds["exam"]["category"], "P3");
+        apply_editor_commands_core(
+            &root,
+            ApplyEditorCommandsInput {
+                item_id: "item".into(),
+                base_version: version,
+                request_id: None,
+                title: None,
+                commands: vec![json!({"op":"setExamCategory","category":"P2"})],
+            },
+        )
+        .unwrap();
+        let row = get_item(&conn, "item").unwrap().unwrap();
+        assert_eq!(row.part_label.as_deref(), Some("P2"));
+        assert_eq!(row.title, "24. P1 The Pearls");
     }
 
     #[test]
     fn listening_and_writing_labels_do_not_change_document_or_version() {
-        for (modality,label) in [("listening","Part 4"),("writing","Task 2")] {
-            let root = fixture("Other",modality);
+        for (modality, label) in [("listening", "Part 4"), ("writing", "Task 2")] {
+            let root = fixture("Other", modality);
             let conn = open_library_connection(&root).unwrap();
-            let before = get_canonical_ds(&conn,"item").unwrap();
-            set_library_item_part_core(&root,"item",Some(label)).unwrap();
-            assert_eq!(get_canonical_ds(&conn,"item").unwrap(),before);
-            assert_eq!(get_item(&conn,"item").unwrap().unwrap().part_label.as_deref(),Some(label));
+            let before = get_canonical_ds(&conn, "item").unwrap();
+            set_library_item_part_core(&root, "item", Some(label)).unwrap();
+            assert_eq!(get_canonical_ds(&conn, "item").unwrap(), before);
+            assert_eq!(
+                get_item(&conn, "item")
+                    .unwrap()
+                    .unwrap()
+                    .part_label
+                    .as_deref(),
+                Some(label)
+            );
         }
     }
 
@@ -712,15 +939,20 @@ mod part_sync_tests {
     fn cloud_review_locks_part_and_lazy_repair_waits_for_unlock() {
         let root = fixture("P1 sample", "reading");
         let conn = open_library_connection(&root).unwrap();
-        crate::processing::queue::enqueue(&conn,"job","item","source",&json!({})).unwrap();
+        crate::processing::queue::enqueue(&conn, "job", "item", "source", &json!({})).unwrap();
         conn.execute("UPDATE processing_jobs_v2 SET stage='cloud_recognition', cloud_status='running' WHERE id='job'",[]).unwrap();
-        let before = get_canonical_ds(&conn,"item").unwrap();
-        assert!(set_library_item_part_core(&root,"item",Some("P3")).unwrap_err().contains("CLOUD_REVIEW_IN_PROGRESS"));
-        super::super::repository::set_item_part(&conn,"item",Some("P3"),Some("manual")).unwrap();
-        list_library_items_core(&root,false).unwrap();
-        assert_eq!(get_canonical_ds(&conn,"item").unwrap(),before);
+        let before = get_canonical_ds(&conn, "item").unwrap();
+        assert!(set_library_item_part_core(&root, "item", Some("P3"))
+            .unwrap_err()
+            .contains("CLOUD_REVIEW_IN_PROGRESS"));
+        super::super::repository::set_item_part(&conn, "item", Some("P3"), Some("manual")).unwrap();
+        list_library_items_core(&root, false).unwrap();
+        assert_eq!(get_canonical_ds(&conn, "item").unwrap(), before);
         conn.execute("UPDATE processing_jobs_v2 SET stage='ready_for_review', cloud_status='succeeded' WHERE id='job'",[]).unwrap();
-        list_library_items_core(&root,false).unwrap();
-        assert_eq!(get_canonical_ds(&conn,"item").unwrap().unwrap().0["exam"]["category"],"P3");
+        list_library_items_core(&root, false).unwrap();
+        assert_eq!(
+            get_canonical_ds(&conn, "item").unwrap().unwrap().0["exam"]["category"],
+            "P3"
+        );
     }
 }

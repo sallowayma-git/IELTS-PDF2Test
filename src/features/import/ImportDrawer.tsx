@@ -205,8 +205,8 @@ export function ImportDrawer({
     <div className={page ? "drawer-scrim import-page" : "drawer-scrim"} role="presentation" onClick={page || busy || checking ? undefined : close}>
       <aside
         className={page ? "drawer import-page-card" : "drawer"}
-        role="dialog"
-        aria-modal="true"
+        role={page ? "region" : "dialog"}
+        aria-modal={page ? undefined : true}
         aria-label="导入 PDF 或 DOCX"
         data-testid="import-drawer"
         onClick={(event) => event.stopPropagation()}

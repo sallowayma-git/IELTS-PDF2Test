@@ -31,11 +31,19 @@ export function BatchOverviewPanel({ root }: { root: string }) {
 
   if (!root) {
     return (
-      <section className="data-empty-state" data-testid="data-not-configured">
-        <h2>还没有配置作答数据目录</h2>
-        <p>请在「设置 → 作答数据目录」选择学生端的考试作答存储目录（其中应有 snapshots/ 与 status/）。</p>
-        <button className="primary" type="button" onClick={() => go("/settings")}>去设置</button>
-      </section>
+      <>
+        <header className="data-toolbar">
+          <div>
+            <h1>数据</h1>
+            <p className="data-subtitle">查看考试批次、学生成绩和题目作答情况。</p>
+          </div>
+        </header>
+        <section className="data-empty-state" data-testid="data-not-configured">
+          <h2>还没有配置作答数据目录</h2>
+          <p>请在「设置 → 作答数据目录」选择学生端的考试作答存储目录（其中应有 snapshots/ 与 status/）。</p>
+          <button className="primary" type="button" onClick={() => go("/settings")}>去设置</button>
+        </section>
+      </>
     );
   }
 
@@ -109,20 +117,22 @@ export function BatchOverviewPanel({ root }: { root: string }) {
             <section className="data-section" data-testid="data-exceptions">
               <h2>导入异常队列（{data.exceptions.length}）</h2>
               <p className="data-subtitle">这些快照没有进入统计；不影响其他快照。修复源文件后重新导入即可。</p>
-              <table className="data-table">
-                <thead>
-                  <tr><th>快照</th><th>原因</th><th>时间</th></tr>
-                </thead>
-                <tbody>
-                  {data.exceptions.map((record) => (
-                    <tr key={`${record.file}|${record.importedAt}`}>
-                      <td className="data-mono">{record.file}</td>
-                      <td>{record.error ?? "未知原因"}</td>
-                      <td>{timeText(record.importedAt)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="data-table-scroll" role="region" aria-label="导入异常记录" tabIndex={0}>
+                <table className="data-table">
+                  <thead>
+                    <tr><th>快照</th><th>原因</th><th>时间</th></tr>
+                  </thead>
+                  <tbody>
+                    {data.exceptions.map((record) => (
+                      <tr key={`${record.file}|${record.importedAt}`}>
+                        <td className="data-mono">{record.file}</td>
+                        <td>{record.error ?? "未知原因"}</td>
+                        <td>{timeText(record.importedAt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </section>
           ) : null}
 

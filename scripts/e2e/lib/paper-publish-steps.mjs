@@ -141,7 +141,7 @@ export function checkPointerOnDisk(nasRoot) {
   if (pointer.reading.length !== 3 || pointer.reading.map((e) => e.part).join(",") !== PARTS.join(",")) {
     problems.push(`reading parts=${pointer.reading.map((e) => e.part).join(",")}`);
   }
-  for (const item of pointer.reading) {
+  for (const item of [...pointer.reading,...pointer.listening]) {
     const entry = item.entry;
     if (!entry) { problems.push(`${item.part} 缺 entry`); continue; }
     if (JSON.stringify(entry) !== JSON.stringify(manifest[item.examId])) problems.push(`${item.part} entry 与清单不一致`);

@@ -374,6 +374,13 @@ fn classify(
     if bank_is_alpha && blocks.iter().all(|block| block.option_run.is_none()) {
         return Some(TaskTypeV2::MatchingFeatures);
     }
+    // Table/form regions flatten their cells into A/B/C-looking lines; the
+    // region role is stronger evidence than a line-based option run.
+    if let Some(task_type @ (TaskTypeV2::TableCompletion | TaskTypeV2::FormCompletion)) =
+        crate::ielts_grammar::task_type_from_kind_hint(task_hint)
+    {
+        return Some(task_type);
+    }
     if blocks.iter().any(|block| block.option_run.is_some()) {
         return Some(TaskTypeV2::SingleChoice);
     }
@@ -935,5 +942,26 @@ mod tests {
         assert!(!groups[0]
             .issues
             .contains(&issue_codes::SIGNIFICANT_REGION_UNASSIGNED.to_string()));
+    }
+
+    #[test]
+    fn table_region_hint_beats_line_based_option_run() {
+        let mut flattened = block("q1", 1, "A Dolphins");
+        flattened.option_run = Some(super::super::OptionRunCandidateV2 {
+            run_id: "run".to_string(),
+            labels: vec!["A".to_string(), "B".to_string(), "C".to_string()],
+            options: Vec::new(),
+            label_column_x: None,
+            confidence: 0.8,
+        });
+        let blocks = [&flattened];
+        assert_eq!(
+            classify("Questions 1-3", Some("table_completion"), &blocks, None),
+            Some(TaskTypeV2::TableCompletion)
+        );
+        assert_eq!(
+            classify("Questions 1-3", None, &blocks, None),
+            Some(TaskTypeV2::SingleChoice)
+        );
     }
 }

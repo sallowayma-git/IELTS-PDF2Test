@@ -88,16 +88,17 @@ async function main() {
 
     await click(cdp, '[data-testid="library-import"]');
     await waitSelector(cdp, '[data-testid="import-drawer"]');
-    record("题库内打开导入抽屉");
+    record("从题库进入导入页");
 
     await click(cdp, '[data-testid="import-pick-files"]');
     await waitSelector(cdp, '[data-testid="import-picked-files"] li');
     record("选择文件", await text(cdp, '[data-testid="import-picked-files"] li .file-name'));
 
     await click(cdp, '[data-testid="import-start"]');
-    // 抽屉必须在建行后立刻关闭，不等识别完成（计划 §12.2）。
-    await waitFor("import drawer closes", async () =>
-      evaluate(cdp, `!document.querySelector('[data-testid="import-drawer"]')`), { timeoutMs: 60000 });
+    // The current product keeps a permanent import panel and shows its queue.
+    await waitFor("import task created", async () => evaluate(cdp,
+      `/已建立 .*个识别任务/.test(document.querySelector('[data-testid="import-notice"]')?.textContent ?? '')`
+    ), { timeoutMs: 60000 });
     await waitSelector(cdp, '[data-testid="library-row"]', 60000);
     record("题库立即出现条目", await text(cdp, '[data-testid="library-row"] .file-name'));
 

@@ -43,6 +43,7 @@ use std::{
 };
 use util::ensure_app_dirs;
 mod analytics;
+mod analytics_commands;
 mod artifact_store;
 mod authoring_commands;
 mod authoring_pipeline;
@@ -50,6 +51,7 @@ mod authoring_review;
 mod authoring_v2_commands;
 mod authoring_validation;
 mod auto_pipeline;
+mod candidate_evidence;
 mod cleanup;
 mod cloud_adoption;
 mod cloud_direct;
@@ -76,7 +78,6 @@ mod library_commands;
 mod listening_audio;
 mod listening_source_v1;
 mod llm_commands;
-mod candidate_evidence;
 mod llm_gateway;
 mod llm_profiles;
 mod llm_suggestions;
@@ -1013,8 +1014,10 @@ async fn list_library_items(include_deleted: Option<bool>, app: AppHandle) -> Co
     let include_deleted = include_deleted.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
         let conn = library::repository::open_library_connection(&root)?;
-        let before = library::repository::list_items(&conn, include_deleted)?.into_iter()
-            .map(|row| (row.id, row.current_edit_version)).collect::<std::collections::HashMap<_,_>>();
+        let before = library::repository::list_items(&conn, include_deleted)?
+            .into_iter()
+            .map(|row| (row.id, row.current_edit_version))
+            .collect::<std::collections::HashMap<_, _>>();
         let result = library::commands::list_library_items_core(&root, include_deleted)?;
         for row in result.as_array().into_iter().flatten() {
             if let Some(id) = row.get("id").and_then(Value::as_str) {
@@ -1079,12 +1082,29 @@ async fn analytics_overview(
 async fn analytics_exam(
     batch_id: String,
     paper_id: String,
+    original: Option<bool>,
     app: AppHandle,
 ) -> CommandResult<analytics::queries::ExamView> {
     let root = app_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         let conn = analytics::open_analytics(&root)?;
-        analytics::queries::build_exam_view(&conn, &batch_id, &paper_id)
+        if original.unwrap_or(false) {
+            let attempts = analytics::queries::load_attempts_mode(
+                &conn,
+                &analytics::queries::Scope::Group {
+                    batch_id: &batch_id,
+                    paper_id: &paper_id,
+                },
+                true,
+            )?;
+            let mut view = analytics::queries::exam_view_from(&batch_id, &paper_id, &attempts);
+            view.listening = Some(analytics::statistics::listening(
+                &conn, &batch_id, &paper_id, true,
+            )?);
+            Ok(view)
+        } else {
+            analytics::queries::build_exam_view(&conn, &batch_id, &paper_id)
+        }
     })
     .await
     .map_err(|error| format!("analytics_join:{error}"))?
@@ -1093,12 +1113,25 @@ async fn analytics_exam(
 #[tauri::command]
 async fn analytics_student(
     attempt_id: String,
+    original: Option<bool>,
     app: AppHandle,
 ) -> CommandResult<analytics::queries::StudentView> {
     let root = app_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         let conn = analytics::open_analytics(&root)?;
-        analytics::queries::build_student_view(&conn, &attempt_id)
+        if original.unwrap_or(false) {
+            let attempts = analytics::queries::load_attempts_mode(
+                &conn,
+                &analytics::queries::Scope::Attempt(&attempt_id),
+                true,
+            )?;
+            attempts
+                .first()
+                .map(analytics::queries::student_view_from)
+                .ok_or("ATTEMPT_NOT_FOUND: 考试不存在".into())
+        } else {
+            analytics::queries::build_student_view(&conn, &attempt_id)
+        }
     })
     .await
     .map_err(|error| format!("analytics_join:{error}"))?
@@ -1110,12 +1143,20 @@ async fn analytics_question(
     paper_id: String,
     passage_index: i64,
     question_id: String,
+    original: Option<bool>,
     app: AppHandle,
 ) -> CommandResult<analytics::queries::QuestionView> {
     let root = app_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         let conn = analytics::open_analytics(&root)?;
-        analytics::queries::build_question_view(&conn, &batch_id, &paper_id, passage_index, &question_id)
+        analytics::queries::build_question_view_mode(
+            &conn,
+            &batch_id,
+            &paper_id,
+            passage_index,
+            &question_id,
+            original.unwrap_or(false),
+        )
     })
     .await
     .map_err(|error| format!("analytics_join:{error}"))?
@@ -1133,7 +1174,11 @@ async fn analytics_export_xlsx(
         Ok(path) if !path.trim().is_empty() => Some(PathBuf::from(path.trim())),
         _ => {
             let dialog_app = app.clone();
-            let paper_text = if paper_id.is_empty() { "旧套题".to_string() } else { paper_id.clone() };
+            let paper_text = if paper_id.is_empty() {
+                "旧套题".to_string()
+            } else {
+                paper_id.clone()
+            };
             let default_name = format!("{batch_id}-{paper_text}-成绩.xlsx");
             tauri::async_runtime::spawn_blocking(move || {
                 let picked = dialog_app
@@ -1144,7 +1189,10 @@ async fn analytics_export_xlsx(
                     .add_filter("Excel", &["xlsx"])
                     .blocking_save_file();
                 match picked {
-                    Some(path) => path.into_path().map(Some).map_err(|error| error.to_string()),
+                    Some(path) => path
+                        .into_path()
+                        .map(Some)
+                        .map_err(|error| error.to_string()),
                     None => Ok(None),
                 }
             })
@@ -1157,7 +1205,38 @@ async fn analytics_export_xlsx(
     };
     tauri::async_runtime::spawn_blocking(move || {
         let conn = analytics::open_analytics(&root)?;
-        analytics::export::write_export(&conn, &batch_id, &paper_id, &path).map(Some)
+        let operator = analytics::review::operator(&root)?;
+        let target = format!("{batch_id}/{paper_id}");
+        analytics::review::audit(
+            &conn,
+            &operator,
+            "export_started",
+            "export",
+            &target,
+            &Value::Null,
+            &serde_json::json!({"path":path}),
+            "导出成绩",
+        )?;
+        let result = analytics::export::write_export(&conn, &batch_id, &paper_id, &path);
+        let after = match &result {
+            Ok(summary) => serde_json::to_value(summary).map_err(|e| e.to_string())?,
+            Err(e) => serde_json::json!({"error":e}),
+        };
+        analytics::review::audit(
+            &conn,
+            &operator,
+            if result.is_ok() {
+                "export_completed"
+            } else {
+                "export_failed"
+            },
+            "export",
+            &target,
+            &Value::Null,
+            &after,
+            "导出成绩",
+        )?;
+        result.map(Some)
     })
     .await
     .map_err(|error| format!("analytics_join:{error}"))?
@@ -1170,7 +1249,9 @@ async fn get_library_item_processing(item_id: String, app: AppHandle) -> Command
     let root = app_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         library_commands::get_library_item_processing_core(&root, &item_id)
-    }).await.map_err(|error| format!("library_processing_join:{error}"))?
+    })
+    .await
+    .map_err(|error| format!("library_processing_join:{error}"))?
 }
 
 #[tauri::command]
@@ -1180,11 +1261,17 @@ async fn get_library_row(item_id: String, app: AppHandle) -> CommandResult<Value
         let conn = library::repository::open_library_connection(&root)?;
         let before = library::repository::current_edit_version(&conn, &item_id)?;
         let result = library_commands::get_library_row_core(&root, &item_id)?;
-        if result.pointer("/item/currentEditVersion").and_then(Value::as_i64) > before {
+        if result
+            .pointer("/item/currentEditVersion")
+            .and_then(Value::as_i64)
+            > before
+        {
             let _ = processing::scheduler::notify_item_content_changed(&conn, &app, &item_id);
         }
         Ok(result)
-    }).await.map_err(|error| format!("library_row_join:{error}"))?
+    })
+    .await
+    .map_err(|error| format!("library_row_join:{error}"))?
 }
 
 /// 撤销整轮云端自动修复。
@@ -1349,9 +1436,11 @@ async fn rename_library_item(
 /// 读取 NAS 上的「当前试卷」指针（不存在返回 null）。
 #[tauri::command]
 async fn get_current_paper(destination: String) -> CommandResult<Value> {
-    tauri::async_runtime::spawn_blocking(move || nas_package_v2::get_current_paper_core(&destination))
-        .await
-        .map_err(|error| error.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        nas_package_v2::get_current_paper_core(&destination)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1376,14 +1465,19 @@ async fn plan_import_split(paths: Vec<String>, app: AppHandle) -> CommandResult<
             if std::fs::metadata(&log).is_ok_and(|metadata| metadata.len() > 512 * 1024) {
                 let _ = std::fs::remove_file(&log);
             }
-            let summaries: Vec<_> = previews.iter().map(|preview| json!({
-                "path": preview.path, "pageCount": preview.page_count,
-                "defaultSplit": preview.default_split, "warnings": preview.warnings,
-                "segments": preview.segments.iter().map(|segment| json!({
-                    "label": segment.label, "pages": segment.pages,
-                    "signals": segment.signals, "confidence": segment.confidence,
-                })).collect::<Vec<_>>()
-            })).collect();
+            let summaries: Vec<_> = previews
+                .iter()
+                .map(|preview| {
+                    json!({
+                        "path": preview.path, "pageCount": preview.page_count,
+                        "defaultSplit": preview.default_split, "warnings": preview.warnings,
+                        "segments": preview.segments.iter().map(|segment| json!({
+                            "label": segment.label, "pages": segment.pages,
+                            "signals": segment.signals, "confidence": segment.confidence,
+                        })).collect::<Vec<_>>()
+                    })
+                })
+                .collect();
             let record = json!({ "at": chrono::Utc::now().to_rfc3339(), "previews": summaries });
             let _ = util::append_text(&log, &(record.to_string() + "\n"));
         }
@@ -1576,7 +1670,9 @@ async fn resolve_authoring_asset_preview(
 #[tauri::command]
 async fn compile_authoring_preview(authoring: Value, app: AppHandle) -> CommandResult<Value> {
     let _ = app_root(&app)?;
-    Ok(authoring_v2_commands::compile_authoring_preview_core(&authoring))
+    Ok(authoring_v2_commands::compile_authoring_preview_core(
+        &authoring,
+    ))
 }
 
 #[tauri::command]
@@ -1620,7 +1716,9 @@ async fn save_diagnostics_settings(
 
 /// 读取流水线模式（`direct` 默认 / `legacy` 旧链）。设置页用来展示与切换。
 #[tauri::command]
-async fn get_pipeline_settings(app: AppHandle) -> CommandResult<pipeline_settings::PipelineSettingsV1> {
+async fn get_pipeline_settings(
+    app: AppHandle,
+) -> CommandResult<pipeline_settings::PipelineSettingsV1> {
     let root = app_root(&app)?;
     pipeline_settings::load_pipeline_settings(&root)
 }
@@ -2011,7 +2109,8 @@ async fn set_library_item_part(
 ) -> CommandResult<bool> {
     let root = app_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let changed = library::commands::set_library_item_part_core(&root, &item_id, label.as_deref())?;
+        let changed =
+            library::commands::set_library_item_part_core(&root, &item_id, label.as_deref())?;
         if changed {
             let conn = library::repository::open_library_connection(&root)?;
             // Same version notification as editor saves; dirty editors defer/recover
@@ -2025,6 +2124,35 @@ async fn set_library_item_part(
 }
 
 pub fn run() {
+    let context = tauri::generate_context!();
+    // Elevated WebView2 hosts ignore WEBVIEW2_* environment overrides. CI's
+    // isolated debug harness must pass its profile and arguments via the API.
+    // https://learn.microsoft.com/microsoft-edge/webview2/concepts/security
+    #[cfg(all(windows, debug_assertions))]
+    let context = {
+        let mut context = context;
+        if env::var_os("PDF2TEST_AUTOMATION_DATA_DIR").is_some() {
+            let args = env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS")
+                .ok()
+                .or_else(|| {
+                    (env::var("TAURI_WEBVIEW_AUTOMATION").as_deref() == Ok("true"))
+                        .then(|| "--remote-debugging-port=0".to_string())
+                });
+            if let Some(args) = args {
+                for window in &mut context.config_mut().app.windows {
+                    let defaults = window.additional_browser_args.take().unwrap_or_else(||
+                        "--autoplay-policy=no-user-gesture-required --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection".into());
+                    window.additional_browser_args = Some(format!(
+                        "{defaults} {args} --remote-debugging-address=127.0.0.1"
+                    ));
+                    window.data_directory =
+                        env::var_os("WEBVIEW2_USER_DATA_FOLDER").map(PathBuf::from);
+                }
+                eprintln!("[automation] configured isolated WebView2 profile and browser arguments through the API");
+            }
+        }
+        context
+    };
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -2035,6 +2163,14 @@ pub fn run() {
             diagnostics::install_worker_panic_log(root.clone());
             // 初始化题库 DB schema + 首次启动迁移既有 job 数据（幂等，失败不阻断启动）。
             let _ = library_commands::migrate_existing_into_library(&root);
+            {
+                let root=root.clone();
+                tauri::async_runtime::spawn_blocking(move||{
+                    if let Ok(conn)=library::repository::open_library_connection(&root){
+                        if let Err(error)=library::paper_archive::recover(&conn){eprintln!("[paper-archive] startup recovery: {error}");}
+                    }
+                });
+            }
             // M2：托管调度状态并启动调度循环（含启动恢复）。
             let processing_state = std::sync::Arc::new(processing::scheduler::ProcessingState::new(
                 processing::scheduler::ProcessingSettings::defaults(),
@@ -2078,6 +2214,26 @@ pub fn run() {
             analytics_student,
             analytics_question,
             analytics_export_xlsx,
+            analytics_commands::list_papers,
+            analytics_commands::analytics_listening_exam,
+            analytics_commands::get_paper,
+            analytics_commands::get_question_context,
+            analytics_commands::get_attempt_detail,
+            analytics_commands::list_overrides,
+            analytics_commands::list_audit_log,
+            analytics_commands::list_writing_queue,
+            analytics_commands::preview_rejudge,
+            analytics_commands::apply_rejudge,
+            analytics_commands::get_review_settings,
+            analytics_commands::save_review_settings,
+            analytics_commands::create_score_override,
+            analytics_commands::revoke_score_override,
+            analytics_commands::set_attempt_counted,
+            analytics_commands::save_writing_grade,
+            analytics_commands::review_writing_grade,
+            analytics_commands::publish_writing_grade,
+            analytics_commands::save_annotation,
+            analytics_commands::delete_annotation,
             get_library_item_processing,
             get_library_row,
             get_recognition_decision,
@@ -2166,7 +2322,7 @@ pub fn run() {
             empty_recycle_bin,
             set_library_item_part
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }
 

@@ -354,7 +354,7 @@ exit 0
             true,
             &[success_provider.to_string_lossy().into_owned()],
         );
-        assert!(success.rendered_pdf().is_some());
+        assert!(success.rendered_pdf().is_some(), "{}", success.metadata());
         assert_eq!(success.metadata()["geometryAuthority"], "render-assisted");
         drop(success);
 

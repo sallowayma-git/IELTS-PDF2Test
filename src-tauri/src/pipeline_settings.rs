@@ -121,10 +121,7 @@ pub(crate) fn resolve_pipeline_mode(app: &tauri::AppHandle) -> PipelineMode {
 }
 
 /// 从 job progress 读导入时确定的模式；没有或无法识别时用全局设置兜底。
-pub(crate) fn pipeline_mode_for_job(
-    root: &Path,
-    job_progress: &serde_json::Value,
-) -> PipelineMode {
+pub(crate) fn pipeline_mode_for_job(root: &Path, job_progress: &serde_json::Value) -> PipelineMode {
     if let Some(mode) = job_progress
         .get("pipelineMode")
         .and_then(serde_json::Value::as_str)
@@ -132,7 +129,9 @@ pub(crate) fn pipeline_mode_for_job(
     {
         return mode;
     }
-    load_pipeline_settings(root).map(|settings| settings.pipeline_mode).unwrap_or_default()
+    load_pipeline_settings(root)
+        .map(|settings| settings.pipeline_mode)
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -151,7 +150,10 @@ mod tests {
     #[test]
     fn default_is_direct() {
         assert_eq!(PipelineMode::default(), PipelineMode::Direct);
-        assert_eq!(PipelineSettingsV1::default().pipeline_mode, PipelineMode::Direct);
+        assert_eq!(
+            PipelineSettingsV1::default().pipeline_mode,
+            PipelineMode::Direct
+        );
     }
 
     #[test]
@@ -208,10 +210,7 @@ mod tests {
             PipelineMode::Legacy
         );
         let empty = serde_json::json!({});
-        assert_eq!(
-            pipeline_mode_for_job(&root, &empty),
-            PipelineMode::Direct
-        );
+        assert_eq!(pipeline_mode_for_job(&root, &empty), PipelineMode::Direct);
         let _ = std::fs::remove_dir_all(root);
     }
 }

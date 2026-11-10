@@ -12,8 +12,8 @@ use super::import::{
     import_submission_snapshots, list_failed_imports, list_failed_imports_for_group, ImportReport,
 };
 use super::queries::{
-    build_exam_view, build_overview, build_question_view, build_student_view, identity_issues, load_attempts,
-    Scope,
+    build_exam_view, build_overview, build_question_view, build_student_view, identity_issues,
+    load_attempts, Scope,
 };
 use super::status::read_attempt_status;
 use super::{ensure_schema, export::write_export, open_analytics};
@@ -170,18 +170,54 @@ fn kind_of(category: &str) -> &'static str {
 
 fn standard_passages(p1: &'static str, p2: &'static str, p3: &'static str) -> Vec<FixPassage> {
     vec![
-        FixPassage { idx: 0, category: "P1", start: "2026-11-07T10:00:00+08:00", end: "2026-11-07T10:20:00+08:00", pattern: p1 },
+        FixPassage {
+            idx: 0,
+            category: "P1",
+            start: "2026-11-07T10:00:00+08:00",
+            end: "2026-11-07T10:20:00+08:00",
+            pattern: p1,
+        },
         // P2 与 P1 区间重叠（用于验证「用时可能重叠」）。
-        FixPassage { idx: 1, category: "P2", start: "2026-11-07T10:15:00+08:00", end: "2026-11-07T10:40:00+08:00", pattern: p2 },
-        FixPassage { idx: 2, category: "P3", start: "2026-11-07T10:50:00+08:00", end: "2026-11-07T11:05:00+08:00", pattern: p3 },
+        FixPassage {
+            idx: 1,
+            category: "P2",
+            start: "2026-11-07T10:15:00+08:00",
+            end: "2026-11-07T10:40:00+08:00",
+            pattern: p2,
+        },
+        FixPassage {
+            idx: 2,
+            category: "P3",
+            start: "2026-11-07T10:50:00+08:00",
+            end: "2026-11-07T11:05:00+08:00",
+            pattern: p3,
+        },
     ]
 }
 
 fn sequential_passages(p1: &'static str, p2: &'static str, p3: &'static str) -> Vec<FixPassage> {
     vec![
-        FixPassage { idx: 0, category: "P1", start: "2026-11-07T10:00:00+08:00", end: "2026-11-07T10:20:00+08:00", pattern: p1 },
-        FixPassage { idx: 1, category: "P2", start: "2026-11-07T10:30:00+08:00", end: "2026-11-07T10:50:00+08:00", pattern: p2 },
-        FixPassage { idx: 2, category: "P3", start: "2026-11-07T11:00:00+08:00", end: "2026-11-07T11:20:00+08:00", pattern: p3 },
+        FixPassage {
+            idx: 0,
+            category: "P1",
+            start: "2026-11-07T10:00:00+08:00",
+            end: "2026-11-07T10:20:00+08:00",
+            pattern: p1,
+        },
+        FixPassage {
+            idx: 1,
+            category: "P2",
+            start: "2026-11-07T10:30:00+08:00",
+            end: "2026-11-07T10:50:00+08:00",
+            pattern: p2,
+        },
+        FixPassage {
+            idx: 2,
+            category: "P3",
+            start: "2026-11-07T11:00:00+08:00",
+            end: "2026-11-07T11:20:00+08:00",
+            pattern: p3,
+        },
     ]
 }
 
@@ -342,7 +378,11 @@ fn publish_snapshot(
     let dir = submissions.join("snapshots").join(terminal);
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join(format!("{attempt}.sqlite")), db_bytes).unwrap();
-    let digest = if tamper_sha { "0".repeat(64) } else { sha(db_bytes) };
+    let digest = if tamper_sha {
+        "0".repeat(64)
+    } else {
+        sha(db_bytes)
+    };
     let meta = json!({
         "schemaVersion": "SubmissionSnapshotV1",
         "terminalId": terminal,
@@ -406,7 +446,14 @@ fn publish_snapshot_with_meta(
     fs::write(dir.join(format!("{attempt}.ready")), "").unwrap();
 }
 
-fn write_status(submissions: &Path, terminal: &str, attempt: &str, status: &str, cand: (&str, &str), updated: &str) {
+fn write_status(
+    submissions: &Path,
+    terminal: &str,
+    attempt: &str,
+    status: &str,
+    cand: (&str, &str),
+    updated: &str,
+) {
     let dir = submissions.join("status").join(terminal);
     fs::create_dir_all(&dir).unwrap();
     let body = json!({
@@ -494,7 +541,10 @@ fn t2_attempts() -> Vec<FixAttempt> {
 }
 
 fn db_bytes(name: &str, attempts: &[FixAttempt]) -> Vec<u8> {
-    let path = std::env::temp_dir().join(format!("analytics-fixture-{name}-{}.sqlite", uuid::Uuid::new_v4()));
+    let path = std::env::temp_dir().join(format!(
+        "analytics-fixture-{name}-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
     write_terminal_db(&path, attempts);
     let bytes = fs::read(&path).unwrap();
     let _ = fs::remove_file(&path);
@@ -504,27 +554,124 @@ fn db_bytes(name: &str, attempts: &[FixAttempt]) -> Vec<u8> {
 /// 标准场景：T1(A1,A2)、T2(A3,A4) 正常；T3 含 sha 不符、坏库、无 ready 三类异常；另有坏状态信标。
 fn seed_standard(env: &Env) {
     let t1 = db_bytes("t1", &t1_attempts("FFTF"));
-    publish_snapshot(&env.submissions, "T1", "A1", &t1, "2026-11-07T11:10:05+08:00", false, true);
-    publish_snapshot(&env.submissions, "T1", "A2", &t1, "2026-11-07T11:10:05+08:00", false, true);
+    publish_snapshot(
+        &env.submissions,
+        "T1",
+        "A1",
+        &t1,
+        "2026-11-07T11:10:05+08:00",
+        false,
+        true,
+    );
+    publish_snapshot(
+        &env.submissions,
+        "T1",
+        "A2",
+        &t1,
+        "2026-11-07T11:10:05+08:00",
+        false,
+        true,
+    );
     // 注意：t1 由 t1_attempts("FFTF") 生成，A1 的 P3 = 1/4。
     let t2 = db_bytes("t2", &t2_attempts());
-    publish_snapshot(&env.submissions, "T2", "A3", &t2, "2026-11-07T11:40:05+08:00", false, true);
+    publish_snapshot(
+        &env.submissions,
+        "T2",
+        "A3",
+        &t2,
+        "2026-11-07T11:40:05+08:00",
+        false,
+        true,
+    );
     // T3：A5 meta sha 写错。
     let t3 = db_bytes("t3", &t2_attempts());
-    publish_snapshot(&env.submissions, "T3", "A5", &t3, "2026-11-07T12:00:00+08:00", true, true);
+    publish_snapshot(
+        &env.submissions,
+        "T3",
+        "A5",
+        &t3,
+        "2026-11-07T12:00:00+08:00",
+        true,
+        true,
+    );
     // T3：A6 文件不是 sqlite（sha 与 meta 一致，但库坏）。
     let corrupt = b"this is definitely not a sqlite database file".to_vec();
-    publish_snapshot(&env.submissions, "T3", "A6", &corrupt, "2026-11-07T12:01:00+08:00", false, true);
+    publish_snapshot(
+        &env.submissions,
+        "T3",
+        "A6",
+        &corrupt,
+        "2026-11-07T12:01:00+08:00",
+        false,
+        true,
+    );
     // T3：A7 有 sqlite 但没有 ready。
-    publish_snapshot(&env.submissions, "T3", "A7", &t3, "2026-11-07T12:02:00+08:00", false, false);
+    publish_snapshot(
+        &env.submissions,
+        "T3",
+        "A7",
+        &t3,
+        "2026-11-07T12:02:00+08:00",
+        false,
+        false,
+    );
 
-    write_status(&env.submissions, "T1", "A1", "submitted", ("C-001", "张三"), "2026-11-07T11:10:00+08:00");
-    write_status(&env.submissions, "T1", "A2", "submitted", ("C-002", "李四"), "2026-11-07T11:20:00+08:00");
-    write_status(&env.submissions, "T1", "A8", "in_progress", ("C-005", "王五"), "2026-11-07T11:50:00+08:00");
-    write_status(&env.submissions, "T1", "A9", "checked_in", ("C-006", "赵六"), "2026-11-07T11:55:00+08:00");
-    write_status(&env.submissions, "T2", "A3", "submitted", ("C-002", "李四四"), "2026-11-07T11:30:00+08:00");
-    write_status(&env.submissions, "T2", "A4", "submitted", ("C-004", "张三"), "2026-11-07T11:40:00+08:00");
-    write_status(&env.submissions, "T2", "A10", "failed", ("C-007", "钱七"), "2026-11-07T11:45:00+08:00");
+    write_status(
+        &env.submissions,
+        "T1",
+        "A1",
+        "submitted",
+        ("C-001", "张三"),
+        "2026-11-07T11:10:00+08:00",
+    );
+    write_status(
+        &env.submissions,
+        "T1",
+        "A2",
+        "submitted",
+        ("C-002", "李四"),
+        "2026-11-07T11:20:00+08:00",
+    );
+    write_status(
+        &env.submissions,
+        "T1",
+        "A8",
+        "in_progress",
+        ("C-005", "王五"),
+        "2026-11-07T11:50:00+08:00",
+    );
+    write_status(
+        &env.submissions,
+        "T1",
+        "A9",
+        "checked_in",
+        ("C-006", "赵六"),
+        "2026-11-07T11:55:00+08:00",
+    );
+    write_status(
+        &env.submissions,
+        "T2",
+        "A3",
+        "submitted",
+        ("C-002", "李四四"),
+        "2026-11-07T11:30:00+08:00",
+    );
+    write_status(
+        &env.submissions,
+        "T2",
+        "A4",
+        "submitted",
+        ("C-004", "张三"),
+        "2026-11-07T11:40:00+08:00",
+    );
+    write_status(
+        &env.submissions,
+        "T2",
+        "A10",
+        "failed",
+        ("C-007", "钱七"),
+        "2026-11-07T11:45:00+08:00",
+    );
     // 坏信标：不影响其他。
     let bad = env.submissions.join("status").join("T3");
     fs::create_dir_all(&bad).unwrap();
@@ -562,8 +709,15 @@ fn import_queries_and_exceptions_end_to_end() {
     assert!(failed_files.contains(&"snapshots/T3/A5.sqlite"));
     assert!(failed_files.contains(&"snapshots/T3/A6.sqlite"));
     assert!(failed_files.contains(&"snapshots/T3/A7.sqlite"));
-    let a5 = report.outcomes.iter().find(|o| o.file.ends_with("A5.sqlite")).unwrap();
-    assert!(a5.error.as_deref().unwrap().contains("sha256 不符"), "{a5:?}");
+    let a5 = report
+        .outcomes
+        .iter()
+        .find(|o| o.file.ends_with("A5.sqlite"))
+        .unwrap();
+    assert!(
+        a5.error.as_deref().unwrap().contains("sha256 不符"),
+        "{a5:?}"
+    );
 
     // 只读源：NAS 上的文件与 ready 没有被改动。
     assert!(env.submissions.join("snapshots/T3/A5.ready").exists());
@@ -595,29 +749,46 @@ fn import_queries_and_exceptions_end_to_end() {
     assert_eq!(view.parts[0].accuracy, Some(0.5));
 
     // 题型正确率分母 = 得分点数。
-    let tfng = view.kinds.iter().find(|k| k.kind == "true_false_not_given").unwrap();
+    let tfng = view
+        .kinds
+        .iter()
+        .find(|k| k.kind == "true_false_not_given")
+        .unwrap();
     assert_eq!((tfng.points, tfng.correct_points), (16.0, 8.0));
     assert_eq!(tfng.accuracy, Some(0.5));
 
     // N < 30：所有题都不下难题结论；Top10 仍列出并带样本量。
-    assert!(view.questions.iter().all(|q| q.n == 4 && !q.hard_conclusion));
+    assert!(view
+        .questions
+        .iter()
+        .all(|q| q.n == 4 && !q.hard_conclusion));
     assert!(!view.hard_questions.is_empty() && view.hard_questions.len() <= 10);
 
     // 学生×题目矩阵：列数 = 题数，行数 = N。
     assert_eq!(view.matrix.len(), 4);
-    assert!(view.matrix.iter().all(|row| row.cells.len() == view.questions.len()));
+    assert!(view
+        .matrix
+        .iter()
+        .all(|row| row.cells.len() == view.questions.len()));
 
     // 单个学生 A1：两篇区间重叠（P1/P2）；错题 = P1 1 题 + P3 3 题。
     let student = build_student_view(&conn, "A1").unwrap();
     assert_eq!(student.raw_score, 8.0);
-    assert!(student.passages.iter().filter(|p| p.overlap).count() >= 2 || student.overlap_note.is_some());
+    assert!(
+        student.passages.iter().filter(|p| p.overlap).count() >= 2
+            || student.overlap_note.is_some()
+    );
     assert!(student.overlap_note.is_some());
     assert!(student.passages.iter().any(|p| p.overlap));
     assert_eq!(student.wrong_answers.len(), 4);
     assert_eq!(student.writings.len(), 1);
     assert_eq!(student.writings[0].word_count, Some(260));
     assert_eq!(student.writings[0].duration_sec, Some(2400));
-    let wrong = student.wrong_answers.iter().find(|w| w.question_id == "p0q3").unwrap();
+    let wrong = student
+        .wrong_answers
+        .iter()
+        .find(|w| w.question_id == "p0q3")
+        .unwrap();
     assert_eq!(wrong.user_answer, "FALSE");
     assert_eq!(wrong.correct_answer, "TRUE");
     assert_eq!(wrong.question_kind, "true_false_not_given");
@@ -628,7 +799,10 @@ fn import_queries_and_exceptions_end_to_end() {
     assert_eq!(question.correct_count, 3);
     assert_eq!(question.accuracy, Some(0.75));
     assert!(!question.hard_conclusion);
-    assert_eq!(question.distribution.iter().map(|b| b.count).sum::<usize>(), 4);
+    assert_eq!(
+        question.distribution.iter().map(|b| b.count).sum::<usize>(),
+        4
+    );
     assert_eq!(question.distribution[0].answer, "TRUE");
     assert_eq!(question.distribution[0].count, 3);
 
@@ -636,8 +810,12 @@ fn import_queries_and_exceptions_end_to_end() {
     let attempts = load_attempts(&conn, &Scope::All).unwrap();
     let issues = identity_issues(&attempts);
     assert_eq!(issues.len(), 2, "{issues:?}");
-    assert!(issues.iter().any(|i| i.kind == "same_id_diff_name" && i.candidate_id == "C-002"));
-    assert!(issues.iter().any(|i| i.kind == "same_name_diff_id" && i.candidate_name == "张三"));
+    assert!(issues
+        .iter()
+        .any(|i| i.kind == "same_id_diff_name" && i.candidate_id == "C-002"));
+    assert!(issues
+        .iter()
+        .any(|i| i.kind == "same_name_diff_id" && i.candidate_name == "张三"));
 
     // 状态信标：坏信标记入 errors，其余照常汇总。
     let scan = read_attempt_status(&env.submissions);
@@ -659,7 +837,10 @@ fn import_queries_and_exceptions_end_to_end() {
     assert_eq!(row.valid_scored, 4);
     // A5(sha 不符)、A6(坏库)、A7(缺 ready) 的 meta 都带本批次，全部归入该组异常。
     assert_eq!(row.import_exceptions, 3);
-    assert_eq!(row.last_submitted_at.as_deref(), Some("2026-11-07T11:40:00+08:00"));
+    assert_eq!(
+        row.last_submitted_at.as_deref(),
+        Some("2026-11-07T11:40:00+08:00")
+    );
     assert_eq!(overview.exceptions.len(), 3);
 }
 
@@ -685,25 +866,45 @@ fn reimport_is_idempotent() {
 }
 
 #[test]
-fn newer_exported_at_replaces_and_older_is_ignored() {
+fn newer_exports_cannot_replace_submitted_answers_and_older_is_ignored() {
     let env = fresh_env("newer");
     seed_standard(&env);
     let mut conn = open(&env);
     run_import(&env, &mut conn);
     assert_eq!(build_student_view(&conn, "A1").unwrap().raw_score, 8.0);
 
-    // 更新：A1 的 P3 全对，exportedAt 更晚 -> 覆盖。
+    // exportedAt 不是修改已交卷答案的授权；冲突快照整份回滚。
     let newer = db_bytes("t1-newer", &t1_attempts("TTTT"));
-    publish_snapshot(&env.submissions, "T1", "A1", &newer, "2026-11-07T13:00:00+08:00", false, true);
+    publish_snapshot(
+        &env.submissions,
+        "T1",
+        "A1",
+        &newer,
+        "2026-11-07T13:00:00+08:00",
+        false,
+        true,
+    );
     let report = run_import(&env, &mut conn);
-    assert!(report.attempts_imported >= 1, "{report:?}");
-    assert_eq!(build_student_view(&conn, "A1").unwrap().raw_score, 11.0);
+    assert!(report.failed >= 1, "{report:?}");
+    assert!(report.outcomes.iter().any(|o| o
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("SNAPSHOT_FACT_CONFLICT"))));
+    assert_eq!(build_student_view(&conn, "A1").unwrap().raw_score, 8.0);
 
     // 旧快照（exportedAt 更早，内容为全错）再次出现 -> 不覆盖。
     let older = db_bytes("t1-older", &t1_attempts("FFFF"));
-    publish_snapshot(&env.submissions, "T1", "A1", &older, "2026-11-07T10:30:00+08:00", false, true);
+    publish_snapshot(
+        &env.submissions,
+        "T1",
+        "A1",
+        &older,
+        "2026-11-07T10:30:00+08:00",
+        false,
+        true,
+    );
     run_import(&env, &mut conn);
-    assert_eq!(build_student_view(&conn, "A1").unwrap().raw_score, 11.0);
+    assert_eq!(build_student_view(&conn, "A1").unwrap().raw_score, 8.0);
 }
 
 #[test]
@@ -721,7 +922,7 @@ fn exam_without_snapshots_is_empty_and_schema_is_stable() {
 }
 
 #[test]
-fn export_writes_five_sheets_to_chosen_path() {
+fn export_writes_eight_sheets_to_chosen_path() {
     let env = fresh_env("export");
     seed_standard(&env);
     let mut conn = open(&env);
@@ -729,7 +930,10 @@ fn export_writes_five_sheets_to_chosen_path() {
     let out = env.app.join("exam-export.xlsx");
     let summary = write_export(&conn, BATCH, PAPER, &out).unwrap();
     assert_eq!(summary.n, 4);
-    assert_eq!(summary.sheets.len(), 5);
+    assert_eq!(summary.sheets.len(), 8);
+    assert!(summary.sheets.iter().any(|s| s == "改判后成绩"));
+    assert!(summary.sheets.iter().any(|s| s == "写作成绩"));
+    assert!(summary.sheets.iter().any(|s| s == "听力"));
     let bytes = fs::read(&out).unwrap();
     assert!(bytes.len() > 2000);
     assert_eq!(&bytes[0..2], b"PK", "xlsx is a zip container");
@@ -757,14 +961,26 @@ fn valid_only_when_all_passages_are_present() {
         writing: false,
     }];
     let bytes = db_bytes("partial", &partial);
-    publish_snapshot(&env.submissions, "T9", "A20", &bytes, "2026-11-07T11:00:05+08:00", false, true);
+    publish_snapshot(
+        &env.submissions,
+        "T9",
+        "A20",
+        &bytes,
+        "2026-11-07T11:00:05+08:00",
+        false,
+        true,
+    );
     let mut conn = open(&env);
     let report = run_import(&env, &mut conn);
     assert_eq!(report.ok, 1, "{report:?}");
     let view = build_exam_view(&conn, BATCH, PAPER).unwrap();
     assert_eq!(view.n, 0);
     assert_eq!(view.excluded.len(), 1);
-    assert!(view.excluded[0].reason.contains("篇数不足"), "{:?}", view.excluded);
+    assert!(
+        view.excluded[0].reason.contains("篇数不足"),
+        "{:?}",
+        view.excluded
+    );
 }
 
 /// 回归（审计 A1）：同一终端 3 人依次考试，每人交卷后导出一份整库快照。
@@ -775,9 +991,27 @@ fn same_terminal_sequential_exams_keep_paper_ids() {
     let env = fresh_env("sequential");
     let mut conn = open(&env);
     let people = [
-        ("A31", "C-301", "王一", "2026-11-07T10:10:00+08:00", "2026-11-07T10:10:05+08:00"),
-        ("A32", "C-302", "王二", "2026-11-07T10:30:00+08:00", "2026-11-07T10:30:05+08:00"),
-        ("A33", "C-303", "王三", "2026-11-07T10:50:00+08:00", "2026-11-07T10:50:05+08:00"),
+        (
+            "A31",
+            "C-301",
+            "王一",
+            "2026-11-07T10:10:00+08:00",
+            "2026-11-07T10:10:05+08:00",
+        ),
+        (
+            "A32",
+            "C-302",
+            "王二",
+            "2026-11-07T10:30:00+08:00",
+            "2026-11-07T10:30:05+08:00",
+        ),
+        (
+            "A33",
+            "C-303",
+            "王三",
+            "2026-11-07T10:50:00+08:00",
+            "2026-11-07T10:50:05+08:00",
+        ),
     ];
     let mut done: Vec<FixAttempt> = Vec::new();
     for (id, cand, name, submitted, exported) in people {
@@ -832,25 +1066,47 @@ fn paper_id_conflict_is_anomaly_and_priority_source_wins() {
         agg: AggForm::V11,
         kv_paper: false,
     }];
-    let path = std::env::temp_dir().join(format!("analytics-conflict-{}.sqlite", uuid::Uuid::new_v4()));
+    let path = std::env::temp_dir().join(format!(
+        "analytics-conflict-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
     write_terminal_db(&path, &attempts);
     Connection::open(&path)
         .unwrap()
-        .execute("INSERT INTO exam_kv (key, value_json) VALUES ('paper_id:A41', '\"paper-OTHER\"')", [])
+        .execute(
+            "INSERT INTO exam_kv (key, value_json) VALUES ('paper_id:A41', '\"paper-OTHER\"')",
+            [],
+        )
         .unwrap();
     let bytes = fs::read(&path).unwrap();
     let _ = fs::remove_file(&path);
-    publish_snapshot(&env.submissions, "T6", "A41", &bytes, "2026-11-07T11:00:05+08:00", false, true);
+    publish_snapshot(
+        &env.submissions,
+        "T6",
+        "A41",
+        &bytes,
+        "2026-11-07T11:00:05+08:00",
+        false,
+        true,
+    );
 
     let report = run_import(&env, &mut conn);
     assert_eq!(report.ok, 1, "{report:?}");
     let paper: String = conn
-        .query_row("SELECT paper_id FROM attempts WHERE attempt_id = 'A41'", [], |row| row.get(0))
+        .query_row(
+            "SELECT paper_id FROM attempts WHERE attempt_id = 'A41'",
+            [],
+            |row| row.get(0),
+        )
         .unwrap();
     assert_eq!(paper, "paper-OTHER");
     let failed = list_failed_imports(&conn).unwrap();
     assert!(
-        failed.iter().any(|r| r.error.as_deref().unwrap_or("").contains("套题归属来源不一致")),
+        failed.iter().any(|r| r
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("套题归属来源不一致")),
         "{failed:?}"
     );
 }
@@ -867,15 +1123,22 @@ fn newer_db_schema_version_is_not_imported() {
         "A3",
         &bytes,
         "2026-11-07T11:40:05+08:00",
-        json!({ "dbSchemaVersion": 2 }),
+        json!({ "dbSchemaVersion": 3 }),
     );
     let report = run_import(&env, &mut conn);
     assert_eq!(report.failed, 1, "{report:?}");
     assert_eq!(report.attempts_imported, 0);
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM attempts", [], |row| row.get(0)).unwrap();
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM attempts", [], |row| row.get(0))
+        .unwrap();
     assert_eq!(count, 0);
     let failed = list_failed_imports(&conn).unwrap();
-    assert!(failed.iter().any(|r| r.error.as_deref().unwrap_or("").contains("请升级作者端")), "{failed:?}");
+    assert!(
+        failed
+            .iter()
+            .any(|r| r.error.as_deref().unwrap_or("").contains("请升级作者端")),
+        "{failed:?}"
+    );
 }
 
 /// 同一 attemptId 来自另一台安装（installId 不同）→ 异常，已导入记录不被覆盖。
@@ -907,7 +1170,12 @@ fn same_attempt_from_other_install_is_not_overwritten() {
     run_import(&env, &mut conn);
     assert_eq!(build_student_view(&conn, "A1").unwrap().raw_score, 8.0);
     let failed = list_failed_imports(&conn).unwrap();
-    assert!(failed.iter().any(|r| r.error.as_deref().unwrap_or("").contains("不同安装")), "{failed:?}");
+    assert!(
+        failed
+            .iter()
+            .any(|r| r.error.as_deref().unwrap_or("").contains("不同安装")),
+        "{failed:?}"
+    );
 }
 
 /// 「导入异常」导出只含本批次/试卷的失败；其他批次的失败仍在总览异常里。
@@ -928,8 +1196,16 @@ fn exception_export_is_scoped_to_group() {
     );
     run_import(&env, &mut conn);
     let all = list_failed_imports(&conn).unwrap();
-    assert!(all.iter().any(|r| r.file == "snapshots/T9/A90.sqlite"), "{all:?}");
+    assert!(
+        all.iter().any(|r| r.file == "snapshots/T9/A90.sqlite"),
+        "{all:?}"
+    );
     let scoped = list_failed_imports_for_group(&conn, BATCH, PAPER).unwrap();
-    assert!(scoped.iter().all(|r| r.batch_id.as_deref() != Some("B-OTHER")), "{scoped:?}");
+    assert!(
+        scoped
+            .iter()
+            .all(|r| r.batch_id.as_deref() != Some("B-OTHER")),
+        "{scoped:?}"
+    );
     assert_eq!(scoped.len(), 3, "{scoped:?}");
 }

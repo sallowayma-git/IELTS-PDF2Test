@@ -153,6 +153,16 @@ const exe = run(
 );
 if (!exe.ok) process.exit(1);
 
+// Cargo may use a shared build cache for an isolated worktree. Copy the binary
+// produced by this build into the worktree before hashing its provenance.
+if (process.env.CARGO_TARGET_DIR) {
+  const cargoExe = path.resolve(repoRoot, process.env.CARGO_TARGET_DIR, "debug", "ielts-author-studio.exe");
+  if (cargoExe !== exePath) {
+    fs.mkdirSync(path.dirname(exePath), { recursive: true });
+    fs.copyFileSync(cargoExe, exePath);
+  }
+}
+
 if (!fs.existsSync(exePath)) {
   console.error(`[build] exe 未产出：${exePath}`);
   process.exit(1);

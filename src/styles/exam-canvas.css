@@ -823,3 +823,10 @@
 .student-highlight-toolbar button { font: 14px Arial, sans-serif; padding: 4px 8px; }
 .exam-canvas-v2.is-student .hl { background: rgb(125, 74, 90); color: #fff; }
 .exam-canvas-v2.is-student .hl[data-hl-type="note"] { background: rgb(32, 76, 207); color: #fff; cursor: pointer; }
+.student-note-overlay { position: fixed; inset: 0; z-index: 999; }
+.student-note-editor { position: fixed; z-index: 1001; min-width: 250px; max-width: 400px; border: 1px solid #c4cbd2; border-radius: 5px; background: white; box-shadow: 0 2px 12px #0005; overflow: hidden; }
+.student-note-editor textarea { display: block; width: 100%; box-sizing: border-box; padding: 8px; min-height: 80px; border: none; border-bottom: 1px solid #e0e0e0; resize: none; font: 14px Arial, sans-serif; outline: none; }
+.student-note-editor .student-note-buttons { display: flex; gap: 4px; padding: 8px; background: #f9f9f9; }
+.student-note-editor button { flex: 1; padding: 6px 12px; border: 1px solid #c4cbd2; border-radius: 3px; background: white; font: 13px Arial, sans-serif; cursor: pointer; }
+.student-note-editor button:hover { background: #f0f0f0; }
+.student-note-editor button:active { background: #e0e0e0; }

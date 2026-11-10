@@ -128,4 +128,10 @@ describe("编辑器「去组卷发布」的预选路由", () => {
   it("没有 pick 时 pickItemId 为 undefined", () => {
     expect(parseRoute("#/library?publish=1").pickItemId).toBeUndefined();
   });
+
+  it("阅读筛选可通过链接恢复", () => {
+    expect(parseRoute("#/library?modality=reading&part=P2")).toMatchObject({
+      name: "library", modality: "reading", part: "P2"
+    });
+  });
 });

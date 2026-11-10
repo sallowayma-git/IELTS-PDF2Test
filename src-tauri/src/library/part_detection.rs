@@ -55,37 +55,80 @@ pub(crate) struct PartDetectionInput<'a> {
 
 /// Shared import/reset evidence reader for canonical nodes and physical source blocks.
 /// Never reads exam.category or examId as evidence (both are derived metadata).
-pub(crate) fn reading_part_from_document(filename: &str, document: &serde_json::Value) -> Option<DetectedPart> {
+pub(crate) fn reading_part_from_document(
+    filename: &str,
+    document: &serde_json::Value,
+) -> Option<DetectedPart> {
     fn visit(value: &serde_json::Value, lines: &mut Vec<String>, numbers: &mut Vec<u32>) {
         match value {
             serde_json::Value::String(text) => lines.extend(text.lines().map(str::to_string)),
-            serde_json::Value::Array(items) => for item in items { visit(item, lines, numbers); },
-            serde_json::Value::Object(object) => for (key, value) in object {
-                if matches!(key.as_str(), "exam" | "audit" | "quality" | "category" | "examId" | "filename" | "originalName") { continue; }
-                if matches!(key.as_str(), "questionNumber" | "displayNumber" | "display_number") {
-                    if let Some(n) = value.as_u64().and_then(|n| u32::try_from(n).ok()) { numbers.push(n); }
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    visit(item, lines, numbers);
                 }
-                if key == "answerKey" {
-                    if let Some(answers) = value.as_object() {
-                        numbers.extend(answers.keys().filter_map(|id| id.strip_prefix('q').unwrap_or(id).parse::<u32>().ok()));
+            }
+            serde_json::Value::Object(object) => {
+                for (key, value) in object {
+                    if matches!(
+                        key.as_str(),
+                        "exam"
+                            | "audit"
+                            | "quality"
+                            | "category"
+                            | "examId"
+                            | "filename"
+                            | "originalName"
+                    ) {
+                        continue;
                     }
+                    if matches!(
+                        key.as_str(),
+                        "questionNumber" | "displayNumber" | "display_number"
+                    ) {
+                        if let Some(n) = value.as_u64().and_then(|n| u32::try_from(n).ok()) {
+                            numbers.push(n);
+                        }
+                    }
+                    if key == "answerKey" {
+                        if let Some(answers) = value.as_object() {
+                            numbers.extend(answers.keys().filter_map(|id| {
+                                id.strip_prefix('q').unwrap_or(id).parse::<u32>().ok()
+                            }));
+                        }
+                    }
+                    visit(value, lines, numbers);
                 }
-                visit(value, lines, numbers);
-            },
-            _ => {},
+            }
+            _ => {}
         }
     }
     let (mut lines, mut numbers) = (Vec::new(), Vec::new());
     visit(document, &mut lines, &mut numbers);
-    detect_part(&PartDetectionInput { modality: "reading", manual_label: None, task_type: None,
-        source_lines: &lines, question_numbers: &numbers, filename })
+    detect_part(&PartDetectionInput {
+        modality: "reading",
+        manual_label: None,
+        task_type: None,
+        source_lines: &lines,
+        question_numbers: &numbers,
+        filename,
+    })
 }
 
-pub(crate) fn import_reading_category(job: &crate::ImportJob, evidence: &serde_json::Value) -> String {
+pub(crate) fn import_reading_category(
+    job: &crate::ImportJob,
+    evidence: &serde_json::Value,
+) -> String {
     let names = std::iter::once(job.title.as_str())
-        .chain(job.source_files.iter().map(|source| source.original_name.as_str()))
-        .collect::<Vec<_>>().join(" ");
-    reading_part_from_document(&names, evidence).map(|p| p.label).unwrap_or_else(|| "P1".to_string())
+        .chain(
+            job.source_files
+                .iter()
+                .map(|source| source.original_name.as_str()),
+        )
+        .collect::<Vec<_>>()
+        .join(" ");
+    reading_part_from_document(&names, evidence)
+        .map(|p| p.label)
+        .unwrap_or_else(|| "P1".to_string())
 }
 
 /// 阅读题号 → Passage：1–13→1，14–26→2，27–40→3。范围外返回 `None`。
@@ -103,7 +146,9 @@ fn reading_label(ordinal: u32) -> Option<String> {
 }
 
 fn listening_label(ordinal: u32) -> Option<String> {
-    (1..=4).contains(&ordinal).then(|| format!("Part {ordinal}"))
+    (1..=4)
+        .contains(&ordinal)
+        .then(|| format!("Part {ordinal}"))
 }
 
 /// 从一行里解析 "READING PASSAGE n" 标题（整行就是标题，尾部可有标点）。
@@ -114,10 +159,7 @@ fn parse_reading_passage_heading(line: &str) -> Option<u32> {
     let mut chars = rest.chars();
     let digit = chars.next()?.to_digit(10)?;
     // 允许尾随标点/空白，但不允许再跟数字（"READING PASSAGE 12" 不是有效的 1..=3）。
-    if chars
-        .next()
-        .is_some_and(|ch| ch.is_ascii_digit())
-    {
+    if chars.next().is_some_and(|ch| ch.is_ascii_digit()) {
         return None;
     }
     (1..=3).contains(&digit).then_some(digit)
@@ -302,7 +344,10 @@ mod tests {
 
     #[test]
     fn content_heading_beats_filename() {
-        let lines = vec!["READING PASSAGE 2".to_string(), "Some body text".to_string()];
+        let lines = vec![
+            "READING PASSAGE 2".to_string(),
+            "Some body text".to_string(),
+        ];
         // 文件名说 P1，但原文标题说 Passage 2 —— 内容优先。
         assert_eq!(
             detect(&input("reading", "p1-conformity", &lines, &[])),
@@ -318,15 +363,30 @@ mod tests {
     #[test]
     fn range_maps_reading_bands_when_contiguous_and_single_band() {
         assert_eq!(
-            detect(&input("reading", "no-hint", &[], &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])),
+            detect(&input(
+                "reading",
+                "no-hint",
+                &[],
+                &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+            )),
             Some(("P1".to_string(), PartSource::Range))
         );
         assert_eq!(
-            detect(&input("reading", "no-hint", &[], &(14..=26).collect::<Vec<_>>())),
+            detect(&input(
+                "reading",
+                "no-hint",
+                &[],
+                &(14..=26).collect::<Vec<_>>()
+            )),
             Some(("P2".to_string(), PartSource::Range))
         );
         assert_eq!(
-            detect(&input("reading", "no-hint", &[], &(27..=40).collect::<Vec<_>>())),
+            detect(&input(
+                "reading",
+                "no-hint",
+                &[],
+                &(27..=40).collect::<Vec<_>>()
+            )),
             Some(("P3".to_string(), PartSource::Range))
         );
     }
@@ -334,7 +394,15 @@ mod tests {
     #[test]
     fn range_refuses_when_spanning_bands_or_non_contiguous() {
         // 跨段（P1 到 P2）→ 不判定。
-        assert_eq!(detect(&input("reading", "no-hint", &[], &(10..=20).collect::<Vec<_>>())), None);
+        assert_eq!(
+            detect(&input(
+                "reading",
+                "no-hint",
+                &[],
+                &(10..=20).collect::<Vec<_>>()
+            )),
+            None
+        );
         // 不连续 → 不判定。
         assert_eq!(detect(&input("reading", "no-hint", &[], &[1, 2, 40])), None);
         // 范围外 → 不判定。
@@ -346,7 +414,12 @@ mod tests {
         let lines = vec!["READING PASSAGE 1".to_string()];
         // 原文说 Passage 1，题号却像 P2；内容优先于范围。
         assert_eq!(
-            detect(&input("reading", "x", &lines, &(14..=26).collect::<Vec<_>>())),
+            detect(&input(
+                "reading",
+                "x",
+                &lines,
+                &(14..=26).collect::<Vec<_>>()
+            )),
             Some(("P1".to_string(), PartSource::Content))
         );
     }
@@ -361,7 +434,10 @@ mod tests {
             question_numbers: &[],
             filename: "essay",
         };
-        assert_eq!(detect(&i), Some(("Task 2".to_string(), PartSource::Content)));
+        assert_eq!(
+            detect(&i),
+            Some(("Task 2".to_string(), PartSource::Content))
+        );
     }
 
     #[test]
@@ -381,10 +457,16 @@ mod tests {
     #[test]
     fn filename_does_not_false_positive_on_word_internal_letters() {
         // 词内 p / part 不得触发 Part。
-        assert_eq!(detect(&input("reading", "Group 3 elements", &[], &[])), None);
+        assert_eq!(
+            detect(&input("reading", "Group 3 elements", &[], &[])),
+            None
+        );
         assert_eq!(detect(&input("reading", "Deep 2 dive", &[], &[])), None);
         assert_eq!(detect(&input("reading", "Step 1 guide", &[], &[])), None);
-        assert_eq!(detect(&input("listening", "Department 3 memo", &[], &[])), None);
+        assert_eq!(
+            detect(&input("listening", "Department 3 memo", &[], &[])),
+            None
+        );
         // 但真正的 token 仍然识别。
         assert_eq!(
             detect(&input("reading", "notes p 2 draft", &[], &[])),
@@ -394,7 +476,10 @@ mod tests {
 
     #[test]
     fn no_signal_returns_none() {
-        assert_eq!(detect(&input("reading", "untitled document", &[], &[])), None);
+        assert_eq!(
+            detect(&input("reading", "untitled document", &[], &[])),
+            None
+        );
     }
 
     #[test]
@@ -402,7 +487,9 @@ mod tests {
         let document = serde_json::json!({"source":{"filename":"READING PASSAGE 1.pdf"},
             "answerSlots":{"slot":{"questionNumber":14}}});
         let part = reading_part_from_document("READING PASSAGE 1.pdf", &document).unwrap();
-        assert_eq!((part.label, part.source), ("P2".to_string(), PartSource::Range));
+        assert_eq!(
+            (part.label, part.source),
+            ("P2".to_string(), PartSource::Range)
+        );
     }
 }
-

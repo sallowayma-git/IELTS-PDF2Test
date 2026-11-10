@@ -325,7 +325,10 @@ const PAPER_HISTORY_DIR_NAME: &str = "papers";
 
 /// 组卷校验（清单写入之前）：三篇阅读必须是 reading 且 Part 分别为 P1/P2/P3，
 /// 听力题必须是 listening 且 Part 相符；所有试卷题都必须在本次 `item_ids` 里、不得重复。
-fn validate_paper_spec(conn: &rusqlite::Connection, input: &PublishItemsInput) -> CommandResult<()> {
+fn validate_paper_spec(
+    conn: &rusqlite::Connection,
+    input: &PublishItemsInput,
+) -> CommandResult<()> {
     use crate::library::repository::get_item;
     let Some(paper) = input.paper.as_ref() else {
         return Ok(());
@@ -408,12 +411,19 @@ fn publish_current_paper(
             .and_then(|exam_id| committed.get(exam_id).map(|entry| (exam_id, entry)))
             .and_then(|(exam_id, entry)| {
                 let script = entry.get("script").and_then(Value::as_str)?;
-                let script_sha = entry.pointer("/checksums/scriptSha256").and_then(Value::as_str)?;
-                let runtime_sha = entry.pointer("/checksums/runtimeSha256").and_then(Value::as_str)?;
+                let script_sha = entry
+                    .pointer("/checksums/scriptSha256")
+                    .and_then(Value::as_str)?;
+                let runtime_sha = entry
+                    .pointer("/checksums/runtimeSha256")
+                    .and_then(Value::as_str)?;
                 if !script.starts_with(&script_prefix) {
                     return None;
                 }
-                let title = entry.get("title").and_then(Value::as_str).unwrap_or_default();
+                let title = entry
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 Some(json!({
                     "part": part,
                     "examId": exam_id,
@@ -454,14 +464,22 @@ fn publish_current_paper(
     let temporary = reading_root.join(format!(".current-paper-{paper_id}.tmp"));
     write_synced_file(&temporary, &bytes)?;
     let old_batches = current_pointer_batch_ids(reading_root);
-    if let Err(error) = atomic_replace_file(&temporary, &reading_root.join(CURRENT_PAPER_FILE_NAME)) {
+    if let Err(error) = atomic_replace_file(&temporary, &reading_root.join(CURRENT_PAPER_FILE_NAME))
+    {
         let _ = fs::remove_file(&temporary);
         return Err(error);
     }
     // 指针已切换：旧指针独有的批次从此刻起算宽限期（契约 V1.1 第 6 条）。
-    record_superseded_batches(library_root, &old_batches, &pointer_batch_ids(&document), Utc::now());
-    Ok(json!({"ok": true, "paperId": paper_id, "publishedAt": published_at, "batchId": batch_id,
-        "reading": document["reading"], "listening": document["listening"]}))
+    record_superseded_batches(
+        library_root,
+        &old_batches,
+        &pointer_batch_ids(&document),
+        Utc::now(),
+    );
+    Ok(
+        json!({"ok": true, "paperId": paper_id, "publishedAt": published_at, "batchId": batch_id,
+        "reading": document["reading"], "listening": document["listening"]}),
+    )
 }
 
 /// 读取 NAS 上的当前试卷指针；不存在返回 `null`。
@@ -474,7 +492,6 @@ pub(crate) fn get_current_paper_core(destination: &str) -> CommandResult<Value> 
     let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
     serde_json::from_str::<Value>(&text).map_err(|error| format!("CURRENT_PAPER_INVALID:{error}"))
 }
-
 
 /// 门禁类失败（编译未通过 / 结构非法）：P2 起 strict 发布里这是**条目级**可降级失败，
 /// 不是批次级环境故障。IO / 资产 / 清单 CAS 等错误不在此列，照旧中断整批。
@@ -580,32 +597,33 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
             // （编译不过、答案没闭合同理），所以走到 `?` 的只剩 IO 与安全类硬错误：
             // 资产缺失/越界、examId 路径不安全、目录不可写、清单 CAS、锁。把这类错误吞成
             // 「这条没发出去」，等于替用户接受环境故障——而他要的是「发布」。
-            let materialized = match crate::authoring_v2_commands::export_authoring_snapshot_with_mode(
-                root,
-                crate::authoring_v2_commands::ExportAuthoringV2Input {
-                    job_id: item_id.clone(),
-                    export_dir: staging.join("snapshots").to_string_lossy().into_owned(),
-                    revision: None,
-                    authoring: Some(ds.clone()),
-                    edit_version: Some(*version as u64),
-                },
-                &mode,
-            ) {
-                Ok(materialized) => materialized,
-                Err(error) if is_publish_gate_failure(&error) => {
-                    // P2 门禁收敛：strict 模式（前端不再带 force）下，编译不过的条目
-                    // 是**这条题自己的内容问题**——与「包检查失败」同级的可降级失败：
-                    // 这一条如实失败，整批照常发布，绝不静默吞掉也不中断批次。
-                    eprintln!("[publish] gate blocked {item_id}: {error}");
-                    failed_items.push(json!({
+            let materialized =
+                match crate::authoring_v2_commands::export_authoring_snapshot_with_mode(
+                    root,
+                    crate::authoring_v2_commands::ExportAuthoringV2Input {
+                        job_id: item_id.clone(),
+                        export_dir: staging.join("snapshots").to_string_lossy().into_owned(),
+                        revision: None,
+                        authoring: Some(ds.clone()),
+                        edit_version: Some(*version as u64),
+                    },
+                    &mode,
+                ) {
+                    Ok(materialized) => materialized,
+                    Err(error) if is_publish_gate_failure(&error) => {
+                        // P2 门禁收敛：strict 模式（前端不再带 force）下，编译不过的条目
+                        // 是**这条题自己的内容问题**——与「包检查失败」同级的可降级失败：
+                        // 这一条如实失败，整批照常发布，绝不静默吞掉也不中断批次。
+                        eprintln!("[publish] gate blocked {item_id}: {error}");
+                        failed_items.push(json!({
                         "itemId": item_id,
                         "ok": false,
                         "message": "这道题还没达到发布条件：编译未通过。请在编辑器里处理列出的问题后重试。"
                     }));
-                    continue;
-                }
-                Err(error) => return Err(error),
-            };
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                };
             let receipt = materialized.get("receipt").cloned().unwrap_or(Value::Null);
             let publish_override = receipt.get("publishOverride").cloned();
             let student_loadable = receipt
@@ -775,6 +793,20 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
                             "confirmedAt": publish_override.get("confirmedAt").cloned()}),
                         );
                     }
+                    let source_path = receipt
+                        .get("runtimePath")
+                        .and_then(Value::as_str)
+                        .ok_or("PUBLISH_RUNTIME_MISSING")?;
+                    let archive_source: Value = crate::util::read_json(Path::new(source_path))?;
+                    crate::library::paper_archive::store_content(
+                        &conn,
+                        &library_root,
+                        &exam_id,
+                        staged.entry["checksums"]["runtimeSha256"]
+                            .as_str()
+                            .ok_or("PUBLISH_RUNTIME_HASH_MISSING")?,
+                        &archive_source,
+                    )?;
                     manifest.insert(exam_id.clone(), staged.entry);
                     outcomes.push(json!({"itemId": item_id, "ok": true, "examId": exam_id,
                         "editVersion": version, "manifestPath": paths.manifest_path, "assetCount": asset_count,
@@ -886,14 +918,37 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
             .and_then(|value| value.get("ok"))
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let archive_warning = if paper_written {
+            (|| -> CommandResult<()> {
+                let pointer: Value =
+                    crate::util::read_json(&reading_root.join(CURRENT_PAPER_FILE_NAME))?;
+                crate::library::paper_archive::record_pointer(
+                    &conn,
+                    &library_root,
+                    &pointer,
+                    &outcomes,
+                )
+            })()
+            .err()
+        } else {
+            None
+        };
         // 清理旧批次：只在指针成功之后执行；它永不删除当前磁盘指针引用的批次。
         let cleanup = paper_written.then(|| {
-            cleanup_superseded_releases(&library_root, &reading_root, &manifest, &batch_id, Utc::now())
+            cleanup_superseded_releases(
+                &library_root,
+                &reading_root,
+                &manifest,
+                &batch_id,
+                Utc::now(),
+            )
         });
         let succeeded = outcomes;
-        let mut value =
-            json!({"destination": input.destination, "succeeded": succeeded, "failed": failed_items});
+        let mut value = json!({"destination": input.destination, "succeeded": succeeded, "failed": failed_items});
         let pointer_failed = input.paper.is_some() && !paper_written;
+        if let Some(error) = archive_warning {
+            value["archiveWarning"] = json!({"code":"PAPER_ARCHIVE_PENDING","message":"试卷已发布，本地档案待修复","detail":error});
+        }
         if let Some(paper_result) = paper_result {
             value["paper"] = paper_result;
         }
@@ -932,7 +987,8 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
         let status_drift = match commit_published_status(&conn, &publications) {
             Ok(drift) => drift,
             Err(error) => {
-                post_commit_warnings.push(json!({"reason": "status_commit_failed", "error": error}));
+                post_commit_warnings
+                    .push(json!({"reason": "status_commit_failed", "error": error}));
                 Vec::new()
             }
         };
@@ -943,7 +999,8 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
             &batch_id,
             &input.destination,
         ) {
-            post_commit_warnings.push(json!({"reason": "publish_record_write_failed", "error": error}));
+            post_commit_warnings
+                .push(json!({"reason": "publish_record_write_failed", "error": error}));
         }
         if !status_drift.is_empty() {
             post_commit_warnings.push(json!({"reason": "status_drift", "items": status_drift}));
@@ -1039,7 +1096,11 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
 
 /// 组卷的试卷题里，本批没有以「学生端可加载」成功的 examId（按 item id 列出）。
 fn paper_missing_items(paper: &PaperSpec, outcomes: &[Value]) -> Vec<String> {
-    let mut slots: Vec<&str> = vec![paper.reading.p1.as_str(), paper.reading.p2.as_str(), paper.reading.p3.as_str()];
+    let mut slots: Vec<&str> = vec![
+        paper.reading.p1.as_str(),
+        paper.reading.p2.as_str(),
+        paper.reading.p3.as_str(),
+    ];
     slots.extend(paper.listening.iter().map(|slot| slot.item_id.as_str()));
     slots
         .into_iter()
@@ -1069,7 +1130,10 @@ fn superseded_record_path(library_root: &Path, key: &str) -> PathBuf {
 }
 
 /// 读取撤下时间；无记录返回 `Ok(None)`，记录损坏返回 `Err`（清理跳过该项并报告，不删除）。
-fn read_superseded_at(library_root: &Path, key: &str) -> Result<Option<chrono::DateTime<Utc>>, String> {
+fn read_superseded_at(
+    library_root: &Path,
+    key: &str,
+) -> Result<Option<chrono::DateTime<Utc>>, String> {
     let path = superseded_record_path(library_root, key);
     if !path.is_file() {
         return Ok(None);
@@ -1086,7 +1150,11 @@ fn read_superseded_at(library_root: &Path, key: &str) -> Result<Option<chrono::D
 }
 
 /// 写撤下记录（临时文件 + 原子替换，经 write_synced_file 落盘）。
-fn write_superseded_record(library_root: &Path, key: &str, at: chrono::DateTime<Utc>) -> CommandResult<()> {
+fn write_superseded_record(
+    library_root: &Path,
+    key: &str,
+    at: chrono::DateTime<Utc>,
+) -> CommandResult<()> {
     let path = superseded_record_path(library_root, key);
     let bytes = canonical_json_bytes(&json!({
         "schemaVersion": "SupersededV1",
@@ -1133,9 +1201,14 @@ pub(crate) fn cleanup_superseded_releases(
     current_batch_id: &str,
     now: chrono::DateTime<Utc>,
 ) -> Value {
-    cleanup_superseded_releases_with(library_root, reading_root, manifest, current_batch_id, now, &|path| {
-        fs::remove_dir_all(path)
-    })
+    cleanup_superseded_releases_with(
+        library_root,
+        reading_root,
+        manifest,
+        current_batch_id,
+        now,
+        &|path| fs::remove_dir_all(path),
+    )
 }
 
 /// 磁盘上当前指针引用的批次号集合（见 `pointer_batch_ids`）。指针缺失或损坏时返回空集合。
@@ -1156,8 +1229,16 @@ fn pointer_batch_ids(pointer: &Value) -> BTreeSet<String> {
         batches.insert(batch.to_string());
     }
     for group in ["reading", "listening"] {
-        for item in pointer.get(group).and_then(Value::as_array).into_iter().flatten() {
-            let script = item.get("script").and_then(Value::as_str).unwrap_or_default();
+        for item in pointer
+            .get(group)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let script = item
+                .get("script")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             if let Some(rest) = script.strip_prefix("./releases/") {
                 if let Some((batch, _)) = rest.split_once('/') {
                     batches.insert(batch.to_string());
@@ -1184,7 +1265,10 @@ pub(crate) fn cleanup_superseded_releases_with(
     let mut kept = Vec::new();
     let mut failed = Vec::new();
     let grace = chrono::Duration::hours(SUPERSEDED_GRACE_HOURS);
-    let mut sweep = |dir_root: PathBuf, label: &str, key_of: &dyn Fn(&str) -> String, referenced: &dyn Fn(&str) -> bool| {
+    let mut sweep = |dir_root: PathBuf,
+                     label: &str,
+                     key_of: &dyn Fn(&str) -> String,
+                     referenced: &dyn Fn(&str) -> bool| {
         for entry in fs::read_dir(&dir_root).into_iter().flatten().flatten() {
             let path = entry.path();
             if !path.is_dir() {

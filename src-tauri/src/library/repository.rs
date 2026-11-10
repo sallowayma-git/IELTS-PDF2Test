@@ -5,7 +5,8 @@
 //! 只在导入与按需迁移时作为**来源**读取；数据库编辑不再回写派生文件，
 //! canonical DS 是唯一权威稿。
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -27,19 +28,25 @@ pub(crate) fn open_library_connection(root: &std::path::Path) -> CommandResult<C
 }
 
 /// 记录已迁移过 V2 schema 的库文件（进程内、按路径去重）。
-fn v2_ensured_set() -> &'static std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>> {
-    static V2_ENSURED: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>,
-    > = std::sync::OnceLock::new();
-    V2_ENSURED.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+type SchemaInitialization = Arc<Mutex<bool>>;
+fn v2_ensured_set() -> &'static Mutex<HashMap<std::path::PathBuf, SchemaInitialization>> {
+    static V2_ENSURED: OnceLock<Mutex<HashMap<std::path::PathBuf, SchemaInitialization>>> =
+        OnceLock::new();
+    V2_ENSURED.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn ensure_v2_schema_once(path: &std::path::Path, conn: &Connection) -> CommandResult<()> {
-    if v2_ensured_set().lock().unwrap().contains(path) {
-        return Ok(());
+    let state = v2_ensured_set()
+        .lock()
+        .unwrap()
+        .entry(path.to_path_buf())
+        .or_insert_with(|| Arc::new(Mutex::new(false)))
+        .clone();
+    let mut ensured = state.lock().unwrap();
+    if !*ensured {
+        ensure_v2_schema(conn)?;
+        *ensured = true;
     }
-    ensure_v2_schema(conn)?;
-    v2_ensured_set().lock().unwrap().insert(path.to_path_buf());
     Ok(())
 }
 
@@ -618,7 +625,9 @@ impl EditFootprint {
             extend_with_context(document, &[task_id.to_string()], out);
         };
         match op {
-            "setExamCategory" => { targets.insert(format!("{TOP_FIELD_PREFIX}exam")); }
+            "setExamCategory" => {
+                targets.insert(format!("{TOP_FIELD_PREFIX}exam"));
+            }
             // Trusted internal replacement only: compute its actual delta rather
             // than treating an unchanged sibling as an attempted overwrite.
             "replaceAuthoringDocument" => {
@@ -1785,27 +1794,36 @@ fn cas_write_canonical(
     }
     // Reading category is canonical. Keep the list/filter projection in the same CAS
     // transaction; listening Part 1–4 and writing Task 1/2 remain library-only labels.
-    if let Some(category) = ds.pointer("/exam/category").and_then(Value::as_str)
+    if let Some(category) = ds
+        .pointer("/exam/category")
+        .and_then(Value::as_str)
         .filter(|v| matches!(*v, "P1" | "P2" | "P3"))
     {
-        let (label, source): (Option<String>, Option<String>) = transaction.query_row(
-            "SELECT part_label, part_source FROM library_items_v2 WHERE id=?1", [item_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).map_err(|error| format!("library_v2_part_projection_read:{error}"))?;
+        let (label, source): (Option<String>, Option<String>) = transaction
+            .query_row(
+                "SELECT part_label, part_source FROM library_items_v2 WHERE id=?1",
+                [item_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|error| format!("library_v2_part_projection_read:{error}"))?;
         // An unrelated save must not erase the old detector's only evidence
         // before lazy backfill can repair a legacy default P1. An explicit human
         // category patch overrides this below in the same transaction.
         if is_automatic_part_source(source.as_deref())
-            && label.as_deref().is_some_and(|v| matches!(v, "P1" | "P2" | "P3") && v != category)
+            && label
+                .as_deref()
+                .is_some_and(|v| matches!(v, "P1" | "P2" | "P3") && v != category)
             && !has_human_category_edit(transaction, item_id)?
         {
             return Ok(());
         }
-        transaction.execute(
-            "UPDATE library_items_v2 SET part_source = COALESCE(part_source, 'canonical'),
+        transaction
+            .execute(
+                "UPDATE library_items_v2 SET part_source = COALESCE(part_source, 'canonical'),
              part_label = ?2 WHERE id = ?1 AND modality = 'reading'",
-            params![item_id, category],
-        ).map_err(|error| format!("library_v2_part_projection:{error}"))?;
+                params![item_id, category],
+            )
+            .map_err(|error| format!("library_v2_part_projection:{error}"))?;
     }
     Ok(())
 }
@@ -2267,8 +2285,18 @@ pub(crate) fn apply_editor_commands_tx_with(
         next_status,
         &now,
     )?;
-    if origin.writes_human_protection() && input.commands.iter().any(|c| c.get("op").and_then(Value::as_str) == Some("setExamCategory")) {
-        set_item_part(&transaction, &input.item_id, ds.pointer("/exam/category").and_then(Value::as_str), Some("manual"))?;
+    if origin.writes_human_protection()
+        && input
+            .commands
+            .iter()
+            .any(|c| c.get("op").and_then(Value::as_str) == Some("setExamCategory"))
+    {
+        set_item_part(
+            &transaction,
+            &input.item_id,
+            ds.pointer("/exam/category").and_then(Value::as_str),
+            Some("manual"),
+        )?;
     }
     if let Some(title) = input.title.as_deref() {
         transaction
@@ -2390,15 +2418,31 @@ mod tests {
     fn summary_projection_preserves_null_empty_deleted_and_full_document_reads() {
         let conn = memory_repo();
         for id in ["null", "empty", "full", "deleted"] {
-            upsert_item_shell(&conn, &UpsertItemInput {
-                id, modality: "reading", title: id, status: "ready", source_asset_id: None,
-            }).unwrap();
+            upsert_item_shell(
+                &conn,
+                &UpsertItemInput {
+                    id,
+                    modality: "reading",
+                    title: id,
+                    status: "ready",
+                    source_asset_id: None,
+                },
+            )
+            .unwrap();
         }
-        conn.execute("UPDATE library_items_v2 SET canonical_ds_json='' WHERE id='empty'", []).unwrap();
+        conn.execute(
+            "UPDATE library_items_v2 SET canonical_ds_json='' WHERE id='empty'",
+            [],
+        )
+        .unwrap();
         let full = sample_ds(&"long title ".repeat(10_000));
         seed_canonical_ds(&conn, "full", &full.to_string(), "ready").unwrap();
         seed_canonical_ds(&conn, "deleted", &sample_ds("Deleted").to_string(), "ready").unwrap();
-        conn.execute("UPDATE library_items_v2 SET deleted_at='2026-10-04' WHERE id='deleted'", []).unwrap();
+        conn.execute(
+            "UPDATE library_items_v2 SET deleted_at='2026-10-04' WHERE id='deleted'",
+            [],
+        )
+        .unwrap();
 
         let active = list_items(&conn, false).unwrap();
         assert_eq!(active.len(), 3);

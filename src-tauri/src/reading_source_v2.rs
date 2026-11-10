@@ -4,8 +4,8 @@ use crate::schema::content_doc_v2::{
 };
 use crate::schema::ielts_authoring_v2::{
     AnswerAssignmentV2, AnswerSlotParticipationV2, AnswerSlotV2, AnswerValueV2, AssignmentV2,
-    DuplicateSelectionPolicyV2, IeltsAuthoringIRV2, InteractionV2, OptionBankScopeV2,
-    OptionV2, PassageCategoryV2, ResponseGroupKindV2, ResponseGroupV2, ResponseScoringPolicyV2,
+    DuplicateSelectionPolicyV2, IeltsAuthoringIRV2, InteractionV2, OptionBankScopeV2, OptionV2,
+    PassageCategoryV2, ResponseGroupKindV2, ResponseGroupV2, ResponseScoringPolicyV2,
     RevisionSourceV2, TaskGroupV2, TaskTypeV2,
 };
 use serde::{Deserialize, Serialize};
@@ -209,7 +209,12 @@ fn normalize_runtime_fixed_truth_option_content(task_groups: &mut [TaskGroupV2])
 /// option contract requires inline options or a bank. Never repair explicit
 /// bank references or infer paragraph letters absent from the source map.
 fn normalize_runtime_paragraph_options(source: &mut ReadingExamSourceV2) {
-    let Some(paragraphs) = source.passage.paragraph_map.as_ref().filter(|map| !map.is_empty()) else {
+    let Some(paragraphs) = source
+        .passage
+        .paragraph_map
+        .as_ref()
+        .filter(|map| !map.is_empty())
+    else {
         return;
     };
     for task in &mut source.task_groups {
@@ -218,24 +223,34 @@ fn normalize_runtime_paragraph_options(source: &mut ReadingExamSourceV2) {
         }
         for response in &mut task.response_groups {
             if !matches!(response.kind, ResponseGroupKindV2::Matching)
-                || response.options.is_some() || response.option_bank_ref.is_some()
+                || response.options.is_some()
+                || response.option_bank_ref.is_some()
             {
                 continue;
             }
-            response.options = Some(paragraphs.keys().map(|label| {
-                let option_id = format!("{}-paragraph-{label}", response.response_group_id);
-                OptionV2 {
-                    content: vec![ContentNodeV2::Text(TextNodeV2 {
-                        base: BaseContentNodeV2 {
-                            id: format!("{option_id}-text"), source_anchors: Vec::new(),
-                            provenance_status: ProvenanceStatusV2::Derived,
-                        },
-                        text: label.clone(), marks: None,
-                    })],
-                    option_id, label: label.clone(), source_anchors: Vec::new(),
-                    provenance_status: Some(ProvenanceStatusV2::Derived),
-                }
-            }).collect());
+            response.options = Some(
+                paragraphs
+                    .keys()
+                    .map(|label| {
+                        let option_id = format!("{}-paragraph-{label}", response.response_group_id);
+                        OptionV2 {
+                            content: vec![ContentNodeV2::Text(TextNodeV2 {
+                                base: BaseContentNodeV2 {
+                                    id: format!("{option_id}-text"),
+                                    source_anchors: Vec::new(),
+                                    provenance_status: ProvenanceStatusV2::Derived,
+                                },
+                                text: label.clone(),
+                                marks: None,
+                            })],
+                            option_id,
+                            label: label.clone(),
+                            source_anchors: Vec::new(),
+                            provenance_status: Some(ProvenanceStatusV2::Derived),
+                        }
+                    })
+                    .collect(),
+            );
         }
     }
 }
@@ -328,7 +343,10 @@ pub(crate) fn validate_reading_source_v2(source: &ReadingExamSourceV2) -> Vec<Co
     let mut mapped_paragraph_ids = BTreeSet::new();
     if let Some(paragraph_map) = source.passage.paragraph_map.as_ref() {
         for (label, node_id) in paragraph_map {
-            if label.trim().is_empty() || node_id.trim().is_empty() || !passage_paragraph_ids.contains(node_id) {
+            if label.trim().is_empty()
+                || node_id.trim().is_empty()
+                || !passage_paragraph_ids.contains(node_id)
+            {
                 issues.push(compiler_issue(
                     "RUNTIME_PARAGRAPH_MAP_TARGET_INVALID",
                     "Every paragraphMap entry must target a real paragraph node in passage.content.",
@@ -445,7 +463,10 @@ pub(crate) fn validate_reading_source_v2(source: &ReadingExamSourceV2) -> Vec<Co
         ));
     }
     for (slot_id, slot) in &source.answer_slots {
-        if matches!(&slot.host_type, crate::schema::ielts_authoring_v2::AnswerSlotHostTypeV2::PassageParagraph) {
+        if matches!(
+            &slot.host_type,
+            crate::schema::ielts_authoring_v2::AnswerSlotHostTypeV2::PassageParagraph
+        ) {
             let mapped = slot.host_node_id.as_deref().is_some_and(|host_id| {
                 passage_paragraph_ids.contains(host_id) && mapped_paragraph_ids.contains(host_id)
             });
@@ -1176,17 +1197,21 @@ mod tests {
     #[test]
     fn font_scale_survives_compile_and_json_round_trip() {
         let mut source = serde_json::to_value(fixture()).unwrap();
-        source["passage"]["content"].as_array_mut().unwrap().push(json!({
-            "type": "heading", "id": "scaled-title", "level": 2, "fontScale": 1.3,
-            "sourceAnchors": [], "provenanceStatus": "user_edited",
-            "children": [{"type": "text", "id": "scaled-text", "text": "Reading title",
-                "sourceAnchors": [], "provenanceStatus": "source"}]
-        }));
+        source["passage"]["content"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "type": "heading", "id": "scaled-title", "level": 2, "fontScale": 1.3,
+                "sourceAnchors": [], "provenanceStatus": "user_edited",
+                "children": [{"type": "text", "id": "scaled-text", "text": "Reading title",
+                    "sourceAnchors": [], "provenanceStatus": "source"}]
+            }));
         let source: IeltsAuthoringIRV2 = serde_json::from_value(source).unwrap();
         let runtime = compile_reading_source_v2(&source).expect("scaled heading compiles");
         let json = serde_json::to_value(runtime).unwrap();
         assert!(json.to_string().contains("\"fontScale\":1.3"));
-        let restored: IeltsAuthoringIRV2 = serde_json::from_slice(&serde_json::to_vec(&source).unwrap()).unwrap();
+        let restored: IeltsAuthoringIRV2 =
+            serde_json::from_slice(&serde_json::to_vec(&source).unwrap()).unwrap();
         assert_eq!(restored, source);
     }
 
@@ -1233,30 +1258,55 @@ mod tests {
     #[test]
     fn heading_runtime_keeps_mapped_passage_hosts_dragdrop_and_shared_bank() {
         let mut authoring = fixture();
-        authoring.passage.as_mut().unwrap().paragraph_map =
-            Some(BTreeMap::from([("A".to_string(), "passage-p1".to_string())]));
+        authoring.passage.as_mut().unwrap().paragraph_map = Some(BTreeMap::from([(
+            "A".to_string(),
+            "passage-p1".to_string(),
+        )]));
         let slot = authoring.answer_slots.get_mut("q14").unwrap();
         slot.host_node_id = Some("passage-p1".to_string());
         slot.host_type = crate::schema::ielts_authoring_v2::AnswerSlotHostTypeV2::PassageParagraph;
         slot.interaction = InteractionV2::Dragdrop;
 
         let runtime = compile_reading_source_v2(&authoring).unwrap();
-        assert_eq!(runtime.passage.paragraph_map.as_ref().unwrap()["A"], "passage-p1");
-        assert_eq!(runtime.answer_slots["q14"].host_node_id.as_deref(), Some("passage-p1"));
-        assert!(matches!(&runtime.answer_slots["q14"].interaction, InteractionV2::Dragdrop));
-        assert!(runtime.task_groups[0].response_groups[0].option_bank_ref.is_some());
+        assert_eq!(
+            runtime.passage.paragraph_map.as_ref().unwrap()["A"],
+            "passage-p1"
+        );
+        assert_eq!(
+            runtime.answer_slots["q14"].host_node_id.as_deref(),
+            Some("passage-p1")
+        );
+        assert!(matches!(
+            &runtime.answer_slots["q14"].interaction,
+            InteractionV2::Dragdrop
+        ));
+        assert!(runtime.task_groups[0].response_groups[0]
+            .option_bank_ref
+            .is_some());
         let runtime_value = serde_json::to_value(runtime).unwrap();
-        assert_eq!(runtime_value.pointer("/answerSlots/q14/hostType"), Some(&json!("passage_paragraph")));
-        assert_eq!(runtime_value.pointer("/answerSlots/q14/interaction"), Some(&json!("dragdrop")));
-        assert!(runtime_value.pointer("/taskGroups/0/optionBank/options").is_some());
-        assert!(runtime_value.pointer("/taskGroups/0/responseGroups/0/optionBankRef").is_some());
+        assert_eq!(
+            runtime_value.pointer("/answerSlots/q14/hostType"),
+            Some(&json!("passage_paragraph"))
+        );
+        assert_eq!(
+            runtime_value.pointer("/answerSlots/q14/interaction"),
+            Some(&json!("dragdrop"))
+        );
+        assert!(runtime_value
+            .pointer("/taskGroups/0/optionBank/options")
+            .is_some());
+        assert!(runtime_value
+            .pointer("/taskGroups/0/responseGroups/0/optionBankRef")
+            .is_some());
     }
 
     #[test]
     fn passage_paragraph_runtime_target_must_exist_in_the_real_paragraph_map() {
         let mut authoring = fixture();
-        authoring.passage.as_mut().unwrap().paragraph_map =
-            Some(BTreeMap::from([("A".to_string(), "passage-p1-text".to_string())]));
+        authoring.passage.as_mut().unwrap().paragraph_map = Some(BTreeMap::from([(
+            "A".to_string(),
+            "passage-p1-text".to_string(),
+        )]));
         let slot = authoring.answer_slots.get_mut("q14").unwrap();
         slot.host_node_id = Some("passage-p1-text".to_string());
         slot.host_type = crate::schema::ielts_authoring_v2::AnswerSlotHostTypeV2::PassageParagraph;
@@ -1264,11 +1314,15 @@ mod tests {
 
         let issues = compile_reading_source_v2(&authoring).unwrap_err();
         assert!(
-            issues.iter().any(|issue| issue.code == "RUNTIME_PARAGRAPH_MAP_TARGET_INVALID"),
+            issues
+                .iter()
+                .any(|issue| issue.code == "RUNTIME_PARAGRAPH_MAP_TARGET_INVALID"),
             "{issues:?}"
         );
         assert!(
-            issues.iter().any(|issue| issue.code == "RUNTIME_PASSAGE_HOST_UNMAPPED"),
+            issues
+                .iter()
+                .any(|issue| issue.code == "RUNTIME_PASSAGE_HOST_UNMAPPED"),
             "{issues:?}"
         );
     }
@@ -1331,11 +1385,9 @@ mod tests {
         let mut source = serde_json::to_value(fixture()).unwrap();
         let instruction = "Questions 14-15 YES if the statement agrees with the views of the writer NO if the statement contradicts the views of the writer NOT GIVEN if it is impossible to say what the writer thinks about this";
         source["taskGroups"][0]["taskType"] = json!("yes_no_not_given");
-        source["taskGroups"][0]["instructionSignature"]["taskType"] =
-            json!("yes_no_not_given");
+        source["taskGroups"][0]["instructionSignature"]["taskType"] = json!("yes_no_not_given");
         source["taskGroups"][0]["instructionSignature"]["normalizedText"] = json!(instruction);
-        source["taskGroups"][0]["instructionSignature"]["answerAssignment"] =
-            json!("per_slot");
+        source["taskGroups"][0]["instructionSignature"]["answerAssignment"] = json!("per_slot");
         source["taskGroups"][0]["instructions"] = json!([{
             "type":"text","id":"ynng-instruction","sourceAnchors":[],
             "provenanceStatus":"source","text":instruction
@@ -1527,8 +1579,10 @@ mod tests {
     #[test]
     fn matching_information_exports_source_paragraph_choices_but_missing_map_stays_blocked() {
         let mut authoring = fixture();
-        authoring.passage.as_mut().unwrap().paragraph_map =
-            Some(BTreeMap::from([("A".to_string(), "passage-p1".to_string())]));
+        authoring.passage.as_mut().unwrap().paragraph_map = Some(BTreeMap::from([(
+            "A".to_string(),
+            "passage-p1".to_string(),
+        )]));
         let task = &mut authoring.task_groups[0];
         task.task_type = TaskTypeV2::MatchingInformation;
         task.option_bank = None;
@@ -1537,21 +1591,40 @@ mod tests {
             response.options = None;
             response.option_bank_ref = None;
             response.assignment = AssignmentV2::PerSlot;
-            response.cardinality = CardinalityV2 { min: 1, max: 1, exact: Some(1) };
+            response.cardinality = CardinalityV2 {
+                min: 1,
+                max: 1,
+                exact: Some(1),
+            };
             response.scoring_policy = ResponseScoringPolicyV2::PerSlotBinary;
             response.allow_option_reuse = true;
         }
         for (slot_id, slot) in &mut authoring.answer_slots {
             slot.interaction = InteractionV2::Radio;
-            authoring.answer_key.insert(slot_id.clone(), option_answer(&["A"]));
+            authoring
+                .answer_key
+                .insert(slot_id.clone(), option_answer(&["A"]));
         }
         let runtime = compile_reading_source_v2(&authoring).unwrap();
-        let options = runtime.task_groups[0].response_groups[0].options.as_ref().unwrap();
-        assert_eq!(options.iter().map(|option| option.label.as_str()).collect::<Vec<_>>(), vec!["A"]);
+        let options = runtime.task_groups[0].response_groups[0]
+            .options
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            options
+                .iter()
+                .map(|option| option.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["A"]
+        );
         assert_eq!(text_from_content_nodes(&options[0].content), "A");
-        assert!(authoring.task_groups[0].response_groups[0].options.is_none());
+        assert!(authoring.task_groups[0].response_groups[0]
+            .options
+            .is_none());
         authoring.passage.as_mut().unwrap().paragraph_map = None;
-        assert!(compile_reading_source_v2(&authoring).unwrap_err().iter()
+        assert!(compile_reading_source_v2(&authoring)
+            .unwrap_err()
+            .iter()
             .any(|issue| issue.code == "RUNTIME_OPTION_BANK_MISSING"));
     }
 

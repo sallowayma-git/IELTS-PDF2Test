@@ -30,6 +30,11 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+
       - name: Install frontend dependencies
         run: npm ci
 
@@ -47,7 +52,10 @@ jobs:
         run: npm run verify:phase1:schema:local
 
       - name: Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+        # PDF/font regressions and PowerShell renderer probes otherwise compete
+        # for the small hosted VM. Keep every test, including the full internal
+        # editor/background-writer thread counts of the concurrency regression.
+        run: cargo test --manifest-path src-tauri/Cargo.toml -- --test-threads=2
 
       - name: Build Windows NSIS installer
         run: npm run tauri -- build --bundles nsis
@@ -76,6 +84,11 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+
       - name: Install tauri-driver
         run: cargo install tauri-driver --locked
 
@@ -89,7 +102,10 @@ jobs:
         run: npx tauri build --debug --no-bundle
 
       - name: Real Tauri smoke (workspace-edit)
-        run: npm run e2e:tauri:workspace-edit
+        run: |
+          $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+          Write-Host "Elevated runner: $($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))"
+          npm run e2e:tauri:workspace-edit -- --keep
 
       - name: Upload E2E artifacts on failure
         if: failure()

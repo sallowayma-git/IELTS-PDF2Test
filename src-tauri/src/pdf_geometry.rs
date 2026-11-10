@@ -2341,7 +2341,8 @@ fn group_lines_into_blocks(lines: &[(String, [f32; 4])]) -> Vec<(String, [f32; 4
                 !indented
                     && gap <= gap_tol
                     && left_delta <= left_tol
-                    && (aligned_short_line || (center_delta <= center_tol && width_delta <= width_tol))
+                    && (aligned_short_line
+                        || (center_delta <= center_tol && width_delta <= width_tol))
                     && !looks_like_hard_line_break(trimmed)
                     && !prev.text.trim_end().ends_with(':')
             }
@@ -2826,12 +2827,20 @@ fn write_rgba_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> CommandR
 pub(crate) fn extract_page_texts_for_split(path: &Path) -> CommandResult<Vec<String>> {
     let guard = pdfium_instance()?;
     let pdfium = guard.as_ref().map_err(|error| error.clone())?;
-    let document = pdfium.load_pdf_from_file(path, None)
+    let document = pdfium
+        .load_pdf_from_file(path, None)
         .map_err(|error| format!("split_pdfium_open:{error}"))?;
-    Ok(document.pages().iter().map(|page| {
-        build_blocks_from_chars(&collect_chars_with_origin(&page))
-            .into_iter().map(|block| block.text).collect::<Vec<_>>().join("\n")
-    }).collect())
+    Ok(document
+        .pages()
+        .iter()
+        .map(|page| {
+            build_blocks_from_chars(&collect_chars_with_origin(&page))
+                .into_iter()
+                .map(|block| block.text)
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .collect())
 }
 
 /// Copy original pages without rasterising or changing their layout.
@@ -3827,9 +3836,18 @@ mod tests {
     #[test]
     fn short_paragraph_tail_stays_with_its_wrapped_lines() {
         let lines = vec![
-            ("A long sentence that wraps across the full text column".to_string(), [80.0, 750.0, 500.0, 760.0]),
-            ("and finishes here.".to_string(), [80.0, 737.0, 170.0, 747.0]),
-            ("A separate paragraph after a blank line.".to_string(), [80.0, 710.0, 460.0, 720.0]),
+            (
+                "A long sentence that wraps across the full text column".to_string(),
+                [80.0, 750.0, 500.0, 760.0],
+            ),
+            (
+                "and finishes here.".to_string(),
+                [80.0, 737.0, 170.0, 747.0],
+            ),
+            (
+                "A separate paragraph after a blank line.".to_string(),
+                [80.0, 710.0, 460.0, 720.0],
+            ),
         ];
         let blocks = group_lines_into_blocks(&lines);
         assert_eq!(blocks.len(), 2);

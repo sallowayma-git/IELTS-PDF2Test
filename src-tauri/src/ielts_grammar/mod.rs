@@ -511,12 +511,15 @@ pub(crate) fn build_authoring_v2_shadow_for_modality(
         authoring["listening"] = draft.structure;
     } else {
         authoring["passage"] = passage;
-        authoring["exam"]["category"] = json!(crate::library::part_detection::import_reading_category(
-            job, &json!({
-                "sourceLines": fallback_lines.iter().map(|line| line.text.as_str()).collect::<Vec<_>>(),
-                "document": authoring,
-            }),
-        ));
+        authoring["exam"]["category"] = json!(
+            crate::library::part_detection::import_reading_category(
+                job,
+                &json!({
+                    "sourceLines": fallback_lines.iter().map(|line| line.text.as_str()).collect::<Vec<_>>(),
+                    "document": authoring,
+                }),
+            )
+        );
     }
     if !recognition_blockers.is_empty() {
         authoring["recognitionBlockers"] = json!(recognition_blockers);
@@ -664,17 +667,50 @@ fn build_passage(
     anchors.extend(physical_span_anchors(&anchors, physical_lines));
     anchors.extend(passage_preamble_anchors(physical_lines, &passage_pages));
     let anchors = valid_anchors(&anchors);
-    let mut content = reading::passage_nodes_with_layout(title, &passage_lines, anchors.clone(), recover_pdf_layout);
+    let mut content = reading::passage_nodes_with_layout(
+        title,
+        &passage_lines,
+        anchors.clone(),
+        recover_pdf_layout,
+    );
     // The physical shadow can contain only passage pages. The recovered local
     // instruction zones remain source evidence even when those pages are absent.
-    let mut instruction_parts = fallback_lines.iter().map(|line| line.text.as_str()).collect::<Vec<_>>();
-    instruction_parts.extend(v1_authoring.get("groups").and_then(Value::as_array).into_iter().flatten()
-        .flat_map(|group| group.get("instruction").and_then(Value::as_array).into_iter().flatten())
-        .filter_map(Value::as_str));
-    for group in split.get("questionGroupCandidates").and_then(Value::as_array).into_iter().flatten() {
-        if let Some(text) = group.get("instructionText").and_then(Value::as_str) { instruction_parts.push(text); }
-        instruction_parts.extend(group.get("sectionEvidence").and_then(Value::as_array).into_iter().flatten()
-            .filter_map(|evidence| evidence.get("textPreview").and_then(Value::as_str)));
+    let mut instruction_parts = fallback_lines
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>();
+    instruction_parts.extend(
+        v1_authoring
+            .get("groups")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .flat_map(|group| {
+                group
+                    .get("instruction")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+            })
+            .filter_map(Value::as_str),
+    );
+    for group in split
+        .get("questionGroupCandidates")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(text) = group.get("instructionText").and_then(Value::as_str) {
+            instruction_parts.push(text);
+        }
+        instruction_parts.extend(
+            group
+                .get("sectionEvidence")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|evidence| evidence.get("textPreview").and_then(Value::as_str)),
+        );
     }
     let instructions = instruction_parts.join(" ");
     reading::derive_declared_paragraph_labels(&mut content, &instructions);
@@ -884,34 +920,66 @@ fn rebind_lines_to_physical(lines: &mut [SemanticLine], physical_lines: &[Semant
 /// Recover physical lines only when their text reconstructs the entire selected
 /// source block. Never replace a truncated/ambiguous match or include nearby
 /// question text merely because its rectangle overlaps the passage.
-fn passage_physical_lines(lines: &[SemanticLine], physical_lines: &[SemanticLine]) -> Vec<SemanticLine> {
+fn passage_physical_lines(
+    lines: &[SemanticLine],
+    physical_lines: &[SemanticLine],
+) -> Vec<SemanticLine> {
     let mut result = Vec::new();
     let mut emitted = BTreeSet::new();
     for line in lines {
-        let ids = line.source_anchor.get("nodeIds").and_then(Value::as_array)
-            .into_iter().flatten().filter_map(Value::as_str).collect::<BTreeSet<_>>();
-        let matched = physical_lines.iter().filter(|candidate| candidate.page_index == line.page_index)
-            .filter(|candidate| candidate.source_anchor.get("nodeIds").and_then(Value::as_array)
-                .into_iter().flatten().filter_map(Value::as_str).any(|id| ids.contains(id)))
+        let ids = line
+            .source_anchor
+            .get("nodeIds")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect::<BTreeSet<_>>();
+        let matched = physical_lines
+            .iter()
+            .filter(|candidate| candidate.page_index == line.page_index)
+            .filter(|candidate| {
+                candidate
+                    .source_anchor
+                    .get("nodeIds")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .any(|id| ids.contains(id))
+            })
             .collect::<Vec<_>>();
-        let key = matched.iter().map(|candidate| physical_text_key(&candidate.text)).collect::<String>();
+        let key = matched
+            .iter()
+            .map(|candidate| physical_text_key(&candidate.text))
+            .collect::<String>();
         if !matched.is_empty() && key == physical_text_key(&line.text) {
             let fragment_texts = split_source_text_at_physical_lines(&line.text, &matched);
-            let source_heading = matched.len() == 1 && line.text.chars().count() < 70
-                && !line.text.trim_end().ends_with(['.', '!', '?', '。', '！', '？']);
+            let source_heading = matched.len() == 1
+                && line.text.chars().count() < 70
+                && !line
+                    .text
+                    .trim_end()
+                    .ends_with(['.', '!', '?', '。', '！', '？']);
             for (candidate, text) in matched.into_iter().zip(fragment_texts) {
                 if emitted.insert((candidate.page_index, candidate.id.clone())) {
                     let mut recovered = candidate.clone();
                     // The glyph layer may put a space between every character.
                     // Borrow its geometry, never its spelling or whitespace.
                     recovered.text = text;
-                    recovered.role = if source_heading { "heading".into() } else { line.role.clone() };
+                    recovered.role = if source_heading {
+                        "heading".into()
+                    } else {
+                        line.role.clone()
+                    };
                     result.push(recovered);
                 }
             }
         } else {
             let mut retained = line.clone();
-            if retained.source_anchor["extractionMode"] == "manual" { retained.bbox = None; }
+            if retained.source_anchor["extractionMode"] == "manual" {
+                retained.bbox = None;
+            }
             result.push(retained);
         }
     }
@@ -930,7 +998,9 @@ fn split_source_text_at_physical_lines(text: &str, lines: &[&SemanticLine]) -> V
         let mut consumed = 0;
         let mut boundary = cursor;
         for (offset, ch) in text[cursor..].char_indices() {
-            if consumed == needed && (ch.is_alphanumeric() || ch.is_whitespace()) { break; }
+            if consumed == needed && (ch.is_alphanumeric() || ch.is_whitespace()) {
+                break;
+            }
             if ch.is_alphanumeric() {
                 consumed += ch.to_lowercase().count();
             }
@@ -2522,10 +2592,23 @@ mod tests {
         assert_eq!(restored[1].text, "A sentence wraps");
         assert_eq!(restored[2].text, "onto its next line.");
         let nodes = reading::passage_nodes_with_layout("", &restored, vec![], true);
-        assert_eq!(nodes.len(), 2, "a source subheading cannot merge with prose");
-        assert_eq!(nodes[1]["children"][0]["text"], "A sentence wraps onto its next line.");
-        let lines = [semantic_line("a", "First sentence.", 0, "a"), semantic_line("b", "“Next sentence.”", 0, "b")];
-        let split = split_source_text_at_physical_lines("First sentence. “Next sentence.”", &[&lines[0], &lines[1]]);
+        assert_eq!(
+            nodes.len(),
+            2,
+            "a source subheading cannot merge with prose"
+        );
+        assert_eq!(
+            nodes[1]["children"][0]["text"],
+            "A sentence wraps onto its next line."
+        );
+        let lines = [
+            semantic_line("a", "First sentence.", 0, "a"),
+            semantic_line("b", "“Next sentence.”", 0, "b"),
+        ];
+        let split = split_source_text_at_physical_lines(
+            "First sentence. “Next sentence.”",
+            &[&lines[0], &lines[1]],
+        );
         assert_eq!(split, vec!["First sentence.", "“Next sentence.”"]);
     }
 
@@ -2995,9 +3078,25 @@ mod tests {
                 {"blockId":"q1","textPreview":"1 First statement", "pageIndex":1}]
         }], "passageCandidates":[]});
         let value = build_authoring_v2_shadow(&job(), &v1, &split, None, None).unwrap();
-        assert_eq!(value["passage"]["paragraphMap"].as_object().unwrap().len(), 10);
-        assert!(value["passage"]["content"].as_array().unwrap().iter().filter(|n| n["type"] == "paragraph").all(|n| n["provenanceStatus"] == "derived"));
-        assert_eq!(value["quality"]["issues"].as_array().unwrap().iter().filter(|issue| issue["code"] == "PARAGRAPH_LABELS_DERIVED").count(), 1);
+        assert_eq!(
+            value["passage"]["paragraphMap"].as_object().unwrap().len(),
+            10
+        );
+        assert!(value["passage"]["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|n| n["type"] == "paragraph")
+            .all(|n| n["provenanceStatus"] == "derived"));
+        assert_eq!(
+            value["quality"]["issues"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|issue| issue["code"] == "PARAGRAPH_LABELS_DERIVED")
+                .count(),
+            1
+        );
         let preview = crate::authoring_v2_commands::compile_authoring_preview_core(&value);
         assert_eq!(preview["ok"], true, "{preview}");
     }
@@ -3104,8 +3203,14 @@ mod tests {
         assert_eq!(group["responseGroups"].as_array().unwrap().len(), 1);
         for prompt in group["responseGroups"][0]["prompt"].as_array().unwrap() {
             let prompt_id = prompt["id"].as_str().unwrap();
-            assert!(!value["passage"]["paragraphMap"].as_object().unwrap().values()
-                .any(|host| host.as_str() == Some(prompt_id)), "heading prompt duplicates passage host {prompt_id}");
+            assert!(
+                !value["passage"]["paragraphMap"]
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .any(|host| host.as_str() == Some(prompt_id)),
+                "heading prompt duplicates passage host {prompt_id}"
+            );
         }
         assert_eq!(
             group.pointer("/responseGroups/0/slotIds"),

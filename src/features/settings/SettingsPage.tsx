@@ -15,6 +15,7 @@ import { chooseExportDirectory } from "../../api/desktopDialogs";
 import { toUserFacingError } from "../../utils/userFacingError";
 import type { DiagnosticsSettings, EnvironmentPreflightReport, LlmProfilePublic, LlmTestResult, PipelineMode } from "../../types";
 import { useAppSettings } from "./appSettings";
+import { ReviewOperatorSettings } from "./ReviewOperatorSettings";
 import { cloudShouldBeEnabledAfterSave, describePipelineMode, normalizePipelineMode } from "./settingsLogic";
 
 // 设置页（计划 §14 / §16.13）：默认只有模型连接、文件与发布目标，其他收进「高级设置」。
@@ -253,6 +254,7 @@ export function SettingsPage() {
     <section className="settings-page" data-testid="settings-page">
       <header className="settings-header">
         <h1>设置</h1>
+        <p className="library-background-note">配置识别服务、NAS 发布目录和作答数据来源。</p>
       </header>
 
       {blockingChecks.length ? (
@@ -371,6 +373,7 @@ export function SettingsPage() {
 
       <section className="settings-group" data-testid="settings-submissions">
         <h2>数据</h2>
+        <ReviewOperatorSettings />
         <div className="settings-field-row">
           <span className="settings-field-label">
             作答数据目录

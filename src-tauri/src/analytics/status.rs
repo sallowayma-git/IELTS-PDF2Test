@@ -48,13 +48,18 @@ pub fn read_attempt_status(submissions_root: &Path) -> BeaconScan {
         if !terminal_path.is_dir() {
             continue;
         }
-        let Ok(files) = fs::read_dir(&terminal_path) else { continue };
+        let Ok(files) = fs::read_dir(&terminal_path) else {
+            continue;
+        };
         for file in files.flatten() {
             let path = file.path();
             if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
                 continue;
             }
-            let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
             if name.starts_with('.') {
                 continue;
             }
@@ -73,7 +78,11 @@ pub fn read_attempt_status(submissions_root: &Path) -> BeaconScan {
         }
     }
     let mut beacons: Vec<AttemptBeacon> = latest.into_values().collect();
-    beacons.sort_by(|a, b| a.batch_id.cmp(&b.batch_id).then(a.attempt_id.cmp(&b.attempt_id)));
+    beacons.sort_by(|a, b| {
+        a.batch_id
+            .cmp(&b.batch_id)
+            .then(a.attempt_id.cmp(&b.attempt_id))
+    });
     scan.beacons = beacons;
     scan
 }

@@ -13,7 +13,7 @@ use chrono::{DateTime, FixedOffset};
 use rusqlite::Connection;
 use serde::Serialize;
 
-use super::import::{list_failed_imports, last_import_at, ImportRecord};
+use super::import::{last_import_at, list_failed_imports, ImportRecord};
 use super::status::BeaconScan;
 use super::{display_answer, passage_label, ratio, DISCLAIMER, HARD_CONCLUSION_MIN_N};
 use crate::CommandResult;
@@ -30,6 +30,7 @@ pub struct PassageRec {
     pub duration_sec: Option<i64>,
     pub gradable: bool,
     pub correct: f64,
+    pub original_correct: f64,
     pub total: f64,
 }
 
@@ -44,6 +45,8 @@ pub struct AnswerRec {
     pub normalized_user_answer_json: Option<String>,
     pub is_correct: Option<i64>,
     pub weight: f64,
+    pub score: Option<f64>,
+    pub original_score: Option<f64>,
     pub elapsed_ms: i64,
     pub change_count: i64,
     pub visit_count: i64,
@@ -79,6 +82,9 @@ impl AttemptRec {
         self.invalid_reason.is_none()
     }
     pub fn raw_score(&self) -> f64 {
+        self.passages.iter().map(|p| p.original_correct).sum()
+    }
+    pub fn effective_score(&self) -> f64 {
         self.passages.iter().map(|p| p.correct).sum()
     }
     pub fn raw_total(&self) -> f64 {
@@ -91,12 +97,22 @@ impl AttemptRec {
 
 pub enum Scope<'a> {
     All,
-    Group { batch_id: &'a str, paper_id: &'a str },
+    Group {
+        batch_id: &'a str,
+        paper_id: &'a str,
+    },
     Attempt(&'a str),
 }
 
 /// 读取已交卷的 attempt 及其子记录，并算出有效性。
 pub fn load_attempts(conn: &Connection, scope: &Scope) -> CommandResult<Vec<AttemptRec>> {
+    load_attempts_mode(conn, scope, false)
+}
+pub fn load_attempts_mode(
+    conn: &Connection,
+    scope: &Scope,
+    original: bool,
+) -> CommandResult<Vec<AttemptRec>> {
     let mut attempts: Vec<AttemptRec> = Vec::new();
     {
         let mut statement = conn
@@ -129,13 +145,18 @@ pub fn load_attempts(conn: &Connection, scope: &Scope) -> CommandResult<Vec<Atte
     }
     attempts.retain(|attempt| match scope {
         Scope::All => true,
-        Scope::Group { batch_id, paper_id } => attempt.batch_id == *batch_id && attempt.paper_id == *paper_id,
+        Scope::Group { batch_id, paper_id } => {
+            attempt.batch_id == *batch_id && attempt.paper_id == *paper_id
+        }
         Scope::Attempt(id) => attempt.attempt_id == *id,
     });
     if attempts.is_empty() {
         return Ok(attempts);
     }
-    let ids: HashSet<String> = attempts.iter().map(|attempt| attempt.attempt_id.clone()).collect();
+    let ids: HashSet<String> = attempts
+        .iter()
+        .map(|attempt| attempt.attempt_id.clone())
+        .collect();
     let mut index: HashMap<String, usize> = HashMap::new();
     for (position, attempt) in attempts.iter().enumerate() {
         index.insert(attempt.attempt_id.clone(), position);
@@ -145,7 +166,9 @@ pub fn load_attempts(conn: &Connection, scope: &Scope) -> CommandResult<Vec<Atte
         .prepare("SELECT attempt_id, total_passages FROM suites")
         .map_err(|error| error.to_string())?;
     let suites = statement
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
         .map_err(|error| error.to_string())?;
     for suite in suites {
         let (attempt_id, total) = suite.map_err(|error| error.to_string())?;
@@ -174,6 +197,7 @@ pub fn load_attempts(conn: &Connection, scope: &Scope) -> CommandResult<Vec<Atte
                     duration_sec: row.get(6)?,
                     gradable: row.get::<_, i64>(7)? != 0,
                     correct: row.get(8)?,
+                    original_correct: row.get(8)?,
                     total: row.get(9)?,
                 },
             ))
@@ -188,14 +212,18 @@ pub fn load_attempts(conn: &Connection, scope: &Scope) -> CommandResult<Vec<Atte
 
     let mut statement = conn
         .prepare(
-            "SELECT attempt_id, passage_index, question_id, display_label, question_kind, user_answer_json,
-                    correct_answer_json, normalized_user_answer_json, is_correct, weight, elapsed_ms,
-                    change_count, visit_count
-             FROM answers ORDER BY attempt_id, passage_index, question_id",
+            "SELECT a.attempt_id,a.passage_index,a.question_id,a.display_label,a.question_kind,a.user_answer_json,
+                    a.correct_answer_json,a.normalized_user_answer_json,COALESCE(o.new_is_correct,a.is_correct),COALESCE(a.max_score,a.weight),a.elapsed_ms,
+                    a.change_count,a.visit_count,COALESCE(o.new_score,a.score,CASE a.is_correct WHEN 1 THEN a.weight WHEN 0 THEN 0 END),COALESCE(a.score,CASE a.is_correct WHEN 1 THEN a.weight WHEN 0 THEN 0 END)
+             FROM answers a LEFT JOIN score_overrides o ON ?1=0 AND o.attempt_id=a.attempt_id AND o.modality='reading' AND o.passage_index=a.passage_index
+               AND o.response_slot_id=COALESCE(a.response_slot_id,a.question_id) AND o.revoked_at IS NULL
+               AND o.original_answer_json IS a.user_answer_json AND o.original_is_correct IS a.is_correct
+               AND o.original_score IS COALESCE(a.score,CASE a.is_correct WHEN 1 THEN a.weight WHEN 0 THEN 0 END)
+             ORDER BY a.attempt_id,a.passage_index,a.question_id",
         )
         .map_err(|error| error.to_string())?;
     let rows = statement
-        .query_map([], |row| {
+        .query_map([original as i64], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 AnswerRec {
@@ -211,6 +239,8 @@ pub fn load_attempts(conn: &Connection, scope: &Scope) -> CommandResult<Vec<Atte
                     elapsed_ms: row.get(10)?,
                     change_count: row.get(11)?,
                     visit_count: row.get(12)?,
+                    score: row.get(13)?,
+                    original_score: row.get(14)?,
                 },
             ))
         })
@@ -223,7 +253,9 @@ pub fn load_attempts(conn: &Connection, scope: &Scope) -> CommandResult<Vec<Atte
     }
 
     let mut statement = conn
-        .prepare("SELECT attempt_id, task_type, word_count, duration_sec, submitted_at FROM writings")
+        .prepare(
+            "SELECT attempt_id, task_type, word_count, duration_sec, submitted_at FROM writings",
+        )
         .map_err(|error| error.to_string())?;
     let rows = statement
         .query_map([], |row| {
@@ -246,7 +278,26 @@ pub fn load_attempts(conn: &Connection, scope: &Scope) -> CommandResult<Vec<Atte
     }
 
     for attempt in &mut attempts {
+        for p in &mut attempt.passages {
+            p.correct = p.original_correct
+                + attempt
+                    .answers
+                    .iter()
+                    .filter(|a| a.passage_index == p.passage_index)
+                    .map(|a| a.score.unwrap_or_default() - a.original_score.unwrap_or_default())
+                    .sum::<f64>();
+        }
         attempt.invalid_reason = validity(attempt);
+        let counted: (bool, Option<String>) = conn
+            .query_row(
+                "SELECT counted,exclude_reason FROM attempts WHERE attempt_id=?1",
+                [&attempt.attempt_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(|e| e.to_string())?;
+        if !counted.0 {
+            attempt.invalid_reason = Some(counted.1.unwrap_or_else(|| "教师设为不计入统计".into()));
+        }
     }
     Ok(attempts)
 }
@@ -260,7 +311,11 @@ fn validity(attempt: &AttemptRec) -> Option<String> {
     if have < need {
         return Some(format!("篇数不足（{have}/{need}）"));
     }
-    if attempt.passages.iter().any(|passage| !passage.gradable || passage.total <= 0.0) {
+    if attempt
+        .passages
+        .iter()
+        .any(|passage| !passage.gradable || passage.total <= 0.0)
+    {
         return Some("存在未计分的篇章".into());
     }
     None
@@ -328,7 +383,10 @@ pub fn build_overview(conn: &Connection, beacons: &BeaconScan) -> CommandResult<
             "in_progress" => row.in_progress += 1,
             "submitted" => {
                 row.submitted_beacon += 1;
-                row.last_submitted_at = max_opt(row.last_submitted_at.take(), Some(beacon.updated_at.clone()));
+                row.last_submitted_at = max_opt(
+                    row.last_submitted_at.take(),
+                    Some(beacon.updated_at.clone()),
+                );
             }
             "failed" => row.voided += 1,
             _ => {}
@@ -347,9 +405,16 @@ pub fn build_overview(conn: &Connection, beacons: &BeaconScan) -> CommandResult<
         row.last_submitted_at = max_opt(row.last_submitted_at.take(), attempt.submitted_at.clone());
     }
 
+    for failed in super::records::query(conn,"SELECT batch_id,paper_id,COUNT(*) n FROM attempts WHERE status='failed' GROUP BY batch_id,paper_id",&[])?{
+        let batch=failed["batch_id"].as_str().unwrap_or("");let paper=failed["paper_id"].as_str().unwrap_or("");
+        groups.entry((batch.to_string(),paper.to_string())).or_insert_with(||empty_row(batch,paper)).imported+=failed["n"].as_u64().unwrap_or(0) as usize;
+    }
     let exceptions = list_failed_imports(conn)?;
     for exception in &exceptions {
-        if let (Some(batch), paper) = (exception.batch_id.clone(), exception.paper_id.clone().unwrap_or_default()) {
+        if let (Some(batch), paper) = (
+            exception.batch_id.clone(),
+            exception.paper_id.clone().unwrap_or_default(),
+        ) {
             if let Some(row) = groups.get_mut(&(batch, paper)) {
                 row.import_exceptions += 1;
             }
@@ -396,8 +461,14 @@ pub fn identity_issues(attempts: &[AttemptRec]) -> Vec<IdentityIssue> {
     let mut by_id: BTreeMap<&str, Vec<&AttemptRec>> = BTreeMap::new();
     let mut by_name: BTreeMap<&str, Vec<&AttemptRec>> = BTreeMap::new();
     for attempt in attempts {
-        by_id.entry(attempt.candidate_id.as_str()).or_default().push(attempt);
-        by_name.entry(attempt.candidate_name.as_str()).or_default().push(attempt);
+        by_id
+            .entry(attempt.candidate_id.as_str())
+            .or_default()
+            .push(attempt);
+        by_name
+            .entry(attempt.candidate_name.as_str())
+            .or_default()
+            .push(attempt);
     }
     for (candidate_id, members) in &by_id {
         let names: HashSet<&str> = members.iter().map(|a| a.candidate_name.as_str()).collect();
@@ -517,6 +588,7 @@ pub struct StudentRow {
     pub candidate_id: String,
     pub candidate_name: String,
     pub raw_score: f64,
+    pub effective_score: f64,
     pub raw_total: f64,
     pub accuracy: Option<f64>,
     /// 与 parts 一一对应的该篇得分点数。
@@ -528,6 +600,7 @@ pub struct StudentRow {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ExamView {
+    pub listening: Option<serde_json::Value>,
     pub batch_id: String,
     pub paper_id: String,
     pub n: usize,
@@ -544,9 +617,17 @@ pub struct ExamView {
     pub students: Vec<StudentRow>,
 }
 
-pub fn build_exam_view(conn: &Connection, batch_id: &str, paper_id: &str) -> CommandResult<ExamView> {
+pub fn build_exam_view(
+    conn: &Connection,
+    batch_id: &str,
+    paper_id: &str,
+) -> CommandResult<ExamView> {
     let attempts = load_attempts(conn, &Scope::Group { batch_id, paper_id })?;
-    Ok(exam_view_from(batch_id, paper_id, &attempts))
+    let mut view = exam_view_from(batch_id, paper_id, &attempts);
+    view.listening = Some(super::statistics::listening(
+        conn, batch_id, paper_id, false,
+    )?);
+    Ok(view)
 }
 
 pub fn exam_view_from(batch_id: &str, paper_id: &str, attempts: &[AttemptRec]) -> ExamView {
@@ -562,17 +643,27 @@ pub fn exam_view_from(batch_id: &str, paper_id: &str, attempts: &[AttemptRec]) -
         .collect();
 
     // 原始分统计。
-    let scores: Vec<f64> = valid.iter().map(|a| a.raw_score()).collect();
+    let scores: Vec<f64> = valid.iter().map(|a| a.effective_score()).collect();
     let totals: Vec<f64> = valid.iter().map(|a| a.raw_total()).collect();
-    let max_total = totals.iter().cloned().fold(None, |acc: Option<f64>, v| Some(acc.map_or(v, |m| m.max(v))));
+    let max_total = totals.iter().cloned().fold(None, |acc: Option<f64>, v| {
+        Some(acc.map_or(v, |m| m.max(v)))
+    });
     let sum_scores: f64 = scores.iter().sum();
     let sum_totals: f64 = totals.iter().sum();
     let mean_accuracy = ratio(sum_scores, sum_totals);
     let score = ScoreSummary {
-        mean: if scores.is_empty() { None } else { Some(sum_scores / scores.len() as f64) },
+        mean: if scores.is_empty() {
+            None
+        } else {
+            Some(sum_scores / scores.len() as f64)
+        },
         median: median(&mut scores.clone()),
-        max: scores.iter().cloned().fold(None, |acc: Option<f64>, v| Some(acc.map_or(v, |m| m.max(v)))),
-        min: scores.iter().cloned().fold(None, |acc: Option<f64>, v| Some(acc.map_or(v, |m| m.min(v)))),
+        max: scores.iter().cloned().fold(None, |acc: Option<f64>, v| {
+            Some(acc.map_or(v, |m| m.max(v)))
+        }),
+        min: scores.iter().cloned().fold(None, |acc: Option<f64>, v| {
+            Some(acc.map_or(v, |m| m.min(v)))
+        }),
         mean_accuracy,
         max_total,
     };
@@ -587,7 +678,11 @@ pub fn exam_view_from(batch_id: &str, paper_id: &str, attempts: &[AttemptRec]) -
             counts[bin] += 1;
         }
         for (bin, count) in counts.into_iter().enumerate() {
-            histogram.push(HistBin { from: bin as f64, to: (bin + 1) as f64, count });
+            histogram.push(HistBin {
+                from: bin as f64,
+                to: (bin + 1) as f64,
+                count,
+            });
         }
     }
 
@@ -596,10 +691,12 @@ pub fn exam_view_from(batch_id: &str, paper_id: &str, attempts: &[AttemptRec]) -
     let mut part_acc: BTreeMap<i64, (usize, f64, f64)> = BTreeMap::new();
     for attempt in &valid {
         for passage in &attempt.passages {
-            part_labels
+            part_labels.entry(passage.passage_index).or_insert_with(|| {
+                passage_label(passage.category.as_deref(), passage.passage_index)
+            });
+            let entry = part_acc
                 .entry(passage.passage_index)
-                .or_insert_with(|| passage_label(passage.category.as_deref(), passage.passage_index));
-            let entry = part_acc.entry(passage.passage_index).or_insert((0, 0.0, 0.0));
+                .or_insert((0, 0.0, 0.0));
             entry.0 += 1;
             entry.1 += passage.correct;
             entry.2 += passage.total;
@@ -609,7 +706,10 @@ pub fn exam_view_from(batch_id: &str, paper_id: &str, attempts: &[AttemptRec]) -
         .iter()
         .map(|(index, (n, correct, total))| PartStat {
             passage_index: *index,
-            label: part_labels.get(index).cloned().unwrap_or_else(|| format!("P{}", index + 1)),
+            label: part_labels
+                .get(index)
+                .cloned()
+                .unwrap_or_else(|| format!("P{}", index + 1)),
             n: *n,
             correct: *correct,
             total: *total,
@@ -630,7 +730,9 @@ pub fn exam_view_from(batch_id: &str, paper_id: &str, attempts: &[AttemptRec]) -
     let mut kind_acc: BTreeMap<String, (HashSet<String>, f64, f64)> = BTreeMap::new();
     for attempt in &valid {
         for answer in &attempt.answers {
-            let Some(graded) = answer.is_correct else { continue };
+            let Some(graded) = answer.is_correct else {
+                continue;
+            };
             if answer.weight <= 0.0 {
                 continue;
             }
@@ -638,7 +740,10 @@ pub fn exam_view_from(batch_id: &str, paper_id: &str, attempts: &[AttemptRec]) -
             let entry = qacc.entry(key).or_insert_with(|| QAcc {
                 passage_index: answer.passage_index,
                 question_id: answer.question_id.clone(),
-                display_label: answer.display_label.clone().unwrap_or_else(|| answer.question_id.clone()),
+                display_label: answer
+                    .display_label
+                    .clone()
+                    .unwrap_or_else(|| answer.question_id.clone()),
                 question_kind: answer.question_kind.clone().unwrap_or_default(),
                 n: 0,
                 correct: 0,
@@ -648,15 +753,22 @@ pub fn exam_view_from(batch_id: &str, paper_id: &str, attempts: &[AttemptRec]) -
                 entry.correct += 1;
             }
             let kind = answer.question_kind.clone().unwrap_or_default();
-            let slot = kind_acc.entry(kind).or_insert_with(|| (HashSet::new(), 0.0, 0.0));
+            let slot = kind_acc
+                .entry(kind)
+                .or_insert_with(|| (HashSet::new(), 0.0, 0.0));
             slot.0.insert(attempt.attempt_id.clone());
             slot.1 += answer.weight;
-            if graded == 1 {
-                slot.2 += answer.weight;
-            }
+            slot.2 += answer
+                .score
+                .unwrap_or_else(|| if graded == 1 { answer.weight } else { 0.0 });
         }
     }
-    let part_label_of = |index: i64| part_labels.get(&index).cloned().unwrap_or_else(|| format!("P{}", index + 1));
+    let part_label_of = |index: i64| {
+        part_labels
+            .get(&index)
+            .cloned()
+            .unwrap_or_else(|| format!("P{}", index + 1))
+    };
     let mut questions: Vec<QuestionStat> = qacc
         .values()
         .map(|q| QuestionStat {
@@ -671,12 +783,20 @@ pub fn exam_view_from(batch_id: &str, paper_id: &str, attempts: &[AttemptRec]) -
             hard_conclusion: q.n >= HARD_CONCLUSION_MIN_N,
         })
         .collect();
-    questions.sort_by(|a, b| (a.passage_index, a.question_id.len(), &a.question_id).cmp(&(b.passage_index, b.question_id.len(), &b.question_id)));
+    questions.sort_by(|a, b| {
+        (a.passage_index, a.question_id.len(), &a.question_id).cmp(&(
+            b.passage_index,
+            b.question_id.len(),
+            &b.question_id,
+        ))
+    });
     let mut hard_questions = questions.clone();
     hard_questions.sort_by(|a, b| {
         let av = a.accuracy.unwrap_or(1.0);
         let bv = b.accuracy.unwrap_or(1.0);
-        av.partial_cmp(&bv).unwrap_or(std::cmp::Ordering::Equal).then(b.n.cmp(&a.n))
+        av.partial_cmp(&bv)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(b.n.cmp(&a.n))
     });
     hard_questions.truncate(10);
 
@@ -690,12 +810,23 @@ pub fn exam_view_from(batch_id: &str, paper_id: &str, attempts: &[AttemptRec]) -
             accuracy: ratio(correct_points, points),
         })
         .collect();
-    kinds.sort_by(|a, b| b.points.partial_cmp(&a.points).unwrap_or(std::cmp::Ordering::Equal));
+    kinds.sort_by(|a, b| {
+        b.points
+            .partial_cmp(&a.points)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // 学生×题目矩阵与学生表。
-    let matrix_cols: Vec<(i64, String)> = questions.iter().map(|q| (q.passage_index, q.question_id.clone())).collect();
+    let matrix_cols: Vec<(i64, String)> = questions
+        .iter()
+        .map(|q| (q.passage_index, q.question_id.clone()))
+        .collect();
     let mut students_sorted: Vec<&AttemptRec> = valid.clone();
-    students_sorted.sort_by(|a, b| a.candidate_id.cmp(&b.candidate_id).then(a.attempt_id.cmp(&b.attempt_id)));
+    students_sorted.sort_by(|a, b| {
+        a.candidate_id
+            .cmp(&b.candidate_id)
+            .then(a.attempt_id.cmp(&b.attempt_id))
+    });
     let part_indices: Vec<i64> = parts.iter().map(|p| p.passage_index).collect();
     let matrix: Vec<MatrixRow> = students_sorted
         .iter()
@@ -726,18 +857,31 @@ pub fn exam_view_from(batch_id: &str, paper_id: &str, attempts: &[AttemptRec]) -
             candidate_id: attempt.candidate_id.clone(),
             candidate_name: attempt.candidate_name.clone(),
             raw_score: attempt.raw_score(),
+            effective_score: attempt.effective_score(),
             raw_total: attempt.raw_total(),
-            accuracy: ratio(attempt.raw_score(), attempt.raw_total()),
-            part_correct: part_indices.iter().map(|index| attempt.passage(*index).map(|p| p.correct)).collect(),
+            accuracy: ratio(attempt.effective_score(), attempt.raw_total()),
+            part_correct: part_indices
+                .iter()
+                .map(|index| attempt.passage(*index).map(|p| p.correct))
+                .collect(),
             submitted_at: attempt.submitted_at.clone(),
             total_duration_sec: {
-                let durations: Vec<i64> = attempt.passages.iter().filter_map(|p| p.duration_sec).collect();
-                if durations.is_empty() { None } else { Some(durations.iter().sum()) }
+                let durations: Vec<i64> = attempt
+                    .passages
+                    .iter()
+                    .filter_map(|p| p.duration_sec)
+                    .collect();
+                if durations.is_empty() {
+                    None
+                } else {
+                    Some(durations.iter().sum())
+                }
             },
         })
         .collect();
 
     ExamView {
+        listening: None,
         batch_id: batch_id.to_string(),
         paper_id: paper_id.to_string(),
         n: valid.len(),
@@ -761,7 +905,11 @@ fn median(values: &mut [f64]) -> Option<f64> {
     }
     values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mid = values.len() / 2;
-    Some(if values.len() % 2 == 0 { (values[mid - 1] + values[mid]) / 2.0 } else { values[mid] })
+    Some(if values.len() % 2 == 0 {
+        (values[mid - 1] + values[mid]) / 2.0
+    } else {
+        values[mid]
+    })
 }
 
 // ───────── 单个学生 ─────────
@@ -819,6 +967,7 @@ pub struct StudentView {
     pub valid: bool,
     pub invalid_reason: Option<String>,
     pub raw_score: f64,
+    pub effective_score: f64,
     pub raw_total: f64,
     pub accuracy: Option<f64>,
     pub passages: Vec<StudentPassage>,
@@ -842,8 +991,14 @@ pub fn student_view_from(attempt: &AttemptRec) -> StudentView {
         .passages
         .iter()
         .map(|p| {
-            let start = p.started_at.as_deref().and_then(|t| DateTime::parse_from_rfc3339(t).ok())?;
-            let end = p.ended_at.as_deref().and_then(|t| DateTime::parse_from_rfc3339(t).ok())?;
+            let start = p
+                .started_at
+                .as_deref()
+                .and_then(|t| DateTime::parse_from_rfc3339(t).ok())?;
+            let end = p
+                .ended_at
+                .as_deref()
+                .and_then(|t| DateTime::parse_from_rfc3339(t).ok())?;
             Some((start, end))
         })
         .collect();
@@ -886,7 +1041,10 @@ pub fn student_view_from(attempt: &AttemptRec) -> StudentView {
                 .map(|p| passage_label(p.category.as_deref(), p.passage_index))
                 .unwrap_or_else(|| format!("P{}", answer.passage_index + 1)),
             question_id: answer.question_id.clone(),
-            display_label: answer.display_label.clone().unwrap_or_else(|| answer.question_id.clone()),
+            display_label: answer
+                .display_label
+                .clone()
+                .unwrap_or_else(|| answer.question_id.clone()),
             question_kind: answer.question_kind.clone().unwrap_or_default(),
             user_answer: display_answer(answer.user_answer_json.as_deref()),
             correct_answer: display_answer(answer.correct_answer_json.as_deref()),
@@ -896,7 +1054,13 @@ pub fn student_view_from(attempt: &AttemptRec) -> StudentView {
             visit_count: answer.visit_count,
         })
         .collect();
-    wrong_answers.sort_by(|a, b| (a.passage_index, a.question_id.len(), &a.question_id).cmp(&(b.passage_index, b.question_id.len(), &b.question_id)));
+    wrong_answers.sort_by(|a, b| {
+        (a.passage_index, a.question_id.len(), &a.question_id).cmp(&(
+            b.passage_index,
+            b.question_id.len(),
+            &b.question_id,
+        ))
+    });
     let writings = attempt
         .writings
         .iter()
@@ -917,8 +1081,9 @@ pub fn student_view_from(attempt: &AttemptRec) -> StudentView {
         valid: attempt.is_valid(),
         invalid_reason: attempt.invalid_reason.clone(),
         raw_score: attempt.raw_score(),
+        effective_score: attempt.effective_score(),
         raw_total: attempt.raw_total(),
-        accuracy: ratio(attempt.raw_score(), attempt.raw_total()),
+        accuracy: ratio(attempt.effective_score(), attempt.raw_total()),
         passages,
         overlap_note: if overlap.iter().any(|v| *v) {
             Some("部分篇章的作答时间区间重叠，用时可能重叠，仅供参考。".into())
@@ -971,7 +1136,18 @@ pub fn build_question_view(
     passage_index: i64,
     question_id: &str,
 ) -> CommandResult<QuestionView> {
-    let attempts = load_attempts(conn, &Scope::Group { batch_id, paper_id })?;
+    build_question_view_mode(conn, batch_id, paper_id, passage_index, question_id, false)
+}
+
+pub fn build_question_view_mode(
+    conn: &Connection,
+    batch_id: &str,
+    paper_id: &str,
+    passage_index: i64,
+    question_id: &str,
+    original: bool,
+) -> CommandResult<QuestionView> {
+    let attempts = load_attempts_mode(conn, &Scope::Group { batch_id, paper_id }, original)?;
     let valid: Vec<&AttemptRec> = attempts.iter().filter(|a| a.is_valid()).collect();
     let mut n = 0usize;
     let mut correct = 0usize;
@@ -982,13 +1158,19 @@ pub fn build_question_view(
     let mut correct_answer: Option<String> = None;
     let mut buckets: BTreeMap<String, (usize, Option<bool>)> = BTreeMap::new();
     for attempt in &valid {
-        for answer in attempt.answers.iter().filter(|a| a.passage_index == passage_index && a.question_id == question_id) {
+        for answer in attempt
+            .answers
+            .iter()
+            .filter(|a| a.passage_index == passage_index && a.question_id == question_id)
+        {
             display_label = display_label.or_else(|| answer.display_label.clone());
             question_kind = question_kind.or_else(|| answer.question_kind.clone());
             if correct_answer.is_none() {
                 correct_answer = Some(display_answer(answer.correct_answer_json.as_deref()));
             }
-            let Some(graded) = answer.is_correct else { continue };
+            let Some(graded) = answer.is_correct else {
+                continue;
+            };
             if answer.weight <= 0.0 {
                 continue;
             }
@@ -1016,7 +1198,11 @@ pub fn build_question_view(
     distribution.sort_by(|a, b| b.count.cmp(&a.count).then(a.answer.cmp(&b.answer)));
     let passage_label_text = valid
         .iter()
-        .find_map(|attempt| attempt.passage(passage_index).map(|p| passage_label(p.category.as_deref(), p.passage_index)))
+        .find_map(|attempt| {
+            attempt
+                .passage(passage_index)
+                .map(|p| passage_label(p.category.as_deref(), p.passage_index))
+        })
         .unwrap_or_else(|| format!("P{}", passage_index + 1));
     Ok(QuestionView {
         batch_id: batch_id.to_string(),

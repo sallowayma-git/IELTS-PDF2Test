@@ -100,7 +100,7 @@ function frontendCommandCalls() {
 
 function sqliteTables() {
   const source = read("src-tauri/src/db.rs");
-  return unique([...source.matchAll(/CREATE TABLE (?:IF NOT EXISTS )?([A-Za-z0-9_]+)/g)].map((m) => m[1]));
+  return unique([...source.matchAll(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?!IF\b)([A-Za-z0-9_]+)/g)].map((m) => m[1]));
 }
 
 function featureFlagDefaults() {

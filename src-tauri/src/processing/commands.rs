@@ -119,7 +119,10 @@ pub(crate) fn import_files_at_root(
             let parts = match stage_passage_split(root, &file, &title) {
                 Ok(parts) => parts,
                 Err(reason) => {
-                    rejected.push(ImportRejectedFile { name: file.name.clone(), reason });
+                    rejected.push(ImportRejectedFile {
+                        name: file.name.clone(),
+                        reason,
+                    });
                     continue;
                 }
             };
@@ -227,10 +230,16 @@ fn stage_passage_split(
     let dir = root.join("tmp").join("import-split");
     if let Err(error) = std::fs::create_dir_all(&dir) {
         eprintln!("[import] split: create temp dir failed: {error}");
-        return Err("拆分未完成：无法建立临时目录，请检查应用数据目录的写入权限或磁盘空间。".into());
+        return Err(
+            "拆分未完成：无法建立临时目录，请检查应用数据目录的写入权限或磁盘空间。".into(),
+        );
     }
     // 没有标题提示时整份导入的标题带扩展名；拆出来的篇名不重复带「.pdf」。
-    let base_title = match title.len().checked_sub(4).and_then(|cut| title.get(cut..).map(|ext| (cut, ext))) {
+    let base_title = match title
+        .len()
+        .checked_sub(4)
+        .and_then(|cut| title.get(cut..).map(|ext| (cut, ext)))
+    {
         Some((cut, ext)) if ext.eq_ignore_ascii_case(".pdf") => &title[..cut],
         _ => title,
     };
@@ -240,7 +249,13 @@ fn stage_passage_split(
         // 只去掉路径/保留字符，保留中文等原文件名（originalName 要给用户看）。
         let name: String = format!("{stem} - {suffix}.pdf")
             .chars()
-            .map(|ch| if ch.is_control() || "<>:\"/\\|?*".contains(ch) { '-' } else { ch })
+            .map(|ch| {
+                if ch.is_control() || "<>:\"/\\|?*".contains(ch) {
+                    '-'
+                } else {
+                    ch
+                }
+            })
             .collect();
         // 每篇一个独立临时目录：staging 以文件名作为 originalName，不能带随机前缀。
         let part_dir = dir.join(uuid::Uuid::new_v4().simple().to_string());
@@ -254,11 +269,15 @@ fn stage_passage_split(
             .map_err(|error| error.to_string())
             .and_then(|_| super::pdf_split::write_segment_pdf(source, &plan, segment, &path))
             .and_then(|_| match &answer_path {
-                Some((answer, text)) => std::fs::write(answer, text).map_err(|error| format!("split_write_answers:{error}")),
+                Some((answer, text)) => std::fs::write(answer, text)
+                    .map_err(|error| format!("split_write_answers:{error}")),
                 None => Ok(()),
             });
         if let Err(error) = written {
-            eprintln!("[import] split: {} segment {} failed: {error}", file.name, segment.label);
+            eprintln!(
+                "[import] split: {} segment {} failed: {error}",
+                file.name, segment.label
+            );
             remove_split_parts(&parts);
             let _ = std::fs::remove_dir_all(&part_dir);
             return Err("拆分未完成：无法生成各篇 PDF 或答案文件，未建立整份条目。请检查磁盘空间、目录权限及 PDF 是否损坏，然后重试；也可取消拆分后整份导入。".into());
@@ -289,64 +308,72 @@ fn import_one_source(
     title: &str,
     options: &SourceImportOptions<'_>,
 ) -> Result<ImportCreatedItem, String> {
-        // 1. 建 job（元数据落 job.json，与既有链共用）。
-        let job = make_job(CreateJobInput {
-            title: Some(title.to_string()),
-            category: None,
-            frequency: None,
-            tags: None,
-            llm_profile_id: None,
-        });
-        let job_id = job.job_id.clone();
-        let staged = (|| -> CommandResult<()> {
-            save_job(root, &job)?;
-            let budget_path = crate::util::job_dir(root, &job_id).join(CLOUD_TOKEN_BUDGET_FILE);
-            std::fs::write(
-                budget_path,
-                json!({"tokenBudget": options.cloud_token_budget}).to_string(),
-            )
-            .map_err(|error| format!("import_cloud_token_budget_save:{error}"))?;
-            // 2. 文件落地：staging + hash 全部同步完成（数据库事务外，计划 §12.2）。
-            crate::job_commands::stage_source_file(root, &job_id, file.path, "MainQuestion")?;
-            for answer in file.answer_files {
-                let extension = std::path::Path::new(answer).extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
-                if !["pdf","png","jpg","jpeg","txt","md"].contains(&extension.as_str()) { return Err("答案文件支持 PDF、PNG、JPEG、TXT、MD".into()); }
-                let size = std::fs::metadata(answer).map_err(|e| e.to_string())?.len();
-                if size > MAX_IMPORT_FILE_BYTES { return Err("答案文件超过导入上限".into()); }
-                crate::job_commands::stage_source_file(root, &job_id, answer, "AnswerKey")?;
+    // 1. 建 job（元数据落 job.json，与既有链共用）。
+    let job = make_job(CreateJobInput {
+        title: Some(title.to_string()),
+        category: None,
+        frequency: None,
+        tags: None,
+        llm_profile_id: None,
+    });
+    let job_id = job.job_id.clone();
+    let staged = (|| -> CommandResult<()> {
+        save_job(root, &job)?;
+        let budget_path = crate::util::job_dir(root, &job_id).join(CLOUD_TOKEN_BUDGET_FILE);
+        std::fs::write(
+            budget_path,
+            json!({"tokenBudget": options.cloud_token_budget}).to_string(),
+        )
+        .map_err(|error| format!("import_cloud_token_budget_save:{error}"))?;
+        // 2. 文件落地：staging + hash 全部同步完成（数据库事务外，计划 §12.2）。
+        crate::job_commands::stage_source_file(root, &job_id, file.path, "MainQuestion")?;
+        for answer in file.answer_files {
+            let extension = std::path::Path::new(answer)
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if !["pdf", "png", "jpg", "jpeg", "txt", "md"].contains(&extension.as_str()) {
+                return Err("答案文件支持 PDF、PNG、JPEG、TXT、MD".into());
             }
-            if let Some(answers) = file.split_answers {
-                crate::job_commands::stage_source_file(root, &job_id, answers, "AnswerKey")?;
+            let size = std::fs::metadata(answer).map_err(|e| e.to_string())?.len();
+            if size > MAX_IMPORT_FILE_BYTES {
+                return Err("答案文件超过导入上限".into());
             }
-            Ok(())
-        })();
-        if let Err(error) = staged {
-            // G1 边界：save_job/staging 失败同样会留下 job 壳（目录 + job.json），
-            // 与 queue 失败同口径补偿清理，不留磁盘孤儿。
-            compensate_failed_import(root, &job_id);
-            return Err(error);
+            crate::job_commands::stage_source_file(root, &job_id, answer, "AnswerKey")?;
         }
+        if let Some(answers) = file.split_answers {
+            crate::job_commands::stage_source_file(root, &job_id, answers, "AnswerKey")?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = staged {
+        // G1 边界：save_job/staging 失败同样会留下 job 壳（目录 + job.json），
+        // 与 queue 失败同口径补偿清理，不留磁盘孤儿。
+        compensate_failed_import(root, &job_id);
+        return Err(error);
+    }
 
-        // 3. 数据库：library 外壳 + 处理任务入队（两个独立短写，文件操作已在外完成）。
-        let queue_result: CommandResult<()> = queue_import(
-            root,
-            &job_id,
-            title,
-            file.name,
-            options.cloud_enabled,
-            options.cloud_profile_id,
-            options.cloud_token_budget,
-            options.modality,
-            options.pipeline_mode,
-            file.part,
-        );
-        if let Err(error) = queue_result {
-            // G1/A4-F01：queue 失败必须补偿——磁盘 job 目录（含 staged 文件）
-            // 与可能残留的 DB 行一并清除，不留「磁盘有 job、DB 无可见行」的孤儿；
-            // 以 rejected 明确告知用户（原始文件未被移动或修改）。
-            compensate_failed_import(root, &job_id);
-            return Err(error);
-        }
+    // 3. 数据库：library 外壳 + 处理任务入队（两个独立短写，文件操作已在外完成）。
+    let queue_result: CommandResult<()> = queue_import(
+        root,
+        &job_id,
+        title,
+        file.name,
+        options.cloud_enabled,
+        options.cloud_profile_id,
+        options.cloud_token_budget,
+        options.modality,
+        options.pipeline_mode,
+        file.part,
+    );
+    if let Err(error) = queue_result {
+        // G1/A4-F01：queue 失败必须补偿——磁盘 job 目录（含 staged 文件）
+        // 与可能残留的 DB 行一并清除，不留「磁盘有 job、DB 无可见行」的孤儿；
+        // 以 rejected 明确告知用户（原始文件未被移动或修改）。
+        compensate_failed_import(root, &job_id);
+        return Err(error);
+    }
     Ok(ImportCreatedItem {
         item_id: job_id,
         title: title.to_string(),
@@ -415,7 +442,12 @@ fn queue_import(
     )?;
     set_item_status(&transaction, job_id, "processing")?;
     if let Some(part) = part {
-        crate::library::repository::set_item_part(&transaction, job_id, Some(part), Some("content"))?;
+        crate::library::repository::set_item_part(
+            &transaction,
+            job_id,
+            Some(part),
+            Some("content"),
+        )?;
     }
     super::queue::enqueue(
         &transaction,
@@ -566,28 +598,47 @@ mod tests {
                 "NOT GIVEN if there is no information on this".to_string(),
             ];
             for q in *first..=*last {
-                questions.push(format!("{q} The writer describes {topic} fact number {q} in the passage."));
+                questions.push(format!(
+                    "{q} The writer describes {topic} fact number {q} in the passage."
+                ));
             }
             pages.push(questions);
         }
-        let mut key = vec!["Listening and Reading Answer Keys".to_string(), "LISTENING".to_string()];
+        let mut key = vec![
+            "Listening and Reading Answer Keys".to_string(),
+            "LISTENING".to_string(),
+        ];
         for q in 1..=10 {
             key.push(format!("{q} listening answer"));
         }
         key.push("READING".to_string());
         for (index, (_, first, last)) in passages.iter().enumerate() {
-            key.push(format!("Reading Passage {}, Questions {first}-{last}", index + 1));
+            key.push(format!(
+                "Reading Passage {}, Questions {first}-{last}",
+                index + 1
+            ));
             for q in *first..=*last {
-                key.push(format!("{q} {}", ["TRUE", "FALSE", "NOT GIVEN"][(q % 3) as usize]));
+                key.push(format!(
+                    "{q} {}",
+                    ["TRUE", "FALSE", "NOT GIVEN"][(q % 3) as usize]
+                ));
             }
         }
         pages.push(key);
-        let owned: Vec<Vec<&str>> = pages.iter().map(|p| p.iter().map(String::as_str).collect()).collect();
+        let owned: Vec<Vec<&str>> = pages
+            .iter()
+            .map(|p| p.iter().map(String::as_str).collect())
+            .collect();
         let refs: Vec<&[&str]> = owned.iter().map(Vec::as_slice).collect();
         super::super::pdf_split::minimal_text_pdf(&refs)
     }
 
-    fn split_import(root: &std::path::Path, name: &str, bytes: &[u8], title_hint: Option<&str>) -> ImportFilesResult {
+    fn split_import(
+        root: &std::path::Path,
+        name: &str,
+        bytes: &[u8],
+        title_hint: Option<&str>,
+    ) -> ImportFilesResult {
         let source = root.join(name);
         fs::write(&source, bytes).unwrap();
         import_files_at_root(
@@ -621,24 +672,50 @@ mod tests {
         let result = split_import(&root, "剑桥 Test 1.pdf", &bytes, None);
         let reasons: Vec<_> = result.rejected.iter().map(|r| r.reason.clone()).collect();
         assert!(reasons.is_empty(), "rejected: {reasons:?}");
-        let titles: Vec<_> = result.created.iter().map(|item| item.title.clone()).collect();
-        assert_eq!(titles, ["剑桥 Test 1 · P1", "剑桥 Test 1 · P2", "剑桥 Test 1 · P3"]);
+        let titles: Vec<_> = result
+            .created
+            .iter()
+            .map(|item| item.title.clone())
+            .collect();
+        assert_eq!(
+            titles,
+            ["剑桥 Test 1 · P1", "剑桥 Test 1 · P2", "剑桥 Test 1 · P3"]
+        );
         let ranges = [(1u32, 13u32), (14, 26), (27, 40)];
         for (item, (first, last)) in result.created.iter().zip(ranges) {
             let job = crate::job_store::load_job(&root, &item.item_id).unwrap();
             let uploads = crate::util::job_dir(&root, &item.item_id).join("uploads");
-            let main = job.source_files.iter().find(|s| s.role == "MainQuestion").unwrap();
+            let main = job
+                .source_files
+                .iter()
+                .find(|s| s.role == "MainQuestion")
+                .unwrap();
             assert!(main.original_name.starts_with("剑桥 Test 1 - P"));
-            let text = pdf_extract::extract_text_by_pages(&uploads.join(&main.stored_name)).unwrap();
-            assert_eq!(text.len(), 2, "{}：子 PDF 只含本篇两页，不再附整页答案", item.title);
+            let text =
+                pdf_extract::extract_text_by_pages(&uploads.join(&main.stored_name)).unwrap();
+            assert_eq!(
+                text.len(),
+                2,
+                "{}：子 PDF 只含本篇两页，不再附整页答案",
+                item.title
+            );
             assert!(!text.iter().any(|page| page.contains("Answer Keys")));
-            let key = job.source_files.iter().find(|s| s.role == "AnswerKey").expect("本篇答案");
+            let key = job
+                .source_files
+                .iter()
+                .find(|s| s.role == "AnswerKey")
+                .expect("本篇答案");
             let answers = fs::read_to_string(uploads.join(&key.stored_name)).unwrap();
             let numbers: Vec<u32> = answers
                 .lines()
                 .filter_map(|line| line.split_whitespace().next()?.parse().ok())
                 .collect();
-            assert_eq!(numbers, (first..=last).collect::<Vec<_>>(), "{}", item.title);
+            assert_eq!(
+                numbers,
+                (first..=last).collect::<Vec<_>>(),
+                "{}",
+                item.title
+            );
             assert!(!answers.contains("listening"), "听力答案不能进阅读条目");
         }
         let leftovers = fs::read_dir(root.join("tmp").join("import-split"))
@@ -674,7 +751,16 @@ mod tests {
         crate::util::ensure_app_dirs(&root).unwrap();
         let bytes = whole_test_pdf(&[("glass", 1, 3), ("horses", 14, 16)]);
         let result = split_import(&root, "full.pdf", &bytes, Some("Full"));
-        assert_eq!(result.created.len(), 2, "{:?}", result.rejected.iter().map(|r| &r.reason).collect::<Vec<_>>());
+        assert_eq!(
+            result.created.len(),
+            2,
+            "{:?}",
+            result
+                .rejected
+                .iter()
+                .map(|r| &r.reason)
+                .collect::<Vec<_>>()
+        );
         let second = &result.created[1].item_id;
         crate::auto_pipeline::run_auto_pipeline_core(
             &root,
@@ -690,20 +776,43 @@ mod tests {
         let authoring = session.get("authoring").cloned().unwrap();
         let text = authoring.to_string();
         assert!(text.contains("horses"), "{text}");
-        assert!(!text.contains("glass fact number"), "第一篇的题不能混进第二篇");
-        let slots = authoring.get("answerSlots").and_then(Value::as_object).cloned().unwrap_or_default();
-        let mut numbers: Vec<u64> = slots.values().filter_map(|slot| slot.get("questionNumber").and_then(Value::as_u64)).collect();
+        assert!(
+            !text.contains("glass fact number"),
+            "第一篇的题不能混进第二篇"
+        );
+        let slots = authoring
+            .get("answerSlots")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let mut numbers: Vec<u64> = slots
+            .values()
+            .filter_map(|slot| slot.get("questionNumber").and_then(Value::as_u64))
+            .collect();
         numbers.sort_unstable();
         assert_eq!(numbers, vec![14, 15, 16], "{text}");
         // 答案来自本篇分出来的答案文本：14 % 3 = 2 → NOT GIVEN，15 → TRUE，16 → FALSE。
-        let key = authoring.get("answerKey").cloned().unwrap_or(Value::Null).to_string();
+        let key = authoring
+            .get("answerKey")
+            .cloned()
+            .unwrap_or(Value::Null)
+            .to_string();
         for expected in ["FALSE", "NOT GIVEN", "TRUE"] {
-            assert!(key.to_ascii_uppercase().contains(expected) || key.contains(&expected.to_ascii_lowercase()), "answerKey={key}");
+            assert!(
+                key.to_ascii_uppercase().contains(expected)
+                    || key.contains(&expected.to_ascii_lowercase()),
+                "answerKey={key}"
+            );
         }
         assert!(!key.contains("listening"), "answerKey={key}");
-        assert_eq!(authoring.pointer("/exam/category").and_then(Value::as_str), Some("P2"));
+        assert_eq!(
+            authoring.pointer("/exam/category").and_then(Value::as_str),
+            Some("P2")
+        );
         let conn = open_library_connection(&root).unwrap();
-        let row = crate::library::repository::get_item(&conn, second).unwrap().unwrap();
+        let row = crate::library::repository::get_item(&conn, second)
+            .unwrap()
+            .unwrap();
         assert_eq!(row.part_label.as_deref(), Some("P2"));
         let _ = fs::remove_dir_all(&root);
     }

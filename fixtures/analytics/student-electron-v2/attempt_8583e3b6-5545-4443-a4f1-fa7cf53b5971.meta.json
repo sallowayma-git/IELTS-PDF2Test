@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "SubmissionSnapshotV2",
+  "terminalId": "TERM-ALTU-01",
+  "installId": "244d88ef-0fa7-47a0-a9b1-c6fd72b8e26e",
+  "attemptId": "attempt_8583e3b6-5545-4443-a4f1-fa7cf53b5971",
+  "batchId": "BATCH-ALTU-E2E",
+  "paperId": "fd1468b9f75e4a1290dfc209ac164a16",
+  "candidateId": "A001",
+  "candidateName": "张三",
+  "submittedAt": "2026-11-10T17:07:07.484Z",
+  "exportedAt": "2026-11-10T17:07:07.491Z",
+  "appVersion": "0.0.1-e2e",
+  "dbSchemaVersion": 2,
+  "scorerVersion": "reading-scorer/1",
+  "sizeBytes": 122880,
+  "sha256": "e2cd2f3a14dd9a8ff6eff38cb6ac44f27e1e8f7f4c30276f1baae408216ac62c"
+}

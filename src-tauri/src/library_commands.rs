@@ -23,8 +23,10 @@ use std::path::Path;
 pub(crate) fn get_library_item_processing_core(root: &Path, item_id: &str) -> CommandResult<Value> {
     crate::util::validate_path_segment("item_id", item_id)?;
     let conn = crate::library::repository::open_library_connection(root)?;
-    serde_json::to_value(crate::processing::queue::get_job_by_library_item(&conn, item_id)?)
-        .map_err(|error| error.to_string())
+    serde_json::to_value(crate::processing::queue::get_job_by_library_item(
+        &conn, item_id,
+    )?)
+    .map_err(|error| error.to_string())
 }
 
 /// Refresh a single library row while retaining the existing four-source merge contract.
@@ -339,7 +341,9 @@ pub(crate) fn permanently_delete_library_exam_core(root: &Path, id: &str) -> Com
     // 释放 DB 连接后再删文件（受管音频清理会另开连接）。文件删除失败只记日志、不回滚：DB 已一致。
     drop(conn);
     if let Err(error) = crate::job_commands::delete_job_artifacts(root, id) {
-        eprintln!("[library] permanent delete {id}: file cleanup failed (db already purged): {error}");
+        eprintln!(
+            "[library] permanent delete {id}: file cleanup failed (db already purged): {error}"
+        );
     }
     // 写作条目的权威内容在 writing-jobs/<id>/，不在 job 目录里；复用 delete_writing_job 的目录清理
     // （非写作条目该目录不存在，无副作用），否则永久删除写作题会残留 writing-job.json。
@@ -668,14 +672,28 @@ mod tests {
         let root = make_reading_appdata();
         migrate_existing_into_library(&root).unwrap();
         // Summary refresh must not parse unchanged document artifacts or revision payloads.
-        fs::write(crate::util::job_dir(&root, "import-test-1").join("authoring-ir.json"), "invalid JSON").unwrap();
+        fs::write(
+            crate::util::job_dir(&root, "import-test-1").join("authoring-ir.json"),
+            "invalid JSON",
+        )
+        .unwrap();
         let row = get_library_row_core(&root, "import-test-1").unwrap();
         let conn = crate::library::repository::open_library_connection(&root).unwrap();
-        assert_eq!(row["summary"], serde_json::to_value(list_exams(&conn, &LibraryFilter::default()).unwrap().remove(0)).unwrap());
+        assert_eq!(
+            row["summary"],
+            serde_json::to_value(
+                list_exams(&conn, &LibraryFilter::default())
+                    .unwrap()
+                    .remove(0)
+            )
+            .unwrap()
+        );
         assert_eq!(row["job"]["jobId"], "import-test-1");
         assert_eq!(row["inTrash"], false);
         assert!(get_library_row_core(&root, "missing").unwrap().is_null());
-        assert!(get_library_item_processing_core(&root, "missing").unwrap().is_null());
+        assert!(get_library_item_processing_core(&root, "missing")
+            .unwrap()
+            .is_null());
         cleanup(&root);
 
         let root = make_writing_appdata();
@@ -687,7 +705,10 @@ mod tests {
         assert!(delete_library_exam_core(&root, "writing-test-1").unwrap());
         let row = get_library_row_core(&root, "writing-test-1").unwrap();
         assert_eq!(row["inTrash"], true);
-        assert_eq!(row["summary"], serde_json::to_value(crate::db::list_trashed_items(&conn).unwrap().remove(0)).unwrap());
+        assert_eq!(
+            row["summary"],
+            serde_json::to_value(crate::db::list_trashed_items(&conn).unwrap().remove(0)).unwrap()
+        );
         cleanup(&root);
     }
 
@@ -695,13 +716,35 @@ mod tests {
     fn incremental_library_row_and_processing_follow_item_identity_and_terminal_state() {
         let root = make_reading_appdata();
         let conn = crate::library::repository::open_library_connection(&root).unwrap();
-        crate::library::repository::upsert_item_shell(&conn, &crate::library::repository::UpsertItemInput {
-            id: "import-test-1", modality: "listening", title: "V2 Title", status: "processing", source_asset_id: None,
-        }).unwrap();
+        crate::library::repository::upsert_item_shell(
+            &conn,
+            &crate::library::repository::UpsertItemInput {
+                id: "import-test-1",
+                modality: "listening",
+                title: "V2 Title",
+                status: "processing",
+                source_asset_id: None,
+            },
+        )
+        .unwrap();
         // Processing job IDs need not equal library item IDs.
-        crate::processing::queue::enqueue(&conn, "worker-job", "import-test-1", "source", &Value::Null).unwrap();
-        assert_eq!(get_library_item_processing_core(&root, "import-test-1").unwrap()["stage"], "queued");
-        conn.execute("UPDATE processing_jobs_v2 SET stage='cancelled', event_seq=5 WHERE id='worker-job'", []).unwrap();
+        crate::processing::queue::enqueue(
+            &conn,
+            "worker-job",
+            "import-test-1",
+            "source",
+            &Value::Null,
+        )
+        .unwrap();
+        assert_eq!(
+            get_library_item_processing_core(&root, "import-test-1").unwrap()["stage"],
+            "queued"
+        );
+        conn.execute(
+            "UPDATE processing_jobs_v2 SET stage='cancelled', event_seq=5 WHERE id='worker-job'",
+            [],
+        )
+        .unwrap();
         let row = get_library_row_core(&root, "import-test-1").unwrap();
         assert_eq!(row["item"]["title"], "V2 Title");
         assert_eq!(row["item"]["modality"], "listening");
@@ -711,7 +754,10 @@ mod tests {
         let row = get_library_row_core(&root, "import-test-1").unwrap();
         assert_eq!(row["inTrash"], true);
         assert_eq!(row["summary"]["title"], "V2 Title");
-        assert!(row["item"].is_null(), "trash refresh must match the full list's deleted-V2 exclusion");
+        assert!(
+            row["item"].is_null(),
+            "trash refresh must match the full list's deleted-V2 exclusion"
+        );
         cleanup(&root);
     }
 
@@ -891,7 +937,9 @@ mod tests {
             "永久删除后不应还有任何表残留该 id"
         );
         assert!(get_item(&conn, "import-test-1").unwrap().is_none());
-        assert!(crate::db::get_exam(&conn, "import-test-1").unwrap().is_none());
+        assert!(crate::db::get_exam(&conn, "import-test-1")
+            .unwrap()
+            .is_none());
         assert!(
             !crate::util::job_dir(&root, "import-test-1").exists(),
             "永久删除必须删掉 job 目录"
@@ -920,7 +968,9 @@ mod tests {
 
     #[test]
     fn permanently_delete_refuses_item_still_processing() {
-        use crate::library::repository::{open_library_connection, upsert_item_shell, UpsertItemInput};
+        use crate::library::repository::{
+            open_library_connection, upsert_item_shell, UpsertItemInput,
+        };
         let root = make_reading_appdata();
         migrate_existing_into_library(&root).unwrap();
         // processing_jobs_v2.library_item_id 外键指向 library_items_v2；导入流程里 job_id
@@ -977,7 +1027,9 @@ mod tests {
     // 且识别完成回写 v1 后不得复活——v1、v2 两个活动查询都不含它，回收站恰好一条。
     #[test]
     fn delete_during_recognition_hides_item_and_survives_recognition_completion() {
-        use crate::library::repository::{open_library_connection, upsert_item_shell, UpsertItemInput};
+        use crate::library::repository::{
+            open_library_connection, upsert_item_shell, UpsertItemInput,
+        };
         let root = make_reading_appdata(); // 仅磁盘 job 文件，DB 为空（未 migrate）
         {
             let conn = open_library_connection(&root).unwrap();
@@ -1035,10 +1087,9 @@ mod tests {
         );
 
         // 模拟识别完成：worker 经双写钩子把 exam 写入 v1（save_job → upsert_reading_job）。
-        let job: ImportJob = crate::util::read_json(
-            &crate::util::job_dir(&root, "import-test-1").join("job.json"),
-        )
-        .unwrap();
+        let job: ImportJob =
+            crate::util::read_json(&crate::util::job_dir(&root, "import-test-1").join("job.json"))
+                .unwrap();
         crate::job_store::save_job(&root, &job).unwrap();
 
         assert!(
@@ -1110,10 +1161,12 @@ mod tests {
             "自动判定来源应为 range/content，实得 {source}"
         );
 
-        assert!(
-            crate::library::commands::set_library_item_part_core(&root, "import-test-1", Some("P1"))
-                .unwrap()
-        );
+        assert!(crate::library::commands::set_library_item_part_core(
+            &root,
+            "import-test-1",
+            Some("P1")
+        )
+        .unwrap());
         let row = find(&crate::library::commands::list_library_items_core(&root, false).unwrap());
         assert_eq!(row["partLabel"], "P1");
         assert_eq!(row["partSource"], "manual");

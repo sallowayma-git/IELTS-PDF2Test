@@ -46,7 +46,12 @@ pub(crate) fn diff_values(before: &Value, after: &Value) -> Vec<DiffEntry> {
     out
 }
 
-fn diff_rec(before: Option<&Value>, after: Option<&Value>, path: &mut Vec<Value>, out: &mut Vec<DiffEntry>) {
+fn diff_rec(
+    before: Option<&Value>,
+    after: Option<&Value>,
+    path: &mut Vec<Value>,
+    out: &mut Vec<DiffEntry>,
+) {
     match (before, after) {
         (Some(b), Some(a)) if b == a => {}
         (Some(Value::Object(before_map)), Some(Value::Object(after_map))) => {
@@ -64,7 +69,12 @@ fn diff_rec(before: Option<&Value>, after: Option<&Value>, path: &mut Vec<Value>
         {
             for index in 0..before_items.len() {
                 path.push(Value::Number(index.into()));
-                diff_rec(Some(&before_items[index]), Some(&after_items[index]), path, out);
+                diff_rec(
+                    Some(&before_items[index]),
+                    Some(&after_items[index]),
+                    path,
+                    out,
+                );
                 path.pop();
             }
         }
@@ -98,13 +108,21 @@ pub(crate) fn set_at(root: &mut Value, path: &[Value], value: Option<&Value>) ->
     let mut current = root;
     for segment in parents {
         current = match segment {
-            Value::String(key) => match current.as_object_mut().and_then(|object| object.get_mut(key)) {
+            Value::String(key) => match current
+                .as_object_mut()
+                .and_then(|object| object.get_mut(key))
+            {
                 Some(child) => child,
                 None => return false,
             },
             Value::Number(number) => {
-                let Some(index) = number.as_u64() else { return false };
-                match current.as_array_mut().and_then(|array| array.get_mut(index as usize)) {
+                let Some(index) = number.as_u64() else {
+                    return false;
+                };
+                match current
+                    .as_array_mut()
+                    .and_then(|array| array.get_mut(index as usize))
+                {
                     Some(child) => child,
                     None => return false,
                 }
@@ -114,16 +132,26 @@ pub(crate) fn set_at(root: &mut Value, path: &[Value], value: Option<&Value>) ->
     }
     match last {
         Value::String(key) => {
-            let Some(object) = current.as_object_mut() else { return false };
+            let Some(object) = current.as_object_mut() else {
+                return false;
+            };
             match value {
-                Some(replacement) => { object.insert(key.clone(), replacement.clone()); }
-                None => { object.remove(key); }
+                Some(replacement) => {
+                    object.insert(key.clone(), replacement.clone());
+                }
+                None => {
+                    object.remove(key);
+                }
             }
             true
         }
         Value::Number(number) => {
-            let Some(index) = number.as_u64().map(|value| value as usize) else { return false };
-            let Some(array) = current.as_array_mut() else { return false };
+            let Some(index) = number.as_u64().map(|value| value as usize) else {
+                return false;
+            };
+            let Some(array) = current.as_array_mut() else {
+                return false;
+            };
             if index >= array.len() {
                 return false;
             }
@@ -190,11 +218,13 @@ mod tests {
 
     #[test]
     fn present_null_survives_serialization() {
-        let entry = DiffEntry { path: vec![json!("x")], before: Some(Value::Null), after: None };
+        let entry = DiffEntry {
+            path: vec![json!("x")],
+            before: Some(Value::Null),
+            after: None,
+        };
         let restored = entry_from_json(&entry_to_json(&entry)).unwrap();
         assert_eq!(restored.before, Some(Value::Null));
         assert_eq!(restored.after, None);
     }
 }
-
-

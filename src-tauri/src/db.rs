@@ -13,9 +13,9 @@
 use crate::{LibraryExamDetail, LibraryExamSummary, LibraryFilter, LibraryMetaPatch, LibraryStats};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::CommandResult;
 
@@ -58,10 +58,13 @@ pub(crate) fn open_connection(root: &Path) -> CommandResult<Connection> {
         eprintln!("[library] open_db failed at {}: {}", path.display(), error);
         "open_db_failed".to_string()
     })?;
+    // Set the wait policy before any PRAGMA or migration can acquire a lock.
+    // PDF recognition and multiple editor saves may contend on slower disks.
+    conn.busy_timeout(std::time::Duration::from_secs(30))
+        .map_err(|error| format!("db_busy_timeout:{error}"))?;
     conn.execute_batch(
         "PRAGMA journal_mode=WAL;\n\
-         PRAGMA foreign_keys=ON;\n\
-         PRAGMA busy_timeout=5000;",
+         PRAGMA foreign_keys=ON;",
     )
     .map_err(|error| format!("db_pragma:{}", error))?;
     // 建表只跑一次/进程/库文件。`ensure_schema` 是 `CREATE TABLE IF NOT EXISTS` 批量，
@@ -73,19 +76,25 @@ pub(crate) fn open_connection(root: &Path) -> CommandResult<Connection> {
 }
 
 /// 记录已建表的库文件（进程内、按路径去重）。
-fn schema_ensured_set() -> &'static Mutex<HashSet<PathBuf>> {
-    static SCHEMA_ENSURED: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
-    SCHEMA_ENSURED.get_or_init(|| Mutex::new(HashSet::new()))
+fn schema_ensured_set() -> &'static Mutex<HashMap<PathBuf, Arc<Mutex<bool>>>> {
+    static SCHEMA_ENSURED: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<bool>>>>> = OnceLock::new();
+    SCHEMA_ENSURED.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// 对某个库文件只跑一次 `ensure_schema`。并发首开时可能重复跑（`ensure_schema` 幂等），
-/// 但绝不会漏跑。
+/// Serialize first initialization of the same file without holding the global
+/// registry across disk I/O or blocking connections to other database files.
 fn ensure_schema_once(path: &Path, conn: &Connection) -> CommandResult<()> {
-    if schema_ensured_set().lock().unwrap().contains(path) {
-        return Ok(());
+    let state = schema_ensured_set()
+        .lock()
+        .unwrap()
+        .entry(path.to_path_buf())
+        .or_insert_with(|| Arc::new(Mutex::new(false)))
+        .clone();
+    let mut ensured = state.lock().unwrap();
+    if !*ensured {
+        ensure_schema(conn)?;
+        *ensured = true;
     }
-    ensure_schema(conn)?;
-    schema_ensured_set().lock().unwrap().insert(path.to_path_buf());
     Ok(())
 }
 
@@ -576,16 +585,22 @@ pub(crate) fn get_library_row_summary(
     conn: &Connection,
     id: &str,
 ) -> CommandResult<(Option<LibraryExamSummary>, bool)> {
-    let v1_trash: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM library_items WHERE id=?1 AND deleted_at IS NOT NULL)",
-        [id], |row| row.get(0),
-    ).map_err(|error| format!("library_row_trash:{error}"))?;
-    let v2_trash = if table_exists(conn, "library_items_v2") {
-        conn.query_row(
+    let v1_trash: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM library_items WHERE id=?1 AND deleted_at IS NOT NULL)",
+            [id],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("library_row_trash:{error}"))?;
+    let v2_trash =
+        if table_exists(conn, "library_items_v2") {
+            conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM library_items_v2 WHERE id=?1 AND deleted_at IS NOT NULL)",
             [id], |row| row.get::<_, bool>(0),
         ).map_err(|error| format!("library_row_v2_trash:{error}"))?
-    } else { false };
+        } else {
+            false
+        };
     let in_trash = v1_trash || v2_trash;
     let sql = if v1_trash {
         "SELECT id, NULL AS exam_id, title, subject, category, difficulty AS frequency, status,
@@ -596,11 +611,17 @@ pub(crate) fn get_library_row_summary(
         "SELECT id, NULL AS exam_id, title, modality AS subject, part_label AS category,
          NULL AS frequency, status, NULL AS task_type, '[]' AS tags_json,
          NULL AS source_hash, 0 AS issue_errors, 0 AS issue_warnings, created_at, updated_at
-         FROM library_items_v2 WHERE id=?1".to_string()
+         FROM library_items_v2 WHERE id=?1"
+            .to_string()
     } else {
-        format!("SELECT {SUMMARY_COLUMNS} FROM ({}) active WHERE id=?1 LIMIT 1", active_summary_source_sql())
+        format!(
+            "SELECT {SUMMARY_COLUMNS} FROM ({}) active WHERE id=?1 LIMIT 1",
+            active_summary_source_sql()
+        )
     };
-    let summary = conn.query_row(&sql, [id], row_to_summary).optional()
+    let summary = conn
+        .query_row(&sql, [id], row_to_summary)
+        .optional()
         .map_err(|error| format!("library_row_summary:{error}"))?;
     Ok((summary, in_trash))
 }
@@ -1051,7 +1072,9 @@ pub(crate) fn purge_all_rows_for_item(conn: &Connection, id: &str) -> CommandRes
 
     let tables: Vec<String> = {
         let mut stmt = tx
-            .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+            )
             .map_err(|e| format!("purge_list_tables:{}", e))?;
         let mapped = stmt
             .query_map([], |row| row.get::<_, String>(0))
@@ -1195,7 +1218,9 @@ pub(crate) fn list_trashed_items(conn: &Connection) -> CommandResult<Vec<Library
     let mut out: Vec<LibraryExamSummary> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     {
-        let mut stmt = conn.prepare(v1_sql).map_err(|e| format!("trash_prepare:{}", e))?;
+        let mut stmt = conn
+            .prepare(v1_sql)
+            .map_err(|e| format!("trash_prepare:{}", e))?;
         let rows = stmt
             .query_map([], row_to_summary)
             .map_err(|e| format!("trash_query:{}", e))?;
@@ -1209,7 +1234,9 @@ pub(crate) fn list_trashed_items(conn: &Connection) -> CommandResult<Vec<Library
         // 内容真源在 v2；这里用 v2 列构最小摘要（够回收站展示与去重）。
         let v2_sql = "SELECT id, title, modality, status, part_label, created_at, updated_at \
                       FROM library_items_v2 WHERE deleted_at IS NOT NULL ORDER BY updated_at DESC";
-        let mut stmt = conn.prepare(v2_sql).map_err(|e| format!("trash_v2_prepare:{}", e))?;
+        let mut stmt = conn
+            .prepare(v2_sql)
+            .map_err(|e| format!("trash_v2_prepare:{}", e))?;
         let rows = stmt
             .query_map([], |row| {
                 Ok((

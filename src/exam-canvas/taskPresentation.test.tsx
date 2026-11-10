@@ -234,6 +234,24 @@ describe("task presentation in the authoring canvas", () => {
     expect(matrix.container.querySelectorAll('[data-testid="matching-matrix"] input[type="radio"]')).toHaveLength(4);
   });
 
+  it("renders paragraph-map matching as a statement-by-paragraph matrix with derived options protected", () => {
+    const draft = headingDraft();
+    const task = draft.taskGroups[0];
+    task.taskType = "matching_information";
+    delete task.optionBank;
+    task.responseGroups = ["q14", "q15"].map((slotId, index) => ({
+      ...task.responseGroups[0], responseGroupId: `info-rg-${index}`, slotIds: [slotId], kind: "matching" as const
+    }));
+    for (const slot of Object.values(draft.answerSlots)) { slot.hostType = "prompt"; slot.interaction = "radio"; slot.hostNodeId = undefined; }
+    for (const response of task.responseGroups) delete response.optionBankRef;
+    const student = render(<ExamCanvas authoring={draft} mode="student" />);
+    expect(student.container.querySelector('[data-testid="matching-matrix"]')).not.toBeNull();
+    student.unmount();
+    const author = render(<ExamCanvas authoring={draft} mode="author" onAnswerChange={vi.fn()} onStructureAction={vi.fn()} />);
+    expect(author.container.querySelector('[data-testid="matching-matrix"]')).not.toBeNull();
+    expect(author.container.querySelector('.v2-option-add,.v2-option-delete,.v2-option-drag-handle')).toBeNull();
+  });
+
   it("keeps a word-bank summary answer inline and exposes its shared option pool", () => {
     const draft = headingDraft({ q14: { kind: "unresolved" }, q15: { kind: "unresolved" } });
     const task = draft.taskGroups[0];

@@ -11,10 +11,9 @@
  * Idempotent: skips download when the library is already present and the
  * stamped version matches.
  *
- * Usage: node scripts/fetch-pdfium.mjs [--force] [--platform <win|mac|linux>]
+ * Usage: node scripts/fetch-pdfium.mjs [--force] [--platform <win|mac|linux>] [--arch <x64|arm64>] [--dry-run]
  */
 import { createWriteStream, existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import https from "node:https";
@@ -27,6 +26,10 @@ const PLATFORM_OVERRIDE = process.argv.includes("--platform")
   ? process.argv[process.argv.indexOf("--platform") + 1]
   : null;
 const FORCE = process.argv.includes("--force");
+const DRY_RUN = process.argv.includes("--dry-run");
+const ARCH_OVERRIDE = process.argv.includes("--arch")
+  ? process.argv[process.argv.indexOf("--arch") + 1]
+  : null;
 
 function detectPlatform() {
   if (PLATFORM_OVERRIDE) return PLATFORM_OVERRIDE;
@@ -35,10 +38,10 @@ function detectPlatform() {
   return "linux";
 }
 
-function platformAsset(platform) {
-  // bblanchon/pdfium-binaries asset names (x64). arm64 variants exist but are
-  // not fetched here; add them if you ship arm64 builds.
-  return `pdfium-${platform}-x64.tgz`;
+function platformAsset(platform, arch) {
+  if (!["win", "mac", "linux"].includes(platform)) throw new Error(`unsupported platform: ${platform}`);
+  if (!["x64", "arm64"].includes(arch)) throw new Error(`unsupported architecture: ${arch}`);
+  return `pdfium-${platform}-${arch}.tgz`;
 }
 
 function libraryFileName(platform) {
@@ -88,7 +91,11 @@ function extractTgz(tgzPath, destDir) {
 
 async function main() {
   const platform = detectPlatform();
-  const asset = platformAsset(platform);
+  const arch = ARCH_OVERRIDE ?? process.arch;
+  const asset = platformAsset(platform, arch);
+  // A release alone cannot distinguish an Intel library from an Apple Silicon
+  // library in the shared platform directory. Replace older, ambiguous stamps.
+  const expectedStamp = `${PDFIUM_RELEASE}:${platform}:${arch}`;
   const url = `https://github.com/bblanchon/pdfium-binaries/releases/download/${PDFIUM_RELEASE}/${asset}`;
   const libDir = join("src-tauri", "lib", platformFolder(platform));
   const libFile = join(libDir, libraryFileName(platform));
@@ -96,10 +103,15 @@ async function main() {
 
   if (existsSync(libFile) && existsSync(versionStamp) && !FORCE) {
     const stamped = readFileSync(versionStamp, "utf8").trim();
-    if (stamped === PDFIUM_RELEASE) {
-      console.log(`[fetch-pdfium] ${platform}: already present (${PDFIUM_RELEASE}), skipping.`);
+    if (stamped === expectedStamp) {
+      console.log(`[fetch-pdfium] ${platform}/${arch}: already present (${PDFIUM_RELEASE}), skipping.`);
       return;
     }
+  }
+
+  if (DRY_RUN) {
+    console.log(`[fetch-pdfium] ${platform}/${arch}: would download ${url} to ${libFile}`);
+    return;
   }
 
   mkdirSync(libDir, { recursive: true });
@@ -135,7 +147,7 @@ async function main() {
     throw new Error(`expected library not found at ${libFile} after extraction`);
   }
   rmSync(tgzPath, { force: true });
-  writeFileSync(versionStamp, PDFIUM_RELEASE);
+  writeFileSync(versionStamp, expectedStamp);
   const stats = readFileSync(libFile);
   console.log(
     `[fetch-pdfium] ${platform}: installed ${libFile} (${(stats.length / 1024 / 1024).toFixed(1)} MB), version ${PDFIUM_RELEASE}.`

@@ -41,7 +41,10 @@ pub(crate) fn install_worker_panic_log(root: PathBuf) {
             "backtrace": std::backtrace::Backtrace::force_capture().to_string(),
         });
         if let Ok(line) = serde_json::to_string(&record) {
-            let _ = crate::util::append_text(&root.join("logs").join("worker-panics.jsonl"), &format!("{line}\n"));
+            let _ = crate::util::append_text(
+                &root.join("logs").join("worker-panics.jsonl"),
+                &format!("{line}\n"),
+            );
         }
         previous(info);
     }));

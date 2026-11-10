@@ -196,7 +196,6 @@ const MODEL_HIDDEN_PROVENANCE_KEYS: [&str; 3] = ["sourceAnchors", "provenance", 
 /// 模型常原样回显它；分发器把回显的占位符归一为主卷真实 ID，而不是当伪 ID 拒绝。
 pub(crate) const REQUEST_SOURCE_FILE_ID_PLACEHOLDER: &str = "SOURCE_FILE_ID_FROM_REQUEST_DATA";
 
-
 fn collect_provenance(
     value: &Value,
     provenance: &mut BTreeMap<(String, String), Map<String, Value>>,

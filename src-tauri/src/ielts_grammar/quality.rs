@@ -397,14 +397,18 @@ fn evaluate_quality_inner(
     // source, never from task groups or cloud output.  Listening uses the same
     // document-level check (its declared `Questions a-b` ranges are read the same
     // way) and adds the per-part view in `validate_listening_parts`.
-    let question_coverage = if cloud_direct { None } else { Some(match frozen {
-        Some(frozen) => super::source_coverage::assess_against_frozen_declaration(
-            authoring,
-            &frozen.declared_question_numbers,
-            &frozen.declarations,
-        ),
-        None => assess_source_question_coverage(authoring, physical_shadow),
-    }) };
+    let question_coverage = if cloud_direct {
+        None
+    } else {
+        Some(match frozen {
+            Some(frozen) => super::source_coverage::assess_against_frozen_declaration(
+                authoring,
+                &frozen.declared_question_numbers,
+                &frozen.declarations,
+            ),
+            None => assess_source_question_coverage(authoring, physical_shadow),
+        })
+    };
 
     if let Some(assessment) = question_coverage.as_ref() {
         match assessment.status {
@@ -438,12 +442,28 @@ fn evaluate_quality_inner(
         }
     }
 
-    if authoring.pointer("/passage/content").and_then(Value::as_array).is_some_and(|nodes|
-        nodes.iter().any(|node| node.get("paragraphLabel").is_some() && node["provenanceStatus"] == "derived")) {
-        push_issue(&mut issues, &mut hard_failures, issue(
-            "PARAGRAPH_LABELS_DERIVED", "warning",
-            "段落字母按题目说明声明的范围及原文段落顺序推导，请核对段落边界。",
-            "document", "document", Vec::new(), vec!["edit_text"]));
+    if authoring
+        .pointer("/passage/content")
+        .and_then(Value::as_array)
+        .is_some_and(|nodes| {
+            nodes.iter().any(|node| {
+                node.get("paragraphLabel").is_some() && node["provenanceStatus"] == "derived"
+            })
+        })
+    {
+        push_issue(
+            &mut issues,
+            &mut hard_failures,
+            issue(
+                "PARAGRAPH_LABELS_DERIVED",
+                "warning",
+                "段落字母按题目说明声明的范围及原文段落顺序推导，请核对段落边界。",
+                "document",
+                "document",
+                Vec::new(),
+                vec!["edit_text"],
+            ),
+        );
     }
 
     validate_exam_id(authoring, &mut issues, &mut hard_failures);
@@ -551,17 +571,21 @@ fn evaluate_quality_inner(
         }
     }
 
-    let source_summary = if cloud_direct { SourceCoverageSummary::default() } else { match frozen {
-        Some(frozen) => SourceCoverageSummary {
-            score: frozen.node_score,
-            significant_count: frozen.significant_count,
-            assigned_count: frozen.explained_count,
-            unassigned_ids: Vec::new(),
-            ledger: Vec::new(),
-            physical_available: false,
-        },
-        None => source_coverage_summary(authoring, physical_shadow),
-    } };
+    let source_summary = if cloud_direct {
+        SourceCoverageSummary::default()
+    } else {
+        match frozen {
+            Some(frozen) => SourceCoverageSummary {
+                score: frozen.node_score,
+                significant_count: frozen.significant_count,
+                assigned_count: frozen.explained_count,
+                unassigned_ids: Vec::new(),
+                ledger: Vec::new(),
+                physical_available: false,
+            },
+            None => source_coverage_summary(authoring, physical_shadow),
+        }
+    };
     let source_coverage = source_summary.score;
     let source_purged = frozen.is_some();
     if cloud_direct {
@@ -2873,7 +2897,11 @@ fn evaluate_group(
         hard_failures,
     );
 
-    let source_anchor_coverage = if cloud_direct || !anchors.is_empty() { 1.0 } else { 0.0 };
+    let source_anchor_coverage = if cloud_direct || !anchors.is_empty() {
+        1.0
+    } else {
+        0.0
+    };
     let type_consistency = if task_type == "short_answer" {
         0.72
     } else {
@@ -4916,7 +4944,10 @@ fn physical_ignored_reasons(
                 && !compact_text.contains("question")
                 && !compact_text.contains("answer")
             {
-                ignored.insert(region_id.to_string(), "running_header_or_footer".to_string());
+                ignored.insert(
+                    region_id.to_string(),
+                    "running_header_or_footer".to_string(),
+                );
                 continue;
             }
 
@@ -8041,9 +8072,18 @@ mod tests {
             }]
         });
         let ignored = physical_ignored_reasons(&physical, &BTreeSet::new());
-        assert_eq!(ignored.get("cap1").map(String::as_str), Some("figure_caption"));
-        assert_eq!(ignored.get("cr1").map(String::as_str), Some("copyright_notice"));
-        assert_eq!(ignored.get("hd1").map(String::as_str), Some("running_header_or_footer"));
+        assert_eq!(
+            ignored.get("cap1").map(String::as_str),
+            Some("figure_caption")
+        );
+        assert_eq!(
+            ignored.get("cr1").map(String::as_str),
+            Some("copyright_notice")
+        );
+        assert_eq!(
+            ignored.get("hd1").map(String::as_str),
+            Some("running_header_or_footer")
+        );
         assert!(!ignored.contains_key("body1"), "正文区域不得被忽略");
     }
 }

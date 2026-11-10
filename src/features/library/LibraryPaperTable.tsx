@@ -15,8 +15,18 @@ export interface PaperGroup {
 const byTitle = (a: LibraryRowV1, b: LibraryRowV1) => a.title.localeCompare(b.title, "zh-CN");
 
 /** 把题库行分成组卷视图的分组。写作不参与组卷，不出现在这里。 */
-export function groupRowsForPaper(rows: LibraryRowV1[]): PaperGroup[] {
+export function groupRowsForPaper(rows: LibraryRowV1[], modality?: "reading" | "listening"): PaperGroup[] {
   const active = rows.filter((row) => !row.inTrash);
+  if (modality) {
+    return [{
+      key: modality,
+      label: "题目列表",
+      rows: active.filter((row) => row.modality === modality).sort((a, b) => {
+        const rank = (row: LibraryRowV1) => isReadingPart(row.part) ? READING_PARTS.indexOf(row.part) : READING_PARTS.length;
+        return (modality === "reading" ? rank(a) - rank(b) : (a.part ?? "").localeCompare(b.part ?? "", "en")) || byTitle(a, b);
+      })
+    }];
+  }
   const groups: PaperGroup[] = READING_PARTS.map((part) => ({
     key: part,
     label: `阅读 ${part}`,
@@ -123,6 +133,7 @@ export function EditableTitle({ title, onSave }: { title: string; onSave: (next:
 
 export function LibraryPaperTable({
   rows,
+  modality,
   selection,
   hasCurrentPaper,
   currentExamIds,
@@ -134,6 +145,7 @@ export function LibraryPaperTable({
   onTrash
 }: {
   rows: LibraryRowV1[];
+  modality?: "reading" | "listening";
   selection: PaperSelection;
   hasCurrentPaper: boolean;
   currentExamIds: Set<string>;
@@ -146,7 +158,7 @@ export function LibraryPaperTable({
   /** 移入回收站（可恢复）。 */
   onTrash: (itemId: string) => void;
 }) {
-  const groups = groupRowsForPaper(rows);
+  const groups = groupRowsForPaper(rows, modality);
   return (
     <div className="paper-table" data-testid="paper-table">
       {groups.map((group) => (
@@ -231,7 +243,7 @@ export function LibraryPaperTable({
               </tbody>
             </table>
           ) : (
-            <p className="empty">暂无题目</p>
+            <p className="empty">{modality ? "没有符合当前条件的题目。可调整筛选条件，或从「导入」添加题目。" : "暂无题目"}</p>
           )}
         </section>
       ))}

@@ -1,5 +1,7 @@
 use crate::{
-    processing::commands::{DEFAULT_CLOUD_TOKEN_BUDGET, MIN_CLOUD_TOKEN_BUDGET, MAX_CLOUD_TOKEN_BUDGET},
+    processing::commands::{
+        DEFAULT_CLOUD_TOKEN_BUDGET, MAX_CLOUD_TOKEN_BUDGET, MIN_CLOUD_TOKEN_BUDGET,
+    },
     util::{append_text, job_dir, write_json},
     validator::allowed_question_kind,
     CommandResult,
@@ -80,9 +82,9 @@ impl LlmTokenUsageTotal {
             self.completion_tokens = self.completion_tokens.saturating_add(tokens);
         }
         let split_total = prompt.unwrap_or(0).saturating_add(completion.unwrap_or(0));
-        self.unattributed_tokens = self.unattributed_tokens.saturating_add(
-            reported_total.unwrap_or(0).saturating_sub(split_total),
-        );
+        self.unattributed_tokens = self
+            .unattributed_tokens
+            .saturating_add(reported_total.unwrap_or(0).saturating_sub(split_total));
         if reported_total.is_none() && (prompt.is_none() || completion.is_none()) {
             self.unknown_usage_calls = self.unknown_usage_calls.saturating_add(1);
         }
@@ -574,14 +576,15 @@ fn error_for_call_record(error: &str, raw_reply: Option<&str>, diagnostics: bool
 /// Rejected requests and connection failures did not produce a completion.
 /// Timeouts and broken responses remain uncertain and still stop the budget.
 fn should_account_usage(trace: &LlmCallTrace) -> bool {
-    trace.usage.is_some() || trace.attempts.iter().any(|attempt| {
-        if let Some(status) = attempt.get("httpStatus").and_then(Value::as_u64) {
-            return (200..300).contains(&status);
-        }
-        let error = attempt.get("error").and_then(Value::as_str).unwrap_or("");
-        !error.starts_with("llm_http_connect_failed:")
-            && !error.starts_with("llm_http_client_failed:")
-    })
+    trace.usage.is_some()
+        || trace.attempts.iter().any(|attempt| {
+            if let Some(status) = attempt.get("httpStatus").and_then(Value::as_u64) {
+                return (200..300).contains(&status);
+            }
+            let error = attempt.get("error").and_then(Value::as_str).unwrap_or("");
+            !error.starts_with("llm_http_connect_failed:")
+                && !error.starts_with("llm_http_client_failed:")
+        })
 }
 
 pub(crate) fn run_llm_gateway(
@@ -666,7 +669,8 @@ fn run_llm_gateway_with_diagnostics(
             if candidate_missing_field_pointer(error).is_some() {
                 if let Ok(value) = parse_llm_json_content(raw) {
                     REJECTED_CANDIDATE.with(|candidate| {
-                        *candidate.borrow_mut() = Some((root.to_path_buf(), job_id.to_string(), error.clone(), value));
+                        *candidate.borrow_mut() =
+                            Some((root.to_path_buf(), job_id.to_string(), error.clone(), value));
                     });
                 }
             }
@@ -696,16 +700,18 @@ fn run_llm_gateway_with_diagnostics(
     let usage = trace.usage.clone().unwrap_or(Value::Null);
     // 软上限记账：Provider 没给 usage 但请求确曾到达服务端（2xx）时，按请求体估算，
     // 不再记「未知」——未知既不锁死任务，也不该让预算出现观测黑洞。
-    let usage_is_empty = usage
-        .get("total_tokens")
-        .and_then(Value::as_u64)
-        .is_none()
+    let usage_is_empty = usage.get("total_tokens").and_then(Value::as_u64).is_none()
         && usage.get("prompt_tokens").and_then(Value::as_u64).is_none()
-        && usage.get("completion_tokens").and_then(Value::as_u64).is_none();
-    let provider_succeeded = trace
-        .attempts
-        .iter()
-        .any(|attempt| attempt.get("httpStatus").and_then(Value::as_u64).is_some_and(|status| (200..300).contains(&status)));
+        && usage
+            .get("completion_tokens")
+            .and_then(Value::as_u64)
+            .is_none();
+    let provider_succeeded = trace.attempts.iter().any(|attempt| {
+        attempt
+            .get("httpStatus")
+            .and_then(Value::as_u64)
+            .is_some_and(|status| (200..300).contains(&status))
+    });
     let usage_fields = if usage_is_empty && provider_succeeded {
         estimated_usage_fields(&trace)
     } else {
@@ -773,11 +779,26 @@ fn run_llm_gateway_with_diagnostics(
         "rejectedPath": rejected_path,
         "recordedAt": Utc::now().to_rfc3339()
     });
-    call_record["usageEstimated"] = usage_fields.get("usageEstimated").cloned().unwrap_or(json!(false));
-    call_record["sourcePagesIncluded"] = request_input.pointer("/chunk/sourcePageMap").cloned().unwrap_or(Value::Null);
-    call_record["sourcePageCount"] = request_input.pointer("/chunk/originalPageCount").cloned().unwrap_or(Value::Null);
-    call_record["evidenceScope"] = request_input.pointer("/chunk/evidenceScope").cloned().unwrap_or(Value::Null);
-    call_record["evidenceScopeReason"] = request_input.pointer("/chunk/evidenceScopeReason").cloned().unwrap_or(Value::Null);
+    call_record["usageEstimated"] = usage_fields
+        .get("usageEstimated")
+        .cloned()
+        .unwrap_or(json!(false));
+    call_record["sourcePagesIncluded"] = request_input
+        .pointer("/chunk/sourcePageMap")
+        .cloned()
+        .unwrap_or(Value::Null);
+    call_record["sourcePageCount"] = request_input
+        .pointer("/chunk/originalPageCount")
+        .cloned()
+        .unwrap_or(Value::Null);
+    call_record["evidenceScope"] = request_input
+        .pointer("/chunk/evidenceScope")
+        .cloned()
+        .unwrap_or(Value::Null);
+    call_record["evidenceScopeReason"] = request_input
+        .pointer("/chunk/evidenceScopeReason")
+        .cloned()
+        .unwrap_or(Value::Null);
     let mut metrics_record = json!({
         "recordType": "llm_usage",
         "commandName": command_name,
@@ -1183,8 +1204,19 @@ fn apply_provider_task_defaults(profile: &Value, body: &mut Value, command: &str
     if !official || !flash_family {
         return;
     }
-    let Some(body) = body.as_object_mut() else { return; };
-    if matches!(command, "generate_authoring_candidate" | "generate_exam_direct" | "extract_pdf_image_answers" | "transcribe_pdf_images" | "extract_group" | "classify_group" | "test_profile") {
+    let Some(body) = body.as_object_mut() else {
+        return;
+    };
+    if matches!(
+        command,
+        "generate_authoring_candidate"
+            | "generate_exam_direct"
+            | "extract_pdf_image_answers"
+            | "transcribe_pdf_images"
+            | "extract_group"
+            | "classify_group"
+            | "test_profile"
+    ) {
         body.entry("thinking").or_insert(json!({"type":"disabled"}));
     } else if !command.is_empty() {
         body.entry("reasoning_effort").or_insert(json!("low"));
@@ -1205,7 +1237,8 @@ fn openai_post(profile: &Value, api_key: Option<&str>, mut body: Value) -> Comma
         trace.system_bytes = trace
             .system_bytes
             .saturating_add(message_role_content_bytes(&body, "system"));
-        trace.user_text_bytes = trace.user_text_bytes
+        trace.user_text_bytes = trace
+            .user_text_bytes
             .saturating_add(message_role_content_bytes(&body, "user"));
         trace.media_bytes = trace
             .media_bytes
@@ -1426,8 +1459,13 @@ fn vision_answer_prompt(input: &Value) -> String {
         serde_json::to_string(input.get("job").unwrap_or(&Value::Null)).unwrap_or_default(),
         serde_json::to_string(input.get("outputContract").unwrap_or(&Value::Null)).unwrap_or_default()
     );
-    let pages: Vec<u64> = input.get("pages").and_then(Value::as_array).into_iter().flatten()
-        .filter_map(|page| page.get("pageIndex").and_then(Value::as_u64)).collect();
+    let pages: Vec<u64> = input
+        .get("pages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|page| page.get("pageIndex").and_then(Value::as_u64))
+        .collect();
     prompt.push_str(&format!("\nSupplied ORIGINAL source page indexes: {pages:?}. evidence.pageIndex MUST use the Page N label shown before each image, NOT the attachment order. Never renumber selected pages starting at 1."));
     if let Some(note) = input.get("repairNote").and_then(Value::as_str) {
         prompt.push_str(&format!("\nYour previous answer-page reply was rejected: {note}. Return the complete answer JSON with corrected source page references, using only the supplied images."));
@@ -1516,51 +1554,107 @@ fn compact_direct_jpeg(bytes: &[u8]) -> CommandResult<Vec<u8>> {
     let (width, height, channels, pixels) = if bytes.starts_with(b"\x89PNG") {
         let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
         decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-        let mut reader = decoder.read_info().map_err(|e| format!("direct_image_decode:{e}"))?;
-        if u64::from(reader.info().width) * u64::from(reader.info().height) > 64_000_000 { return Err("direct_image_dimensions_too_large".into()); }
+        let mut reader = decoder
+            .read_info()
+            .map_err(|e| format!("direct_image_decode:{e}"))?;
+        if u64::from(reader.info().width) * u64::from(reader.info().height) > 64_000_000 {
+            return Err("direct_image_dimensions_too_large".into());
+        }
         let mut pixels = vec![0; reader.output_buffer_size()];
-        let info = reader.next_frame(&mut pixels).map_err(|e| format!("direct_image_decode:{e}"))?;
+        let info = reader
+            .next_frame(&mut pixels)
+            .map_err(|e| format!("direct_image_decode:{e}"))?;
         pixels.truncate(info.buffer_size());
-        let channels = match info.color_type { png::ColorType::Grayscale => 1, png::ColorType::GrayscaleAlpha => 2, png::ColorType::Rgb => 3, png::ColorType::Rgba => 4, _ => return Err("direct_image_color_unsupported".into()) };
+        let channels = match info.color_type {
+            png::ColorType::Grayscale => 1,
+            png::ColorType::GrayscaleAlpha => 2,
+            png::ColorType::Rgb => 3,
+            png::ColorType::Rgba => 4,
+            _ => return Err("direct_image_color_unsupported".into()),
+        };
         (info.width as usize, info.height as usize, channels, pixels)
     } else {
         let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(bytes));
-        decoder.read_info().map_err(|e| format!("direct_image_decode:{e}"))?;
+        decoder
+            .read_info()
+            .map_err(|e| format!("direct_image_decode:{e}"))?;
         let info = decoder.info().ok_or("direct_image_info_missing")?;
-        if u64::from(info.width) * u64::from(info.height) > 64_000_000 { return Err("direct_image_dimensions_too_large".into()); }
-        let channels = match info.pixel_format { jpeg_decoder::PixelFormat::L8 => 1, jpeg_decoder::PixelFormat::RGB24 => 3, _ => return Err("direct_image_color_unsupported".into()) };
-        let pixels = decoder.decode().map_err(|e| format!("direct_image_decode:{e}"))?;
+        if u64::from(info.width) * u64::from(info.height) > 64_000_000 {
+            return Err("direct_image_dimensions_too_large".into());
+        }
+        let channels = match info.pixel_format {
+            jpeg_decoder::PixelFormat::L8 => 1,
+            jpeg_decoder::PixelFormat::RGB24 => 3,
+            _ => return Err("direct_image_color_unsupported".into()),
+        };
+        let pixels = decoder
+            .decode()
+            .map_err(|e| format!("direct_image_decode:{e}"))?;
         (info.width as usize, info.height as usize, channels, pixels)
     };
-    if width == 0 || height == 0 { return Err("direct_image_dimensions_invalid".into()); }
-    let gray = pixels.chunks_exact(channels).map(|pixel| {
-        let value = if channels < 3 { u32::from(pixel[0]) } else { (u32::from(pixel[0])*299 + u32::from(pixel[1])*587 + u32::from(pixel[2])*114)/1000 };
-        let alpha = if channels == 2 || channels == 4 { u32::from(pixel[channels-1]) } else { 255 };
-        ((value*alpha + 255*(255-alpha))/255) as u8
-    }).collect::<Vec<_>>();
+    if width == 0 || height == 0 {
+        return Err("direct_image_dimensions_invalid".into());
+    }
+    let gray = pixels
+        .chunks_exact(channels)
+        .map(|pixel| {
+            let value = if channels < 3 {
+                u32::from(pixel[0])
+            } else {
+                (u32::from(pixel[0]) * 299 + u32::from(pixel[1]) * 587 + u32::from(pixel[2]) * 114)
+                    / 1000
+            };
+            let alpha = if channels == 2 || channels == 4 {
+                u32::from(pixel[channels - 1])
+            } else {
+                255
+            };
+            ((value * alpha + 255 * (255 - alpha)) / 255) as u8
+        })
+        .collect::<Vec<_>>();
     let longest = width.max(height);
     let scale = 1400.0 / longest.max(1400) as f64;
-    let out_width = (width as f64*scale).round().max(1.0) as usize;
-    let out_height = (height as f64*scale).round().max(1.0) as usize;
-    let mut resized = Vec::with_capacity(out_width*out_height);
-    for y in 0..out_height { for x in 0..out_width {
-        let left=x*width/out_width; let right=((x+1)*width/out_width).max(left+1);
-        let top=y*height/out_height; let bottom=((y+1)*height/out_height).max(top+1);
-        let mut sum=0u64;
-        for sy in top..bottom { for sx in left..right { sum += u64::from(gray[sy*width+sx]); } }
-        resized.push((sum/((right-left)*(bottom-top)) as u64) as u8);
-    }}
-    let mut encoded=Vec::new();
-    jpeg_encoder::Encoder::new(&mut encoded,60).encode(&resized,out_width as u16,out_height as u16,jpeg_encoder::ColorType::Luma)
+    let out_width = (width as f64 * scale).round().max(1.0) as usize;
+    let out_height = (height as f64 * scale).round().max(1.0) as usize;
+    let mut resized = Vec::with_capacity(out_width * out_height);
+    for y in 0..out_height {
+        for x in 0..out_width {
+            let left = x * width / out_width;
+            let right = ((x + 1) * width / out_width).max(left + 1);
+            let top = y * height / out_height;
+            let bottom = ((y + 1) * height / out_height).max(top + 1);
+            let mut sum = 0u64;
+            for sy in top..bottom {
+                for sx in left..right {
+                    sum += u64::from(gray[sy * width + sx]);
+                }
+            }
+            resized.push((sum / ((right - left) * (bottom - top)) as u64) as u8);
+        }
+    }
+    let mut encoded = Vec::new();
+    jpeg_encoder::Encoder::new(&mut encoded, 60)
+        .encode(
+            &resized,
+            out_width as u16,
+            out_height as u16,
+            jpeg_encoder::ColorType::Luma,
+        )
         .map_err(|e| format!("direct_image_encode:{e}"))?;
     Ok(encoded)
 }
 
 fn direct_image_data_url(root: &Path, job_id: &str, image: &Value) -> CommandResult<String> {
-    let raw_path=image.get("path").and_then(Value::as_str).ok_or("vision_image_path_missing")?;
-    let (_, bytes)=read_llm_file(root,job_id,raw_path,MAX_LLM_IMAGE_BYTES,"image")?;
-    let encoded=compact_direct_jpeg(&bytes)?;
-    Ok(format!("data:image/jpeg;base64,{}",general_purpose::STANDARD.encode(encoded)))
+    let raw_path = image
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or("vision_image_path_missing")?;
+    let (_, bytes) = read_llm_file(root, job_id, raw_path, MAX_LLM_IMAGE_BYTES, "image")?;
+    let encoded = compact_direct_jpeg(&bytes)?;
+    Ok(format!(
+        "data:image/jpeg;base64,{}",
+        general_purpose::STANDARD.encode(encoded)
+    ))
 }
 
 /// PDF 渲染出的黑白页常以 RGB PNG 存储，直接附上会把每张页图膨胀到数百 KB。
@@ -1801,9 +1895,13 @@ fn append_pdf_images_to_content(
             content.push(
                 json!({"type": "text", "text": format!("Page {}, image {}", page_index, image_index + 1)}),
             );
-            let image_data_url = if input.get("mode").and_then(Value::as_str) == Some(crate::cloud_direct::DIRECT_COMMAND_NAME) {
+            let image_data_url = if input.get("mode").and_then(Value::as_str)
+                == Some(crate::cloud_direct::DIRECT_COMMAND_NAME)
+            {
                 direct_image_data_url(root, job_id, image)?
-            } else { data_url_for_image(root, job_id, image)? };
+            } else {
+                data_url_for_image(root, job_id, image)?
+            };
             inline_bytes = inline_bytes.saturating_add(image_data_url.len() as u64);
             if inline_bytes > MAX_LLM_INLINE_BYTES {
                 return Err("vision_inline_payload_too_large".to_string());
@@ -2022,12 +2120,28 @@ fn run_openai_compatible_vision_answer_llm(
 }
 
 fn validate_vision_answer_source_pages(output: &Value, input: &Value) -> CommandResult<()> {
-    let pages: std::collections::BTreeSet<u64> = input.get("pages").and_then(Value::as_array).into_iter().flatten()
-        .filter_map(|page| page.get("pageIndex").and_then(Value::as_u64)).collect();
-    for (index, evidence) in output.get("evidence").and_then(Value::as_array).into_iter().flatten().enumerate() {
-        let page = evidence.get("pageIndex").and_then(Value::as_u64).unwrap_or(0);
+    let pages: std::collections::BTreeSet<u64> = input
+        .get("pages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|page| page.get("pageIndex").and_then(Value::as_u64))
+        .collect();
+    for (index, evidence) in output
+        .get("evidence")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        let page = evidence
+            .get("pageIndex")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
         if !pages.contains(&page) {
-            return Err(format!("vision_answer_evidence_page_not_supplied:{index}:{page}:allowed={pages:?}"));
+            return Err(format!(
+                "vision_answer_evidence_page_not_supplied:{index}:{page}:allowed={pages:?}"
+            ));
         }
     }
     Ok(())
@@ -2245,9 +2359,8 @@ fn authoring_candidate_prompt_parts(input: &Value) -> (String, String) {
 Output contract JSON: {}",
         serde_json::to_string(&output_contract).unwrap_or_default()
     );
-    let response_mode = if let Some(fields) = input
-        .get("repairMissingFields")
-        .and_then(Value::as_array)
+    let response_mode = if let Some(fields) =
+        input.get("repairMissingFields").and_then(Value::as_array)
     {
         format!(
             "Response mode: missing-field patch. Return only {{\"missingFields\":{{<JSON pointer>:<value>}}}} with exactly these JSON pointers and no complete candidate: {}. Existing values are preserved by the backend.",
@@ -2361,10 +2474,13 @@ fn repair_llm_messages(
 ) -> Vec<Value> {
     let system = repair_system_prompt(input);
     let marker = "Authoritative taskPresentationRules (shared by recognition and repair):";
-    let (header, rules) = system.split_once(marker).expect("authoring system rule marker");
+    let (header, rules) = system
+        .split_once(marker)
+        .expect("authoring system rule marker");
     // Type-specific rules follow the stable operation/tool prefix so different packet
     // types can still reuse that prefix. Evidence and observations stay at the tail.
-    let mut content = vec![json!({"type":"text", "text":"Original source evidence for this request:"})];
+    let mut content =
+        vec![json!({"type":"text", "text":"Original source evidence for this request:"})];
     content.extend(evidence);
     vec![
         json!({"role":"system", "content":format!("{header}{prefix}\n{marker}{rules}")}),
@@ -2525,7 +2641,7 @@ fn run_openai_compatible_generate_exam_direct_llm(
     }
     let mut messages = vec![
         json!({"role":"system", "content":if input["modality"] == "listening" {crate::cloud_direct::listening_system_prompt()} else {crate::cloud_direct::direct_system_prompt()}}),
-        json!({"role":"user", "content":content})
+        json!({"role":"user", "content":content}),
     ];
     // Repair continues the same conversation: the evidence prefix above stays
     // byte-identical (prompt cache), the output to fix is the model's own
@@ -2534,8 +2650,11 @@ fn run_openai_compatible_generate_exam_direct_llm(
         messages.push(json!({"role":"assistant", "content": serde_json::to_string(current).unwrap_or_default()}));
     }
     let tail = exam_direct_tail(input);
-    if !tail.is_empty() { messages.push(json!({"role":"user", "content":tail})); }
-    let mut body = json!({"model":model,"temperature":llm_temperature(profile),"messages":messages});
+    if !tail.is_empty() {
+        messages.push(json!({"role":"user", "content":tail}));
+    }
+    let mut body =
+        json!({"model":model,"temperature":llm_temperature(profile),"messages":messages});
     if llm_force_json(profile) {
         body["response_format"] = json!({"type": "json_object"});
     }
@@ -2552,10 +2671,7 @@ fn exam_direct_prompt(input: &Value) -> String {
         .get("taskPresentationRules")
         .and_then(Value::as_str)
         .unwrap_or("");
-    let example = input
-        .get("example")
-        .cloned()
-        .unwrap_or(Value::Null);
+    let example = input.get("example").cloned().unwrap_or(Value::Null);
     let example_text = serde_json::to_string(&example).unwrap_or_default();
     // 补充范例（TFNG/单选、表格/流程图填空）：每份独立成段，覆盖主范例没有的
     // 题型与宿主差异（prompt 宿主 vs table_cell/flow_step 宿主）。
@@ -2591,12 +2707,16 @@ Return the single JSON object described in the system prompt (meta, passage, tas
 answerSlots, answerKey, warnings). JSON only, no Markdown, no code fences."
     );
     if input["modality"] == "listening" {
-        prompt = prompt.replace("IELTS Reading", "IELTS Listening").replace("meta, passage, taskGroups", "meta, parts, taskGroups");
+        prompt = prompt
+            .replace("IELTS Reading", "IELTS Listening")
+            .replace("meta, passage, taskGroups", "meta, parts, taskGroups");
         prompt.push_str("\nSupplementary ANSWER KEY pages, if supplied below, are printed answer evidence. Without such evidence every answer must be unresolved. Never guess from questions.");
     } else {
         prompt = prompt.replace("Convert the ONE IELTS Reading test PDF below into one complete exam JSON object.",
             "Convert all reading passages in this PDF evidence into separate complete document bodies, returned in the documents envelope.");
-        if let Some(at) = prompt.rfind("Return the single JSON object described in the system prompt") {
+        if let Some(at) =
+            prompt.rfind("Return the single JSON object described in the system prompt")
+        {
             prompt.truncate(at);
         }
         // The examples above are individual document bodies, not the envelope.
@@ -2618,10 +2738,8 @@ fn exam_direct_tail(input: &Value) -> String {
         prompt.push_str(&format!("\n\n=== FORMAT NOTE ===\n{json_note}"));
     }
     if let Some(repair) = repair {
-        let issues = serde_json::to_string(
-            repair.get("compilerIssues").unwrap_or(&Value::Null),
-        )
-        .unwrap_or_default();
+        let issues = serde_json::to_string(repair.get("compilerIssues").unwrap_or(&Value::Null))
+            .unwrap_or_default();
         let instruction = repair
             .get("instruction")
             .and_then(Value::as_str)
@@ -2647,9 +2765,13 @@ fn validate_exam_direct_output(output: &mut Value) -> CommandResult<()> {
     if let Some(documents) = object.get_mut("documents") {
         // An empty list is a valid coverage follow-up answer ("nothing missed");
         // the batch normalizer still requires at least one usable article.
-        let documents = documents.as_array_mut().ok_or("cloud_direct_batch_documents_empty")?;
+        let documents = documents
+            .as_array_mut()
+            .ok_or("cloud_direct_batch_documents_empty")?;
         for entry in documents {
-            if !entry.is_object() { return Err("cloud_direct_batch_entry_invalid".into()); }
+            if !entry.is_object() {
+                return Err("cloud_direct_batch_entry_invalid".into());
+            }
             if let Some(document) = entry.get_mut("document") {
                 validate_exam_direct_output(document)?;
             } else if entry.get("taskGroups").is_some() {
@@ -2721,51 +2843,94 @@ pub(crate) fn candidate_missing_field_pointer(error: &str) -> Option<String> {
                 .join("/")
         )
     };
-    let index = |position: usize| parts.get(position).copied().filter(|value| value.parse::<u64>().is_ok());
+    let index = |position: usize| {
+        parts
+            .get(position)
+            .copied()
+            .filter(|value| value.parse::<u64>().is_ok())
+    };
     match code {
         "cloud_authoring_output_content_node_field_missing" => {
             let (location, field) = detail.rsplit_once(':')?;
-            location.starts_with('/').then(|| format!("{location}/{field}"))
+            location
+                .starts_with('/')
+                .then(|| format!("{location}/{field}"))
         }
         // /taskGroups 与 /answerSlots 整体缺失或为空不是「叶子字段缺失」——让模型用补丁补一整
         // 组题目没有意义，多半是它答非所问（返回了别的模式的应答）。这两种情况不进补丁流程，
         // 直接判定本次候选失败（最多整份重试一次），不在可补指针集合里。
-        "cloud_authoring_output_group_task_id_missing" => Some(pointer(&["taskGroups", index(0)?, "taskId"])),
-        "cloud_authoring_output_group_range_missing" => Some(pointer(&["taskGroups", index(0)?, "displayRange"])),
-        "cloud_authoring_output_group_task_type_missing" => Some(pointer(&["taskGroups", index(0)?, "taskType"])),
-        "cloud_authoring_output_group_instructions_missing" => Some(pointer(&["taskGroups", index(0)?, "instructions"])),
-        "cloud_authoring_output_group_response_groups_missing" => Some(pointer(&["taskGroups", index(0)?, "responseGroups"])),
+        "cloud_authoring_output_group_task_id_missing" => {
+            Some(pointer(&["taskGroups", index(0)?, "taskId"]))
+        }
+        "cloud_authoring_output_group_range_missing" => {
+            Some(pointer(&["taskGroups", index(0)?, "displayRange"]))
+        }
+        "cloud_authoring_output_group_task_type_missing" => {
+            Some(pointer(&["taskGroups", index(0)?, "taskType"]))
+        }
+        "cloud_authoring_output_group_instructions_missing" => {
+            Some(pointer(&["taskGroups", index(0)?, "instructions"]))
+        }
+        "cloud_authoring_output_group_response_groups_missing" => {
+            Some(pointer(&["taskGroups", index(0)?, "responseGroups"]))
+        }
         "cloud_authoring_output_response_group_id_missing" => Some(pointer(&[
-            "taskGroups", index(0)?, "responseGroups", index(1)?, "responseGroupId",
+            "taskGroups",
+            index(0)?,
+            "responseGroups",
+            index(1)?,
+            "responseGroupId",
         ])),
         "cloud_authoring_output_response_group_field_missing" => Some(pointer(&[
-            "taskGroups", index(0)?, "responseGroups", index(1)?, parts.get(2).copied()?,
+            "taskGroups",
+            index(0)?,
+            "responseGroups",
+            index(1)?,
+            parts.get(2).copied()?,
         ])),
         "cloud_authoring_output_response_group_slot_ids_missing"
         | "cloud_authoring_output_response_group_slot_ids_empty" => Some(pointer(&[
-            "taskGroups", index(0)?, "responseGroups", index(1)?, "slotIds",
+            "taskGroups",
+            index(0)?,
+            "responseGroups",
+            index(1)?,
+            "slotIds",
         ])),
         "cloud_authoring_output_slot_question_number_missing" => Some(pointer(&[
-            "answerSlots", parts.first().copied()?, "questionNumber",
+            "answerSlots",
+            parts.first().copied()?,
+            "questionNumber",
         ])),
         "cloud_authoring_output_slot_field_missing" => Some(pointer(&[
-            "answerSlots", parts.first().copied()?, parts.get(1).copied()?,
+            "answerSlots",
+            parts.first().copied()?,
+            parts.get(1).copied()?,
         ])),
         "cloud_authoring_output_slot_passage_host_node_missing" => Some(pointer(&[
-            "answerSlots", parts.first().copied()?, "hostNodeId",
+            "answerSlots",
+            parts.first().copied()?,
+            "hostNodeId",
         ])),
         "cloud_authoring_output_option_bank_field_missing" => Some(pointer(&[
-            "taskGroups", index(0)?, "optionBank", parts.get(1).copied()?,
+            "taskGroups",
+            index(0)?,
+            "optionBank",
+            parts.get(1).copied()?,
         ])),
         "cloud_authoring_output_option_field_missing" => Some(pointer(&[
-            "taskGroups", index(0)?, "optionBank", "options", index(1)?, parts.get(2).copied()?,
+            "taskGroups",
+            index(0)?,
+            "optionBank",
+            "options",
+            index(1)?,
+            parts.get(2).copied()?,
         ])),
-        "cloud_authoring_output_listening_part_label_missing" => Some(pointer(&[
-            "listeningParts", index(0)?, "displayLabel",
-        ])),
-        "cloud_authoring_output_listening_part_task_ids_missing" => Some(pointer(&[
-            "listeningParts", index(0)?, "taskIds",
-        ])),
+        "cloud_authoring_output_listening_part_label_missing" => {
+            Some(pointer(&["listeningParts", index(0)?, "displayLabel"]))
+        }
+        "cloud_authoring_output_listening_part_task_ids_missing" => {
+            Some(pointer(&["listeningParts", index(0)?, "taskIds"]))
+        }
         _ => None,
     }
 }
@@ -2776,9 +2941,12 @@ pub(crate) fn read_rejected_authoring_candidate(
     error: &str,
 ) -> CommandResult<Option<Value>> {
     let retained = REJECTED_CANDIDATE.with(|candidate| {
-        candidate.borrow_mut().take().and_then(|(retained_root, retained_job, retained_error, value)| {
-            (retained_root == root && retained_job == job_id && retained_error == error).then_some(value)
-        })
+        candidate.borrow_mut().take().and_then(
+            |(retained_root, retained_job, retained_error, value)| {
+                (retained_root == root && retained_job == job_id && retained_error == error)
+                    .then_some(value)
+            },
+        )
     });
     if retained.is_some() {
         return Ok(retained);
@@ -2787,7 +2955,11 @@ pub(crate) fn read_rejected_authoring_candidate(
     let entries = match fs::read_dir(&cache_dir) {
         Ok(entries) => entries,
         Err(read_error) if read_error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(read_error) => return Err(format!("candidate_rejection_cache_read_failed:{read_error}")),
+        Err(read_error) => {
+            return Err(format!(
+                "candidate_rejection_cache_read_failed:{read_error}"
+            ))
+        }
     };
     let mut paths = entries
         .map(|entry| entry.map(|entry| entry.path()))
@@ -2837,14 +3009,21 @@ pub(crate) fn merge_authoring_candidate_supplement(
     }
     validate_authoring_candidate_output_for_chunk_with_source_paragraphs(
         &mut candidate,
-        input.get("modality").and_then(Value::as_str).unwrap_or("reading"),
+        input
+            .get("modality")
+            .and_then(Value::as_str)
+            .unwrap_or("reading"),
         input.get("chunk"),
         input.get("sourceParagraphs"),
     )?;
     Ok(candidate)
 }
 
-fn set_missing_candidate_pointer(root: &mut Value, pointer: &str, value: Value) -> CommandResult<()> {
+fn set_missing_candidate_pointer(
+    root: &mut Value,
+    pointer: &str,
+    value: Value,
+) -> CommandResult<()> {
     let segments = pointer
         .strip_prefix('/')
         .ok_or_else(|| "cloud_authoring_patch_pointer_invalid".to_string())?
@@ -2888,7 +3067,10 @@ fn set_missing_candidate_pointer(root: &mut Value, pointer: &str, value: Value) 
         Value::Object(object) => object.get(last).cloned(),
         _ => return Err("cloud_authoring_patch_pointer_parent_invalid".to_string()),
     };
-    if existing.as_ref().is_some_and(|target| !candidate_value_is_missing(target)) {
+    if existing
+        .as_ref()
+        .is_some_and(|target| !candidate_value_is_missing(target))
+    {
         return Err("cloud_authoring_patch_would_overwrite_value".to_string());
     }
     match cursor {
@@ -2949,7 +3131,10 @@ fn fill_candidate_structural_defaults(output: &mut Value) {
                     }
                     if wire_name(&rule.assignment) == "per_slot"
                         && map.get("assignment").and_then(Value::as_str) == Some("per_slot")
-                        && map.get("slotIds").and_then(Value::as_array).is_some_and(|slots| !slots.is_empty())
+                        && map
+                            .get("slotIds")
+                            .and_then(Value::as_array)
+                            .is_some_and(|slots| !slots.is_empty())
                     {
                         map.entry("cardinality")
                             .or_insert(json!({"min":1,"max":1,"exact":1}));
@@ -3075,7 +3260,8 @@ fn validate_authoring_candidate_output_with_source_paragraphs(
     let mut source_paragraph_ids = source_paragraphs
         .map(candidate_source_paragraph_ids)
         .unwrap_or_default();
-    source_paragraph_ids.extend(crate::reconcile::candidate::canonical_passage_paragraph_ids(output));
+    source_paragraph_ids
+        .extend(crate::reconcile::candidate::canonical_passage_paragraph_ids(output));
     if let Some(content) = output.pointer("/passage/content").and_then(Value::as_array) {
         validate_candidate_nodes(content, "/passage/content")?;
     }
@@ -3179,7 +3365,10 @@ fn validate_authoring_candidate_output_with_source_paragraphs(
                         "cloud_authoring_output_response_group_prompt_invalid:{index}:{position}"
                     ));
                 };
-                validate_candidate_nodes(prompt, &format!("/taskGroups/{index}/responseGroups/{position}/prompt"))?;
+                validate_candidate_nodes(
+                    prompt,
+                    &format!("/taskGroups/{index}/responseGroups/{position}/prompt"),
+                )?;
             }
             let Some(slot_ids) = response_object.get("slotIds").and_then(Value::as_array) else {
                 return Err(format!(
@@ -3404,7 +3593,10 @@ fn validate_candidate_nodes(nodes: &[Value], location: &str) -> CommandResult<()
             }
         }
         let required = match node_object.get("type").and_then(Value::as_str) {
-            Some("doc" | "paragraph" | "heading" | "list_item" | "table_cell" | "figcaption" | "flow_step") => Some("children"),
+            Some(
+                "doc" | "paragraph" | "heading" | "list_item" | "table_cell" | "figcaption"
+                | "flow_step",
+            ) => Some("children"),
             Some("bullet_list" | "ordered_list") => Some("items"),
             Some("table") => Some("rows"),
             Some("table_row") => Some("cells"),
@@ -3510,7 +3702,10 @@ fn validate_candidate_option_bank(bank: &Value, index: usize) -> CommandResult<(
                 "cloud_authoring_output_option_field_missing:{index}:{position}:content"
             ));
         };
-        validate_candidate_nodes(content, &format!("/taskGroups/{index}/optionBank/options/{position}/content"))?;
+        validate_candidate_nodes(
+            content,
+            &format!("/taskGroups/{index}/optionBank/options/{position}/content"),
+        )?;
     }
     Ok(())
 }
@@ -3558,8 +3753,19 @@ fn dry_run_candidate_finalize(output: &Value, modality: &'static str) -> Command
 fn compact_batch_review_prompt(input: &Value) -> String {
     let mut data = input.clone();
     if let Some(object) = data.as_object_mut() {
-        for key in ["profile", "pdfPath", "sourceText", "apiKey", "apiKeySource", "pages",
-                    "tools", "allowedOps", "rules", "repairNote", "inputFootprint"] {
+        for key in [
+            "profile",
+            "pdfPath",
+            "sourceText",
+            "apiKey",
+            "apiKeySource",
+            "pages",
+            "tools",
+            "allowedOps",
+            "rules",
+            "repairNote",
+            "inputFootprint",
+        ] {
             object.remove(key);
         }
     }
@@ -3570,11 +3776,19 @@ fn compact_batch_review_prompt(input: &Value) -> String {
         object.retain(|name, _| name == "submit_batch_decisions");
     }
     let allowed_ops = input.get("allowedOps").cloned().unwrap_or(Value::Null);
-    if let Some(issue) = input.get("repairNote").and_then(Value::as_str)
-        .filter(|issue| !issue.trim().is_empty()) {
+    if let Some(issue) = input
+        .get("repairNote")
+        .and_then(Value::as_str)
+        .filter(|issue| !issue.trim().is_empty())
+    {
         data["validationIssue"] = json!(issue);
     }
-    let paper = ielts_paper_label(input.get("modality").and_then(Value::as_str).unwrap_or("reading"));
+    let paper = ielts_paper_label(
+        input
+            .get("modality")
+            .and_then(Value::as_str)
+            .unwrap_or("reading"),
+    );
     format!(
         "You are repairing an {paper} authoring draft so it matches the ORIGINAL FILE.\nCompare this packet's Cloud and Local alternatives against ORIGINAL source evidence. Return exactly one JSON object: {{\"callId\":\"batch-1\",\"tool\":\"submit_batch_decisions\",\"arguments\":{{\"decisions\":[{{\"decisionId\":\"d1\",\"choice\":\"Cloud\",\"evidenceLineIds\":[\"p1:l2\"]}}]}}}}.\n\
 - One decision per listed difference; copy decisionId (d1, d2, …). Legacy differences without decisionId require targetType/targetId/field. In adopted_cloud_vs_local_snapshot, Cloud=draftSlice and Local=localSnapshotSlice; otherwise Cloud=candidateSlice and Local=draftSlice. Do not retransmit either alternative. Backend applies dependency-closed selections and all version/human-edit guards.\n\
@@ -4122,7 +4336,9 @@ fn validate_repair_tool_arguments(tool: &str, arguments: &Value) -> CommandResul
             let Some(decisions) = arguments.get("decisions").and_then(Value::as_array) else {
                 return missing("needs a decisions array");
             };
-            if decisions.is_empty() { return missing("decisions must not be empty"); }
+            if decisions.is_empty() {
+                return missing("decisions must not be empty");
+            }
             for decision in decisions {
                 if non_empty_str(decision.get("decisionId")).is_none() {
                     for key in ["targetType", "targetId", "field"] {
@@ -4131,13 +4347,18 @@ fn validate_repair_tool_arguments(tool: &str, arguments: &Value) -> CommandResul
                         }
                     }
                 }
-                if !matches!(decision.get("choice").and_then(Value::as_str),
-                    Some("Cloud" | "Local" | "Wrong" | "Unknown")) {
+                if !matches!(
+                    decision.get("choice").and_then(Value::as_str),
+                    Some("Cloud" | "Local" | "Wrong" | "Unknown")
+                ) {
                     return missing("choice must be Cloud, Local, Wrong or Unknown");
                 }
                 if decision.get("choice").and_then(Value::as_str) == Some("Wrong")
-                    && !decision.get("commands").and_then(Value::as_array)
-                        .is_some_and(|commands| !commands.is_empty()) {
+                    && !decision
+                        .get("commands")
+                        .and_then(Value::as_array)
+                        .is_some_and(|commands| !commands.is_empty())
+                {
                     return missing("Wrong needs non-empty correction commands");
                 }
             }
@@ -5279,30 +5500,45 @@ mod tests {
 
     #[test]
     fn direct_page_images_are_small_grayscale_jpeg_with_readable_dimensions() {
-        let (width,height)=(1979u32,2800u32);
-        let mut pixels=vec![255; width as usize*height as usize*3];
-        for y in (150..2600).step_by(45) { for x in 150..1700 { if x%70<45 { let at=(y as usize*width as usize+x as usize)*3; pixels[at..at+3].fill(0); } } }
-        let png=encode_test_rgb_png(width,height,&pixels);
-        let jpeg=compact_direct_jpeg(&png).unwrap();
-        assert!(jpeg.len()<100_000,"JPEG bytes={}",jpeg.len());
-        let mut decoder=jpeg_decoder::Decoder::new(std::io::Cursor::new(&jpeg));
-        decoder.decode().unwrap(); let info=decoder.info().unwrap();
-        assert_eq!(info.height,1400);
-        assert_eq!(info.pixel_format,jpeg_decoder::PixelFormat::L8);
-        assert!(info.width>900 && info.width<1100);
-        assert!(compact_direct_jpeg(&jpeg).is_ok(),"JPEG answer attachments use the same encoder");
+        let (width, height) = (1979u32, 2800u32);
+        let mut pixels = vec![255; width as usize * height as usize * 3];
+        for y in (150..2600).step_by(45) {
+            for x in 150..1700 {
+                if x % 70 < 45 {
+                    let at = (y as usize * width as usize + x as usize) * 3;
+                    pixels[at..at + 3].fill(0);
+                }
+            }
+        }
+        let png = encode_test_rgb_png(width, height, &pixels);
+        let jpeg = compact_direct_jpeg(&png).unwrap();
+        assert!(jpeg.len() < 100_000, "JPEG bytes={}", jpeg.len());
+        let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(&jpeg));
+        decoder.decode().unwrap();
+        let info = decoder.info().unwrap();
+        assert_eq!(info.height, 1400);
+        assert_eq!(info.pixel_format, jpeg_decoder::PixelFormat::L8);
+        assert!(info.width > 900 && info.width < 1100);
+        assert!(
+            compact_direct_jpeg(&jpeg).is_ok(),
+            "JPEG answer attachments use the same encoder"
+        );
     }
 
     #[test]
     fn direct_examples_are_compact_and_repair_data_does_not_change_prefix() {
-        let mut input=json!({"example":{"a":[1,2,3]},"examples":[{"name":"first","document":{}},{"name":"second","document":{"b":[4,5]}}]});
-        let prefix=exam_direct_prompt(&input);
+        let mut input = json!({"example":{"a":[1,2,3]},"examples":[{"name":"first","document":{}},{"name":"second","document":{"b":[4,5]}}]});
+        let prefix = exam_direct_prompt(&input);
         assert!(prefix.contains(r#"{"a":[1,2,3]}"#));
-        input["repair"]=json!({"compilerIssues":[{"code":"broken"}],"currentOutput":{"key":"fixed"}});
-        assert_eq!(exam_direct_prompt(&input),prefix);
+        input["repair"] =
+            json!({"compilerIssues":[{"code":"broken"}],"currentOutput":{"key":"fixed"}});
+        assert_eq!(exam_direct_prompt(&input), prefix);
         assert!(exam_direct_tail(&input).contains("COMPILER ISSUES"));
         assert!(!prefix.contains("fixed"));
-        assert!(!exam_direct_tail(&input).contains("fixed"), "the output to fix is the assistant turn, not tail text");
+        assert!(
+            !exam_direct_tail(&input).contains("fixed"),
+            "the output to fix is the assistant turn, not tail text"
+        );
     }
 
     #[test]
@@ -5903,12 +6139,13 @@ mod tests {
         let part = data_url_for_pdf(&job.root, job.job_id, &job.input, &job.input["profile"])
             .unwrap()
             .unwrap();
-        let raw_file_data = part.pointer("/file/file_data").and_then(Value::as_str).unwrap();
+        let raw_file_data = part
+            .pointer("/file/file_data")
+            .and_then(Value::as_str)
+            .unwrap();
         assert!(!raw_file_data.starts_with("data:"));
         assert_eq!(
-            general_purpose::STANDARD
-                .decode(raw_file_data)
-                .unwrap(),
+            general_purpose::STANDARD.decode(raw_file_data).unwrap(),
             fs::read(job.input["pdfPath"].as_str().unwrap()).unwrap()
         );
 
@@ -5936,12 +6173,8 @@ mod tests {
             });
         });
 
-        let result = run_openai_compatible_authoring_candidate_llm(
-            &job.root,
-            job.job_id,
-            &job.input,
-            None,
-        );
+        let result =
+            run_openai_compatible_authoring_candidate_llm(&job.root, job.job_id, &job.input, None);
         DRY_RUN_REQUEST_CAPTURE.with(|capture| *capture.borrow_mut() = None);
         assert_eq!(result.unwrap_err(), "llm_dry_run_request_captured");
 
@@ -5960,50 +6193,103 @@ mod tests {
             Some("/taskGroups/2/taskId".to_string())
         );
         assert_eq!(
-            candidate_missing_field_pointer("cloud_authoring_output_slot_field_missing:q-4:hostType"),
+            candidate_missing_field_pointer(
+                "cloud_authoring_output_slot_field_missing:q-4:hostType"
+            ),
             Some("/answerSlots/q-4/hostType".to_string())
         );
         assert!(candidate_missing_field_pointer("llm_json_parse_failed:bad").is_none());
-        assert!(candidate_missing_field_pointer("cloud_authoring_output_slot_reference_dangling:q1").is_none());
+        assert!(candidate_missing_field_pointer(
+            "cloud_authoring_output_slot_reference_dangling:q1"
+        )
+        .is_none());
         // /taskGroups 与 /answerSlots 整体缺失或为空不是叶子字段缺失，不进补丁流程（返回 None
         // ⇒ 判定候选失败并整份重试），否则会让模型用「补丁」补一整组题目。
-        assert!(candidate_missing_field_pointer("cloud_authoring_output_task_groups_missing").is_none());
-        assert!(candidate_missing_field_pointer("cloud_authoring_output_task_groups_empty").is_none());
-        assert!(candidate_missing_field_pointer("cloud_authoring_output_answer_slots_empty").is_none());
+        assert!(
+            candidate_missing_field_pointer("cloud_authoring_output_task_groups_missing").is_none()
+        );
+        assert!(
+            candidate_missing_field_pointer("cloud_authoring_output_task_groups_empty").is_none()
+        );
+        assert!(
+            candidate_missing_field_pointer("cloud_authoring_output_answer_slots_empty").is_none()
+        );
     }
 
     #[test]
     fn candidate_supplements_fill_only_missing_paths() {
         let mut candidate = json!({"taskGroups": [{"taskId": "existing"}]});
-        set_missing_candidate_pointer(&mut candidate, "/taskGroups/0/taskType", json!("completion"))
-            .expect("missing field can be filled");
+        set_missing_candidate_pointer(
+            &mut candidate,
+            "/taskGroups/0/taskType",
+            json!("completion"),
+        )
+        .expect("missing field can be filled");
         assert_eq!(candidate["taskGroups"][0]["taskType"], "completion");
         assert_eq!(
-            set_missing_candidate_pointer(&mut candidate, "/taskGroups/0/taskId", json!("replacement"))
-                .unwrap_err(),
+            set_missing_candidate_pointer(
+                &mut candidate,
+                "/taskGroups/0/taskId",
+                json!("replacement")
+            )
+            .unwrap_err(),
             "cloud_authoring_patch_would_overwrite_value"
         );
     }
 
     #[test]
     fn candidate_repair_retains_partial_content_without_full_diagnostics() {
-        let mut candidate = crate::llm_suggestions::authoring_candidate_output_contract("reading")["shape"].clone();
-        candidate["taskGroups"][0].as_object_mut().unwrap().remove("taskId");
+        let mut candidate =
+            crate::llm_suggestions::authoring_candidate_output_contract("reading")["shape"].clone();
+        candidate["taskGroups"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("taskId");
         let (base_url, requests) = fake_llm_server(vec![
             FakeReply::Respond(200, chat_body(&candidate.to_string(), "stop")),
-            FakeReply::Respond(200, chat_body(&json!({"missingFields":{"/taskGroups/0/taskId":"repaired-task"}}).to_string(), "stop")),
+            FakeReply::Respond(
+                200,
+                chat_body(
+                    &json!({"missingFields":{"/taskGroups/0/taskId":"repaired-task"}}).to_string(),
+                    "stop",
+                ),
+            ),
         ]);
         let job = fake_candidate_job(&base_url, "job-operational-candidate-repair");
-        let error = run_llm_gateway_with_diagnostics(&job.root, job.job_id, "generate_authoring_candidate", &job.input, None, false).unwrap_err();
-        assert_eq!(candidate_missing_field_pointer(&error).as_deref(), Some("/taskGroups/0/taskId"));
-        let partial = read_rejected_authoring_candidate(&job.root, job.job_id, &error).unwrap().expect("repair input must survive without diagnostics");
+        let error = run_llm_gateway_with_diagnostics(
+            &job.root,
+            job.job_id,
+            "generate_authoring_candidate",
+            &job.input,
+            None,
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(
+            candidate_missing_field_pointer(&error).as_deref(),
+            Some("/taskGroups/0/taskId")
+        );
+        let partial = read_rejected_authoring_candidate(&job.root, job.job_id, &error)
+            .unwrap()
+            .expect("repair input must survive without diagnostics");
         assert_eq!(partial, candidate);
         let mut retry = job.input.clone();
         retry["repairMissingFields"] = json!(["/taskGroups/0/taskId"]);
-        let supplement = run_llm_gateway_with_diagnostics(&job.root, job.job_id, "generate_authoring_candidate", &retry, None, false).unwrap();
+        let supplement = run_llm_gateway_with_diagnostics(
+            &job.root,
+            job.job_id,
+            "generate_authoring_candidate",
+            &retry,
+            None,
+            false,
+        )
+        .unwrap();
         let repaired = merge_authoring_candidate_supplement(partial, supplement, &retry).unwrap();
         assert_eq!(repaired["taskGroups"][0]["taskId"], "repaired-task");
-        assert_eq!(repaired["taskGroups"][0]["responseGroups"][0]["prompt"], candidate["taskGroups"][0]["responseGroups"][0]["prompt"]);
+        assert_eq!(
+            repaired["taskGroups"][0]["responseGroups"][0]["prompt"],
+            candidate["taskGroups"][0]["responseGroups"][0]["prompt"]
+        );
         assert_eq!(requests.try_iter().count(), 2);
         let cache = job_dir(&job.root, job.job_id).join("cache").join("llm");
         assert!(!cache.exists() || fs::read_dir(cache).unwrap().next().is_none());
@@ -6053,14 +6339,23 @@ mod tests {
     }
 
     fn cached_input_order(path: &Path) -> (u64, u64, String) {
-        let filename = path.file_name().and_then(|value| value.to_str()).unwrap_or_default();
+        let filename = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
         let (command, suffix) = filename
             .strip_suffix(".json")
             .unwrap_or(filename)
             .split_once("-input-")
             .unwrap_or(("", ""));
-        let mut values = suffix.split('-').filter_map(|value| value.parse::<u64>().ok());
-        (values.next().unwrap_or(0), values.next().unwrap_or(0), command.to_string())
+        let mut values = suffix
+            .split('-')
+            .filter_map(|value| value.parse::<u64>().ok());
+        (
+            values.next().unwrap_or(0),
+            values.next().unwrap_or(0),
+            command.to_string(),
+        )
     }
 
     #[test]
@@ -6080,7 +6375,9 @@ mod tests {
             .expect("job directory name")
             .to_string();
         let jobs_dir = job_dir_path.parent().expect("job directory parent");
-        let root = jobs_dir.parent().expect("job directory must be under data/jobs");
+        let root = jobs_dir
+            .parent()
+            .expect("job directory must be under data/jobs");
         let cache_dir = job_dir_path.join("cache").join("llm");
         let mut inputs = fs::read_dir(&cache_dir)
             .expect("retained LLM input cache must exist")
@@ -6099,16 +6396,29 @@ mod tests {
         let mut call_index = 0u64;
         for path in &inputs {
             let (_, _, command_name) = cached_input_order(path);
-            assert!(!command_name.is_empty(), "cached input filename has no command name");
-            let mut input: Value = serde_json::from_slice(&fs::read(path).expect("read redacted input cache"))
-                .expect("cached input must be JSON");
-            assert!(input.get("apiKey").is_none(), "refusing an unredacted API key field");
+            assert!(
+                !command_name.is_empty(),
+                "cached input filename has no command name"
+            );
+            let mut input: Value =
+                serde_json::from_slice(&fs::read(path).expect("read redacted input cache"))
+                    .expect("cached input must be JSON");
+            assert!(
+                input.get("apiKey").is_none(),
+                "refusing an unredacted API key field"
+            );
             if let Some(profile) = input.get_mut("profile").and_then(Value::as_object_mut) {
                 if let Some(model) = std::env::var_os("PDF2TEST_LLM_DRY_RUN_MODEL") {
-                    profile.insert("model".to_string(), Value::String(model.to_string_lossy().into_owned()));
+                    profile.insert(
+                        "model".to_string(),
+                        Value::String(model.to_string_lossy().into_owned()),
+                    );
                 }
                 if let Some(base_url) = std::env::var_os("PDF2TEST_LLM_DRY_RUN_BASE_URL") {
-                    profile.insert("baseUrl".to_string(), Value::String(base_url.to_string_lossy().into_owned()));
+                    profile.insert(
+                        "baseUrl".to_string(),
+                        Value::String(base_url.to_string_lossy().into_owned()),
+                    );
                 }
             }
             if command_name == "generate_authoring_candidate" {
@@ -6137,7 +6447,10 @@ mod tests {
                 let mut slot = capture.borrow_mut();
                 slot.take().map(|state| state.request_index).unwrap_or(0)
             });
-            assert!(captured > 0, "cached gateway input did not produce a request body");
+            assert!(
+                captured > 0,
+                "cached gateway input did not produce a request body"
+            );
         }
     }
 
@@ -6227,7 +6540,10 @@ mod tests {
                 "missing {segment}: {record}"
             );
         }
-        assert!(record["segments"]["promptText"].as_u64().unwrap_or(0) > record["segments"]["system"].as_u64().unwrap_or(0));
+        assert!(
+            record["segments"]["promptText"].as_u64().unwrap_or(0)
+                > record["segments"]["system"].as_u64().unwrap_or(0)
+        );
         assert!(record["inputBytes"].as_u64().unwrap_or(0) > 0, "{record}");
         assert!(record["inputSummary"].is_object(), "{record}");
         assert!(record["outputSummary"].is_object(), "{record}");
@@ -6256,15 +6572,26 @@ mod tests {
         let response = json!({
             "choices": [{"message": {"content": "not json"}, "finish_reason": "stop"}],
             "usage": {"total_tokens": 1200}
-        }).to_string();
+        })
+        .to_string();
         let (base_url, requests) = fake_llm_server(vec![
-            FakeReply::Respond(200, response.clone()), FakeReply::Respond(200, response),
+            FakeReply::Respond(200, response.clone()),
+            FakeReply::Respond(200, response),
         ]);
         let job = fake_candidate_job(&base_url, "job-total-only");
         for _ in 0..2 {
-            let error = run_llm_gateway(&job.root, job.job_id, "generate_authoring_candidate", &job.input, None).unwrap_err();
+            let error = run_llm_gateway(
+                &job.root,
+                job.job_id,
+                "generate_authoring_candidate",
+                &job.input,
+                None,
+            )
+            .unwrap_err();
             assert!(!error.starts_with("cloud_token_budget"), "{error}");
-            requests.recv_timeout(Duration::from_secs(2)).expect("request must reach provider");
+            requests
+                .recv_timeout(Duration::from_secs(2))
+                .expect("request must reach provider");
         }
         let summary = llm_usage_summary(&job.root, job.job_id).unwrap();
         assert_eq!(summary["totalTokens"], 2400);
@@ -6278,14 +6605,25 @@ mod tests {
     fn rejected_request_does_not_poison_the_following_request_budget() {
         let (base_url, requests) = fake_llm_server(vec![
             FakeReply::Respond(401, "invalid credentials".to_string()),
-            FakeReply::Respond(200, json!({
-                "choices": [{"message": {"content": "not json"}, "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 30, "completion_tokens": 5}
-            }).to_string()),
+            FakeReply::Respond(
+                200,
+                json!({
+                    "choices": [{"message": {"content": "not json"}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 30, "completion_tokens": 5}
+                })
+                .to_string(),
+            ),
         ]);
         let job = fake_candidate_job(&base_url, "job-rejected-usage");
         for prefix in ["llm_http_401", "llm_json_parse_failed"] {
-            let error = run_llm_gateway(&job.root, job.job_id, "generate_authoring_candidate", &job.input, None).unwrap_err();
+            let error = run_llm_gateway(
+                &job.root,
+                job.job_id,
+                "generate_authoring_candidate",
+                &job.input,
+                None,
+            )
+            .unwrap_err();
             assert!(error.starts_with(prefix), "{error}");
             requests.recv_timeout(Duration::from_secs(2)).unwrap();
         }
@@ -6298,8 +6636,12 @@ mod tests {
     #[test]
     fn uncertain_usage_no_longer_locks_the_budget_and_estimation_keeps_totals_visible() {
         let mut total = LlmTokenUsageTotal::default();
-        total.record(&normalized_usage_fields(&json!({"prompt_tokens": 100, "total_tokens": 140})));
-        total.record(&normalized_usage_fields(&json!({"prompt_tokens": 30, "completion_tokens": 10, "total_tokens": 20})));
+        total.record(&normalized_usage_fields(
+            &json!({"prompt_tokens": 100, "total_tokens": 140}),
+        ));
+        total.record(&normalized_usage_fields(
+            &json!({"prompt_tokens": 30, "completion_tokens": 10, "total_tokens": 20}),
+        ));
         assert_eq!(total.total_tokens(), 180);
         assert_eq!(total.unknown_usage_calls, 0);
         // 软上限（cloud-direct §2.3）：用量未知不再锁死任务。
@@ -6307,7 +6649,9 @@ mod tests {
         assert_eq!(total.unknown_usage_calls, 1);
         assert!(budget_block_reason(&total, 300_000).is_none());
         // 只有达到设置上限才停止后续请求。
-        assert!(budget_block_reason(&total, 100).unwrap().starts_with("cloud_token_budget_exceeded"));
+        assert!(budget_block_reason(&total, 100)
+            .unwrap()
+            .starts_with("cloud_token_budget_exceeded"));
         // 按请求体估算记账：2xx 但无 usage 的调用得到可观测的估算值（约 4 字符/token）。
         let estimated = estimated_usage_fields(&LlmCallTrace {
             request_bytes: 40_000,
@@ -6320,7 +6664,10 @@ mod tests {
         total.record(&estimated);
         assert_eq!(total.total_tokens(), 180 + 10_100);
         // 记账语义不变：拒绝/连接失败不计，超时与坏响应仍计。
-        let timed_out = LlmCallTrace { attempts: vec![json!({"httpStatus":200,"error":"llm_http_body_failed:timeout"})], ..Default::default() };
+        let timed_out = LlmCallTrace {
+            attempts: vec![json!({"httpStatus":200,"error":"llm_http_body_failed:timeout"})],
+            ..Default::default()
+        };
         assert!(should_account_usage(&timed_out));
         assert!(!should_account_usage(&LlmCallTrace::default()));
     }
@@ -6330,15 +6677,32 @@ mod tests {
         let response = json!({
             "choices": [{"message": {"content": "not json"}, "finish_reason": "stop"}],
             "usage": {"prompt_tokens": 100, "completion_tokens": 100}
-        }).to_string();
+        })
+        .to_string();
         let (base_url, requests) = fake_llm_server(vec![FakeReply::Respond(200, response)]);
         let job = fake_candidate_job(&base_url, "job-remaining-budget");
-        fs::write(job_dir(&job.root, job.job_id).join(LLM_TOKEN_BUDGET_FILE),
-            json!({"tokenBudget": 10_000}).to_string()).unwrap();
-        write_llm_token_usage_total(&job.root, job.job_id, &LlmTokenUsageTotal {
-            prompt_tokens: 8_000, completion_tokens: 1_500, ..Default::default()
-        }).unwrap();
-        let _ = run_llm_gateway(&job.root, job.job_id, "generate_authoring_candidate", &job.input, None);
+        fs::write(
+            job_dir(&job.root, job.job_id).join(LLM_TOKEN_BUDGET_FILE),
+            json!({"tokenBudget": 10_000}).to_string(),
+        )
+        .unwrap();
+        write_llm_token_usage_total(
+            &job.root,
+            job.job_id,
+            &LlmTokenUsageTotal {
+                prompt_tokens: 8_000,
+                completion_tokens: 1_500,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let _ = run_llm_gateway(
+            &job.root,
+            job.job_id,
+            "generate_authoring_candidate",
+            &job.input,
+            None,
+        );
         let request = requests.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(request.contains("\"max_tokens\":500"), "{request}");
     }
@@ -6595,7 +6959,11 @@ mod tests {
         apply_provider_task_defaults(&profile, &mut explicit, "generate_authoring_candidate");
         assert_eq!(explicit["thinking"]["type"], "enabled");
         let mut proxy = json!({});
-        apply_provider_task_defaults(&json!({"baseUrl":"https://api.deepseek.com.example/v1","model":"deepseek-flash"}), &mut proxy, "generate_authoring_candidate");
+        apply_provider_task_defaults(
+            &json!({"baseUrl":"https://api.deepseek.com.example/v1","model":"deepseek-flash"}),
+            &mut proxy,
+            "generate_authoring_candidate",
+        );
         assert_eq!(proxy, json!({}));
     }
 
@@ -6606,9 +6974,17 @@ mod tests {
         assert!(prompt.contains("[5, 6]"));
         assert!(prompt.contains("NOT the attachment order"));
         assert!(prompt.contains("page 1 was not supplied"));
-        assert!(validate_vision_answer_source_pages(&json!({"evidence":[{"pageIndex":1}]}), &input)
-            .unwrap_err().starts_with("vision_answer_evidence_page_not_supplied"));
-        validate_vision_answer_source_pages(&json!({"evidence":[{"pageIndex":5},{"pageIndex":6}]}), &input).unwrap();
+        assert!(validate_vision_answer_source_pages(
+            &json!({"evidence":[{"pageIndex":1}]}),
+            &input
+        )
+        .unwrap_err()
+        .starts_with("vision_answer_evidence_page_not_supplied"));
+        validate_vision_answer_source_pages(
+            &json!({"evidence":[{"pageIndex":5},{"pageIndex":6}]}),
+            &input,
+        )
+        .unwrap();
     }
 
     /// 非超时的直传失败（供应商不收 PDF 附件）仍然回退到页图；回退也失败时，
@@ -7297,12 +7673,19 @@ mod tests {
             assert_eq!(candidate["answerSlots"]["cloud-q1"]["interaction"], "radio");
             finalize_candidate(&candidate, modality).unwrap();
             let normalized = crate::reconcile::candidate::normalize_cloud_authoring(
-                &candidate_identity(modality), None, &candidate,
-            ).unwrap();
-            let quality = crate::ielts_grammar::quality::evaluate_quality(&normalized.document, None);
-            assert!(!quality["issues"].as_array().unwrap().iter().any(|issue| {
-                issue["code"].as_str() == Some("TASK_PRESENTATION_CONTRACT_MISMATCH")
-            }), "the model example must pass the product presentation gate: {quality}");
+                &candidate_identity(modality),
+                None,
+                &candidate,
+            )
+            .unwrap();
+            let quality =
+                crate::ielts_grammar::quality::evaluate_quality(&normalized.document, None);
+            assert!(
+                !quality["issues"].as_array().unwrap().iter().any(|issue| {
+                    issue["code"].as_str() == Some("TASK_PRESENTATION_CONTRACT_MISMATCH")
+                }),
+                "the model example must pass the product presentation gate: {quality}"
+            );
         }
     }
 
@@ -7341,17 +7724,28 @@ mod tests {
             {"slotIds":["q14","q15"],"assignment":"per_slot"}
         ]}],"answerSlots":{}});
         fill_candidate_structural_defaults(&mut candidate);
-        assert_eq!(candidate.pointer("/taskGroups/0/responseGroups/0/cardinality"), Some(&json!({"min":1,"max":1,"exact":1})));
+        assert_eq!(
+            candidate.pointer("/taskGroups/0/responseGroups/0/cardinality"),
+            Some(&json!({"min":1,"max":1,"exact":1}))
+        );
     }
 
     #[test]
     fn missing_flow_steps_are_a_targeted_content_patch_and_nested_steps_are_validated() {
         let mut nodes = json!([{"type":"flowchart","id":"flow"}]);
-        let error = validate_candidate_nodes(nodes.as_array().unwrap(), "/taskGroups/0/stimulus").unwrap_err();
-        assert_eq!(candidate_missing_field_pointer(&error).as_deref(), Some("/taskGroups/0/stimulus/0/steps"));
+        let error = validate_candidate_nodes(nodes.as_array().unwrap(), "/taskGroups/0/stimulus")
+            .unwrap_err();
+        assert_eq!(
+            candidate_missing_field_pointer(&error).as_deref(),
+            Some("/taskGroups/0/stimulus/0/steps")
+        );
         nodes[0]["steps"] = json!([{"type":"flow_step","id":"step","children":[{"type":"text"}]}]);
-        let error = validate_candidate_nodes(nodes.as_array().unwrap(), "/taskGroups/0/stimulus").unwrap_err();
-        assert_eq!(candidate_missing_field_pointer(&error).as_deref(), Some("/taskGroups/0/stimulus/0/steps/0/children/0/id"));
+        let error = validate_candidate_nodes(nodes.as_array().unwrap(), "/taskGroups/0/stimulus")
+            .unwrap_err();
+        assert_eq!(
+            candidate_missing_field_pointer(&error).as_deref(),
+            Some("/taskGroups/0/stimulus/0/steps/0/children/0/id")
+        );
     }
 
     #[test]
@@ -7384,13 +7778,21 @@ mod tests {
         }
         let mut other_type = input.clone();
         other_type["context"]["draftSlice"]["taskGroups"][0]["taskType"] = json!("short_answer");
-        other_type["context"]["localSnapshotSlice"]["taskGroups"][0]["taskType"] = json!("short_answer");
+        other_type["context"]["localSnapshotSlice"]["taskGroups"][0]["taskType"] =
+            json!("short_answer");
         let (other_prefix, other_tail) = repair_step_prompt_parts(&other_type);
         assert_eq!(prefix, other_prefix);
         let other_messages = repair_llm_messages(&other_type, &other_prefix, vec![], other_tail);
         let marker = "Authoritative taskPresentationRules (shared by recognition and repair):";
-        assert_eq!(system.split_once(marker).unwrap().0,
-            other_messages[0]["content"].as_str().unwrap().split_once(marker).unwrap().0);
+        assert_eq!(
+            system.split_once(marker).unwrap().0,
+            other_messages[0]["content"]
+                .as_str()
+                .unwrap()
+                .split_once(marker)
+                .unwrap()
+                .0
+        );
         input["context"]["differences"] = json!([{"field":"taskType"}]);
         assert_eq!(
             repair_system_prompt(&input),
@@ -7437,8 +7839,10 @@ mod tests {
             "arguments":{"decisions":[{"targetType":"slot","targetId":"q1",
                 "field":"prompt","choice":"Cloud","evidence":[
                     {"sourceFileId":"source-1","pageIndex":1,"quote":"Question 1"}]}]}});
-        let (url, requests) = fake_llm_server(vec![FakeReply::Respond(200,
-            chat_body(&reply.to_string(), "stop"))]);
+        let (url, requests) = fake_llm_server(vec![FakeReply::Respond(
+            200,
+            chat_body(&reply.to_string(), "stop"),
+        )]);
         let mut job = fake_candidate_job(&url, "job-compact-batch-gateway");
         job.input["reviewMode"] = json!("compact_batch");
         job.input["context"] = json!({"contextMode":"packets",
@@ -7447,8 +7851,8 @@ mod tests {
                 {"targetType":"slot","targetId":"q1","field":"prompt"}]});
         job.input["tools"] = crate::llm_suggestions::repair_tools_table("source-1");
         job.input["allowedOps"] = json!(crate::cloud_repair::tools::MODEL_ALLOWED_OPS);
-        let parsed = run_openai_compatible_repair_step_llm(
-            &job.root, job.job_id, &job.input, None).unwrap();
+        let parsed =
+            run_openai_compatible_repair_step_llm(&job.root, job.job_id, &job.input, None).unwrap();
         assert_eq!(parsed["tool"], "submit_batch_decisions");
         let raw = requests.recv_timeout(Duration::from_secs(5)).unwrap();
         let request: Value = serde_json::from_str(raw.split_once("\r\n\r\n").unwrap().1).unwrap();
@@ -7456,14 +7860,20 @@ mod tests {
         assert!(text.contains("submit_batch_decisions"));
         assert!(!text.contains("\\\"read_draft\\\":"));
         assert!(!text.contains("matching_headings"));
-        let chars: usize = request["messages"].as_array().unwrap().iter().map(|message| {
-            match &message["content"] {
+        let chars: usize = request["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|message| match &message["content"] {
                 Value::String(text) => text.chars().count(),
-                Value::Array(parts) => parts.iter().filter_map(|part| part["text"].as_str())
-                    .map(|text| text.chars().count()).sum(),
+                Value::Array(parts) => parts
+                    .iter()
+                    .filter_map(|part| part["text"].as_str())
+                    .map(|text| text.chars().count())
+                    .sum(),
                 _ => 0,
-            }
-        }).sum();
+            })
+            .sum();
         println!("COMPACT_BATCH_GATEWAY_PROMPT chars={chars}");
         assert!(chars < 5000, "scoped compact prompt: {chars}");
     }
@@ -7496,35 +7906,53 @@ mod tests {
         assert!(prompt.contains("historySummary") && prompt.contains("canonicalRef"));
         assert!(!prompt.contains("LEGACY_READ_SCHEMA") && !prompt.contains("SECRET"));
         assert!(!prompt.contains("/private/paper.pdf"));
-        assert!(prompt.chars().count() < 3000, "compact prompt: {}", prompt.chars().count());
+        assert!(
+            prompt.chars().count() < 3000,
+            "compact prompt: {}",
+            prompt.chars().count()
+        );
         for choice in ["Cloud", "Local", "Unknown"] {
             validate_repair_tool_arguments("submit_batch_decisions", &json!({"decisions":[
                 {"targetType":"task_group", "targetId":"tg1", "field":"taskType", "choice":choice}
             ]})).unwrap();
         }
-        validate_repair_tool_arguments("submit_batch_decisions", &json!({"decisions":[
-            {"decisionId":"d1", "choice":"Cloud"}
-        ]})).unwrap();
-        assert!(validate_repair_tool_arguments("submit_batch_decisions", &json!({"decisions":[
-            {"targetType":"task_group", "targetId":"tg1", "field":"taskType", "choice":"Wrong"}
-        ]})).is_err());
+        validate_repair_tool_arguments(
+            "submit_batch_decisions",
+            &json!({"decisions":[
+                {"decisionId":"d1", "choice":"Cloud"}
+            ]}),
+        )
+        .unwrap();
+        assert!(validate_repair_tool_arguments(
+            "submit_batch_decisions",
+            &json!({"decisions":[
+                {"targetType":"task_group", "targetId":"tg1", "field":"taskType", "choice":"Wrong"}
+            ]})
+        )
+        .is_err());
         let mut a = input.clone();
         a["tools"]["submit_batch_decisions"]["arguments"]["evidence"] =
             json!([{"sourceFileId":"document-a", "pageIndex":1,"quote":"sample"}]);
         a["sourceFile"] = json!({"fileId":"document-a"});
         let mut b = a.clone();
-        b["tools"]["submit_batch_decisions"]["arguments"]["evidence"][0]["sourceFileId"] = json!("document-b");
+        b["tools"]["submit_batch_decisions"]["arguments"]["evidence"][0]["sourceFileId"] =
+            json!("document-b");
         b["sourceFile"]["fileId"] = json!("document-b");
         let (prefix_a, tail_a) = repair_step_prompt_parts(&a);
         let (prefix_b, tail_b) = repair_step_prompt_parts(&b);
-        assert_eq!(prefix_a, prefix_b, "document identity must not fragment cached rules");
+        assert_eq!(
+            prefix_a, prefix_b,
+            "document identity must not fragment cached rules"
+        );
         assert_ne!(tail_a, tail_b);
         let tail_json = tail_a.strip_prefix("Input JSON: ").unwrap();
-        serde_json::from_str::<Value>(tail_json).expect("full request tail must be one JSON object");
+        serde_json::from_str::<Value>(tail_json)
+            .expect("full request tail must be one JSON object");
         a["repairNote"] = json!("previous reply rejected");
         a["inputFootprint"] = json!({"estimatedInputTokens":345});
         let (_, retry_tail) = repair_step_prompt_parts(&a);
-        let retry_json: Value = serde_json::from_str(retry_tail.strip_prefix("Input JSON: ").unwrap()).unwrap();
+        let retry_json: Value =
+            serde_json::from_str(retry_tail.strip_prefix("Input JSON: ").unwrap()).unwrap();
         assert_eq!(retry_json["validationIssue"], "previous reply rejected");
         assert!(retry_json.get("inputFootprint").is_none());
         println!("COMPACT_REVIEW_PROMPT chars={}", prompt.chars().count());
@@ -7546,12 +7974,18 @@ mod tests {
         let repair = json!({"modality":"reading","context":context,"tools":crate::llm_suggestions::repair_tools_table("source-1"),"rules":crate::llm_suggestions::repair_tool_rules(&context),"allowedOps":crate::cloud_repair::tools::MODEL_ALLOWED_OPS});
         let (prefix, tail) = repair_step_prompt_parts(&repair);
         let messages = repair_llm_messages(&repair, &prefix, vec![], tail);
-        let repair_chars: usize = messages.iter().map(|message| match &message["content"] {
-            Value::String(text) => text.chars().count(),
-            Value::Array(parts) => parts.iter().filter_map(|part| part["text"].as_str())
-                .map(|text| text.chars().count()).sum(),
-            _ => 0,
-        }).sum();
+        let repair_chars: usize = messages
+            .iter()
+            .map(|message| match &message["content"] {
+                Value::String(text) => text.chars().count(),
+                Value::Array(parts) => parts
+                    .iter()
+                    .filter_map(|part| part["text"].as_str())
+                    .map(|text| text.chars().count())
+                    .sum(),
+                _ => 0,
+            })
+            .sum();
         assert!(repair_chars < 15000, "repair fixed prompt: {repair_chars}");
         println!("OPTIMIZED_PROMPT_FOOTPRINT candidate_chars={candidate_chars} repair_chars={repair_chars}");
     }
@@ -7620,13 +8054,19 @@ mod tests {
         let plan = crate::reconcile::candidate::plan_candidate_chunks(&pages.join("\n"));
         let scopes = crate::candidate_evidence::plan_pages(&pages, &plan)
             .unwrap_or_else(|| panic!("Source page boundaries: {pages:?}; plan: {plan:?}"));
-        assert_eq!(scopes, vec![
-            vec![1, 2, 3, 4, 10],
-            vec![3, 4, 5, 6, 7, 10],
-            vec![6, 7, 8, 9, 10],
-        ]);
-        assert_eq!(scopes.iter().map(Vec::len).sum::<usize>(), 16,
-            "Numbered instructions previously inflated these three attachments to 20 pages");
+        assert_eq!(
+            scopes,
+            vec![
+                vec![1, 2, 3, 4, 10],
+                vec![3, 4, 5, 6, 7, 10],
+                vec![6, 7, 8, 9, 10],
+            ]
+        );
+        assert_eq!(
+            scopes.iter().map(Vec::len).sum::<usize>(),
+            16,
+            "Numbered instructions previously inflated these three attachments to 20 pages"
+        );
         let mut replies = Vec::new();
         for (index, chunk) in plan.iter().enumerate() {
             let mut output = crate::llm_suggestions::authoring_candidate_output_contract("reading")

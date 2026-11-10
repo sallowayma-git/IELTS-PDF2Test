@@ -488,13 +488,17 @@ pub(crate) fn compile_authoring_preview_core(authoring: &Value) -> Value {
                             .answer_key
                             .values()
                             .filter(|value| match value {
-                                crate::schema::ielts_authoring_v2::AnswerValueV2::Text { values, .. } => {
-                                    values.iter().any(|entry| !entry.trim().is_empty())
+                                crate::schema::ielts_authoring_v2::AnswerValueV2::Text {
+                                    values,
+                                    ..
+                                } => values.iter().any(|entry| !entry.trim().is_empty()),
+                                crate::schema::ielts_authoring_v2::AnswerValueV2::Option {
+                                    labels,
+                                    ..
+                                } => !labels.is_empty(),
+                                crate::schema::ielts_authoring_v2::AnswerValueV2::Unresolved => {
+                                    false
                                 }
-                                crate::schema::ielts_authoring_v2::AnswerValueV2::Option { labels, .. } => {
-                                    !labels.is_empty()
-                                }
-                                crate::schema::ielts_authoring_v2::AnswerValueV2::Unresolved => false,
                             })
                             .count();
                         (
@@ -511,13 +515,17 @@ pub(crate) fn compile_authoring_preview_core(authoring: &Value) -> Value {
                             .answer_key
                             .values()
                             .filter(|value| match value {
-                                crate::schema::ielts_authoring_v2::AnswerValueV2::Text { values, .. } => {
-                                    values.iter().any(|entry| !entry.trim().is_empty())
+                                crate::schema::ielts_authoring_v2::AnswerValueV2::Text {
+                                    values,
+                                    ..
+                                } => values.iter().any(|entry| !entry.trim().is_empty()),
+                                crate::schema::ielts_authoring_v2::AnswerValueV2::Option {
+                                    labels,
+                                    ..
+                                } => !labels.is_empty(),
+                                crate::schema::ielts_authoring_v2::AnswerValueV2::Unresolved => {
+                                    false
                                 }
-                                crate::schema::ielts_authoring_v2::AnswerValueV2::Option { labels, .. } => {
-                                    !labels.is_empty()
-                                }
-                                crate::schema::ielts_authoring_v2::AnswerValueV2::Unresolved => false,
                             })
                             .count();
                         (
@@ -607,27 +615,50 @@ pub(crate) fn check_publish_preflight(
     }
     // Preserve actual targets, but show repeated warning codes as one actionable
     // summary on direct drafts. Local drafts retain their established reporting.
-    let quality_issues = authoring_value.pointer("/quality/issues").and_then(Value::as_array);
-    for issue in quality_issues.into_iter().flatten().filter(|issue| issue["severity"] == "warning") {
+    let quality_issues = authoring_value
+        .pointer("/quality/issues")
+        .and_then(Value::as_array);
+    for issue in quality_issues
+        .into_iter()
+        .flatten()
+        .filter(|issue| issue["severity"] == "warning")
+    {
         let warning = json!({
             "code": issue.get("code").cloned().unwrap_or(json!("QUALITY_WARNING")),
             "targetId": issue.get("targetId").cloned().unwrap_or(Value::Null),
             "message": issue.get("message").cloned().unwrap_or(json!("这道题有一条提示需要核对。"))
         });
-        if !warnings.iter().any(|existing| existing["code"] == warning["code"] && existing["targetId"] == warning["targetId"]) {
+        if !warnings.iter().any(|existing| {
+            existing["code"] == warning["code"] && existing["targetId"] == warning["targetId"]
+        }) {
             warnings.push(warning);
         }
     }
     if crate::ielts_grammar::quality::is_cloud_direct(authoring_value) {
         let mut grouped = std::collections::BTreeMap::<String, Vec<Value>>::new();
         for warning in warnings.drain(..) {
-            grouped.entry(warning["code"].as_str().unwrap_or("QUALITY_WARNING").to_string()).or_default().push(warning);
+            grouped
+                .entry(
+                    warning["code"]
+                        .as_str()
+                        .unwrap_or("QUALITY_WARNING")
+                        .to_string(),
+                )
+                .or_default()
+                .push(warning);
         }
         for entries in grouped.into_values() {
             let mut summary = entries[0].clone();
             if entries.len() > 1 {
-                summary["message"] = json!(format!("{}（共 {} 处，见问题列表）", summary["message"].as_str().unwrap_or("请核对"), entries.len()));
-                summary["targetIds"] = json!(entries.iter().filter_map(|item| item["targetId"].as_str()).collect::<Vec<_>>());
+                summary["message"] = json!(format!(
+                    "{}（共 {} 处，见问题列表）",
+                    summary["message"].as_str().unwrap_or("请核对"),
+                    entries.len()
+                ));
+                summary["targetIds"] = json!(entries
+                    .iter()
+                    .filter_map(|item| item["targetId"].as_str())
+                    .collect::<Vec<_>>());
                 summary["items"] = json!(entries);
             }
             warnings.push(summary);
@@ -1530,14 +1561,20 @@ pub(crate) fn apply_patch(document: &mut Value, patch: &Value) -> CommandResult<
     let op = required_string(object, "op")?;
     match op {
         "setExamCategory" => {
-            if document.get("modality").and_then(Value::as_str).is_some_and(|v| v != "reading") {
+            if document
+                .get("modality")
+                .and_then(Value::as_str)
+                .is_some_and(|v| v != "reading")
+            {
                 return Err("AUTHORING_PATCH_READING_REQUIRED".to_string());
             }
             let category = required_string(object, "category")?;
             if !matches!(category, "P1" | "P2" | "P3") {
                 return Err("AUTHORING_PATCH_CATEGORY_INVALID".to_string());
             }
-            let exam = document.get_mut("exam").and_then(Value::as_object_mut)
+            let exam = document
+                .get_mut("exam")
+                .and_then(Value::as_object_mut)
                 .ok_or("AUTHORING_PATCH_EXAM_REQUIRED")?;
             exam.insert("category".to_string(), json!(category));
             Ok(())
@@ -1590,7 +1627,8 @@ fn replace_text(document: &mut Value, patch: &Map<String, Value>) -> CommandResu
         .and_then(Value::as_str)
         .ok_or_else(|| format!("AUTHORING_PATCH_TEXT_MISSING:{node_id}"))?;
     if let Some(expected) = patch.get("expectedText") {
-        let expected = expected.as_str()
+        let expected = expected
+            .as_str()
             .ok_or_else(|| "AUTHORING_PATCH_FIELD_REQUIRED:expectedText".to_string())?;
         if expected != original {
             return Err(format!("AUTHORING_PATCH_TEXT_CONFLICT:{node_id}"));
@@ -1657,7 +1695,10 @@ fn set_node_attrs(document: &mut Value, patch: &Map<String, Value>) -> CommandRe
         .ok_or_else(|| format!("AUTHORING_PATCH_NODE_NOT_FOUND:{node_id}"))?;
     if let Some(value) = attrs.get("fontScale") {
         if node.get("type").and_then(Value::as_str) != Some("heading")
-            || !value.as_f64().map(|v| [0.9, 1.0, 1.15, 1.3, 1.5].contains(&v)).unwrap_or(false)
+            || !value
+                .as_f64()
+                .map(|v| [0.9, 1.0, 1.15, 1.3, 1.5].contains(&v))
+                .unwrap_or(false)
         {
             return Err("AUTHORING_PATCH_FONT_SCALE_INVALID".to_string());
         }
@@ -1901,10 +1942,9 @@ fn set_task_type(document: &mut Value, patch: &Map<String, Value>) -> CommandRes
     if !is_supported_task_type(task_type) {
         return Err(format!("AUTHORING_PATCH_TASK_TYPE_INVALID:{task_type}"));
     }
-    let parsed_task_type = serde_json::from_value::<crate::schema::ielts_authoring_v2::TaskTypeV2>(
-        json!(task_type),
-    )
-    .map_err(|_| format!("AUTHORING_PATCH_TASK_TYPE_INVALID:{task_type}"))?;
+    let parsed_task_type =
+        serde_json::from_value::<crate::schema::ielts_authoring_v2::TaskTypeV2>(json!(task_type))
+            .map_err(|_| format!("AUTHORING_PATCH_TASK_TYPE_INVALID:{task_type}"))?;
     let mut next_document = document.clone();
     let mut task = find_value_by_field(&next_document, "taskId", task_id)
         .cloned()
@@ -1917,7 +1957,9 @@ fn set_task_type(document: &mut Value, patch: &Map<String, Value>) -> CommandRes
         .cloned()
         .ok_or_else(|| format!("AUTHORING_PATCH_TASK_RESPONSE_GROUPS_REQUIRED:{task_id}"))?;
     if response_groups.is_empty() {
-        return Err(format!("AUTHORING_PATCH_TASK_RESPONSE_GROUPS_REQUIRED:{task_id}"));
+        return Err(format!(
+            "AUTHORING_PATCH_TASK_RESPONSE_GROUPS_REQUIRED:{task_id}"
+        ));
     }
     let slot_ids = response_groups
         .iter()
@@ -1933,7 +1975,9 @@ fn set_task_type(document: &mut Value, patch: &Map<String, Value>) -> CommandRes
         .collect::<Vec<_>>();
     let unique_slot_ids = slot_ids.iter().cloned().collect::<BTreeSet<_>>();
     if slot_ids.is_empty() || unique_slot_ids.len() != slot_ids.len() {
-        return Err(format!("AUTHORING_PATCH_TASK_SLOT_STRUCTURE_INVALID:{task_id}"));
+        return Err(format!(
+            "AUTHORING_PATCH_TASK_SLOT_STRUCTURE_INVALID:{task_id}"
+        ));
     }
     match rule.group_granularity {
         crate::schema::task_presentation::GroupGranularity::PerSlot
@@ -1975,9 +2019,15 @@ fn set_task_type(document: &mut Value, patch: &Map<String, Value>) -> CommandRes
     };
     let bank = task.get("optionBank").cloned();
     if option_source == "option_bank"
-        && bank.as_ref().and_then(|value| value.get("optionBankId")).and_then(Value::as_str).is_none()
+        && bank
+            .as_ref()
+            .and_then(|value| value.get("optionBankId"))
+            .and_then(Value::as_str)
+            .is_none()
     {
-        return Err(format!("AUTHORING_PATCH_TASK_OPTION_BANK_REQUIRED:{task_id}"));
+        return Err(format!(
+            "AUTHORING_PATCH_TASK_OPTION_BANK_REQUIRED:{task_id}"
+        ));
     }
     let paragraph_map = canonical_paragraph_map(&next_document);
     let options = match option_source.as_str() {
@@ -2041,9 +2091,12 @@ fn set_task_type(document: &mut Value, patch: &Map<String, Value>) -> CommandRes
         }
         slot["hostType"] = json!(host_type);
         slot["interaction"] = json!(interaction);
-        let constraints = slot
-            .as_object_mut()
-            .and_then(|object| object.entry("constraints").or_insert_with(|| json!({})).as_object_mut());
+        let constraints = slot.as_object_mut().and_then(|object| {
+            object
+                .entry("constraints")
+                .or_insert_with(|| json!({}))
+                .as_object_mut()
+        });
         if let Some(constraints) = constraints {
             if option_labels.is_empty() {
                 constraints.remove("acceptedOptionLabels");
@@ -2062,7 +2115,13 @@ fn set_task_type(document: &mut Value, patch: &Map<String, Value>) -> CommandRes
             let Some(value) = answer_key.get(slot_id) else {
                 continue;
             };
-            validate_task_answer_preservation(value, &option_labels, &assignment, task_id, slot_id)?;
+            validate_task_answer_preservation(
+                value,
+                &option_labels,
+                &assignment,
+                task_id,
+                slot_id,
+            )?;
         }
     }
 
@@ -2127,7 +2186,10 @@ fn set_task_type(document: &mut Value, patch: &Map<String, Value>) -> CommandRes
         );
         *task_target = task_object;
     }
-    if let Some(slots) = next_document.get_mut("answerSlots").and_then(Value::as_object_mut) {
+    if let Some(slots) = next_document
+        .get_mut("answerSlots")
+        .and_then(Value::as_object_mut)
+    {
         for (slot_id, slot) in slot_updates {
             slots.insert(slot_id, slot);
         }
@@ -2171,7 +2233,13 @@ fn find_value_by_id<'a>(value: &'a Value, id: &str) -> Option<&'a Value> {
 fn task_option(task_id: &str, label: &str, text: &str) -> Value {
     let slug = label
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '-' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect::<String>();
     json!({
         "optionId": format!("{task_id}-rule-option-{slug}"),
@@ -2220,7 +2288,8 @@ fn canonical_paragraph_map(document: &Value) -> BTreeMap<String, String> {
         .flatten()
         .filter_map(|(label, node_id)| {
             let node_id = node_id.as_str()?;
-            ids.contains(node_id).then(|| (label.clone(), node_id.to_string()))
+            ids.contains(node_id)
+                .then(|| (label.clone(), node_id.to_string()))
         })
         .collect()
 }
@@ -2299,10 +2368,9 @@ fn passage_target_for_slot(
     }
     let label = paragraph_label_from_task_text(&text)
         .ok_or_else(|| format!("AUTHORING_PATCH_TASK_TYPE_ANCHOR_REQUIRED:{slot_id}"))?;
-    paragraph_map
-        .get(&label)
-        .cloned()
-        .ok_or_else(|| format!("AUTHORING_PATCH_TASK_TYPE_PARAGRAPH_LABEL_UNKNOWN:{slot_id}:{label}"))
+    paragraph_map.get(&label).cloned().ok_or_else(|| {
+        format!("AUTHORING_PATCH_TASK_TYPE_PARAGRAPH_LABEL_UNKNOWN:{slot_id}:{label}")
+    })
 }
 
 fn validate_task_answer_preservation(
@@ -2314,7 +2382,11 @@ fn validate_task_answer_preservation(
 ) -> CommandResult<()> {
     match answer.get("kind").and_then(Value::as_str) {
         Some("option") => {
-            let labels = answer.get("labels").and_then(Value::as_array).cloned().unwrap_or_default();
+            let labels = answer
+                .get("labels")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
             for label in labels.iter().filter_map(Value::as_str) {
                 if !allowed_labels.contains(label) {
                     return Err(format!(
@@ -2324,7 +2396,11 @@ fn validate_task_answer_preservation(
             }
         }
         Some("text") if !allowed_labels.is_empty() => {
-            let values = answer.get("values").and_then(Value::as_array).cloned().unwrap_or_default();
+            let values = answer
+                .get("values")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
             for value in values.iter().filter_map(Value::as_str) {
                 if !allowed_labels.contains(value) {
                     return Err(format!(
@@ -2609,7 +2685,10 @@ fn set_answer_slot_host(document: &mut Value, patch: &Map<String, Value>) -> Com
     let slot_id = required_string(patch, "slotId")?;
     let host_node_id = required_string(patch, "hostNodeId")?;
     let paragraph_map = canonical_paragraph_map(document);
-    if !paragraph_map.values().any(|node_id| node_id == host_node_id) {
+    if !paragraph_map
+        .values()
+        .any(|node_id| node_id == host_node_id)
+    {
         return Err(format!(
             "AUTHORING_PATCH_SLOT_HOST_PARAGRAPH_UNMAPPED:{slot_id}:{host_node_id}"
         ));
@@ -3627,9 +3706,10 @@ mod tests {
     use super::{
         apply_patch, compile_authoring_preview_core, expand_question_expression,
         explicitly_handled_issue_targets, export_authoring_v2_core, materialize_authoring_assets,
-        physical_shadow_matches_authoring, preserve_issue_resolutions, resolve_authoring_asset_preview_core,
-        stamp_published_audit_revision, unresolved_blocking_issues,
-        validate_authoring_v2_publish_readiness, AUTHORING_V2_SHADOW_FILE,
+        physical_shadow_matches_authoring, preserve_issue_resolutions,
+        resolve_authoring_asset_preview_core, stamp_published_audit_revision,
+        unresolved_blocking_issues, validate_authoring_v2_publish_readiness,
+        AUTHORING_V2_SHADOW_FILE,
     };
     use crate::schema::common::{AssetDescriptorV2, AssetExtractionModeV2, AssetKindV2};
     use serde_json::{json, Value};
@@ -3704,13 +3784,25 @@ mod tests {
             "type": "heading", "id": "heading", "level": 2,
             "sourceAnchors": [], "provenanceStatus": "source", "children": []
         }]});
-        apply_patch(&mut document, &json!({"op":"setNodeAttrs","nodeId":"heading","attrs":{"fontScale":1.5}})).unwrap();
+        apply_patch(
+            &mut document,
+            &json!({"op":"setNodeAttrs","nodeId":"heading","attrs":{"fontScale":1.5}}),
+        )
+        .unwrap();
         assert_eq!(document["children"][0]["fontScale"], json!(1.5));
         let persisted = serde_json::to_vec(&document).unwrap();
         let mut reopened: Value = serde_json::from_slice(&persisted).unwrap();
         assert_eq!(reopened["children"][0]["fontScale"], json!(1.5));
-        assert!(apply_patch(&mut reopened, &json!({"op":"setNodeAttrs","nodeId":"heading","attrs":{"fontScale":42}})).is_err());
-        apply_patch(&mut reopened, &json!({"op":"setNodeAttrs","nodeId":"heading","attrs":{},"removeAttrs":["fontScale"]})).unwrap();
+        assert!(apply_patch(
+            &mut reopened,
+            &json!({"op":"setNodeAttrs","nodeId":"heading","attrs":{"fontScale":42}})
+        )
+        .is_err());
+        apply_patch(
+            &mut reopened,
+            &json!({"op":"setNodeAttrs","nodeId":"heading","attrs":{},"removeAttrs":["fontScale"]}),
+        )
+        .unwrap();
         assert!(reopened["children"][0].get("fontScale").is_none());
     }
 
@@ -3730,8 +3822,12 @@ mod tests {
     fn replace_text_rejects_stale_expected_text_without_changing_the_node() {
         let mut document = text_document();
         let before = document.clone();
-        let error = apply_patch(&mut document, &json!({"op":"replaceText", "nodeId":"text-1",
-            "from":0, "to":1, "expectedText":"older passage", "text":"new passage"})).unwrap_err();
+        let error = apply_patch(
+            &mut document,
+            &json!({"op":"replaceText", "nodeId":"text-1",
+            "from":0, "to":1, "expectedText":"older passage", "text":"new passage"}),
+        )
+        .unwrap_err();
         assert_eq!(error, "AUTHORING_PATCH_TEXT_CONFLICT:text-1");
         assert_eq!(document, before);
     }
@@ -3796,10 +3892,19 @@ mod tests {
         .expect("a heading target resolved by paragraphMap should be convertible");
 
         assert_eq!(document["taskGroups"][0]["taskType"], "matching_headings");
-        assert_eq!(document["taskGroups"][0]["instructionSignature"]["taskType"], "matching_headings");
-        assert_eq!(document["taskGroups"][0]["responseGroups"][0]["kind"], "matching");
+        assert_eq!(
+            document["taskGroups"][0]["instructionSignature"]["taskType"],
+            "matching_headings"
+        );
+        assert_eq!(
+            document["taskGroups"][0]["responseGroups"][0]["kind"],
+            "matching"
+        );
         assert_eq!(document["answerSlots"]["q1"]["interaction"], "dragdrop");
-        assert_eq!(document["answerSlots"]["q1"]["hostType"], "passage_paragraph");
+        assert_eq!(
+            document["answerSlots"]["q1"]["hostType"],
+            "passage_paragraph"
+        );
         assert_eq!(document["answerSlots"]["q1"]["hostNodeId"], "passage-a");
         assert_eq!(document["answerKey"]["q1"]["labels"], json!(["i"]));
     }
@@ -3820,14 +3925,26 @@ mod tests {
             "answerKey": {"q1":{"kind":"unresolved"}}
         });
 
-        apply_patch(&mut document, &json!({"op":"setAnswerSlotHost","slotId":"q1","hostNodeId":"passage-b"}))
-            .expect("a mapped passage paragraph can become the target");
+        apply_patch(
+            &mut document,
+            &json!({"op":"setAnswerSlotHost","slotId":"q1","hostNodeId":"passage-b"}),
+        )
+        .expect("a mapped passage paragraph can become the target");
         assert_eq!(document["answerSlots"]["q1"]["hostNodeId"], "passage-b");
-        assert_eq!(document["answerSlots"]["q1"]["hostType"], "passage_paragraph");
-        assert_eq!(document["answerSlots"]["q1"]["provenanceStatus"], "user_edited");
+        assert_eq!(
+            document["answerSlots"]["q1"]["hostType"],
+            "passage_paragraph"
+        );
+        assert_eq!(
+            document["answerSlots"]["q1"]["provenanceStatus"],
+            "user_edited"
+        );
 
-        let error = apply_patch(&mut document, &json!({"op":"setAnswerSlotHost","slotId":"q1","hostNodeId":"missing"}))
-            .expect_err("unmapped passage IDs are rejected");
+        let error = apply_patch(
+            &mut document,
+            &json!({"op":"setAnswerSlotHost","slotId":"q1","hostNodeId":"missing"}),
+        )
+        .expect_err("unmapped passage IDs are rejected");
         assert!(error.contains("SLOT_HOST_PARAGRAPH_UNMAPPED"), "{error}");
     }
 
@@ -4186,9 +4303,14 @@ mod tests {
         broken["passage"] = json!(null);
         let failed = compile_authoring_preview_core(&broken);
         assert_eq!(failed["ok"], json!(false), "{failed}");
-        assert_eq!(failed["issues"][0]["code"], json!("RUNTIME_PASSAGE_MISSING"));
+        assert_eq!(
+            failed["issues"][0]["code"],
+            json!("RUNTIME_PASSAGE_MISSING")
+        );
         assert!(
-            failed["issues"][0]["message"].as_str().is_some_and(|m| !m.is_empty()),
+            failed["issues"][0]["message"]
+                .as_str()
+                .is_some_and(|m| !m.is_empty()),
             "问题必须可定位"
         );
     }
