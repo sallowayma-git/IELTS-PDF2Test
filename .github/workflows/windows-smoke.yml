@@ -52,7 +52,10 @@ jobs:
         run: npm run verify:phase1:schema:local
 
       - name: Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+        # PDF/font regressions and PowerShell renderer probes otherwise compete
+        # for the small hosted VM. Keep every test, including the full internal
+        # editor/background-writer thread counts of the concurrency regression.
+        run: cargo test --manifest-path src-tauri/Cargo.toml -- --test-threads=2
 
       - name: Build Windows NSIS installer
         run: npm run tauri -- build --bundles nsis
