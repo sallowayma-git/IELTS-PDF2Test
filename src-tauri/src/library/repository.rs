@@ -5,7 +5,8 @@
 //! 只在导入与按需迁移时作为**来源**读取；数据库编辑不再回写派生文件，
 //! canonical DS 是唯一权威稿。
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -27,20 +28,25 @@ pub(crate) fn open_library_connection(root: &std::path::Path) -> CommandResult<C
 }
 
 /// 记录已迁移过 V2 schema 的库文件（进程内、按路径去重）。
-fn v2_ensured_set() -> &'static std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>> {
-    static V2_ENSURED: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>,
-    > = std::sync::OnceLock::new();
-    V2_ENSURED.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+type SchemaInitialization = Arc<Mutex<bool>>;
+fn v2_ensured_set() -> &'static Mutex<HashMap<std::path::PathBuf, SchemaInitialization>> {
+    static V2_ENSURED: OnceLock<Mutex<HashMap<std::path::PathBuf, SchemaInitialization>>> =
+        OnceLock::new();
+    V2_ENSURED.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn ensure_v2_schema_once(path: &std::path::Path, conn: &Connection) -> CommandResult<()> {
-    let mut ensured = v2_ensured_set().lock().unwrap();
-    if ensured.contains(path) {
-        return Ok(());
+    let state = v2_ensured_set()
+        .lock()
+        .unwrap()
+        .entry(path.to_path_buf())
+        .or_insert_with(|| Arc::new(Mutex::new(false)))
+        .clone();
+    let mut ensured = state.lock().unwrap();
+    if !*ensured {
+        ensure_v2_schema(conn)?;
+        *ensured = true;
     }
-    ensure_v2_schema(conn)?;
-    ensured.insert(path.to_path_buf());
     Ok(())
 }
 

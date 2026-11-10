@@ -13,9 +13,9 @@
 use crate::{LibraryExamDetail, LibraryExamSummary, LibraryFilter, LibraryMetaPatch, LibraryStats};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::CommandResult;
 
@@ -76,20 +76,25 @@ pub(crate) fn open_connection(root: &Path) -> CommandResult<Connection> {
 }
 
 /// 记录已建表的库文件（进程内、按路径去重）。
-fn schema_ensured_set() -> &'static Mutex<HashSet<PathBuf>> {
-    static SCHEMA_ENSURED: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
-    SCHEMA_ENSURED.get_or_init(|| Mutex::new(HashSet::new()))
+fn schema_ensured_set() -> &'static Mutex<HashMap<PathBuf, Arc<Mutex<bool>>>> {
+    static SCHEMA_ENSURED: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<bool>>>>> = OnceLock::new();
+    SCHEMA_ENSURED.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// First-open migration and registration share the lock: concurrent opens never
-/// run duplicate migrations while other connections already start writing.
+/// Serialize first initialization of the same file without holding the global
+/// registry across disk I/O or blocking connections to other database files.
 fn ensure_schema_once(path: &Path, conn: &Connection) -> CommandResult<()> {
-    let mut ensured = schema_ensured_set().lock().unwrap();
-    if ensured.contains(path) {
-        return Ok(());
+    let state = schema_ensured_set()
+        .lock()
+        .unwrap()
+        .entry(path.to_path_buf())
+        .or_insert_with(|| Arc::new(Mutex::new(false)))
+        .clone();
+    let mut ensured = state.lock().unwrap();
+    if !*ensured {
+        ensure_schema(conn)?;
+        *ensured = true;
     }
-    ensure_schema(conn)?;
-    ensured.insert(path.to_path_buf());
     Ok(())
 }
 
