@@ -48,10 +48,11 @@
   justify-content: space-between;
   gap: 10px;
   min-width: 0;
-  padding: 9px 11px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.6);
+  padding: 10px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
 }
 
 .reject-list li { border-color: var(--danger); flex-wrap: wrap; }
@@ -65,10 +66,11 @@
   display: grid;
   gap: 6px;
   min-width: 0;
-  padding: 10px 11px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.6);
+  padding: 14px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
 }
 .split-plan-toggle { display: flex; align-items: flex-start; gap: 8px; min-width: 0; cursor: pointer; }
 .split-plan-toggle span { min-width: 0; overflow-wrap: anywhere; }

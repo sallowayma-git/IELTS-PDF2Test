@@ -9,7 +9,6 @@ import {
   listWritingJobs,
   updateWritingJob
 } from "../../api/tauriCommands";
-import { StatusPill } from "../../components/StatusPill";
 import { toUserFacingError } from "../../utils/userFacingError";
 import type { WritingJob, WritingJobStatus, WritingTaskType } from "../../types";
 
@@ -19,6 +18,9 @@ import type { WritingJob, WritingJobStatus, WritingTaskType } from "../../types"
 const TASK_DEFAULTS: Record<WritingTaskType, { suggested: number; label: string }> = {
   task1: { suggested: 150, label: "图表描述题 (Task 1)" },
   task2: { suggested: 250, label: "议论文 (Task 2)" }
+};
+const WRITING_STATUS_LABEL: Record<WritingJobStatus, string> = {
+  Draft: "草稿", ExportReady: "可导出", Exported: "已导出"
 };
 
 export function WritingPanel({ refresh }: { refresh: () => void }) {
@@ -106,7 +108,7 @@ export function WritingPanel({ refresh }: { refresh: () => void }) {
   async function handleMarkReady() {
     if (!editing) return;
     if (!editing.promptText.trim()) {
-      setError("题目内容 (promptText) 不能为空。");
+      setError("题目内容不能为空。");
       return;
     }
     setBusy(true);
@@ -167,12 +169,11 @@ export function WritingPanel({ refresh }: { refresh: () => void }) {
   }
 
   return (
-    <section className="writing-panel page-enter" data-testid="library-writing-panel">
-      <div className="hero-panel">
+    <section className="writing-panel" data-testid="library-writing-panel">
+      <div className="library-writing-header">
         <div>
-          <p className="eyebrow">写作题库创作</p>
-          <h2>手输 Task 1 / Task 2 题目，导出为 NAS 端可识别的写作题库</h2>
-          <p>各建一道「可导出」的 Task 1 与 Task 2，然后就地导出到 NAS 目录。</p>
+          <h2>写作题库</h2>
+          <p className="library-background-note">管理 Task 1 与 Task 2 题目，各建一道可导出的题目后，导出到 NAS 目录。</p>
         </div>
         <div className="hero-actions">
           <button className="primary" disabled={busy} onClick={handleExport} data-testid="writing-export">
@@ -186,8 +187,7 @@ export function WritingPanel({ refresh }: { refresh: () => void }) {
       <div className="two-column">
         <section>
           <div className="section-heading">
-            <p className="eyebrow">新建写作任务</p>
-            <h3>创建</h3>
+            <h3>新建题目</h3>
           </div>
           <div className="writing-create-form">
             <label>
@@ -205,21 +205,21 @@ export function WritingPanel({ refresh }: { refresh: () => void }) {
           </div>
 
           <div className="section-heading" style={{ marginTop: 24 }}>
-            <p className="eyebrow">写作任务列表</p>
-            <h3>已有任务</h3>
+            <h3>题目列表 <span className="writing-list-count">{jobs.length} 题</span></h3>
           </div>
           <div className="job-table" data-testid="writing-job-table">
             {jobs.map((job) => (
               <button
                 key={job.jobId}
                 className={`job-row${job.jobId === selectedJobId ? " is-active" : ""}`}
+                aria-current={job.jobId === selectedJobId ? "true" : undefined}
                 onClick={() => setSelectedJobId(job.jobId)}
               >
                 <span>
                   <strong>{job.title}</strong>
-                  <small>{job.taskType} · {job.examId}</small>
+                  <small>{job.taskType === "task1" ? "Task 1 · 图表描述" : "Task 2 · 议论文"}</small>
                 </span>
-                <StatusPill status={mapWritingStatusToJobStatus(job.status)} />
+                <span className={`status-pill status-${job.status.toLowerCase()}`}>{WRITING_STATUS_LABEL[job.status]}</span>
                 <span>{job.updatedAt.slice(0, 10)}</span>
               </button>
             ))}
@@ -231,8 +231,8 @@ export function WritingPanel({ refresh }: { refresh: () => void }) {
           {editing ? (
             <>
               <div className="section-heading">
-                <p className="eyebrow">编辑题目</p>
-                <h3>{editing.title}</h3>
+                <h3>编辑题目</h3>
+                <p className="library-background-note">{editing.title}</p>
               </div>
               <div className="writing-edit-form">
                 <label>
@@ -259,11 +259,11 @@ export function WritingPanel({ refresh }: { refresh: () => void }) {
                   />
                 </label>
                 <label>
-                  <span>题目 ID（examId）</span>
+                  <span>题目编号</span>
                   <input value={editing.examId} onChange={(e) => setEditing({ ...editing, examId: e.target.value })} />
                 </label>
                 <label>
-                  <span>题目内容 (promptText)</span>
+                  <span>题目内容</span>
                   <textarea
                     className="writing-prompt-textarea"
                     value={editing.promptText}
@@ -278,7 +278,7 @@ export function WritingPanel({ refresh }: { refresh: () => void }) {
                   <button className="ghost" disabled={busy} onClick={handleDelete}>删除</button>
                 </div>
                 <p className="writing-status-hint">
-                  当前状态：<StatusPill status={mapWritingStatusToJobStatus(editing.status)} />
+                  当前状态：<span className={`status-pill status-${editing.status.toLowerCase()}`}>{WRITING_STATUS_LABEL[editing.status]}</span>
                   {editing.status === "Exported" ? "（已导出，仍可编辑后重新导出）" : ""}
                 </p>
               </div>
@@ -291,10 +291,4 @@ export function WritingPanel({ refresh }: { refresh: () => void }) {
       </div>
     </section>
   );
-}
-
-function mapWritingStatusToJobStatus(status: WritingJobStatus): "Working" | "DraftSaved" | "ExportReady" | "Exported" {
-  if (status === "Exported") return "Exported";
-  if (status === "ExportReady") return "ExportReady";
-  return "DraftSaved";
 }

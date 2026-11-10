@@ -1,15 +1,17 @@
 /* 设计令牌。所有层只通过变量取色和取字体，不再硬编码色值。 */
 :root {
-  --ink: #13201d;
-  --muted: #6c756c;
-  --paper: #f4efe5;
-  --paper-2: #fffaf0;
-  --line: #d8d0c0;
-  --line-strong: #aeb7a9;
-  --accent: #1f8a70;
-  --accent-2: #c77838;
+  --ink: #202b28;
+  --muted: #626e68;
+  --paper: #f8faf9;
+  --paper-2: #ffffff;
+  --surface: #ffffff;
+  --surface-muted: #f1f5f3;
+  --line: #dfe6e2;
+  --line-strong: #b5c1bb;
+  --accent: #19765f;
+  --accent-2: #99561f;
   --danger: #b84b3f;
-  --shadow: 0 22px 60px rgba(24, 34, 29, 0.12);
+  --shadow: 0 8px 28px rgba(24, 34, 29, 0.1);
   --font-ui: "Avenir Next", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", sans-serif;
   --font-display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", "Songti SC", Georgia, serif;
   font-family: var(--font-ui);

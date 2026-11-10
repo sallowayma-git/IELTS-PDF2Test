@@ -41,6 +41,8 @@ export interface RouteState {
   pickItemId?: string;
   /** 题库题型子标签（reading | listening | writing | all）。承接被退休的 #/legacy/writing。 */
   modality?: string;
+  /** 阅读题库内部的 Part 筛选，不改变题目的实际 Part 标签。 */
+  part?: string;
   legacyPage?: LegacyPageName;
   /** 数据模块的子视图（#/data/...）。 */
   data?: DataView;
@@ -101,6 +103,7 @@ export function parseRoute(hash = window.location.hash): RouteState {
   const value = hash.replace(/^#\/?/, "");
   const intent = parseIntent(value);
   const modality = parseModality(value);
+  const part = new URLSearchParams(value.split("?")[1] ?? "").get("part") ?? undefined;
   const pickItemId = parsePick(value);
   const parts = value.split(/[/?]/).filter(Boolean);
   if (!parts.length) return { name: "library" };
@@ -114,7 +117,7 @@ export function parseRoute(hash = window.location.hash): RouteState {
     if (legacyPage) return { name: "legacy", legacyPage, itemId: parts[2], intent };
     return { name: "library", intent, modality };
   }
-  if (parts[0] === "library") return { name: "library", intent, modality, pickItemId };
+  if (parts[0] === "library") return { name: "library", intent, modality, pickItemId, part };
   return { name: "library", intent, modality, pickItemId };
 }
 

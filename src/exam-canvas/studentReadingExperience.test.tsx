@@ -93,11 +93,45 @@ describe("student reading experience", () => {
       fireEvent.click(screen.getByRole("button", { name: "Highlight" }));
       const highlight = container.querySelector<HTMLElement>(".hl")!;
       expect(highlight).not.toBeNull();
+      expect(highlight.dataset.kind).toBe("highlight");
       highlight.getBoundingClientRect = () => ({ top: 140, left: 50, bottom: 160 } as DOMRect);
       fireEvent.click(highlight);
+      expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
       fireEvent.click(screen.getByRole("button", { name: "Remove highlight" }));
       expect(container.querySelector(".hl")).toBeNull();
     }
+    expect(JSON.stringify(source)).toBe(before);
+  });
+  it("creates, edits, and removes notes from selected text", () => {
+    const source = draft();
+    const before = JSON.stringify(source);
+    const { container } = render(<ExamCanvas authoring={source} mode="student" />);
+    const node = container.querySelector(".v2-passage-pane .v2-text")!.firstChild!;
+    const range = document.createRange();
+    range.setStart(node, 0); range.setEnd(node, Math.min(8, node.textContent!.length));
+    range.getBoundingClientRect = () => ({ top: 140, left: 50, bottom: 160 } as DOMRect);
+    const selectedText = range.toString().trim();
+    window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+    fireEvent(document, new Event("selectionchange"));
+    fireEvent.click(within(screen.getByRole("toolbar")).getByRole("button", { name: "Note" }));
+    const note = container.querySelector<HTMLElement>(".hl[data-kind='note']")!;
+    expect(note).not.toBeNull();
+    expect(note.dataset.note).toBe(selectedText);
+    note.getBoundingClientRect = () => ({ top: 140, left: 50, bottom: 160 } as DOMRect);
+    fireEvent.click(note);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const textarea = screen.getByRole("textbox", { name: "Edit note" }) as HTMLTextAreaElement;
+    expect(textarea).not.toBeNull();
+    fireEvent.change(textarea, { target: { value: "This is a test note" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(note.dataset.note).toBe("This is a test note");
+    fireEvent.click(note);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect((screen.getByRole("textbox", { name: "Edit note" }) as HTMLTextAreaElement).value).toBe("This is a test note");
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(note);
+    fireEvent.click(screen.getByRole("button", { name: "Remove highlight" }));
+    expect(container.querySelector(".hl[data-kind='note']")).toBeNull();
     expect(JSON.stringify(source)).toBe(before);
   });
   it("keeps input, choice and drag control DOM and bindings intact across a selection", () => {

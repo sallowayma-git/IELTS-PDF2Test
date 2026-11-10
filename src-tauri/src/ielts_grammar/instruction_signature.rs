@@ -205,10 +205,10 @@ fn infer_task_type_from_cues(lower: &str) -> Option<TaskTypeV2> {
     {
         return Some(TaskTypeV2::Classification);
     }
-    if lower.contains("complete the table") || lower.contains("complete the table below") {
+    if lower.contains("complete the table") || has_fill_verb_with_word(lower, "table") {
         return Some(TaskTypeV2::TableCompletion);
     }
-    if lower.contains("complete the form") {
+    if lower.contains("complete the form") || has_fill_verb_with_word(lower, "form") {
         return Some(TaskTypeV2::FormCompletion);
     }
     if lower.contains("complete the flow") || lower.contains("flow-chart") {
@@ -270,6 +270,15 @@ fn infer_task_type_from_cues(lower: &str) -> Option<TaskTypeV2> {
         return Some(TaskTypeV2::MatchingFeatures);
     }
     None
+}
+
+/// Instruction wording such as "Fill in the table" or "Complete the information
+/// in the table" carries the same task identity as "Complete the table".
+fn has_fill_verb_with_word(lower: &str, noun: &str) -> bool {
+    let has_noun = lower
+        .split(|ch: char| !ch.is_ascii_alphabetic())
+        .any(|word| word == noun);
+    has_noun && (lower.contains("complete") || lower.contains("fill in") || lower.contains("fill-in"))
 }
 
 fn has_numbered_inline_blank_sequence(text: &str) -> bool {
@@ -675,6 +684,18 @@ mod tests {
                 TaskTypeV2::MatchingFeatures,
             ),
             ("Choose the correct answer, A-D.", TaskTypeV2::SingleChoice),
+            (
+                "Fill in the table below. Write NO MORE THAN TWO WORDS.",
+                TaskTypeV2::TableCompletion,
+            ),
+            (
+                "Complete the information in the table below.",
+                TaskTypeV2::TableCompletion,
+            ),
+            (
+                "Fill in the form below. Write ONE WORD AND/OR A NUMBER.",
+                TaskTypeV2::FormCompletion,
+            ),
         ] {
             assert_eq!(
                 classify_instruction_task_type(text),

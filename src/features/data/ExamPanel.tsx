@@ -100,40 +100,42 @@ export function ExamPanel({ batchId, paperId }: { batchId: string; paperId: stri
         {view.hardQuestions.length === 0 ? (
           <p className="data-empty">暂无判分题目。</p>
         ) : (
-          <table className="data-table">
-            <thead>
-              <tr><th>题号</th><th>Part</th><th>题型</th><th>正确率</th><th>样本</th><th>结论</th><th /></tr>
-            </thead>
-            <tbody>
-              {view.hardQuestions.map((question) => (
-                <tr key={`${question.passageIndex}|${question.questionId}`} data-testid="data-hard-row">
-                  <td>{question.displayLabel}</td>
-                  <td>{question.passageLabel}</td>
-                  <td>{taskTypeLabel(question.questionKind)}</td>
-                  <td>{pct(question.accuracy)}</td>
-                  <td>{nText(question.n)}</td>
-                  <td>{questionVerdict(question)}</td>
-                  <td>
-                    <button
-                      className="ghost small"
-                      type="button"
-                      onClick={() =>
-                        go(dataViewPath({
-                          kind: "question",
-                          batchId,
-                          paperId,
-                          passageIndex: question.passageIndex,
-                          questionId: question.questionId
-                        }))
-                      }
-                    >
-                      看分布
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="data-table-scroll" role="region" aria-label="题目统计" tabIndex={0}>
+            <table className="data-table">
+              <thead>
+                <tr><th>题号</th><th>Part</th><th>题型</th><th>正确率</th><th>样本</th><th>结论</th><th /></tr>
+              </thead>
+              <tbody>
+                {view.hardQuestions.map((question) => (
+                  <tr key={`${question.passageIndex}|${question.questionId}`} data-testid="data-hard-row">
+                    <td>{question.displayLabel}</td>
+                    <td>{question.passageLabel}</td>
+                    <td>{taskTypeLabel(question.questionKind)}</td>
+                    <td>{pct(question.accuracy)}</td>
+                    <td>{nText(question.n)}</td>
+                    <td>{questionVerdict(question)}</td>
+                    <td>
+                      <button
+                        className="ghost small"
+                        type="button"
+                        onClick={() =>
+                          go(dataViewPath({
+                            kind: "question",
+                            batchId,
+                            paperId,
+                            passageIndex: question.passageIndex,
+                            questionId: question.questionId
+                          }))
+                        }
+                      >
+                        看分布
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
 
@@ -185,34 +187,36 @@ export function ExamPanel({ batchId, paperId }: { batchId: string; paperId: stri
         {view.students.length === 0 ? (
           <p className="data-empty">还没有有效计分的学生。</p>
         ) : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>姓名</th><th>卡号</th><th>原始分</th><th>正确率</th>
-                {view.parts.map((part) => <th key={part.passageIndex}>{part.label}</th>)}
-                <th>用时</th><th>交卷</th>
-              </tr>
-            </thead>
-            <tbody>
-              {view.students.map((student) => (
-                <tr key={student.attemptId}>
-                  <td>
-                    <button className="link-button" type="button" onClick={() => go(dataViewPath({ kind: "student", attemptId: student.attemptId }))}>
-                      {student.candidateName}
-                    </button>
-                  </td>
-                  <td className="data-mono">{student.candidateId}</td>
-                  <td>{num(student.rawScore)} / {num(student.rawTotal)}</td>
-                  <td>{pct(student.accuracy)}</td>
-                  {student.partCorrect.map((value, index) => (
-                    <td key={view.parts[index]?.passageIndex ?? index}>{value == null ? "—" : num(value)}</td>
-                  ))}
-                  <td>{secText(student.totalDurationSec)}</td>
-                  <td>{timeText(student.submittedAt)}</td>
+          <div className="data-table-scroll" role="region" aria-label="学生成绩" tabIndex={0}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>姓名</th><th>卡号</th><th>原始分</th><th>正确率</th>
+                  {view.parts.map((part) => <th key={part.passageIndex}>{part.label}</th>)}
+                  <th>用时</th><th>交卷</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {view.students.map((student) => (
+                  <tr key={student.attemptId}>
+                    <td>
+                      <button className="link-button" type="button" onClick={() => go(dataViewPath({ kind: "student", attemptId: student.attemptId }))}>
+                        {student.candidateName}
+                      </button>
+                    </td>
+                    <td className="data-mono">{student.candidateId}</td>
+                    <td>{num(student.rawScore)} / {num(student.rawTotal)}</td>
+                    <td>{pct(student.accuracy)}</td>
+                    {student.partCorrect.map((value, index) => (
+                      <td key={view.parts[index]?.passageIndex ?? index}>{value == null ? "—" : num(value)}</td>
+                    ))}
+                    <td>{secText(student.totalDurationSec)}</td>
+                    <td>{timeText(student.submittedAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
 

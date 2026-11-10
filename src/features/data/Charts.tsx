@@ -7,39 +7,42 @@ export function Histogram({ bins, label }: { bins: HistBin[]; label: string }) {
     return <p className="data-empty">暂无有效计分的学生。</p>;
   }
   const max = Math.max(1, ...bins.map((bin) => bin.count));
-  const cell = 24;
+  const width = Math.max(480, bins.length * 24);
+  const cell = width / bins.length;
   const height = 140;
-  const width = bins.length * cell;
   return (
-    <svg
-      className="data-histogram"
-      viewBox={`0 0 ${width} ${height}`}
-      role="img"
-      aria-label={label}
-      data-testid="data-histogram"
-      preserveAspectRatio="xMidYMid meet"
-    >
-      {bins.map((bin, index) => {
-        const barHeight = (bin.count / max) * 100;
-        const x = index * cell + 4;
-        return (
-          <g key={bin.from}>
-            <rect x={x} y={110 - barHeight} width={cell - 8} height={barHeight} className="data-bar">
-              <title>{`${bin.from}–${bin.to} 分：${bin.count} 人`}</title>
-            </rect>
-            {bin.count > 0 ? (
-              <text x={x + (cell - 8) / 2} y={110 - barHeight - 3} textAnchor="middle" className="data-bar-count">
-                {bin.count}
+    <div className="data-chart-scroll" role="region" aria-label={label} tabIndex={0}>
+      <svg
+        className="data-histogram"
+        style={{ minWidth: Math.max(480, bins.length * 20) }}
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label={label}
+        data-testid="data-histogram"
+        preserveAspectRatio="xMinYMid meet"
+      >
+        {bins.map((bin, index) => {
+          const barHeight = (bin.count / max) * 100;
+          const x = index * cell + 4;
+          return (
+            <g key={bin.from}>
+              <rect x={x} y={110 - barHeight} width={cell - 8} height={barHeight} className="data-bar">
+                <title>{`${bin.from}–${bin.to} 分：${bin.count} 人`}</title>
+              </rect>
+              {bin.count > 0 ? (
+                <text x={x + (cell - 8) / 2} y={110 - barHeight - 3} textAnchor="middle" className="data-bar-count">
+                  {bin.count}
+                </text>
+              ) : null}
+              <text x={x + (cell - 8) / 2} y={126} textAnchor="middle" className="data-axis">
+                {bin.from}
               </text>
-            ) : null}
-            <text x={x + (cell - 8) / 2} y={126} textAnchor="middle" className="data-axis">
-              {bin.from}
-            </text>
-          </g>
-        );
-      })}
-      <line x1={0} y1={110} x2={width} y2={110} className="data-axis-line" />
-    </svg>
+            </g>
+          );
+        })}
+        <line x1={0} y1={110} x2={width} y2={110} className="data-axis-line" />
+      </svg>
+    </div>
   );
 }
 

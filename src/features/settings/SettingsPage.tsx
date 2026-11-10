@@ -254,6 +254,7 @@ export function SettingsPage() {
     <section className="settings-page" data-testid="settings-page">
       <header className="settings-header">
         <h1>设置</h1>
+        <p className="library-background-note">配置识别服务、NAS 发布目录和作答数据来源。</p>
       </header>
 
       {blockingChecks.length ? (
