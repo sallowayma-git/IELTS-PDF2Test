@@ -2548,6 +2548,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
     case "analytics_student":
     case "analytics_question":
     case "analytics_export_xlsx":
+    case "get_review_settings":
+    case "save_review_settings":
       throw new Error(`requires_tauri_runtime:${command}`);
     case "publish_items":
       throw new Error("requires_tauri_runtime:publish_items");

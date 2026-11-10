@@ -27,6 +27,7 @@ pub fn migrate(conn: &Connection) -> CommandResult<()> {
         ("attempts", "exclude_reason", "TEXT"),
         ("attempts", "review_version", "INTEGER NOT NULL DEFAULT 0"),
         ("passages", "highlights_json", "TEXT"),
+        ("passages", "raw_submission_json", "TEXT"),
         ("passages", "note_text", "TEXT"),
         ("passages", "timer_snapshot_json", "TEXT"),
         ("passages", "runtime_sha256", "TEXT"),

@@ -72,7 +72,8 @@ pub fn import_submission_snapshots(
     }
     report.snapshots_dir_found = true;
 
-    let tmp_dir = app_root.join("analytics-tmp");
+    // Each concurrent import owns its copies and cleanup.
+    let tmp_dir = app_root.join("analytics-tmp").join(uuid::Uuid::new_v4().to_string());
     fs::create_dir_all(&tmp_dir).map_err(|error| format!("analytics_tmp:{error}"))?;
 
     for (candidate, ready) in scan_candidates(&snapshots_dir)? {
@@ -422,6 +423,7 @@ fn write_attempt(
     now: &str,
 ) -> Result<(), String> {
     let id = attempt.attempt_id.as_str();
+    let original = super::immutable::ImportedFacts::read(tx, id)?;
     // 子表整组替换：先清掉该 attempt 的旧子行，再 UPSERT 新快照的行。
     for table in ["answers", "passages", "writings", "suites"] {
         tx.execute(&format!("DELETE FROM {table} WHERE attempt_id = ?1"), params![id])
@@ -577,6 +579,7 @@ fn write_attempt(
         .map_err(|error| format!("写入 writings 失败：{error}"))?;
     }
     source.extensions.apply(tx, id)?;
+    if let Some(original) = original { original.verify(tx, id)?; }
     Ok(())
 }
 

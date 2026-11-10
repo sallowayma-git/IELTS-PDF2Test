@@ -685,25 +685,45 @@ fn reimport_is_idempotent() {
 }
 
 #[test]
-fn newer_exported_at_replaces_and_older_is_ignored() {
+fn newer_exports_cannot_replace_submitted_answers_and_older_is_ignored() {
     let env = fresh_env("newer");
     seed_standard(&env);
     let mut conn = open(&env);
     run_import(&env, &mut conn);
     assert_eq!(build_student_view(&conn, "A1").unwrap().raw_score, 8.0);
 
-    // 更新：A1 的 P3 全对，exportedAt 更晚 -> 覆盖。
+    // exportedAt 不是修改已交卷答案的授权；冲突快照整份回滚。
     let newer = db_bytes("t1-newer", &t1_attempts("TTTT"));
-    publish_snapshot(&env.submissions, "T1", "A1", &newer, "2026-11-07T13:00:00+08:00", false, true);
+    publish_snapshot(
+        &env.submissions,
+        "T1",
+        "A1",
+        &newer,
+        "2026-11-07T13:00:00+08:00",
+        false,
+        true,
+    );
     let report = run_import(&env, &mut conn);
-    assert!(report.attempts_imported >= 1, "{report:?}");
-    assert_eq!(build_student_view(&conn, "A1").unwrap().raw_score, 11.0);
+    assert!(report.failed >= 1, "{report:?}");
+    assert!(report.outcomes.iter().any(|o| o
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("SNAPSHOT_FACT_CONFLICT"))));
+    assert_eq!(build_student_view(&conn, "A1").unwrap().raw_score, 8.0);
 
     // 旧快照（exportedAt 更早，内容为全错）再次出现 -> 不覆盖。
     let older = db_bytes("t1-older", &t1_attempts("FFFF"));
-    publish_snapshot(&env.submissions, "T1", "A1", &older, "2026-11-07T10:30:00+08:00", false, true);
+    publish_snapshot(
+        &env.submissions,
+        "T1",
+        "A1",
+        &older,
+        "2026-11-07T10:30:00+08:00",
+        false,
+        true,
+    );
     run_import(&env, &mut conn);
-    assert_eq!(build_student_view(&conn, "A1").unwrap().raw_score, 11.0);
+    assert_eq!(build_student_view(&conn, "A1").unwrap().raw_score, 8.0);
 }
 
 #[test]

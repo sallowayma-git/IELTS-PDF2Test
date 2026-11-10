@@ -98,8 +98,8 @@ impl Extensions {
                 .and_then(|p| p["runtimeSha256"].as_str())
                 .or_else(|| row["source_hash"].as_str());
             let script = pin.and_then(|p| p["scriptSha256"].as_str());
-            conn.execute("UPDATE passages SET highlights_json=?3,note_text=?4,timer_snapshot_json=?5,runtime_sha256=?6,script_sha256=?7 WHERE attempt_id=?1 AND passage_index=?2",
-                params![id,row["passage_index"].as_i64(),raw.get("highlights").map(Value::to_string),raw["noteText"].as_str(),raw.get("timerSnapshot").map(Value::to_string),hash,script]).map_err(|e| e.to_string())?;
+            conn.execute("UPDATE passages SET highlights_json=?3,note_text=?4,timer_snapshot_json=?5,runtime_sha256=?6,script_sha256=?7,raw_submission_json=?8 WHERE attempt_id=?1 AND passage_index=?2",
+                params![id,row["passage_index"].as_i64(),raw.get("highlights").map(Value::to_string),raw["noteText"].as_str(),raw.get("timerSnapshot").map(Value::to_string),hash,script,row["raw_submission_json"].as_str()]).map_err(|e| e.to_string())?;
         }
         for row in self.rows("reading_answers") {
             if !suites

@@ -1,0 +1,16 @@
+{
+  "method": "Real Electron renderer -> NAS database -> final submit -> ready snapshot; synthetic test candidate only",
+  "command": "python3 developer/tests/e2e/suite_practice_flow.py",
+  "studentHead": "0400e83dad74db5de9f316c9a40e8041c5e94cc4",
+  "platform": "darwin-arm64",
+  "windowsKioskVerified": false,
+  "attemptId": "attempt_8583e3b6-5545-4443-a4f1-fa7cf53b5971",
+  "schemaVersion": 2,
+  "sourceSha256": {
+    "apps/student-exam/src/pages/ReadingExamPage.vue": "90c22c57003acbc75af9eb9149e2d2486e2f48b3b9953b861f0570c3efc13033",
+    "apps/student-exam/src/modules/exam/answerEvents.ts": "f7908404e189dd39bbf76eb7df6448881c0b11e4ec566b52af0f1621581d3249",
+    "apps/student-exam/src/modules/reading-engine/useReadingAttempt.ts": "ac29b12ed17cc1a86d4dfb8155af2e33ff85d4082099a9bb49b20b902bc4fbed",
+    "server/src/lib/exam/ExamReadingService.ts": "2c4c55f4a252db11c475c5c94b7a1a5a53e057eec1069e635ac31d68cd8e9e2f",
+    "server/src/lib/exam/ExamListeningService.ts": "59b6edbd3912966e9334b78b688a2657cc5795ebe5c9a91112c729c06adda593"
+  }
+}

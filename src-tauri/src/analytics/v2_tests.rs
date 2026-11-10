@@ -7,12 +7,13 @@ use std::{
 };
 
 fn setup(version: u8) -> (PathBuf, Connection, String) {
-    let root = std::env::temp_dir().join(format!(
-        "analytics-real-v{version}-{}",
-        uuid::Uuid::new_v4()
-    ));
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(format!("../fixtures/analytics/student-v{version}"));
+    setup_fixture(&format!("student-v{version}"))
+}
+
+fn setup_fixture(name: &str) -> (PathBuf, Connection, String) {
+    let root = std::env::temp_dir().join(format!("analytics-real-{name}-{}", uuid::Uuid::new_v4()));
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../fixtures/analytics/{name}"));
     let provenance: Value =
         serde_json::from_slice(&fs::read(fixture.join("provenance.json")).unwrap()).unwrap();
     let target = root.join("nas/snapshots/fixture-terminal");
@@ -33,6 +34,74 @@ fn setup(version: u8) -> (PathBuf, Connection, String) {
         conn,
         provenance["attemptId"].as_str().unwrap().to_string(),
     )
+}
+
+#[test]
+fn imports_listening_facts_from_the_real_electron_final_submission() {
+    let (root, conn, attempt) = setup_fixture("student-electron-listening-v2");
+    let (correct, total): (f64, f64) = conn
+        .query_row(
+            "SELECT score_correct,score_total FROM listening_attempts WHERE attempt_id=?1",
+            [&attempt],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((correct, total), (9.0, 9.0));
+    let (slots, correct_slots): (i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*),SUM(is_correct) FROM listening_answers WHERE attempt_id=?1",
+            [&attempt],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((slots, correct_slots), (9, 9));
+    assert_eq!(
+        queries::build_student_view(&conn, &attempt)
+            .unwrap()
+            .writings
+            .len(),
+        2
+    );
+    drop(conn);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn imports_snapshot_created_by_the_real_electron_reading_and_writing_flow() {
+    let (root, mut conn, attempt) = setup_fixture("student-electron-v2");
+    let view = queries::build_student_view(&conn, &attempt).unwrap();
+    assert_eq!(view.raw_score, 3.0);
+    assert_eq!(view.raw_total, 3.0);
+    assert_eq!(view.writings.len(), 2);
+    let (events, clocks): (i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*),COUNT(DISTINCT clock_id) FROM answer_events WHERE attempt_id=?1",
+            [&attempt],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((events, clocks), (19, 1));
+    let (raw, note, highlights): (String, String, String) = conn.query_row(
+        "SELECT raw_submission_json,note_text,highlights_json FROM passages WHERE attempt_id=?1 ORDER BY passage_index LIMIT 1",
+        [&attempt], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).unwrap();
+    assert!(raw.contains("alpha"));
+    assert!(note.contains('>'));
+    assert!(
+        serde_json::from_str::<Value>(&highlights)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len()
+            >= 2
+    );
+    let duplicate =
+        import::import_submission_snapshots(&mut conn, &root, &root.join("nas")).unwrap();
+    assert_eq!(duplicate.failed, 0);
+    assert_eq!(duplicate.attempts_imported, 0);
+    assert_eq!(duplicate.skipped, 1);
+    drop(conn);
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -86,6 +155,101 @@ fn consumes_snapshots_generated_by_real_v1_and_v2_student_services() {
         drop(conn);
         let _ = fs::remove_dir_all(root);
     }
+}
+
+#[test]
+fn later_exports_reject_changes_to_original_body_listening_and_events() {
+    for (table, mutation) in [
+        (
+            "writings",
+            "UPDATE writing_submissions SET content='tampered essay'",
+        ),
+        (
+            "listening_answers",
+            "UPDATE listening_answers SET user_answer_json='\"tampered\"'",
+        ),
+        (
+            "answer_events",
+            "UPDATE answer_events SET new_answer_json='\"tampered\"'",
+        ),
+        (
+            "passages",
+            "UPDATE reading_passages SET raw_submission_json='{\"answers\":{\"q1\":\"tampered\"}}'",
+        ),
+    ] {
+        let (root, mut conn, _) = setup(2);
+        let before = records::query(&conn, &format!("SELECT * FROM {table}"), &[]).unwrap();
+        let dir = root.join("nas/snapshots/fixture-terminal");
+        let file = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.extension().is_some_and(|e| e == "sqlite"))
+            .unwrap();
+        let source = Connection::open(&file).unwrap();
+        source.execute_batch(mutation).unwrap();
+        drop(source);
+        let meta_file = file.with_extension("meta.json");
+        let mut meta: Value = serde_json::from_slice(&fs::read(&meta_file).unwrap()).unwrap();
+        let bytes = fs::read(&file).unwrap();
+        meta["sha256"] = json!(import::sha256_hex(&bytes));
+        meta["sizeBytes"] = json!(bytes.len());
+        let previous =
+            chrono::DateTime::parse_from_rfc3339(meta["exportedAt"].as_str().unwrap()).unwrap();
+        meta["exportedAt"] = json!((previous + chrono::Duration::seconds(1)).to_rfc3339());
+        fs::write(meta_file, meta.to_string()).unwrap();
+        let report =
+            import::import_submission_snapshots(&mut conn, &root, &root.join("nas")).unwrap();
+        assert_eq!(report.failed, 1, "{table}: {report:?}");
+        assert!(report.outcomes[0]
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("SNAPSHOT_FACT_CONFLICT"));
+        assert_eq!(
+            before,
+            records::query(&conn, &format!("SELECT * FROM {table}"), &[]).unwrap()
+        );
+        drop(conn);
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[test]
+fn concurrent_imports_keep_one_set_of_original_facts_and_preserve_review_state() {
+    let (root, conn, attempt) = setup(2);
+    let expected: i64 = conn
+        .query_row("SELECT COUNT(*) FROM answers", [], |r| r.get(0))
+        .unwrap();
+    drop(conn);
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let workers: Vec<_> = (0..2)
+        .map(|_| {
+            let root = root.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                let mut conn = open_analytics(&root).unwrap();
+                barrier.wait();
+                import::import_submission_snapshots(&mut conn, &root, &root.join("nas")).unwrap()
+            })
+        })
+        .collect();
+    for worker in workers {
+        let report = worker.join().unwrap();
+        assert_eq!(report.failed, 0, "{report:?}");
+    }
+    let conn = open_analytics(&root).unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM answers WHERE attempt_id=?1",
+            [&attempt],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        expected
+    );
+    assert_eq!(review::settings(&root).unwrap()["operatorName"], "复核教师");
+    drop(conn);
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]

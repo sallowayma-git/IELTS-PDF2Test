@@ -20,6 +20,7 @@ pub mod status;
 mod schema_v2;
 pub(crate) mod records;
 mod import_extensions;
+mod immutable;
 pub mod review;
 pub mod writing_review;
 pub mod rejudge;
