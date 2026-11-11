@@ -1754,6 +1754,8 @@ pub(crate) fn merge_human_edits(
                     | "deleteResponseGroup"
                     | "deleteTaskGroup"
                     | "restoreStructure"
+                    | "renumberQuestions"
+                    | "insertResponseGroup"
                     | "upsertTaskGroupBundle"
                     | "insertNode"
                     | "deleteNode"
@@ -1761,6 +1763,9 @@ pub(crate) fn merge_human_edits(
             );
             if group_wide {
                 let mut groups = command_group_ids(&command, current);
+                if op=="renumberQuestions" && command["scope"]=="exam" {
+                    groups.extend(current["taskGroups"].as_array().into_iter().flatten().filter_map(|t|t["taskId"].as_str()).map(str::to_string));
+                }
                 groups.extend(command["taskIds"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string));
                 // A deleted task has no current seed. Its tombstone was applied above.
                 let missing: Vec<String> = groups.iter().filter(|id| !current["taskGroups"].as_array().into_iter().flatten().any(|t|t["taskId"]==id.as_str())).cloned().collect();
@@ -1771,6 +1776,15 @@ pub(crate) fn merge_human_edits(
                     }
                 }
                 if !groups.is_empty() { preserved_groups.extend(preserve_groups(current, cloud, &groups)?); }
+                // The user explicitly confirmed a new listening numbering domain.
+                // Keep its Part declarations with the protected slots, including when
+                // a candidate regenerated Part IDs. Inconsistent candidates fail the
+                // existing structural check rather than overwrite that confirmation.
+                if op == "renumberQuestions" {
+                    if let Some(listening) = current.get("listening") {
+                        cloud["listening"] = listening.clone();
+                    }
+                }
                 if op == "restoreStructure" {
                     for field in ["passage","listening"] {
                         if command["changes"].as_array().into_iter().flatten().any(|c| c["path"][0]==field) {

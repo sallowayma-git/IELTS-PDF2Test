@@ -13,6 +13,63 @@ const initial = fixture.initial as unknown as IeltsAuthoringIRV2;
 const patches = fixture.patches as AuthoringPatchV2[];
 
 describe("structural editor patches", () => {
+  it("renumber confirms only scoring numbers in listening Part declarations", () => {
+    const document = structuredClone(fixture.listeningInitial) as unknown as IeltsAuthoringIRV2;
+    document.answerSlots.q1.participation = "example";
+    const changed = apply(document, [{op:"renumberQuestions",scope:"exam",startAt:11}]);
+    expect(changed.listening!.parts[0].expectedQuestionNumbers).not.toContain(11);
+    expect(changed.answerSlots.q1.slotId).toBe("q1");
+  });
+
+  it("clears optional policies and bank references absent from the source row", () => {
+    const document = structuredClone(fixture.matrixInitial) as unknown as IeltsAuthoringIRV2;
+    delete document.taskGroups[1].responseGroups[0].optionBankRef;
+    delete (document.taskGroups[1].responseGroups[0] as Partial<typeof document.taskGroups[1]["responseGroups"][0]>).allowOptionReuse;
+    const patch = structuredClone(fixture.extraCases[0].patches[0]) as Extract<AuthoringPatchV2,{op:"insertResponseGroup"}>;
+    patch.responseGroup.optionBankRef = "wrong-bank";
+    patch.responseGroup.allowOptionReuse = true;
+    const changed = apply(document,[patch]).taskGroups[1].responseGroups[1];
+    expect(changed.optionBankRef).toBeUndefined();
+    expect(changed.allowOptionReuse).toBeUndefined();
+  });
+  it.each(fixture.extraCases)("Rust/TS parity and undo/redo: $id", (test) => {
+    let document = structuredClone((fixture as Record<string, unknown>)[test.initialKey]) as IeltsAuthoringIRV2;
+    const original = structuredClone(document);
+    const inverses: AuthoringPatchV2[] = [];
+    test.patches.forEach((raw, index) => {
+      const patch = raw as AuthoringPatchV2;
+      const before = structuredClone(document);
+      const undo = inverse(document, patch)!;
+      document = apply(document, [patch]);
+      expect(document).toEqual(test.steps[index].after);
+      expect(undo).toEqual(test.steps[index].inverse);
+      expect(apply(document, [undo])).toEqual(before);
+      inverses.push(undo);
+    });
+    for (const undo of inverses.reverse()) document = apply(document, [undo]);
+    expect(document).toEqual(original);
+  });
+
+  it("matrix insertion creates a sibling, shares its bank and keeps the existing single-slot row", () => {
+    const document = fixture.matrixInitial as unknown as IeltsAuthoringIRV2;
+    const patch = fixture.extraCases[0].patches[0] as AuthoringPatchV2;
+    const changed = apply(document, [patch]);
+    const task = changed.taskGroups[1];
+    expect(task.responseGroups.map((g) => g.slotIds.length)).toEqual([1,1]);
+    expect(task.responseGroups[1].optionBankRef).toBe(task.responseGroups[0].optionBankRef);
+    expect(task.responseGroups[1].options).toBeUndefined();
+    expect(task.optionBank).toEqual(document.taskGroups[1].optionBank);
+  });
+
+  it("rejects task numbering collisions and duplicate group/slot IDs atomically", () => {
+    const document = fixture.matrixInitial as unknown as IeltsAuthoringIRV2;
+    expect(() => apply(document, [{ op: "renumberQuestions", scope: "task", taskId: "task-2", startAt: 4 }])).toThrow("RENUMBER_COLLISION:4");
+    expect(() => apply(document, [{ op: "renumberQuestions", scope: "exam", startAt: 0 }])).toThrow("RENUMBER_START_INVALID");
+    const patch = fixture.extraCases[0].patches[0] as Extract<AuthoringPatchV2, {op:"insertResponseGroup"}>;
+    expect(() => apply(document, [{...patch,responseGroup:{...patch.responseGroup,responseGroupId:document.taskGroups[1].responseGroups[0].responseGroupId}}])).toThrow("RESPONSE_GROUP_ALREADY_EXISTS");
+    expect(() => apply(document, [{...patch,slot:document.answerSlots.q5}])).toThrow("SLOT_ALREADY_EXISTS");
+    expect(document).toEqual(fixture.matrixInitial);
+  });
   it("shares every forward document and undo patch with the Rust regression", () => {
     let document = structuredClone(initial);
     const steps = patches.map((patch) => {
@@ -82,7 +139,7 @@ describe("structural editor patches", () => {
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
     for (const schema of [commonSchema, contentSchema, qualitySchema, probeSchema, authoringSchema]) ajv.addSchema(schema);
     const validate = ajv.getSchema("https://contracts.ielts-author-studio.dev/phase1/ielts-authoring-ir-v2.schema.json#/$defs/authoringStructurePatch")!;
-    for (const patch of [...patches, ...fixture.steps.map((s) => s.inverse)]) expect(validate(patch), JSON.stringify(validate.errors)).toBe(true);
+    for (const patch of [...patches, ...fixture.steps.map((s) => s.inverse), ...fixture.extraCases.flatMap((test) => [...test.patches,...test.steps.map((step) => step.inverse)])]) expect(validate(patch), JSON.stringify(validate.errors)).toBe(true);
     expect(validate({ op: "deleteTaskGroup" })).toBe(false);
     expect(validate({ op: "deleteResponseGroup", taskId: "t", responseGroupId: "g", extra: true })).toBe(false);
   });

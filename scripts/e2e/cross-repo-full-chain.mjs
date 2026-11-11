@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 跨仓库全链路真实应用 e2e（作者端 PDF2Test-data 编排；学生端 IELTS-wt-audit 真 Electron）。
+// 跨仓库全链路真实应用 e2e（作者端 PDF2Test-data 编排；学生端 IELTS-NASfor-WenDao 真 Electron）。
 //
 //   1. 临时 NAS：<系统临时目录>/cross-repo-chain-<stamp>/{nas-papers,nas-submissions}
 //   2. 作者端发布（真 Tauri 界面）：预置三篇合成权威稿 → 题库设 P1/P2/P3 → 组卷勾选 → 发布为当前试卷 → 发布目录 = nas-papers
@@ -19,7 +19,7 @@
 //
 // 用法：
 //   node scripts/e2e/cross-repo-full-chain.mjs                                   完整链路
-//   STUDENT_REPO=F:\workspace\IELTS-wt-audit  （默认值，学生端仓库根）
+//   STUDENT_REPO=F:\workspace\IELTS-NASfor-WenDao  （默认值，学生端仓库根）
 //   node scripts/e2e/cross-repo-full-chain.mjs --phase republish --run-dir <d> --result <f>   （在途钩子内部调用）
 import fs from "node:fs";
 import os from "node:os";
@@ -41,7 +41,7 @@ const scriptPath = fileURLToPath(import.meta.url);
 const exePath = path.join(repoRoot, "src-tauri", "target", "debug", "ielts-author-studio.exe");
 const extraArgs = "--no-sandbox --disable-gpu";
 const SYNTHETIC_AUTHORING = path.join(repoRoot, "fixtures", "golden", "synthetic", "ielts", "early-approaches-authoring-v2.json");
-const STUDENT_REPO = process.env.STUDENT_REPO || "F:\\workspace\\IELTS-wt-audit";
+const STUDENT_REPO = process.env.STUDENT_REPO || "F:\\workspace\\IELTS-NASfor-WenDao";
 const STUDENT_FLOW = path.join(STUDENT_REPO, "developer", "tests", "e2e", "student_exam_altu_electron_flow.py");
 const TERMINAL_ID = "TERM-ALTU-01";
 const BATCH = "BATCH-ALTU-E2E";

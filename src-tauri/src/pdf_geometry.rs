@@ -1865,6 +1865,13 @@ fn cross_page_section_continuation(
 /// Build paragraph-ish blocks from page characters while honoring per-section
 /// layout changes such as "top half 2-column, bottom half single-column".
 fn build_blocks_from_chars(chars: &[CharWithOrigin]) -> Vec<BlockWithLayout> {
+    build_blocks_from_chars_with_short_tails(chars, true)
+}
+
+fn build_blocks_from_chars_with_short_tails(
+    chars: &[CharWithOrigin],
+    merge_short_tails: bool,
+) -> Vec<BlockWithLayout> {
     if chars.is_empty() {
         return Vec::new();
     }
@@ -1883,7 +1890,7 @@ fn build_blocks_from_chars(chars: &[CharWithOrigin]) -> Vec<BlockWithLayout> {
         }
         if section.column_count == 1 {
             let lines = build_lines_within_column_refined(&section_chars, y_tol);
-            let grouped = group_lines_into_blocks(&lines);
+            let grouped = group_lines_into_blocks_with_short_tails(&lines, merge_short_tails);
             result.extend(grouped.into_iter().map(|(text, bbox)| BlockWithLayout {
                 text,
                 bbox,
@@ -1930,7 +1937,7 @@ fn build_blocks_from_chars(chars: &[CharWithOrigin]) -> Vec<BlockWithLayout> {
         for (is_banner, segment_chars) in segments {
             if is_banner {
                 let lines = build_lines_within_column_refined(&segment_chars, y_tol);
-                let grouped = group_lines_into_blocks(&lines);
+                let grouped = group_lines_into_blocks_with_short_tails(&lines, merge_short_tails);
                 result.extend(grouped.into_iter().map(|(text, bbox)| BlockWithLayout {
                     text,
                     bbox,
@@ -2020,7 +2027,8 @@ fn build_blocks_from_chars(chars: &[CharWithOrigin]) -> Vec<BlockWithLayout> {
                         continue;
                     }
                     let lines = build_lines_within_column_refined(&column_chars, y_tol);
-                    let grouped = group_lines_into_blocks(&lines);
+                    let grouped =
+                        group_lines_into_blocks_with_short_tails(&lines, merge_short_tails);
                     let column_index = column_span.first().copied().unwrap_or(0);
                     result.extend(grouped.into_iter().map(|(text, bbox)| BlockWithLayout {
                         text,
@@ -2087,7 +2095,7 @@ fn build_blocks_from_chars(chars: &[CharWithOrigin]) -> Vec<BlockWithLayout> {
                     continue;
                 }
                 let lines = build_lines_within_column_refined(&column_chars, y_tol);
-                let grouped = group_lines_into_blocks(&lines);
+                let grouped = group_lines_into_blocks_with_short_tails(&lines, merge_short_tails);
                 result.extend(grouped.into_iter().map(|(text, bbox)| BlockWithLayout {
                     text,
                     bbox,
@@ -2239,7 +2247,15 @@ fn looks_like_hard_line_break(text: &str) -> bool {
         || lower.contains("answer key")
 }
 
+#[cfg(test)]
 fn group_lines_into_blocks(lines: &[(String, [f32; 4])]) -> Vec<(String, [f32; 4])> {
+    group_lines_into_blocks_with_short_tails(lines, true)
+}
+
+fn group_lines_into_blocks_with_short_tails(
+    lines: &[(String, [f32; 4])],
+    merge_short_tails: bool,
+) -> Vec<(String, [f32; 4])> {
     // Track per-group running stats so the merge thresholds can adapt to the
     // paragraph being built (e.g. wider/justified paragraphs, indented first
     // lines) instead of using fixed pixel constants that fail on real-world
@@ -2341,7 +2357,7 @@ fn group_lines_into_blocks(lines: &[(String, [f32; 4])]) -> Vec<(String, [f32; 4
                 !indented
                     && gap <= gap_tol
                     && left_delta <= left_tol
-                    && (aligned_short_line
+                    && ((merge_short_tails && aligned_short_line)
                         || (center_delta <= center_tol && width_delta <= width_tol))
                     && !looks_like_hard_line_break(trimmed)
                     && !prev.text.trim_end().ends_with(':')
@@ -4698,6 +4714,99 @@ mod tests {
     fn listening_fixture_path() -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../fixtures/golden/private-real/listening-vol7-t9.pdf")
+    }
+
+    #[test]
+    #[ignore = "private PDF A/B diagnostic for f922690; writes artifacts/v1-blockcount-drift.json"]
+    fn diagnose_short_tail_blockcount_drift() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let guard = pdfium_instance().expect("PDFium required for an actual A/B comparison");
+        let pdfium = guard.as_ref().expect("PDFium initialization");
+        let mut reports = Vec::new();
+        for name in [
+            "chili-peppers",
+            "conformity",
+            "fishbourne-roman-palace",
+            "listening-to-the-ocean",
+            "organisational-design",
+            "petri-dish",
+            "sleep-study",
+            "western-celebrity",
+        ] {
+            let path = root.join(format!("fixtures/golden/private-real/{name}.pdf"));
+            let document = pdfium
+                .load_pdf_from_file(&path, None)
+                .expect("private PDF required");
+            let mut modern = 0;
+            let mut historical = 0;
+            let mut examples = Vec::new();
+            for (page_index, page) in document.pages().iter().enumerate() {
+                let chars = collect_chars_with_origin(&page);
+                let current = build_blocks_from_chars_with_short_tails(&chars, true);
+                let before = build_blocks_from_chars_with_short_tails(&chars, false);
+                modern += current.len();
+                historical += before.len();
+                for block in &current {
+                    let parts: Vec<_> = before
+                        .iter()
+                        .filter(|old| block.text.contains(&old.text))
+                        .collect();
+                    if parts.len() > 1 && examples.len() < 3 {
+                        examples.push(serde_json::json!({"page":page_index+1,"after":{"text":block.text,"bbox":block.bbox},"before":parts.iter().map(|part|serde_json::json!({"text":part.text,"bbox":part.bbox})).collect::<Vec<_>>()}));
+                    }
+                }
+            }
+            let baseline: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(root.join(format!("fixtures/golden/baseline/v1/{name}.json")))
+                    .unwrap(),
+            )
+            .unwrap();
+            reports.push(serde_json::json!({"fixture":name,"baselineBlockCount":baseline["observed"]["blockCount"],"withoutShortTailMerge":historical,"current":modern,"examples":examples}));
+        }
+        // The product parser also adds blank-page placeholders and diagram images.
+        // Count those separately, after releasing the process-wide PDFium lock.
+        drop(guard);
+        let scratch = std::env::temp_dir().join(format!("v1-drift-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&scratch).unwrap();
+        for report in &mut reports {
+            let name = report["fixture"].as_str().unwrap().to_string();
+            let input = root.join(format!("fixtures/golden/private-real/{name}.pdf"));
+            let mut job = crate::job_store::make_job(crate::CreateJobInput {
+                title: Some(name.clone()),
+                ..Default::default()
+            });
+            let source = SourceFile {
+                file_id: name.clone(),
+                original_name: format!("{name}.pdf"),
+                stored_name: format!("{name}.pdf"),
+                file_type: "pdf".into(),
+                sha256: "diagnostic".into(),
+                size_bytes: fs::metadata(&input).unwrap().len(),
+                role: "MainQuestion".into(),
+                imported_at: chrono::Utc::now(),
+            };
+            job.source_files = vec![source.clone()];
+            let ir = parse_pdf_with_pdfium(
+                &job,
+                &source,
+                &input,
+                &scratch.join(format!("{name}.json")),
+                "auto",
+            )
+            .unwrap();
+            let blocks: Vec<_> = ir["pages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|page| page["blocks"].as_array().unwrap())
+                .collect();
+            report["productBlockCount"] = json!(blocks.len());
+            report["nonGeometryBlocks"]=json!(blocks.iter().filter(|block|block["blockType"]=="image" || block["text"].as_str().is_some_and(|s|s.starts_with("[No extractable text"))).map(|block|json!({"blockType":block["blockType"],"text":block["text"],"bbox":block["bbox"]})).collect::<Vec<_>>());
+        }
+        let output = root.join("artifacts/v1-blockcount-drift.json");
+        std::fs::create_dir_all(output.parent().unwrap()).unwrap();
+        std::fs::write(&output,serde_json::to_vec_pretty(&serde_json::json!({"candidateCommit":"f9226902eedb4872f33e88a4adfe9508b3e1f54a","method":"same PDFium, same glyphs; only aligned short-tail merge toggled","fixtures":reports})).unwrap()).unwrap();
+        println!("{}", output.display());
     }
 
     /// Block texts for every page of a PDF through the product line builder.

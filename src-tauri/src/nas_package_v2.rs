@@ -36,7 +36,6 @@ const ASSET_MANIFEST_FILE_NAME: &str = "asset-manifest.json";
 const CONTROL_DIR_NAME: &str = ".publish-control";
 const REPORT_DIR_NAME: &str = "publish/reports";
 const BACKUP_DIR_NAME: &str = "backups";
-const CURRENT_STUDENT_RUNTIME_VERSION: [u64; 3] = [0, 2, 0];
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -547,6 +546,15 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
             Ok(((*id).clone(), ds, version))
         })
         .collect::<CommandResult<Vec<_>>>()?;
+    // Empty listening sections cannot become student content, even under force.
+    // Compile before creating anything on NAS and preserve the actionable Chinese reason.
+    for (_, document, _) in &snapshots {
+        if document["modality"] != "listening" { continue; }
+        let preview=crate::authoring_v2_commands::compile_authoring_preview_core(document);
+        if let Some(issue)=preview["issues"].as_array().into_iter().flatten().find(|issue|issue["code"]=="LISTENING_PART_EMPTY") {
+            return Err(format!("LISTENING_PART_EMPTY:{}:{}",issue["targetId"].as_str().unwrap_or_default(),issue["message"].as_str().unwrap_or("听力部分没有题目，请补题后再发布")));
+        }
+    }
     transaction.commit().map_err(|error| error.to_string())?;
 
     let library_root =
@@ -1728,12 +1736,17 @@ fn stage_package_files(
         ));
     }
 
+    let supported_runtime_version = if source.modality() == "listening" {
+        crate::listening_source_v1::LISTENING_MINIMUM_RUNTIME_VERSION
+    } else {
+        "0.2.0"
+    };
     let minimum_runtime_version = input
         .minimum_runtime_version
         .as_deref()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or("0.2.0");
-    validate_minimum_runtime_version(minimum_runtime_version)?;
+        .unwrap_or(supported_runtime_version);
+    validate_minimum_runtime_version(minimum_runtime_version, supported_runtime_version)?;
     let entry = json!({
         "examId": source.exam_id(),
         "dataKey": source.exam_id(),
@@ -2243,12 +2256,12 @@ fn parse_runtime_version(value: &str) -> Option<[u64; 3]> {
     Some(parsed)
 }
 
-fn validate_minimum_runtime_version(value: &str) -> CommandResult<()> {
+fn validate_minimum_runtime_version(value: &str, supported: &str) -> CommandResult<()> {
     let parsed = parse_runtime_version(value)
         .ok_or_else(|| format!("nas_package_v2_runtime_version_invalid:{value}"))?;
-    if parsed > CURRENT_STUDENT_RUNTIME_VERSION {
+    if parsed > parse_runtime_version(supported).ok_or("nas_package_v2_supported_runtime_invalid")? {
         return Err(format!(
-            "nas_package_v2_runtime_incompatible:minimum={value}:current=0.2.0"
+            "nas_package_v2_runtime_incompatible:minimum={value}:current={supported}"
         ));
     }
     Ok(())
@@ -3356,10 +3369,12 @@ mod tests {
 
     #[test]
     fn runtime_version_policy_blocks_invalid_or_future_student_runtime() {
-        assert!(validate_minimum_runtime_version("0.2.0").is_ok());
-        assert!(validate_minimum_runtime_version("0.1.9").is_ok());
-        assert!(validate_minimum_runtime_version("future").is_err());
-        assert!(validate_minimum_runtime_version("0.3.0").is_err());
+        assert!(validate_minimum_runtime_version("0.2.0", "0.2.0").is_ok());
+        assert!(validate_minimum_runtime_version("0.1.9", "0.2.0").is_ok());
+        assert!(validate_minimum_runtime_version("future", "0.2.0").is_err());
+        assert!(validate_minimum_runtime_version("0.3.0", "0.2.0").is_err());
+        assert!(validate_minimum_runtime_version("1.0.0", "1.0.0").is_ok());
+        assert!(validate_minimum_runtime_version("1.0.1", "1.0.0").is_err());
     }
 
     #[test]

@@ -81,6 +81,8 @@ export type AuthoringPatchV2 =
   | { op: "setOptionBank"; taskId: string; optionBank: OptionBankV2 | null; preserveProvenance?: boolean; restoreProvenanceStatus?: ProvenanceStatus }
   | ({ op: "insertAnswerSlot"; taskId: string; responseGroupId: string; slotIndex: number; slot: AnswerSlotV2; value: AnswerValueV2; expression?: QuestionNumberExpressionV2 } & AnswerSlotPlacementV2)
   | { op: "deleteAnswerSlot"; taskId: string; responseGroupId: string; nodeId?: string; slotId: string; expression?: QuestionNumberExpressionV2 }
+  | { op: "renumberQuestions"; scope: "task" | "exam"; taskId?: string; startAt?: number }
+  | { op: "insertResponseGroup"; taskId: string; index: number; responseGroup: ResponseGroupV2; slot: AnswerSlotV2; value: AnswerValueV2; promptNode?: ContentNodeV2 }
   | { op: "deleteResponseGroup"; taskId: string; responseGroupId: string }
   | { op: "deleteTaskGroup"; taskId: string }
   | { op: "restoreStructure"; taskIds: string[]; changes: AuthoringStructureChangeV2[] }

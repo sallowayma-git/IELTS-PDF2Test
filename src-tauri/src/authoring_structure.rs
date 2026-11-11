@@ -328,10 +328,305 @@ fn preserve_referenced_bank(document: &mut Value, deleted: &Value) {
     }
 }
 
+fn ordered_task_slots(task: &Value) -> Vec<String> {
+    let owned: BTreeSet<String> = task["responseGroups"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|g| slot_ids(&g["slotIds"]))
+        .collect();
+    fn embedded(
+        value: &Value,
+        owned: &BTreeSet<String>,
+        seen: &mut BTreeSet<String>,
+        out: &mut Vec<String>,
+    ) {
+        if value["type"] == "answer_slot" {
+            if let Some(id) = value["slotId"].as_str().filter(|id| owned.contains(*id)) {
+                if seen.insert(id.to_string()) {
+                    out.push(id.to_string());
+                }
+            }
+        }
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    embedded(item, owned, seen, out);
+                }
+            }
+            Value::Object(object) => {
+                // Content arrays have a defined visual order, independent of JSON map ordering.
+                for key in ["children", "items", "rows", "cells", "steps", "caption"] {
+                    if let Some(child) = object.get(key) {
+                        embedded(child, owned, seen, out);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    embedded(&task["instructions"], &owned, &mut seen, &mut out);
+    embedded(&task["stimulus"], &owned, &mut seen, &mut out);
+    for group in task["responseGroups"].as_array().into_iter().flatten() {
+        embedded(&group["prompt"], &owned, &mut seen, &mut out);
+        for id in group["slotIds"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            if seen.insert(id.to_string()) {
+                out.push(id.to_string());
+            }
+        }
+    }
+    out
+}
+
+fn renumber_questions(document: &mut Value, patch: &Map<String, Value>) -> CommandResult<()> {
+    let scope = string(patch, "scope")?;
+    if !matches!(scope, "task" | "exam") {
+        return Err("AUTHORING_PATCH_RENUMBER_SCOPE_INVALID".into());
+    }
+    let task_id = if scope == "task" {
+        Some(string(patch, "taskId")?)
+    } else {
+        None
+    };
+    if let Some(id) = task_id {
+        task_index(document, id)?;
+    }
+    let tasks: Vec<(String, Vec<String>)> = document["taskGroups"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|t| task_id.is_none_or(|id| t["taskId"] == id))
+        .map(|t| {
+            (
+                t["taskId"].as_str().unwrap_or_default().to_string(),
+                ordered_task_slots(t),
+            )
+        })
+        .collect();
+    let ids: Vec<String> = tasks
+        .iter()
+        .flat_map(|(_, ids)| ids.iter().cloned())
+        .collect();
+    let unique: BTreeSet<String> = ids.iter().cloned().collect();
+    if unique.len() != ids.len() {
+        return Err("AUTHORING_PATCH_RENUMBER_SLOT_REUSED".into());
+    }
+    if ids.is_empty() {
+        return Err("AUTHORING_PATCH_EXPRESSION_EMPTY".into());
+    }
+    for id in &ids {
+        if document["answerSlots"].get(id).is_none() {
+            return Err(format!("AUTHORING_PATCH_SLOT_NOT_FOUND:{id}"));
+        }
+    }
+    let default_start = if scope == "exam" {
+        1
+    } else {
+        ids.iter()
+            .filter_map(|id| document["answerSlots"][id]["questionNumber"].as_u64())
+            .min()
+            .unwrap_or(1)
+    };
+    let start = match patch.get("startAt") {
+        None => default_start,
+        Some(value) => value
+            .as_u64()
+            .filter(|n| *n > 0 && *n <= u32::MAX as u64)
+            .ok_or("AUTHORING_PATCH_RENUMBER_START_INVALID")?,
+    };
+    let last = start
+        .checked_add(ids.len() as u64 - 1)
+        .filter(|n| *n <= u32::MAX as u64)
+        .ok_or("AUTHORING_PATCH_RENUMBER_START_INVALID")?;
+    let outside: BTreeSet<u64> = document["answerSlots"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(id, _)| !unique.contains(*id))
+        .filter_map(|(_, s)| s["questionNumber"].as_u64())
+        .collect();
+    if let Some(collision) = (start..=last).find(|n| outside.contains(n)) {
+        return Err(format!("AUTHORING_PATCH_RENUMBER_COLLISION:{collision}"));
+    }
+    for (index, id) in ids.iter().enumerate() {
+        document["answerSlots"][id]["questionNumber"] = json!(start + index as u64);
+        document["answerSlots"][id]["displayLabel"] = json!((start + index as u64).to_string());
+    }
+    fn labels(value: &mut Value, table: &Value, ids: &BTreeSet<String>) {
+        match value {
+            Value::Array(items) => {
+                for child in items {
+                    labels(child, table, ids);
+                }
+            }
+            Value::Object(object) => {
+                if object.get("type").and_then(Value::as_str) == Some("answer_slot") {
+                    if let Some(id) = object
+                        .get("slotId")
+                        .and_then(Value::as_str)
+                        .filter(|id| ids.contains(*id))
+                    {
+                        object.insert("displayLabel".into(), table[id]["displayLabel"].clone());
+                    }
+                }
+                for child in object.values_mut() {
+                    labels(child, table, ids);
+                }
+            }
+            _ => {}
+        }
+    }
+    let table = document["answerSlots"].clone();
+    labels(document, &table, &unique);
+    for (id, _) in &tasks {
+        refresh_numbers(document, id)?;
+    }
+    // Explicit renumbering confirms the new numbering domain for affected Parts.
+    let affected: BTreeSet<String> = tasks.iter().map(|(id, _)| id.clone()).collect();
+    let all_tasks = document["taskGroups"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if let Some(parts) = document
+        .pointer_mut("/listening/parts")
+        .and_then(Value::as_array_mut)
+    {
+        for part in parts {
+            let part_ids = slot_ids(&part["taskIds"]);
+            if scope == "task" && part_ids.is_disjoint(&affected) {
+                continue;
+            }
+            let numbers: BTreeSet<u64> = all_tasks
+                .iter()
+                .filter(|t| t["taskId"].as_str().is_some_and(|id| part_ids.contains(id)))
+                .flat_map(ordered_task_slots)
+                .filter(|id| table[id]["participation"] == "scoring")
+                .filter_map(|id| table[&id]["questionNumber"].as_u64())
+                .collect();
+            part["expectedQuestionNumbers"] = json!(numbers);
+        }
+    }
+    Ok(())
+}
+
+fn insert_response_group(document: &mut Value, patch: &Map<String, Value>) -> CommandResult<()> {
+    let task_id = string(patch, "taskId")?;
+    let ti = task_index(document, task_id)?;
+    let index = patch
+        .get("index")
+        .and_then(Value::as_u64)
+        .ok_or("AUTHORING_PATCH_FIELD_REQUIRED:index")? as usize;
+    let groups = document["taskGroups"][ti]["responseGroups"]
+        .as_array()
+        .ok_or("AUTHORING_PATCH_RESPONSE_GROUPS_MISSING")?;
+    if index > groups.len() {
+        return Err(format!("AUTHORING_PATCH_INDEX_INVALID:{index}"));
+    }
+    let template = groups
+        .get(index.saturating_sub(1))
+        .or_else(|| groups.first())
+        .cloned()
+        .ok_or("AUTHORING_PATCH_RESPONSE_GROUP_TEMPLATE_REQUIRED")?;
+    let mut group = patch
+        .get("responseGroup")
+        .and_then(Value::as_object)
+        .cloned()
+        .ok_or("AUTHORING_PATCH_RESPONSE_GROUP_REQUIRED")?;
+    let gid = string(&group, "responseGroupId")?.to_string();
+    if document["taskGroups"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|t| t["responseGroups"].as_array().into_iter().flatten())
+        .any(|g| g["responseGroupId"] == gid)
+    {
+        return Err(format!(
+            "AUTHORING_PATCH_RESPONSE_GROUP_ALREADY_EXISTS:{gid}"
+        ));
+    }
+    let mut slot = patch
+        .get("slot")
+        .and_then(Value::as_object)
+        .cloned()
+        .ok_or("AUTHORING_PATCH_SLOT_REQUIRED")?;
+    let id = string(&slot, "slotId")?.to_string();
+    if document["answerSlots"].get(&id).is_some() || document["answerKey"].get(&id).is_some() {
+        return Err(format!("AUTHORING_PATCH_SLOT_ALREADY_EXISTS:{id}"));
+    }
+    if group.get("slotIds") != Some(&json!([id])) {
+        return Err("AUTHORING_PATCH_RESPONSE_GROUP_SLOT_MISMATCH".into());
+    }
+    let answer = patch
+        .get("value")
+        .ok_or("AUTHORING_PATCH_ANSWER_REQUIRED")?
+        .clone();
+    for field in [
+        "kind",
+        "cardinality",
+        "assignment",
+        "scoringPolicy",
+        "duplicatePolicy",
+        "allowOptionReuse",
+    ] {
+        if let Some(value) = template.get(field) {
+            group.insert(field.into(), value.clone());
+        } else {
+            group.remove(field);
+        }
+    }
+    if let Some(reference) = template.get("optionBankRef") {
+        group.insert("optionBankRef".into(), reference.clone());
+        group.remove("options");
+    } else {
+        group.remove("optionBankRef");
+    }
+    let prompt=patch.get("promptNode").cloned().or_else(|| {
+        if group.get("prompt").and_then(Value::as_array).is_some_and(|p|!p.is_empty()) { None }
+        else { Some(json!({"type":"paragraph","id":format!("{id}-prompt"),"children":[{"type":"text","id":format!("{id}-prompt-text"),"text":"新题干","sourceAnchors":[],"provenanceStatus":"manual"}],"sourceAnchors":[],"provenanceStatus":"manual"})) }
+    });
+    if let Some(prompt) = prompt {
+        let host = prompt["id"]
+            .as_str()
+            .ok_or("AUTHORING_PATCH_PROMPT_INVALID")?;
+        if contains_slot(&prompt) {
+            return Err("AUTHORING_PATCH_PROMPT_INVALID".into());
+        }
+        slot.insert("hostNodeId".into(), json!(host));
+        slot.insert("hostType".into(), json!("prompt"));
+        group.insert("prompt".into(), json!([prompt]));
+    }
+    if !valid_new_subtree(document, &json!(group)) {
+        return Err("AUTHORING_PATCH_PROMPT_INVALID".into());
+    }
+    document["taskGroups"][ti]["responseGroups"]
+        .as_array_mut()
+        .unwrap()
+        .insert(index, json!(group));
+    document["answerSlots"]
+        .as_object_mut()
+        .ok_or("AUTHORING_PATCH_ANSWER_SLOTS_MISSING")?
+        .insert(id.clone(), json!(slot));
+    document["answerKey"]
+        .as_object_mut()
+        .ok_or("AUTHORING_PATCH_ANSWER_KEY_MISSING")?
+        .insert(id, answer);
+    refresh_numbers(document, task_id)
+}
+
 pub(crate) fn apply(document: &mut Value, patch: &Map<String, Value>) -> CommandResult<()> {
     let mut next = document.clone();
     apply_inner(&mut next, patch)?;
-    if patch.get("op").and_then(Value::as_str) != Some("restoreStructure") {
+    if !matches!(
+        patch.get("op").and_then(Value::as_str),
+        Some("restoreStructure" | "renumberQuestions")
+    ) {
         refresh_listening(&mut next, document);
     }
     *document = next;
@@ -342,6 +637,12 @@ fn apply_inner(document: &mut Value, patch: &Map<String, Value>) -> CommandResul
     let op = string(patch, "op")?;
     if op == "restoreStructure" {
         return restore(document, patch);
+    }
+    if op == "renumberQuestions" {
+        return renumber_questions(document, patch);
+    }
+    if op == "insertResponseGroup" {
+        return insert_response_group(document, patch);
     }
     let task_id = string(patch, "taskId")?;
     let ti = task_index(document, task_id)?;
@@ -589,6 +890,154 @@ mod tests {
     }
 
     #[test]
+    fn cloud_rebase_preserves_confirmed_listening_numbering_and_part_identity() {
+        let fixture=fixture();let mut current=fixture["listeningInitial"].clone();
+        let patch=json!({"op":"renumberQuestions","scope":"exam","startAt":11});
+        apply_patch(&mut current,&patch).unwrap();
+        let mut cloud=fixture["listeningInitial"].clone();
+        cloud["listening"]["parts"][0]["partId"]=json!("regenerated-part");
+        crate::cloud_adoption::merge_human_edits(&current,&mut cloud,&[json!({"command":{"commands":[patch]}})]).unwrap();
+        assert_eq!(cloud["listening"],current["listening"]);
+        assert_eq!(cloud["answerSlots"],current["answerSlots"]);
+        assert_eq!(cloud["answerKey"],current["answerKey"]);
+    }
+
+    #[test]
+    fn renumber_part_declarations_exclude_example_slots() {
+        let mut document = fixture()["listeningInitial"].clone();
+        document["answerSlots"]["q1"]["participation"] = json!("example");
+        apply_patch(
+            &mut document,
+            &json!({"op":"renumberQuestions","scope":"exam","startAt":11}),
+        )
+        .unwrap();
+        assert!(
+            !document["listening"]["parts"][0]["expectedQuestionNumbers"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(11))
+        );
+        assert_eq!(document["answerSlots"]["q1"]["slotId"], "q1");
+    }
+
+    #[test]
+    fn matrix_insert_clears_absent_template_policies_and_references() {
+        let fixture = fixture();
+        let mut document = fixture["matrixInitial"].clone();
+        let template = document["taskGroups"][1]["responseGroups"][0]
+            .as_object_mut()
+            .unwrap();
+        template.remove("optionBankRef");
+        template.remove("allowOptionReuse");
+        let mut patch = fixture["extraCases"][0]["patches"][0].clone();
+        patch["responseGroup"]["optionBankRef"] = json!("wrong-bank");
+        patch["responseGroup"]["allowOptionReuse"] = json!(true);
+        apply_patch(&mut document, &patch).unwrap();
+        let group = &document["taskGroups"][1]["responseGroups"][1];
+        assert!(group.get("optionBankRef").is_none());
+        assert!(group.get("allowOptionReuse").is_none());
+    }
+
+    #[test]
+    fn renumber_and_matrix_append_share_ts_documents_and_inverses() {
+        let fixture = fixture();
+        for test in fixture["extraCases"].as_array().unwrap() {
+            let initial = fixture[test["initialKey"].as_str().unwrap()].clone();
+            let mut document = initial.clone();
+            let mut inverses = Vec::new();
+            for (patch, step) in test["patches"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .zip(test["steps"].as_array().unwrap())
+            {
+                let before = document.clone();
+                apply_patch(&mut document, patch).unwrap();
+                assert_eq!(document, step["after"], "{} / {}", test["id"], patch["op"]);
+                apply_patch(&mut document, &step["inverse"]).unwrap();
+                assert_eq!(document, before);
+                apply_patch(&mut document, patch).unwrap();
+                inverses.push(step["inverse"].clone());
+            }
+            for inverse in inverses.iter().rev() {
+                apply_patch(&mut document, inverse).unwrap();
+            }
+            assert_eq!(document, initial);
+        }
+    }
+
+    #[test]
+    fn renumber_preserves_identity_and_answers_and_clears_gap_warning() {
+        let fixture = fixture();
+        let mut document = fixture["extraCases"][0]["steps"][0]["after"].clone();
+        let answers = document["answerKey"].clone();
+        let slots: BTreeSet<String> = document["answerSlots"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        apply_patch(
+            &mut document,
+            &json!({"op":"renumberQuestions","scope":"exam"}),
+        )
+        .unwrap();
+        assert_eq!(document["answerKey"], answers);
+        assert_eq!(
+            document["answerSlots"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            slots
+        );
+        let numbers: Vec<u64> = document["taskGroups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(ordered_task_slots)
+            .map(|id| {
+                document["answerSlots"][id]["questionNumber"]
+                    .as_u64()
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(numbers, (1..=7).collect::<Vec<_>>());
+        let root = std::env::temp_dir().join(format!("renumber-quality-{}", uuid::Uuid::new_v4()));
+        crate::util::ensure_app_dirs(&root).unwrap();
+        crate::authoring_v2_commands::refresh_quality_report(&root, "item", &mut document).unwrap();
+        assert!(!document["quality"]["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|issue| issue["code"] == "QUESTION_NUMBER_NONCONTIGUOUS"));
+    }
+
+    #[test]
+    fn collision_and_matrix_identity_errors_leave_the_document_unchanged() {
+        let fixture = fixture();
+        let initial = fixture["matrixInitial"].clone();
+        let mut doc = initial.clone();
+        assert_eq!(
+            apply_patch(
+                &mut doc,
+                &json!({"op":"renumberQuestions","scope":"task","taskId":"task-2","startAt":4})
+            )
+            .unwrap_err(),
+            "AUTHORING_PATCH_RENUMBER_COLLISION:4"
+        );
+        assert_eq!(doc, initial);
+        let mut patch = fixture["extraCases"][0]["patches"][0].clone();
+        patch["responseGroup"]["responseGroupId"] =
+            initial["taskGroups"][1]["responseGroups"][0]["responseGroupId"].clone();
+        assert!(apply_patch(&mut doc, &patch)
+            .unwrap_err()
+            .starts_with("AUTHORING_PATCH_RESPONSE_GROUP_ALREADY_EXISTS:"));
+        assert_eq!(doc, initial);
+    }
+
+    #[test]
     fn invalid_slot_deletions_and_stale_undo_are_atomic() {
         let fixture = fixture();
         let initial = fixture["initial"].clone();
@@ -778,6 +1227,13 @@ mod tests {
             .unwrap()
             .iter()
             .chain(std::iter::once(&fixture["steps"][0]["inverse"]))
+            .chain(
+                fixture["extraCases"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .flat_map(|test| test["patches"].as_array().unwrap()),
+            )
         {
             assert!(
                 !crate::cloud_repair::tools::MODEL_ALLOWED_OPS

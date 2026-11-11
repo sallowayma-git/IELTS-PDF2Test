@@ -1291,6 +1291,41 @@ fn current_paper_is_null_before_any_paper_is_published() {
 }
 
 #[test]
+fn empty_listening_part_saves_but_never_writes_a_paper_to_nas() {
+    let root=temp_root("paper-empty-listening");
+    ensure_app_dirs(&root).unwrap();
+    let p1=seed_part(&root,"empty-p1","P1");
+    let p2=seed_part(&root,"empty-p2","P2");
+    let p3=seed_part(&root,"empty-p3","P3");
+    let item=seed_listening_item(&root,"empty-listening",&[1,2,3,4]);
+    let conn=crate::library::repository::open_library_connection(&root).unwrap();
+    let (mut ds,_) = crate::library::repository::get_canonical_ds(&conn,&item).unwrap().unwrap();
+    ds["listening"]["scope"]=json!("partial_practice");
+    let part_id=ds["listening"]["parts"][0]["partId"].as_str().unwrap().to_string();
+    let commands=ds["listening"]["parts"][0]["taskIds"].as_array().unwrap().iter().map(|id|json!({"op":"deleteTaskGroup","taskId":id})).collect();
+    conn.execute("UPDATE library_items_v2 SET canonical_ds_json=?2 WHERE id=?1",rusqlite::params![item,ds.to_string()]).unwrap();
+    drop(conn);
+    let workspace=crate::library::commands::get_workspace_item_core(&root,&item).unwrap();
+    crate::library::commands::apply_editor_commands_core(&root,crate::library::repository::ApplyEditorCommandsInput {
+        item_id:item.clone(),base_version:workspace["editVersion"].as_i64().unwrap(),request_id:None,commands,title:None,
+    }).expect("an empty Part remains an editable, persisted draft");
+    let saved=crate::library::commands::get_workspace_item_core(&root,&item).unwrap();
+    assert!(saved["ds"]["listening"]["parts"][0]["taskIds"].as_array().unwrap().is_empty(),"{saved}");
+    assert!(saved["ds"]["quality"]["issues"].as_array().unwrap().iter().any(|i|i["code"]=="LISTENING_PART_EMPTY" && i["message"]=="第 1 部分没有题目，请删除该部分或补题后再发布"));
+    set_part(&root,&item,"Part 1");
+    for force in [None,force_now()] {
+        let error=publish_items_core(&root,PublishItemsInput {
+            item_ids:vec![p1.clone(),p2.clone(),p3.clone(),item.clone()],
+            destination:destination(&root).to_string_lossy().into(),fault:None,force,
+            paper:Some(paper_spec(&p1,&p2,&p3,&[("Part 1",&item)])),
+        }).unwrap_err();
+        assert!(error.starts_with(&format!("LISTENING_PART_EMPTY:{part_id}:")),"{error}");
+        assert!(error.contains("第 1 部分没有题目，请删除该部分或补题后再发布"),"{error}");
+        assert!(!destination(&root).exists(),"even lock and staging directories must stay absent");
+    }
+}
+
+#[test]
 fn paper_publish_refuses_unconfirmed_items_before_any_nas_write_even_when_forced() {
     let root=temp_root("paper-not-confirmed");
     ensure_app_dirs(&root).unwrap();

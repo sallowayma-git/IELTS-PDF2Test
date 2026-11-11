@@ -21,7 +21,7 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-it.each([fixture.patches[0], fixture.patches[2], fixture.patches[3]])("locks and later saves $op without losing the structural edit", async (patch) => {
+it.each([fixture.patches[0], fixture.patches[2], fixture.patches[3], fixture.extraCases[0].patches[0], {op:"renumberQuestions",scope:"exam",startAt:11}])("locks and later saves $op without losing the structural edit", async (patch) => {
   applyEditorCommands.mockRejectedValueOnce(new Error("CLOUD_REVIEW_IN_PROGRESS:item"));
   applyEditorCommands.mockResolvedValue({ editVersion: 2, appliedCount: 1, replayed: false });
   const { result } = renderHook(() => useCanonicalEditor("item"));

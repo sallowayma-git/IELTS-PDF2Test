@@ -637,6 +637,15 @@ fn evaluate_quality_inner(
     }
 
     let compiler_probes = evaluate_compiler_probes(authoring);
+    // Surface section-specific compiler diagnostics directly in the author UI.
+    for part in authoring.pointer("/listening/parts").and_then(Value::as_array).into_iter().flatten() {
+        let id=part["partId"].as_str().unwrap_or_default();
+        let prefix=format!("LISTENING_PART_EMPTY:{id}:");
+        if let Some(message)=compiler_probes.pointer("/v2Runtime/details").and_then(Value::as_array).into_iter().flatten()
+            .filter_map(Value::as_str).find_map(|detail|detail.strip_prefix(&prefix)) {
+            push_issue(&mut issues,&mut hard_failures,issue("LISTENING_PART_EMPTY","blocking",message,"part",id,anchors_from(part),vec!["edit_text"]));
+        }
+    }
     append_compiler_probe_issue(
         &compiler_probes,
         "v2Runtime",

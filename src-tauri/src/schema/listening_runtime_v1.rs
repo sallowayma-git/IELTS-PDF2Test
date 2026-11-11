@@ -461,6 +461,9 @@ pub fn validate_listening_exam_source_v1(
                 }
             }
         }
+        if actual_part_numbers.is_empty() {
+            push_issue(&mut issues, "LISTENING_PART_EMPTY", &part.part_id);
+        }
         let expected_part_numbers = part
             .expected_question_numbers
             .iter()

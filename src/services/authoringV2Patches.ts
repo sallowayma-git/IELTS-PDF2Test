@@ -308,9 +308,9 @@ function patchExpression(document: IeltsAuthoringIRV2, patch: Extract<AuthoringP
   const task = findObjectByField(document, "taskId", patch.taskId);
   if (!task) throw new Error(`AUTHORING_PATCH_TASK_NOT_FOUND:${patch.taskId}`);
   const numbers = expandExpression(patch.expression);
-  task.displayRange = patch.expression;
+  task.displayRange = structuredClone(patch.expression);
   if (isObject(task.instructionSignature)) {
-    task.instructionSignature.expectedQuestionNumbers = numbers;
+    task.instructionSignature.expectedQuestionNumbers = [...numbers];
     task.instructionSignature.expectedSlotCount = numbers.length;
   }
   markUserEdited(task, patch.preserveProvenance, patch.restoreProvenanceStatus);
@@ -513,6 +513,84 @@ function patchDeleteResponseGroup(document: IeltsAuthoringIRV2, patch: Extract<A
   refreshNumbers(document, patch.taskId);
 }
 
+function orderedTaskSlots(task: IeltsAuthoringIRV2["taskGroups"][number]): string[] {
+  const owned = new Set(task.responseGroups.flatMap((g) => g.slotIds));
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const embedded = (value: unknown): void => {
+    if (Array.isArray(value)) return value.forEach(embedded);
+    if (!isObject(value)) return;
+    if (value.type === "answer_slot" && typeof value.slotId === "string" && owned.has(value.slotId) && !seen.has(value.slotId)) {
+      seen.add(value.slotId); out.push(value.slotId);
+    }
+    for (const key of ["children", "items", "rows", "cells", "steps", "caption"]) embedded(value[key]);
+  };
+  embedded(task.instructions); embedded(task.stimulus);
+  for (const group of task.responseGroups) {
+    embedded(group.prompt);
+    for (const id of group.slotIds) if (!seen.has(id)) { seen.add(id); out.push(id); }
+  }
+  return out;
+}
+
+function patchRenumberQuestions(document: IeltsAuthoringIRV2, patch: Extract<AuthoringPatchV2, { op: "renumberQuestions" }>): void {
+  if (!["task", "exam"].includes(patch.scope)) throw new Error("AUTHORING_PATCH_RENUMBER_SCOPE_INVALID");
+  if (patch.scope === "task" && !patch.taskId) throw new Error("AUTHORING_PATCH_FIELD_REQUIRED:taskId");
+  const tasks = document.taskGroups.filter((t) => patch.scope === "exam" || t.taskId === patch.taskId);
+  if (patch.scope === "task" && !tasks.length) throw new Error(`AUTHORING_PATCH_TASK_NOT_FOUND:${patch.taskId}`);
+  const ids = tasks.flatMap(orderedTaskSlots);
+  const unique = new Set(ids);
+  if (unique.size !== ids.length) throw new Error("AUTHORING_PATCH_RENUMBER_SLOT_REUSED");
+  if (!ids.length) throw new Error("AUTHORING_PATCH_EXPRESSION_EMPTY");
+  for (const id of ids) if (!document.answerSlots[id]) throw new Error(`AUTHORING_PATCH_SLOT_NOT_FOUND:${id}`);
+  const start = patch.startAt ?? (patch.scope === "exam" ? 1 : Math.min(...ids.map((id) => document.answerSlots[id].questionNumber)));
+  if (!Number.isInteger(start) || start < 1 || start + ids.length - 1 > 4294967295) throw new Error("AUTHORING_PATCH_RENUMBER_START_INVALID");
+  const outside = new Set(Object.entries(document.answerSlots).filter(([id]) => !unique.has(id)).map(([,s]) => s.questionNumber));
+  for (let i = 0; i < ids.length; i += 1) if (outside.has(start + i)) throw new Error(`AUTHORING_PATCH_RENUMBER_COLLISION:${start + i}`);
+  ids.forEach((id, i) => { document.answerSlots[id].questionNumber = start + i; document.answerSlots[id].displayLabel = String(start + i); });
+  visitJson(document, (node) => {
+    if (node.type === "answer_slot" && typeof node.slotId === "string" && unique.has(node.slotId)) node.displayLabel = document.answerSlots[node.slotId].displayLabel;
+  });
+  for (const task of tasks) refreshNumbers(document, task.taskId);
+  for (const part of document.listening?.parts ?? []) {
+    if (patch.scope === "task" && !tasks.some((t) => part.taskIds.includes(t.taskId))) continue;
+    part.expectedQuestionNumbers = [...new Set(document.taskGroups.filter((t) => part.taskIds.includes(t.taskId)).flatMap(orderedTaskSlots)
+      .filter((id) => document.answerSlots[id]?.participation === "scoring")
+      .map((id) => document.answerSlots[id]?.questionNumber).filter((n): n is number => Number.isInteger(n)))].sort((a,b) => a-b);
+  }
+}
+
+function patchInsertResponseGroup(document: IeltsAuthoringIRV2, patch: Extract<AuthoringPatchV2, { op: "insertResponseGroup" }>): void {
+  const task = document.taskGroups.find((t) => t.taskId === patch.taskId);
+  if (!task) throw new Error(`AUTHORING_PATCH_TASK_NOT_FOUND:${patch.taskId}`);
+  validateIndex(patch.index, task.responseGroups.length);
+  const template = task.responseGroups[Math.max(0,patch.index - 1)] ?? task.responseGroups[0];
+  if (!template) throw new Error("AUTHORING_PATCH_RESPONSE_GROUP_TEMPLATE_REQUIRED");
+  const group = structuredClone(patch.responseGroup);
+  if (document.taskGroups.some((t) => t.responseGroups.some((g) => g.responseGroupId === group.responseGroupId))) throw new Error(`AUTHORING_PATCH_RESPONSE_GROUP_ALREADY_EXISTS:${group.responseGroupId}`);
+  const slot = structuredClone(patch.slot);
+  const id = slot.slotId;
+  if (document.answerSlots[id] || Object.hasOwn(document.answerKey, id)) throw new Error(`AUTHORING_PATCH_SLOT_ALREADY_EXISTS:${id}`);
+  if (group.slotIds.length !== 1 || group.slotIds[0] !== id) throw new Error("AUTHORING_PATCH_RESPONSE_GROUP_SLOT_MISMATCH");
+  for (const key of ["kind", "cardinality", "assignment", "scoringPolicy", "duplicatePolicy", "allowOptionReuse"] as const) {
+    if (template[key] !== undefined) (group as unknown as JsonObject)[key] = structuredClone(template[key]);
+    else delete (group as unknown as JsonObject)[key];
+  }
+  if (template.optionBankRef !== undefined) { group.optionBankRef = template.optionBankRef; delete group.options; }
+  else delete group.optionBankRef;
+  const prompt: ContentNodeV2 | undefined = patch.promptNode ?? (!group.prompt?.length ? {
+    type: "paragraph", id: `${id}-prompt`, children: [{ type: "text", id: `${id}-prompt-text`, text: "新题干", sourceAnchors: [], provenanceStatus: "manual" }], sourceAnchors: [], provenanceStatus: "manual"
+  } : undefined);
+  if (prompt) {
+    if (!prompt.id || hasEmbeddedSlot(prompt)) throw new Error("AUTHORING_PATCH_PROMPT_INVALID");
+    slot.hostNodeId = prompt.id; slot.hostType = "prompt"; group.prompt = [structuredClone(prompt)];
+  }
+  if (!validNewSubtree(document, group as unknown as ContentNodeV2)) throw new Error("AUTHORING_PATCH_PROMPT_INVALID");
+  task.responseGroups.splice(patch.index, 0, group);
+  document.answerSlots[id] = slot; document.answerKey[id] = structuredClone(patch.value);
+  refreshNumbers(document, patch.taskId);
+}
+
 // Undo stores only changed paths and checks the post-edit value before restoring.
 // This prevents a delayed undo from silently overwriting intervening cloud edits.
 function equalJson(a: unknown, b: unknown): boolean {
@@ -572,7 +650,7 @@ function patchResolveIssue(document: IeltsAuthoringIRV2, patch: Extract<Authorin
 export function applyAuthoringV2Patches(authoring: IeltsAuthoringIRV2, patches: AuthoringPatchV2[]): IeltsAuthoringIRV2 {
   const document = structuredClone(authoring);
   for (const patch of patches) {
-    const structural = ["insertAnswerSlot", "deleteAnswerSlot", "deleteResponseGroup", "deleteTaskGroup"].includes(patch.op);
+    const structural = ["insertAnswerSlot", "deleteAnswerSlot", "deleteResponseGroup", "deleteTaskGroup", "insertResponseGroup"].includes(patch.op);
     const beforeStructure = structural ? structuredClone(document) : undefined;
     switch (patch.op) {
       case "setExamCategory":
@@ -594,6 +672,8 @@ export function applyAuthoringV2Patches(authoring: IeltsAuthoringIRV2, patches: 
       case "setResponseCardinality": patchResponseCardinality(document, patch); break;
       case "setResponseGroup": patchResponseGroup(document, patch); break;
       case "setOptionBank": patchOptionBank(document, patch); break;
+      case "renumberQuestions": patchRenumberQuestions(document, patch); break;
+      case "insertResponseGroup": patchInsertResponseGroup(document, patch); break;
       case "insertAnswerSlot": patchInsertAnswerSlot(document, patch); break;
       case "deleteAnswerSlot": patchDeleteAnswerSlot(document, patch); break;
       case "deleteTaskGroup": patchDeleteTaskGroup(document, patch.taskId); break;
@@ -726,13 +806,15 @@ export function inverseAuthoringPatch(authoring: IeltsAuthoringIRV2, patch: Auth
       const task = authoring.taskGroups.find((candidate) => candidate.taskId === patch.taskId);
       return task ? { op: "setOptionBank", taskId: patch.taskId, optionBank: clone(task.optionBank ?? null), preserveProvenance: true, restoreProvenanceStatus: typeof (task as unknown as JsonObject).provenanceStatus === "string" ? (task as unknown as JsonObject).provenanceStatus as "source" | "derived" | "user_edited" | "manual" : undefined } : undefined;
     }
+    case "renumberQuestions":
+    case "insertResponseGroup":
     case "insertAnswerSlot":
     case "deleteAnswerSlot":
     case "deleteResponseGroup":
     case "deleteTaskGroup": {
       const after = applyAuthoringV2Patches(authoring, [patch]);
       const changes = structureChanges(authoring, after).filter((change) => ["taskGroups", "answerSlots", "answerKey", "passage", "listening"].includes(change.path[0]));
-      return { op: "restoreStructure", taskIds: [patch.taskId], changes };
+      return { op: "restoreStructure", taskIds: patch.op === "renumberQuestions" && patch.scope === "exam" ? authoring.taskGroups.map((t) => t.taskId) : [patch.taskId!], changes };
     }
     case "restoreStructure": return { op: "restoreStructure", taskIds: clone(patch.taskIds), changes: patch.changes.map(({ path, before, after }) => ({ path: clone(path), ...(after !== undefined ? { before: clone(after) } : {}), ...(before !== undefined ? { after: clone(before) } : {}) })) };
     case "setAnswer":

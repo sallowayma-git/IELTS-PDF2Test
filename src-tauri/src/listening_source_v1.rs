@@ -291,7 +291,23 @@ pub(crate) fn compile_listening_source_v1(
 
     let issues = validate_listening_exam_source_v1(&compiled)
         .into_iter()
-        .map(|issue| compiler_issue(&issue.code, contract_message(&issue.code), &issue.target_id))
+        .map(|issue| {
+            if issue.code == "LISTENING_PART_EMPTY" {
+                let ordinal = structure
+                    .parts
+                    .iter()
+                    .position(|part| part.part_id == issue.target_id)
+                    .unwrap_or(0)
+                    + 1;
+                compiler_issue(
+                    &issue.code,
+                    &format!("第 {ordinal} 部分没有题目，请删除该部分或补题后再发布"),
+                    &issue.target_id,
+                )
+            } else {
+                compiler_issue(&issue.code, contract_message(&issue.code), &issue.target_id)
+            }
+        })
         .collect::<Vec<_>>();
     if issues.is_empty() {
         Ok(compiled)
@@ -392,6 +408,74 @@ mod tests {
         assert_eq!(compiled.question_order[0], "q1");
         assert_eq!(compiled.question_order[39], "q40");
         assert!(validate_listening_exam_source_v1(&compiled).is_empty());
+    }
+
+    fn empty_first_part(scope: ListeningScopeV2, keep_declaration: bool) -> IeltsAuthoringIRV2 {
+        let mut source = complete_exam();
+        source.listening.as_mut().unwrap().scope = scope;
+        let ids: std::collections::BTreeSet<String> = source.listening.as_ref().unwrap().parts[0]
+            .task_ids
+            .iter()
+            .cloned()
+            .collect();
+        let removed: Vec<String> = source
+            .task_groups
+            .iter()
+            .filter(|t| ids.contains(&t.task_id))
+            .flat_map(|t| t.response_groups.iter())
+            .flat_map(|g| g.slot_ids.iter().cloned())
+            .collect();
+        source.task_groups.retain(|t| !ids.contains(&t.task_id));
+        for id in removed {
+            source.answer_slots.remove(&id);
+            source.answer_key.remove(&id);
+        }
+        let part = &mut source.listening.as_mut().unwrap().parts[0];
+        part.task_ids.clear();
+        if !keep_declaration {
+            part.expected_question_numbers.clear();
+        }
+        source
+    }
+
+    #[test]
+    fn partial_practice_rejects_an_empty_actual_part_and_explains_it_in_chinese() {
+        let source = empty_first_part(ListeningScopeV2::PartialPractice, false);
+        let issues = compile_listening_source_v1(&source).unwrap_err();
+        let issue = issues
+            .iter()
+            .find(|i| i.code == "LISTENING_PART_EMPTY")
+            .expect("specific empty-part blocker");
+        assert_eq!(
+            issue.target_id,
+            source.listening.as_ref().unwrap().parts[0].part_id
+        );
+        assert_eq!(
+            issue.message,
+            "第 1 部分没有题目，请删除该部分或补题后再发布"
+        );
+    }
+
+    #[test]
+    fn complete_exam_rejects_an_empty_actual_part() {
+        assert!(compile_listening_source_v1(&empty_first_part(
+            ListeningScopeV2::CompleteExam,
+            false
+        ))
+        .unwrap_err()
+        .iter()
+        .any(|i| i.code == "LISTENING_PART_EMPTY"));
+    }
+
+    #[test]
+    fn declared_numbers_cannot_hide_an_empty_part() {
+        assert!(compile_listening_source_v1(&empty_first_part(
+            ListeningScopeV2::PartialPractice,
+            true
+        ))
+        .unwrap_err()
+        .iter()
+        .any(|i| i.code == "LISTENING_PART_EMPTY"));
     }
 
     /// Four sections, four files. A paper whose sections all played the same recording would

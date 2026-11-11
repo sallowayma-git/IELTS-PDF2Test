@@ -36,7 +36,7 @@ use crate::CommandResult;
 ///
 /// 有意不开放：
 /// - `resolveIssue`：允许它等于允许模型靠"标记已解决"代替真正修复内容；
-/// - `deleteResponseGroup` / `deleteTaskGroup` / `restoreStructure`：用户结构删除与撤销，
+/// - `renumberQuestions` / `insertResponseGroup` / `deleteResponseGroup` / `deleteTaskGroup` / `restoreStructure`：用户结构删除与撤销，
 ///   与 deleteAnswerSlot 一样不向模型开放。
 /// - `deleteAnswerSlot`：槽位删除必须走 `upsertTaskGroupBundle` 的整组替换，那里才会
 ///   连带处理旧槽位的去向与跨组引用；

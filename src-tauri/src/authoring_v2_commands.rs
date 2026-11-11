@@ -1593,7 +1593,7 @@ pub(crate) fn apply_patch(document: &mut Value, patch: &Value) -> CommandResult<
         "setResponseCardinality" => set_response_cardinality(document, object),
         "setResponseGroup" => set_response_group(document, object),
         "setOptionBank" => set_option_bank(document, object),
-        "insertAnswerSlot" | "deleteAnswerSlot" | "deleteResponseGroup" | "deleteTaskGroup" | "restoreStructure" => crate::authoring_structure::apply(document, object),
+        "insertAnswerSlot" | "deleteAnswerSlot" | "deleteResponseGroup" | "deleteTaskGroup" | "restoreStructure" | "renumberQuestions" | "insertResponseGroup" => crate::authoring_structure::apply(document, object),
         "setAnswerSlotHost" => set_answer_slot_host(document, object),
         "setAnswer" => set_answer(document, object),
         "bindSource" => bind_source(document, object),

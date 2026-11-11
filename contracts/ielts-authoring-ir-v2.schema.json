@@ -29,6 +29,87 @@
     "audit": { "$ref": "#/$defs/audit" }
   },
   "$defs": {
+      "renumberQuestionsPatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "op",
+          "scope"
+        ],
+        "properties": {
+          "op": {
+            "const": "renumberQuestions"
+          },
+          "scope": {
+            "enum": [
+              "task",
+              "exam"
+            ]
+          },
+          "taskId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "startAt": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4294967295
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "scope": {
+                  "const": "task"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "taskId"
+              ]
+            }
+          }
+        ]
+      },
+      "insertResponseGroupPatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "op",
+          "taskId",
+          "index",
+          "responseGroup",
+          "slot",
+          "value"
+        ],
+        "properties": {
+          "op": {
+            "const": "insertResponseGroup"
+          },
+          "taskId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "responseGroup": {
+            "$ref": "#/$defs/responseGroup"
+          },
+          "slot": {
+            "$ref": "#/$defs/answerSlot"
+          },
+          "value": {
+            "$ref": "#/$defs/answerValue"
+          },
+          "promptNode": {
+            "$ref": "./content-doc-v2.schema.json#/$defs/contentNode"
+          }
+        }
+      },
       "authoringContentTarget": {
         "oneOf": [
           {
@@ -133,6 +214,8 @@
       "authoringStructurePatch": {
         "description": "Editor structural patches and guarded undo. Deleting the final response group deletes its task. Surviving question numbers are preserved.",
         "oneOf": [
+        { "$ref": "#/$defs/renumberQuestionsPatch" },
+        { "$ref": "#/$defs/insertResponseGroupPatch" },
           {
             "type": "object",
             "additionalProperties": false,

@@ -800,14 +800,14 @@ impl EditFootprint {
                     targets.extend(strings_of(entry.get("partId")));
                 }
             }
-            "restoreStructure" => {},
+            "restoreStructure" | "renumberQuestions" | "insertResponseGroup" => {},
             // 未知 / 不允许的命令：影响范围取「整个稿件」这一最保守的边界，
             // 让它必然与任何人工保护目标相交，从而在授权层就被拒掉。
             _ => {
                 collect_subtree_ids(document, &mut targets);
             }
         }
-        if matches!(op,"insertAnswerSlot"|"deleteAnswerSlot"|"deleteResponseGroup"|"deleteTaskGroup"|"restoreStructure") {
+        if matches!(op,"insertAnswerSlot"|"deleteAnswerSlot"|"deleteResponseGroup"|"deleteTaskGroup"|"restoreStructure"|"renumberQuestions"|"insertResponseGroup") {
             let mut after = document.clone();
             if crate::authoring_structure::apply(&mut after,command.as_object().unwrap()).is_ok() {
                 for key in cloud_candidate_change_targets(document,&after) {
@@ -1163,7 +1163,7 @@ fn capture_transaction_change_targets(
             .collect();
     }
 
-    if commands.iter().any(|c| matches!(c["op"].as_str(),Some("insertAnswerSlot"|"deleteAnswerSlot"|"deleteResponseGroup"|"deleteTaskGroup"|"restoreStructure"))) {
+    if commands.iter().any(|c| matches!(c["op"].as_str(),Some("insertAnswerSlot"|"deleteAnswerSlot"|"deleteResponseGroup"|"deleteTaskGroup"|"restoreStructure"|"renumberQuestions"|"insertResponseGroup"))) {
         let mut after = document.clone();
         if commands.iter().all(|c| crate::authoring_v2_commands::apply_patch(&mut after,c).is_ok()) {
             return cloud_candidate_change_targets(document,&after).into_iter().collect();
