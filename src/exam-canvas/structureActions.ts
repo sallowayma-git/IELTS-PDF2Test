@@ -1,4 +1,4 @@
-import type { AuthoringPatchV2, ContentNodeV2, IeltsAuthoringIRV2, QuestionNumberExpressionV2 } from "../types";
+import type { AnswerSlotV2, AuthoringPatchV2, ContentNodeV2, IeltsAuthoringIRV2, QuestionNumberExpressionV2 } from "../types";
 import { locateContentNode } from "../services/authoringV2Patches";
 import type { ExamCanvasStructureAction } from "./ExamCanvas";
 
@@ -106,9 +106,46 @@ export function compileStructureAction(current: IeltsAuthoringIRV2, action: Exam
     if (!slot || !Object.values(current.passage?.paragraphMap ?? {}).includes(action.hostNodeId)) return;
     return { op: "setAnswerSlotHost", slotId: action.slotId, hostNodeId: action.hostNodeId };
   }
+  if (action.type === "response-group.delete") {
+    const task = current.taskGroups.find((candidate) => candidate.taskId === action.taskId);
+    if (!task?.responseGroups.some((group) => group.responseGroupId === action.responseGroupId)) throw new Error("这组题已不在当前题稿里，这次删除没有生效。");
+    return { op: "deleteResponseGroup", taskId: action.taskId, responseGroupId: action.responseGroupId };
+  }
+  if (action.type === "task-group.delete") {
+    if (!current.taskGroups.some((candidate) => candidate.taskId === action.taskId)) throw new Error("这道大题已不在当前题稿里，这次删除没有生效。");
+    return { op: "deleteTaskGroup", taskId: action.taskId };
+  }
+  if (action.type === "answer-slot.append") {
+    const task = current.taskGroups.find((candidate) => candidate.taskId === action.taskId);
+    const group = task?.responseGroups.find((candidate) => candidate.responseGroupId === action.responseGroupId);
+    if (!task || !group) throw new Error("这组题已不在当前题稿里，这次添加没有生效。");
+    // 新题沿用同组现有答案位的版式（交互方式、参与计分、宿主）；题号取全卷最大题号 + 1。
+    const anchorId = action.afterSlotId ?? group.slotIds.at(-1);
+    const template = anchorId ? current.answerSlots[anchorId] : undefined;
+    if (!template) throw new Error("这组题没有可参照的答案位，无法添加。");
+    const slotIndex = action.afterSlotId ? group.slotIds.indexOf(action.afterSlotId) + 1 : group.slotIds.length;
+    if (slotIndex <= 0) throw new Error("插入位置已不在当前题稿里，这次添加没有生效，请重试。");
+    const questionNumber = Math.max(0, ...Object.values(current.answerSlots).map((slot) => slot.questionNumber)) + 1;
+    const slotId = `q${questionNumber}-${stamp}`;
+    // 宿主只沿用原文段落；其余宿主（题干节点等）不能复制，由后端在逐题题干布局下自动生成新题干。
+    const { hostNodeId, ...templateRest } = structuredClone(template);
+    const passageHost = template.hostType === "passage_paragraph";
+    const slot: AnswerSlotV2 = {
+      ...templateRest,
+      slotId, questionNumber, displayLabel: String(questionNumber),
+      hostType: passageHost ? "passage_paragraph" : "prompt",
+      ...(passageHost && hostNodeId ? { hostNodeId } : {}),
+      sourceAnchors: [], provenanceStatus: "manual", confidence: 1,
+    };
+    return { op: "insertAnswerSlot", taskId: task.taskId, responseGroupId: group.responseGroupId, slotIndex, slot, value: { kind: "unresolved" } };
+  }
+  // 逐题删除：只按 slotId 定位，不带 expression（后端按保留题号计算集合表达式）。
   const task = current.taskGroups.find((task) => task.responseGroups.some((group) => group.slotIds.includes(action.slotId)));
   const group = task?.responseGroups.find((group) => group.slotIds.includes(action.slotId));
-  if (!task || !group || group.slotIds.length <= 1) throw new Error("每题至少保留一个答案位。");
-  const numbers = task.responseGroups.flatMap((response) => response.slotIds.filter((id) => id !== action.slotId).map((id) => current.answerSlots[id].questionNumber));
-  return { op: "deleteAnswerSlot", taskId: task.taskId, responseGroupId: group.responseGroupId, nodeId: action.nodeId, slotId: action.slotId, expression: expression(numbers) };
+  if (!task || !group) throw new Error("这个答案位已不在当前题稿里，这次删除没有生效。");
+  if (group.slotIds.length <= 1) throw new Error("每组至少保留一题，可删除整组。");
+  return {
+    op: "deleteAnswerSlot", taskId: task.taskId, responseGroupId: group.responseGroupId, slotId: action.slotId,
+    ...(action.nodeId ? { nodeId: action.nodeId } : {}),
+  };
 }

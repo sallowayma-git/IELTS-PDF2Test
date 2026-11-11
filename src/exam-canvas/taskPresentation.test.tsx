@@ -64,7 +64,7 @@ describe("task presentation in the authoring canvas", () => {
     const { container } = render(<ExamCanvas authoring={draft} mode={mode} onAnswerChange={onAnswerChange} onStructureAction={vi.fn()} />);
     expect(container.querySelectorAll('.v2-matching-matrix tbody tr')).toHaveLength(2);
     expect([...container.querySelectorAll('.v2-matching-option-head')].map(el => el.textContent)).toEqual(["A", "B"]);
-    expect(container.querySelector('.v2-matching-item')?.textContent).toBe("14Information 1");
+    expect(container.querySelector('.v2-matching-item')?.textContent?.replace('×', '')).toBe("14Information 1");
     expect(container.querySelector('.v2-response-group,.v2-option-add,.v2-option-delete,.v2-option-drag-handle')).toBeNull();
     fireEvent.click(container.querySelector('input[name="q14"][value="A"]')!);
     if (mode === "author") expect(onAnswerChange).toHaveBeenCalledWith("q14", { kind: "option", labels: ["A"], assignment: "per_slot" });

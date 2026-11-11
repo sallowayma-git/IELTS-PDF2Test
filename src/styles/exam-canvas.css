@@ -847,3 +847,95 @@
 .student-note-editor button { flex: 1; padding: 6px 12px; border: 1px solid #c4cbd2; border-radius: 3px; background: white; font: 13px Arial, sans-serif; cursor: pointer; }
 .student-note-editor button:hover { background: #f0f0f0; }
 .student-note-editor button:active { background: #e0e0e0; }
+
+/* 逐题删除（列表行末 × / 矩阵题干后的 ×）：与选项 × 同一套样式——常显低对比度、20×20 点击区。 */
+.exam-canvas-v2.is-author .v2-question-delete {
+  flex: 0 0 auto;
+  align-self: center;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: #5f6670;
+  font: inherit;
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+.exam-canvas-v2.is-author .v2-question-delete:hover:not(:disabled),
+.exam-canvas-v2.is-author .v2-question-delete:focus-visible { opacity: 1; color: #b42318; }
+.exam-canvas-v2.is-author .v2-question-delete:focus-visible { outline: 2px solid var(--paper-focus, #1f6387); outline-offset: 1px; }
+.exam-canvas-v2.is-author .v2-question-delete:disabled { opacity: 0.25; cursor: not-allowed; }
+/* 「＋ 添加一题」：与「＋ 添加选项」同一种低对比度入口。 */
+.exam-canvas-v2.is-author .v2-question-append {
+  display: block;
+  margin: 8px 0 0;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: #6b7178;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  opacity: 0.8;
+}
+.exam-canvas-v2.is-author .v2-question-append:hover,
+.exam-canvas-v2.is-author .v2-question-append:focus-visible { opacity: 1; color: var(--paper-ink, #111); text-decoration: underline; }
+/* 「⋯」次级菜单：不显眼，只在展开时出现内容；删除项在确认框之后才真正提交。 */
+.exam-canvas-v2.is-author .v2-structure-menu {
+  display: inline-block;
+  position: relative;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+.exam-canvas-v2.is-author .v2-structure-menu > summary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  color: #5f6670;
+  cursor: pointer;
+  list-style: none;
+  opacity: 0.55;
+  line-height: 1;
+}
+.exam-canvas-v2.is-author .v2-structure-menu > summary::-webkit-details-marker { display: none; }
+.exam-canvas-v2.is-author .v2-structure-menu > summary:hover,
+.exam-canvas-v2.is-author .v2-structure-menu > summary:focus-visible { opacity: 1; }
+.exam-canvas-v2.is-author .v2-structure-menu[open] > .v2-structure-menu-items {
+  position: absolute;
+  z-index: 5;
+  top: 24px;
+  right: 0;
+  min-width: 120px;
+  padding: 4px;
+  border: 1px solid #d0d4da;
+  border-radius: 4px;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+}
+.exam-canvas-v2.is-author .v2-structure-menu-items button {
+  display: block;
+  width: 100%;
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: #b42318;
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.exam-canvas-v2.is-author .v2-structure-menu-items button:hover { text-decoration: underline; }

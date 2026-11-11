@@ -1,7 +1,7 @@
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { StudentReadingTools } from "./StudentReadingTools";
 import { InlineTextEditor } from "./editors/InlineTextEditor";
-import { MatchingMatrix, matchingRowsFor } from "./renderers/MatchingMatrix";
+import { MatchingMatrix, matchingRowsFor, type MatchingRow } from "./renderers/MatchingMatrix";
 import { resolveAuthoringAssetPreview, type AuthoringAssetPreview } from "../api/tauriCommands";
 import { getListeningAudio, type ListeningAudioStatus } from "../api/listeningAudioClient";
 import { buildReadingInteractionModelV2, buildRuntimeViewModelV2 } from "../services/runtimeViewModelV2";
@@ -26,7 +26,14 @@ export type ExamCanvasStructureAction =
   | { type: "table.column.add"; tableId: string; afterColumnIndex?: number }
   | { type: "table.column.delete"; tableId: string; columnIndex: number }
   | { type: "answer-slot.insert"; afterNodeId: string }
-  | { type: "answer-slot.delete"; nodeId: string; slotId: string }
+  /** 删除一题。`nodeId` 只在题目以嵌入答案位节点（正文/表格里的槽位）出现时提供；列表型题目不带。 */
+  | { type: "answer-slot.delete"; slotId: string; nodeId?: string }
+  /** 在同组末尾（或 `afterSlotId` 之后）添加一题；题号由编译器取全卷最大题号 + 1。 */
+  | { type: "answer-slot.append"; taskId: string; responseGroupId: string; afterSlotId?: string }
+  /** 删除整个作答组（组内全部题与其选项引用）。 */
+  | { type: "response-group.delete"; taskId: string; responseGroupId: string }
+  /** 删除整道大题（含其全部作答组与题目）。 */
+  | { type: "task-group.delete"; taskId: string }
   | { type: "answer-slot.host.set"; slotId: string; hostNodeId: string };
 
 export interface ExamCanvasProps {
@@ -124,6 +131,98 @@ function optionSourceEditable(canvas: ExamCanvasProps, taskId: string, responseG
   const task = canvas.authoring.taskGroups.find(task => task.taskId === taskId);
   const response = task?.responseGroups.find(response => response.responseGroupId === responseGroupId);
   return task?.taskType !== "matching_information" || response?.options !== undefined || response?.optionBankRef !== undefined;
+}
+
+/** 作者模式且未被云端校核锁定时才显示结构删除/添加入口。 */
+function structureEditable(canvas: ExamCanvasProps): boolean {
+  return canvas.mode === "author" && Boolean(canvas.onStructureAction) && !canvas.locked;
+}
+
+/** 题号列表的人话写法：连续区间写成「第 14–20 题」，否则逐个列出。 */
+function questionRangeLabel(numbers: number[]): string {
+  const sorted = [...new Set(numbers)].sort((a, b) => a - b);
+  if (sorted.length === 0) return "";
+  if (sorted.length === 1) return `第 ${sorted[0]} 题`;
+  const contiguous = sorted.every((value, index) => index === 0 || value === sorted[index - 1] + 1);
+  return contiguous ? `第 ${sorted[0]}–${sorted[sorted.length - 1]} 题` : `第 ${sorted.join("、")} 题`;
+}
+
+/** 逐题删除：行末 ×，常显低对比度；组内只剩一题时禁用并说明可以删除整组。 */
+function QuestionDeleteButton({ canvas, slotId, displayNumber, count }: {
+  canvas: ExamCanvasProps;
+  slotId: string;
+  displayNumber: string;
+  count: number;
+}) {
+  if (!structureEditable(canvas)) return null;
+  const onlyOne = count <= 1;
+  return <button
+    type="button"
+    className="v2-question-delete"
+    title={onlyOne ? "每组至少保留一题，可删除整组" : `删除第 ${displayNumber} 题`}
+    aria-label={`删除第 ${displayNumber} 题`}
+    disabled={onlyOne}
+    // 按钮在题目行里：阻止点击冒泡成“选中这一题”。
+    onClick={(event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      canvas.onStructureAction?.({ type: "answer-slot.delete", slotId });
+    }}
+  >×</button>;
+}
+
+/** 逐题列表底部的「＋ 添加一题」：新题接在同组末尾。 */
+function QuestionAppendButton({ canvas, taskId, responseGroupId }: {
+  canvas: ExamCanvasProps;
+  taskId: string;
+  responseGroupId: string;
+}) {
+  if (!structureEditable(canvas)) return null;
+  return <button
+    type="button"
+    className="v2-question-append"
+    onClick={(event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      canvas.onStructureAction?.({ type: "answer-slot.append", taskId, responseGroupId });
+    }}
+  >＋ 添加一题</button>;
+}
+
+/**
+ * 「⋯」次级菜单：删除这组题（作答组）或整道大题。两者都必须二次确认，
+ * 确认框写明题号范围并提示可用撤销恢复。
+ */
+function GroupDeleteMenu({ canvas, scope, taskId, responseGroupId, slotIds }: {
+  canvas: ExamCanvasProps;
+  scope: "response" | "task";
+  taskId: string;
+  responseGroupId?: string;
+  slotIds: string[];
+}) {
+  if (!structureEditable(canvas)) return null;
+  const numbers = slotIds.map((slotId) => canvas.authoring.answerSlots[slotId]?.questionNumber ?? 0).filter((value) => value > 0);
+  const range = questionRangeLabel(numbers);
+  const what = scope === "task" ? "整道大题" : "这组题";
+  return <details className="v2-structure-menu" onClick={(event) => event.stopPropagation()}>
+    <summary aria-label={`更多结构操作（${what}）`} title="更多结构操作">⋯</summary>
+    <div className="v2-structure-menu-items">
+      <button
+        type="button"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const message = `删除${what}：${range}（共 ${slotIds.length} 题，连同其答案与选项）？
+
+删除后可用撤销（Ctrl+Z）恢复。`;
+          if (!window.confirm(message)) return;
+          canvas.onStructureAction?.(scope === "task"
+            ? { type: "task-group.delete", taskId }
+            : { type: "response-group.delete", taskId, responseGroupId: responseGroupId ?? "" });
+        }}
+      >删除{what}</button>
+    </div>
+  </details>;
 }
 
 function OptionDeleteButton({ canvas, taskId, responseGroupId, option, count }: {
@@ -1060,7 +1159,7 @@ export function ExamCanvas(inputProps: ExamCanvasProps) {
         ) : null}
         {runtime.taskGroups.filter((task) => !shownTaskIds || shownTaskIds.has(task.taskId)).map((task) => <article key={task.taskId} className={`question-group unified-group v2-task-group${props.selectedId === task.taskId ? " is-selected" : ""}`} data-group-id={task.taskId} data-editor-id={task.taskId} onClick={() => props.mode === "author" && props.onSelect?.(task.taskId)}>
           {props.taskAdornment?.(task.taskId)}
-          <header className="v2-task-header">{props.mode === "author" ? <span className="v2-editor-task-badge">{taskTypeLabel(task.taskType)}</span> : null}<div className="v2-instruction"><ContentNodes nodes={task.instructions} canvas={props} /></div></header>
+          <header className="v2-task-header">{props.mode === "author" ? <span className="v2-editor-task-badge">{taskTypeLabel(task.taskType)}</span> : null}<div className="v2-instruction"><ContentNodes nodes={task.instructions} canvas={props} /></div>{structureEditable(props) ? <GroupDeleteMenu canvas={props} scope="task" taskId={task.taskId} slotIds={(task as TaskGroupV2).responseGroups.flatMap((group) => group.slotIds)} /> : null}</header>
           {task.stimulus?.length ? <div className="v2-stimulus"><ContentNodes nodes={task.stimulus} canvas={props} /></div> : null}
           {(() => {
             // Matching 矩阵：相同选项集合、每行一个 radio/checkbox 答案位。
@@ -1083,6 +1182,7 @@ export function ExamCanvas(inputProps: ExamCanvasProps) {
               renderContent={(nodes) => nodes?.length ? <ContentNodes nodes={nodes} canvas={props} /> : null}
               onSelectOption={setOption}
               onSelectTarget={props.mode === "author" ? props.onSelect : undefined}
+              renderRowAction={(row: MatchingRow) => <QuestionDeleteButton canvas={props} slotId={row.slotId} displayNumber={row.displayNumber} count={row.responseGroup.slotIds.length} />}
             />{props.mode === "author" ? rows.filter((row, index) => row.responseGroup.options?.length || index === 0).map(row => {
               const response = row.responseGroup;
               if (!optionSourceEditable(props, task.taskId, response.responseGroupId)) return null;
@@ -1127,6 +1227,7 @@ export function ExamCanvas(inputProps: ExamCanvasProps) {
               && containsAnswerSlot(task.stimulus, responseSlotIds)
               && response.slotIds.every((slotId) => containsAnswerSlot(task.stimulus, new Set([slotId])));
             return <section key={response.responseGroupId} className={`v2-response-group${props.selectedId === response.responseGroupId ? " is-selected" : ""}`} data-response-group-id={response.responseGroupId} data-assignment={response.assignment} onClick={(event) => { if (props.mode === "author") { event.stopPropagation(); props.onSelect?.(response.responseGroupId); } }}>
+              {(task as TaskGroupV2).responseGroups.length > 1 ? <GroupDeleteMenu canvas={props} scope="response" taskId={task.taskId} responseGroupId={response.responseGroupId} slotIds={response.slotIds} /> : null}
               {sharedPromptNodes?.length ? <div className="v2-response-prompt"><ContentNodes nodes={sharedPromptNodes} canvas={props} /></div> : null}
               {inlineStimulusComplete ? null : unordered ? <fieldset className="v2-shared-selection" data-option-list={props.mode === "author" ? "" : undefined}><legend>Select {response.cardinality.exact || response.slotIds.length} options for {response.slotIds.map((slotId) => runtime.questionDisplayMap[slotId]).join(", ")}</legend>{options.map((option, optionIndex) => { const checked = response.slotIds.some((slotId) => (canvasAnswers[slotId] ?? []).includes(option.label)); return <label key={option.optionId} className={`v2-choice-item${checked ? " is-checked" : ""}`} {...optionRowProps(option)}><OptionDragHandle canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} index={optionIndex} /><input type="checkbox" value={option.label} checked={checked} disabled={props.locked || (!checked && unorderedSelected >= unorderedLimit)} onChange={(event) => { const selected = Array.from(new Set(response.slotIds.flatMap((slotId) => canvasAnswers[slotId] ?? []).filter((value) => value !== option.label))).slice(0, response.slotIds.length); if (event.target.checked) selected.push(option.label); response.slotIds.forEach((slotId, index) => setOption(slotId, selected[index] ?? "", Boolean(selected[index]), false, "unordered_set")); }} /><span><strong>{option.label}</strong>{optionContentDuplicatesLabel(option) ? null : <> <ContentNodes nodes={option.content} canvas={props} /></>}</span><OptionDeleteButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} option={option} count={options.length} /></label>; })}<div className="v2-slot-summary">{response.slotIds.map((slotId) => <span key={slotId} className="v2-slot-chip" data-question-id={slotId}>{runtime.questionDisplayMap[slotId]}: {(canvasAnswers[slotId] ?? []).join(", ") || "—"}</span>)}</div></fieldset> : <div className="v2-slot-list">{response.slotIds.map((slotId, index) => {
                 const slot = runtime.answerSlots[slotId];
@@ -1148,8 +1249,8 @@ export function ExamCanvas(inputProps: ExamCanvasProps) {
                       : options.length
                         ? <div className={`v2-choice-options${isTfngOptionSet(options) ? " v2-tfng-options" : ""}`} data-option-list={props.mode === "author" ? "" : undefined}>{options.map((option, optionIndex) => <label key={`${slotId}-${option.optionId}`} className={`v2-choice-item${values.includes(option.label) ? " is-checked" : ""}`} {...optionRowProps(option)}><OptionDragHandle canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} index={optionIndex} /><input disabled={props.locked} type={slot.interaction === "checkbox" ? "checkbox" : "radio"} name={slotId} value={option.label} checked={values.includes(option.label)} onChange={(event) => setOption(slotId, option.label, event.target.checked, slot.interaction === "checkbox")} /><span><strong>{option.label}</strong>{optionContentDuplicatesLabel(option) ? null : <> <ContentNodes nodes={option.content} canvas={props} /></>}</span><OptionDeleteButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} option={option} count={options.length} /></label>)}</div>
                         : <input className="v2-text-answer" readOnly={props.locked} type="text" name={slotId} value={values[0] ?? ""} aria-label={`Answer ${runtime.questionDisplayMap[slotId]}`} onChange={(event) => setText(slotId, event.target.value)} />;
-                return <div key={slotId} className={`v2-slot-question${props.selectedId === slotId ? " is-selected" : ""}`} data-question-id={slotId} onClick={(event) => { if (props.mode === "author") { event.stopPropagation(); props.onSelect?.(slotId); } }}><div className="v2-slot-question-label"><span className="v2-slot-number">{runtime.questionDisplayMap[slotId]}</span>{hostPromptNode ? <span className="v2-slot-prompt" style={{ flex: 1, minWidth: 0 }}><ContentNodes nodes={[hostPromptNode]} canvas={props} /></span> : null}{slot.hostType === "passage_paragraph" ? <span className="v2-passage-target-reference">{paragraphLabel ? `Paragraph ${paragraphLabel}` : "Passage paragraph"}</span> : response.kind === "text_entry" || response.kind === "matching" ? <span>Response {index + 1}</span> : null}</div>{answerControl}</div>;
-              })}</div>}
+                return <div key={slotId} className={`v2-slot-question${props.selectedId === slotId ? " is-selected" : ""}`} data-question-id={slotId} onClick={(event) => { if (props.mode === "author") { event.stopPropagation(); props.onSelect?.(slotId); } }}><div className="v2-slot-question-label"><span className="v2-slot-number">{runtime.questionDisplayMap[slotId]}</span>{hostPromptNode ? <span className="v2-slot-prompt" style={{ flex: 1, minWidth: 0 }}><ContentNodes nodes={[hostPromptNode]} canvas={props} /></span> : null}{slot.hostType === "passage_paragraph" ? <span className="v2-passage-target-reference">{paragraphLabel ? `Paragraph ${paragraphLabel}` : "Passage paragraph"}</span> : response.kind === "text_entry" || response.kind === "matching" ? <span>Response {index + 1}</span> : null}</div>{answerControl}<QuestionDeleteButton canvas={props} slotId={slotId} displayNumber={runtime.questionDisplayMap[slotId] ?? slotId} count={response.slotIds.length} /></div>;
+              })}{structureEditable(props) ? <QuestionAppendButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} /> : null}</div>}
               {!optionPoolRendered && (options.length || (props.mode === "author" && (response.kind === "choice" || response.kind === "matching"))) ? <OptionAddButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} /> : null}
             </section>;
           })}

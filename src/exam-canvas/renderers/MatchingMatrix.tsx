@@ -46,7 +46,8 @@ export function MatchingMatrix({
   interactive,
   renderContent,
   onSelectOption,
-  onSelectTarget
+  onSelectTarget,
+  renderRowAction
 }: {
   rows: MatchingRow[];
   options: OptionV2[];
@@ -57,6 +58,8 @@ export function MatchingMatrix({
   renderContent: (nodes: ContentNodeV2[] | undefined) => ReactNode;
   onSelectOption: (slotId: string, label: string, checked: boolean, multiple: boolean) => void;
   onSelectTarget?: (id: string) => void;
+  /** 作者模式的每题行操作（如逐题删除），附在题干后面。 */
+  renderRowAction?: (row: MatchingRow) => ReactNode;
 }) {
   if (!rows.length || !options.length) return null;
 
@@ -88,6 +91,7 @@ export function MatchingMatrix({
                 <th scope="row" className="v2-matching-item">
                   <span className="v2-slot-number">{row.displayNumber}</span>
                   <span className="v2-matching-prompt">{renderContent(row.prompt)}</span>
+                  {renderRowAction?.(row)}
                 </th>
                 {options.map((option) => (
                   <td key={`${row.slotId}-${option.optionId}`} className="v2-matching-cell">

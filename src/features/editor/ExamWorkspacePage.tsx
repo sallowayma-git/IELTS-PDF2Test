@@ -465,6 +465,28 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
     scrollNoticeIntoView.current = true;
     showError(error, fallback);
   }
+  // Ctrl+Z 撤销、Ctrl+Shift+Z / Ctrl+Y 重做（与工具栏按钮同一条路径）。焦点在文本框里时交给浏览器自己的文字撤销。
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key !== "z" && key !== "y") return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      if (mode !== "edit" || cloudReviewing) return;
+      if (key === "z" && !event.shiftKey) {
+        if (!editor.canUndo) return;
+        event.preventDefault();
+        editor.undo();
+      } else if (key === "y" || event.shiftKey) {
+        if (!editor.canRedo) return;
+        event.preventDefault();
+        editor.redo();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [editor.canUndo, editor.canRedo, editor.undo, editor.redo, mode, cloudReviewing]);
   useEffect(() => {
     if (!notice || !scrollNoticeIntoView.current) return;
     scrollNoticeIntoView.current = false;

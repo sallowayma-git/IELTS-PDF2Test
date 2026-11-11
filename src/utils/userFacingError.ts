@@ -109,6 +109,16 @@ function classify(raw: string): { category: UserErrorCategory; userMessage?: str
     // 旧导出入口（无界面调用方）仍是严格门禁；产品发布按钮不会再收到这个错误。
     return { category: "validation", userMessage: "这道题还有未完成的内容，暂时不能用这个方式导出；请直接点击「发布」。" };
   }
+  // 结构编辑（删除 / 添加 / 撤销）的机器码：只留一句能照做的人话。
+  if (raw.includes("AUTHORING_PATCH_LAST_ANSWER_SLOT")) {
+    return { category: "validation", userMessage: "每组至少保留一题，可删除整组。" };
+  }
+  if (raw.includes("CLOUD_REVIEW_IN_PROGRESS")) {
+    return { category: "conflict", userMessage: "云端校核进行中，暂时不能修改题目结构，请等校核结束后再试。" };
+  }
+  if (raw.includes("AUTHORING_PATCH_RESTORE_CONFLICT")) {
+    return { category: "conflict", userMessage: "内容已被修改，无法撤销这一步。" };
+  }
   if (raw.includes("PAPER_ITEM_NOT_CONFIRMED")) {
     return { category: "validation", userMessage: "试卷里有题目尚未确认入库，请先在导入页确认入库。" };
   }
