@@ -107,7 +107,7 @@ function classify(raw: string): { category: UserErrorCategory; userMessage?: str
       return { category: "validation", userMessage: "这道题有部分内容没有识别完成，请手动补齐后再发布。" };
     }
     // 旧导出入口（无界面调用方）仍是严格门禁；产品发布按钮不会再收到这个错误。
-    return { category: "validation", userMessage: "这道题还有未完成的内容，暂时不能用这个方式导出；请直接点击「发布」。" };
+    return { category: "validation", userMessage: "这道题还有未完成的内容，暂时不能用这个方式导出；请先保存，再到「题库」组卷发布。" };
   }
   // 结构编辑（删除 / 添加 / 撤销）的机器码：只留一句能照做的人话。
   if (raw.includes("AUTHORING_PATCH_LAST_ANSWER_SLOT")) {

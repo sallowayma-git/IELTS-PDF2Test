@@ -722,7 +722,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               ) : null}
             </>
           ) : (
-            `编辑模式 · 保存后点击「发布」输出到 NAS${comparisons.length ? ` · ${comparisons.length} 组待选择` : ""}`
+            `编辑模式 · 保存后到「题库」组卷发布${comparisons.length ? ` · ${comparisons.length} 组待选择` : ""}`
           )}
         </span>
         {mode === "student" && previewLimitation.level === "warning" ? (
