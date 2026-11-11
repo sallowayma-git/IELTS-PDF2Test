@@ -47,7 +47,8 @@ export function MatchingMatrix({
   renderContent,
   onSelectOption,
   onSelectTarget,
-  renderRowAction
+  renderRowAction,
+  renderFooter
 }: {
   rows: MatchingRow[];
   options: OptionV2[];
@@ -60,6 +61,8 @@ export function MatchingMatrix({
   onSelectTarget?: (id: string) => void;
   /** 作者模式的每题行操作（如逐题删除），附在题干后面。 */
   renderRowAction?: (row: MatchingRow) => ReactNode;
+  /** 作者模式矩阵底部的入口（如「＋ 添加一题」），位于表格之后、选项说明之前。 */
+  renderFooter?: ReactNode;
 }) {
   if (!rows.length || !options.length) return null;
 
@@ -115,6 +118,8 @@ export function MatchingMatrix({
           })}
         </tbody>
       </table>
+
+      {renderFooter ? <div className="v2-matching-footer">{renderFooter}</div> : null}
 
       {options.some(option => !optionContentDuplicatesLabel(option)) ? <ol className="v2-matching-legend">
         {options.map((option) => (

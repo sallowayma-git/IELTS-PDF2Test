@@ -190,7 +190,33 @@ function QuestionAppendButton({ canvas, taskId, responseGroupId }: {
 }
 
 /**
- * 「⋯」次级菜单：删除这组题（作答组）或整道大题。两者都必须二次确认，
+ * 矩阵的一行 = 一个单题作答组（矩阵前提）。后端不允许删掉组内最后一题，
+ * 所以矩阵行的「删除」等价于删除这一组；矩阵只剩一行时禁用，删整道大题请用大题的「更多」。
+ */
+function MatrixRowDeleteButton({ canvas, taskId, row, rowCount }: {
+  canvas: ExamCanvasProps;
+  taskId: string;
+  row: MatchingRow;
+  rowCount: number;
+}) {
+  if (!structureEditable(canvas)) return null;
+  const onlyOne = rowCount <= 1;
+  return <button
+    type="button"
+    className="v2-question-delete"
+    title={onlyOne ? "只剩一题，可用「更多」删除整道大题" : `删除第 ${row.displayNumber} 题`}
+    aria-label={`删除第 ${row.displayNumber} 题`}
+    disabled={onlyOne}
+    onClick={(event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      canvas.onStructureAction?.({ type: "response-group.delete", taskId, responseGroupId: row.responseGroup.responseGroupId });
+    }}
+  >×</button>;
+}
+
+/**
+ * 「更多」次级菜单：删除这组题（作答组）或整道大题。两者都必须二次确认，
  * 确认框写明题号范围并提示可用撤销恢复。
  */
 function GroupDeleteMenu({ canvas, scope, taskId, responseGroupId, slotIds }: {
@@ -205,7 +231,7 @@ function GroupDeleteMenu({ canvas, scope, taskId, responseGroupId, slotIds }: {
   const range = questionRangeLabel(numbers);
   const what = scope === "task" ? "整道大题" : "这组题";
   return <details className="v2-structure-menu" onClick={(event) => event.stopPropagation()}>
-    <summary aria-label={`更多结构操作（${what}）`} title="更多结构操作">⋯</summary>
+    <summary aria-label={`更多结构操作（${what}）`} title="更多结构操作">更多</summary>
     <div className="v2-structure-menu-items">
       <button
         type="button"
@@ -1182,7 +1208,8 @@ export function ExamCanvas(inputProps: ExamCanvasProps) {
               renderContent={(nodes) => nodes?.length ? <ContentNodes nodes={nodes} canvas={props} /> : null}
               onSelectOption={setOption}
               onSelectTarget={props.mode === "author" ? props.onSelect : undefined}
-              renderRowAction={(row: MatchingRow) => <QuestionDeleteButton canvas={props} slotId={row.slotId} displayNumber={row.displayNumber} count={row.responseGroup.slotIds.length} />}
+              renderRowAction={(row: MatchingRow) => <MatrixRowDeleteButton canvas={props} taskId={task.taskId} row={row} rowCount={rows.length} />}
+              renderFooter={structureEditable(props) ? <QuestionAppendButton canvas={props} taskId={task.taskId} responseGroupId={rows[rows.length - 1].responseGroup.responseGroupId} /> : null}
             />{props.mode === "author" ? rows.filter((row, index) => row.responseGroup.options?.length || index === 0).map(row => {
               const response = row.responseGroup;
               if (!optionSourceEditable(props, task.taskId, response.responseGroupId)) return null;

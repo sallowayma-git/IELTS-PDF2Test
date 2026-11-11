@@ -117,3 +117,49 @@ describe("入口的可见条件", () => {
     expect(container.querySelector(".v2-structure-menu")).toBeNull();
   });
 });
+
+describe("矩阵（配对表）的逐行删除与添加", () => {
+  /** 三个单题作答组、选项库共享、逐选框作答：满足矩阵前提（rg-a → q14，rg-c → q15，rg-b → q16）。 */
+  function matrixDraft() {
+    const draft = structureDraft();
+    const task = draft.taskGroups[0];
+    const [groupA, groupB] = task.responseGroups;
+    task.responseGroups = [
+      { ...groupA, slotIds: ["q14"] },
+      { ...groupA, responseGroupId: "rg-c", slotIds: ["q15"] },
+      groupB,
+    ];
+    for (const slotId of ["q14", "q15", "q16"]) draft.answerSlots[slotId].interaction = "radio";
+    return draft;
+  }
+
+  it("矩阵每行的 × 派发 response-group.delete（一行即一组），只剩一行时禁用", () => {
+    const onStructureAction = vi.fn();
+    const { container } = render(<ExamCanvas authoring={matrixDraft()} mode="author" onStructureAction={onStructureAction} onAnswerChange={vi.fn()} />);
+    expect(container.querySelector('[data-testid="matching-matrix"]')).not.toBeNull();
+    const row = container.querySelector<HTMLElement>('tr[data-question-id="q15"]')!;
+    const remove = row.querySelector<HTMLButtonElement>(".v2-question-delete")!;
+    expect(remove.getAttribute("aria-label")).toBe("删除第 15 题");
+    expect(remove.disabled).toBe(false);
+    fireEvent.click(remove);
+    expect(onStructureAction).toHaveBeenCalledWith({ type: "response-group.delete", taskId: "headings", responseGroupId: "rg-c" });
+  });
+
+  it("矩阵底部「＋ 添加一题」派发 answer-slot.append，指向最后一行所在的组", () => {
+    const onStructureAction = vi.fn();
+    const { container } = render(<ExamCanvas authoring={matrixDraft()} mode="author" onStructureAction={onStructureAction} onAnswerChange={vi.fn()} />);
+    const add = container.querySelector<HTMLButtonElement>('.v2-matching-footer > .v2-question-append')!;
+    expect(add.textContent).toContain("添加一题");
+    fireEvent.click(add);
+    expect(onStructureAction).toHaveBeenCalledWith({ type: "answer-slot.append", taskId: "headings", responseGroupId: "rg-b" });
+  });
+
+  it("矩阵只剩一行时该行的 × 禁用并指向整道大题的「更多」", () => {
+    const draft = matrixDraft();
+    draft.taskGroups[0].responseGroups = [draft.taskGroups[0].responseGroups[2]];
+    const { container } = render(<ExamCanvas authoring={draft} mode="author" onStructureAction={vi.fn()} onAnswerChange={vi.fn()} />);
+    const remove = container.querySelector<HTMLButtonElement>(".v2-question-delete")!;
+    expect(remove.disabled).toBe(true);
+    expect(remove.title).toContain("整道大题");
+  });
+});
