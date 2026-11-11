@@ -33,7 +33,7 @@ import {
   assertBuildFresh, buildFreshReport, gitHead, launchTauriAppCdp, repoRoot, sha256File, sleep, writeReport,
 } from "./lib/tauri-cdp-harness.mjs";
 import {
-  APP_SETTINGS_KEY, PARTS, checkPointerOnDisk, confirmedSettingsJs, ensureAllCheckedStable, ensureChecked, libraryRows, publishCurrentSelection,
+  APP_SETTINGS_KEY, PARTS, checkPointerOnDisk, confirmRowsOnImportPage, ensureAllCheckedStable, ensureChecked, libraryRows, publishCurrentSelection,
   readPointer, seedReadingJob, setRowPart, waitForRows,
 } from "./lib/paper-publish-steps.mjs";
 
@@ -86,6 +86,21 @@ function writeState(runDir, state) {
   fs.writeFileSync(path.join(runDir, "chain-state.json"), JSON.stringify(state, null, 2));
 }
 
+/**
+ * 组卷勾选：阅读三篇在「阅读」分区勾选；听力在「听力」分区（路由 modality=listening）单独勾选。
+ * 两个分区的行互不可见，所以不能用同一个 tr 选择器一起等。返回两段稳定化结果与阅读侧回查结果。
+ */
+async function selectPaperRows(session, { readingIds, listeningId, label }) {
+  const reading = await ensureAllCheckedStable(session, readingIds);
+  await session.evaluate(`(() => { window.location.hash = "#/library?modality=listening"; return true; })()`);
+  await session.waitFor(`!!document.querySelector('tr[data-item-id="${listeningId}"] input[type="checkbox"]')`, { timeoutMs: 30000, label: `${label}-listening-row` });
+  const listening = await ensureAllCheckedStable(session, [listeningId]);
+  await session.evaluate(`(() => { window.location.hash = "#/library?modality=reading"; return true; })()`);
+  await session.waitFor(`!!document.querySelector('[data-testid="paper-table"]')`, { timeoutMs: 15000, label: `${label}-back-to-reading` });
+  const readingBack = await ensureAllCheckedStable(session, readingIds);
+  return { reading, listening, readingBack };
+}
+
 /** 作者端发布：真 Tauri 界面。seed=true 时先把三篇预置进应用数据目录（启动迁移种入题库）。 */
 async function authorPublish({ runDir, nasRoot, state, seed, label }) {
   const template = JSON.parse(fs.readFileSync(SYNTHETIC_AUTHORING, "utf8"));
@@ -114,11 +129,17 @@ async function authorPublish({ runDir, nasRoot, state, seed, label }) {
       if(!checked.ok)throw new Error(checked.error);
     }
 
+    // 预置条目先经产品界面「确认入库」（导入页待确认行），再进入题库与组卷。
+    const viaUi = await confirmRowsOnImportPage(session, ids);
+    const confirmedRows = (await libraryRows(session)).filter((row) => ids.includes(row.id) && row.confirmedAt);
+    out.assertions.push(["confirmed-via-import-ui", confirmedRows.length === ids.length && viaUi.length === state.seeded.length,
+      `导入页「确认入库」点击 ${viaUi.length} 行（阅读卷 ${state.seeded.length} 篇）；后端 confirmedAt 非空=${confirmedRows.length}/${ids.length}；听力夹具由后端命令确认，不在界面点击范围内`]);
+    if (confirmedRows.length !== ids.length) throw new Error("确认入库后后端没有 confirmedAt");
+
     await session.evaluate(`(() => {
       const raw = window.localStorage.getItem(${JSON.stringify(APP_SETTINGS_KEY)});
       const settings = raw ? JSON.parse(raw) : {};
       settings.nasDestination = ${JSON.stringify(nasRoot)};
-      ${confirmedSettingsJs(ids)}
       window.localStorage.setItem(${JSON.stringify(APP_SETTINGS_KEY)}, JSON.stringify(settings));
       window.location.hash = "#/settings"; return true;
     })()`);
@@ -142,10 +163,12 @@ async function authorPublish({ runDir, nasRoot, state, seed, label }) {
     out.assertions.push(["parts", PARTS.every((p, i) => partOf[i] === p), `Part=${JSON.stringify(partOf)}`]);
 
     await session.waitFor(`!!document.querySelector('[data-testid="paper-table"]')`, { timeoutMs: 15000, label: `${label}-paper-table` });
-    const stab = await ensureAllCheckedStable(session, ids);
-    out.assertions.push(["checked", stab.stable, `勾选稳定=${stab.stable} 补点次数=${stab.rechecks} 状态=${JSON.stringify(stab.states)}`]);
-    out.assertions.push(["checked-no-recheck", stab.rechecks === 0, `补点次数必须为 0（勾选重置根因已修）：rechecks=${stab.rechecks}`]);
-    out.rechecks = stab.rechecks;
+    const sel = await selectPaperRows(session, { readingIds: state.seeded.map((job) => job.jobId), listeningId: state.listening.jobId, label });
+    const stab = sel.readingBack;
+    out.assertions.push(["checked", sel.reading.stable && sel.listening.stable && stab.stable, `阅读勾选稳定=${sel.reading.stable} 听力勾选稳定=${sel.listening.stable} 回阅读区仍勾选=${stab.stable} 状态=${JSON.stringify(stab.states)}`]);
+    const rechecks = sel.reading.rechecks + sel.listening.rechecks + stab.rechecks;
+    out.assertions.push(["checked-no-recheck", rechecks === 0, `补点次数必须为 0（勾选重置根因已修）：阅读=${sel.reading.rechecks} 听力=${sel.listening.rechecks} 回查=${stab.rechecks}`]);
+    out.rechecks = rechecks;
     const message = await publishCurrentSelection(session, label);
     out.message = message;
     out.assertions.push(["publish-message", String(message).includes("当前试卷已发布"), `界面提示=${JSON.stringify(message)}`]);
@@ -196,9 +219,11 @@ async function republishPhase({ runDir, nasRoot, resultFile }) {
     const rows = await libraryRows(session);
     const partsOk = PARTS.every((p, i) => rows.find((r) => r.id === ids[i])?.partLabel === p);
     out.assertions.push(["parts-persisted", partsOk, `Part 仍为 P1/P2/P3=${partsOk}`]);
-    const stab = await ensureAllCheckedStable(session, ids);
-    out.assertions.push(["checked", stab.stable, `勾选稳定=${stab.stable} 补点次数=${stab.rechecks} 状态=${JSON.stringify(stab.states)}`]);
-    out.assertions.push(["checked-no-recheck", stab.rechecks === 0, `补点次数必须为 0（勾选重置根因已修）：rechecks=${stab.rechecks}`]);
+    const sel = await selectPaperRows(session, { readingIds: state.seeded.map((job) => job.jobId), listeningId: state.listening.jobId, label: "republish-in-flight" });
+    const stab = sel.readingBack;
+    out.assertions.push(["checked", sel.reading.stable && sel.listening.stable && stab.stable, `阅读勾选稳定=${sel.reading.stable} 听力勾选稳定=${sel.listening.stable} 回阅读区仍勾选=${stab.stable} 状态=${JSON.stringify(stab.states)}`]);
+    const rechecks = sel.reading.rechecks + sel.listening.rechecks + stab.rechecks;
+    out.assertions.push(["checked-no-recheck", rechecks === 0, `补点次数必须为 0（勾选重置根因已修）：阅读=${sel.reading.rechecks} 听力=${sel.listening.rechecks} 回查=${stab.rechecks}`]);
     out.message = await publishCurrentSelection(session, "republish-in-flight");
     out.assertions.push(["publish-message", String(out.message).includes("当前试卷已发布"), `界面提示=${JSON.stringify(out.message)}`]);
     const disk = checkPointerOnDisk(nasRoot);

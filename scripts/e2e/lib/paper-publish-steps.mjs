@@ -9,12 +9,24 @@ export const APP_SETTINGS_KEY = "ielts-author-studio.app-settings.v1";
 export const PARTS = ["P1", "P2", "P3"];
 
 /**
- * 用户确认入库的本地兜底（后端 set_library_item_confirmed 未上线前）：预置条目是「识别完成、未确认」，
- * 不先确认就不会进题库。等价于用户在导入页点了「确认入库」。
- * 用法：把返回的语句拼进 settings 对象的读写脚本里（见 tauri-cdp-paper-publish.mjs）。
+ * 预置条目里仍是「识别完成、未确认」的，只有确认入库后才会进题库。
+ * 走产品界面：导入页「待确认」里逐行点「确认入库」，并等待该行离开待确认组（后端 confirmedAt 为唯一权威，
+ * 不写任何本地确认集合）。已带 confirmedAt 的预置行（如听力夹具由后端命令确认）不再点击。
+ * 返回本函数经界面确认的 id 列表；任一行点不到或不离开，waitFor 超时抛错。
  */
-export function confirmedSettingsJs(ids) {
-  return `settings.confirmedLibraryItemIds = [...new Set([...(settings.confirmedLibraryItemIds ?? []), ...${JSON.stringify(ids)}])];`;
+export async function confirmRowsOnImportPage(session, ids, { timeoutMs = 30000 } = {}) {
+  const current = await libraryRows(session);
+  const pending = ids.filter((id) => !current.find((row) => row.id === id)?.confirmedAt);
+  if (!pending.length) return [];
+  await session.evaluate(`(() => { window.location.hash = "#/import"; return true; })()`);
+  await session.waitFor(`!!document.querySelector('[data-testid="import-group-review"]')`, { timeoutMs: 40000, label: "import-page" });
+  for (const id of pending) {
+    const row = `[data-testid="import-group-review"] [data-item-id="${id}"]`;
+    await session.waitFor(`!!document.querySelector('${row} [data-testid="import-row-confirm"]')`, { timeoutMs, label: `review-has-${id}` });
+    await session.clickSelector(`${row} [data-testid="import-row-confirm"]`);
+    await session.waitFor(`!document.querySelector('${row}')`, { timeoutMs, label: `left-review-${id}` });
+  }
+  return pending;
 }
 
 /** 复现 product_chain.rs::physical_shadow_for（与 tauri-cdp-paper-publish.mjs 同款）。 */
