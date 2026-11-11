@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { describeRetryOutcome, retryProcessing } from "../../api/processingClient";
 import { go, workspacePath } from "../../app/router";
 import { LibraryItemRow } from "../library/LibraryItemRow";
+import { confirmItems, useConfirmedIds } from "../library/confirmedStore";
 import { useLibraryStore } from "../library/libraryStore";
 import { importQueueGroups, type LibraryRowV1 } from "../library/libraryTypes";
 import { toUserFacingError } from "../../utils/userFacingError";
@@ -9,7 +10,7 @@ import { ImportDrawer } from "./ImportDrawer";
 import { useImportFiles, type ImportRejection } from "./useImportFiles";
 
 // 导入一级页：选择文件（与原导入抽屉同一套逻辑，常驻在页面里）+ 处理队列。
-// 队列分三组：识别中 / 待检查 / 失败。检查通过变成「可发布」后离开本页，进入题库。
+// 队列分三组：识别中 / 待确认 / 失败。识别完成的题在这里检查后「确认入库」才进入题库。
 
 function describeError(error: unknown, fallback: string): string {
   const facing = toUserFacingError(error, fallback);
@@ -25,7 +26,9 @@ function QueueGroup({
   onOpen,
   onTrash,
   onRetry,
-  onSetPart
+  onSetPart,
+  onConfirm,
+  onConfirmAll
 }: {
   title: string;
   testid: string;
@@ -35,12 +38,21 @@ function QueueGroup({
   onTrash: (id: string) => void;
   onRetry: (id: string) => void;
   onSetPart: (id: string, label: string | null) => void;
+  /** 待确认组才提供：单行确认入库。 */
+  onConfirm?: (id: string) => void;
+  /** 待确认组才提供：全部确认入库（调用方负责二次确认）。 */
+  onConfirmAll?: () => void;
 }) {
   return (
     <section className={`import-queue-group${rows.length ? " has-items" : " is-empty"}`} data-testid={testid}>
       <header className="paper-group-head">
         <h3>{title}</h3>
         <span className="paper-group-count">{rows.length} 项</span>
+        {onConfirmAll && rows.length ? (
+          <button className="primary small" data-testid="import-confirm-all" onClick={onConfirmAll}>
+            全部确认入库（{rows.length}）
+          </button>
+        ) : null}
       </header>
       {rows.length ? (
         <div className="library-list">
@@ -57,6 +69,7 @@ function QueueGroup({
               onPermanentDelete={() => undefined}
               onSetPart={onSetPart}
               onRetry={onRetry}
+              onConfirm={onConfirm}
             />
           ))}
         </div>
@@ -100,6 +113,27 @@ export function ImportPage() {
     }
   }
 
+  /** 确认入库：未设置 Part 的题照常入库，但提示用户入库后在题库里设置 Part 才能组卷。 */
+  async function confirmRows(ids: string[]) {
+    try {
+      await confirmItems(ids);
+      store.refresh();
+      const single = ids.length === 1 ? store.rows.find((row) => row.id === ids[0]) : undefined;
+      const needsPart = single !== undefined && (single.modality === "reading" || single.modality === "listening") && !single.part;
+      setNotice(needsPart
+        ? "已进入题库，可在题库里组卷发布。还没有设置 Part，入库后在题库里设置才能组卷。"
+        : `已进入题库${ids.length > 1 ? `（${ids.length} 项）` : ""}，可在题库里组卷发布。`);
+    } catch (error) {
+      store.refresh();
+      setNotice(describeError(error, "确认入库没有成功，请稍后重试。"));
+    }
+  }
+
+  function confirmAll(rows: LibraryRowV1[]) {
+    if (!window.confirm(`确认 ${rows.length} 项进入题库？确认后仍可在题库里「退回待确认」。`)) return;
+    void confirmRows(rows.map((row) => row.id));
+  }
+
   async function trash(id: string) {
     try {
       await store.moveToTrash(id);
@@ -117,7 +151,8 @@ export function ImportPage() {
     }
   }
 
-  const groups = importQueueGroups(store.rows);
+  const confirmedIds = useConfirmedIds();
+  const groups = importQueueGroups(store.rows, confirmedIds);
   const open = (id: string) => go(workspacePath(id));
 
   return (
@@ -154,7 +189,18 @@ export function ImportPage() {
       <section className="import-queue" aria-label="导入进度">
         <h2>导入进度</h2>
         <QueueGroup title="识别中" testid="import-group-working" rows={groups.working} emptyText="没有正在识别的题目。" onOpen={open} onTrash={trash} onRetry={retry} onSetPart={setPart} />
-        <QueueGroup title="待检查" testid="import-group-review" rows={groups.review} emptyText="没有待检查的题目。检查通过后会进入题库。" onOpen={open} onTrash={trash} onRetry={retry} onSetPart={setPart} />
+        <QueueGroup
+          title="待确认"
+          testid="import-group-review"
+          rows={groups.review}
+          emptyText="没有待确认的题目。识别完成的题在这里确认后进入题库。"
+          onOpen={open}
+          onTrash={trash}
+          onRetry={retry}
+          onSetPart={setPart}
+          onConfirm={(id) => void confirmRows([id])}
+          onConfirmAll={() => confirmAll(groups.review)}
+        />
         <QueueGroup title="失败" testid="import-group-failed" rows={groups.failed} emptyText="没有失败的导入。" onOpen={open} onTrash={trash} onRetry={retry} onSetPart={setPart} />
       </section>
     </section>

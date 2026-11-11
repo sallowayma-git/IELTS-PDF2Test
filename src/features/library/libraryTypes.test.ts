@@ -117,8 +117,8 @@ describe("buildRow 重试耗尽展示（G1/A4-F03）", () => {
       })
     );
     expect(row.stage).toBe("action_required");
-    // 不把质量状态说成门槛：识别完成就是可以打开编辑。
-    expect(row.detail).toBe("可以打开编辑");
+    // 识别完成但未确认入库：导入页提示用户检查后确认，不再说「可以打开编辑」。
+    expect(row.detail).toBe("检查无误后点「确认入库」");
   });
 });
 

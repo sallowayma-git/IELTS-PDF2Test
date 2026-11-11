@@ -21,8 +21,10 @@ function row(id: string, stage: LibraryStageV1, extra: Partial<LibraryRowV1> = {
   };
 }
 
-describe("导入页的三组队列", () => {
-  it("识别中 / 待检查 / 失败各归其组，已可发布的不在导入页", () => {
+const NONE = new Set<string>();
+
+describe("导入页的三组队列（用户确认入库）", () => {
+  it("识别中 / 待确认 / 失败各归其组；已发布的不在导入页", () => {
     const rows = [
       row("q", "queued"),
       row("l", "local"),
@@ -33,22 +35,42 @@ describe("导入页的三组队列", () => {
       row("ok", "ready"),
       row("pub", "published")
     ];
-    const groups = importQueueGroups(rows);
+    const groups = importQueueGroups(rows, NONE);
     expect(groups.working.map((r) => r.id).sort()).toEqual(["c", "l", "q", "r"]);
-    expect(groups.review.map((r) => r.id)).toEqual(["a"]);
+    // 未确认的识别完成行（含 ready）都进「待确认」。
+    expect(groups.review.map((r) => r.id).sort()).toEqual(["a", "ok"]);
     expect(groups.failed.map((r) => r.id)).toEqual(["f"]);
-    expect(importBadgeCount(rows)).toBe(6);
+    expect(importBadgeCount(rows, NONE)).toBe(7);
+  });
+
+  it("已确认入库的识别完成行离开导入页，角标同步减少", () => {
+    const rows = [row("a", "action_required"), row("ok", "ready"), row("f", "failed")];
+    const confirmed = new Set(["a", "ok"]);
+    const groups = importQueueGroups(rows, confirmed);
+    expect(groups.review).toEqual([]);
+    expect(groups.failed.map((r) => r.id)).toEqual(["f"]);
+    expect(importBadgeCount(rows, confirmed)).toBe(1);
+  });
+
+  it("后端 confirmedAt 与本地集合取并集", () => {
+    const rows = [
+      row("backend", "ready", { confirmedAt: "2026-11-10T00:00:00Z" }),
+      row("local", "ready"),
+      row("none", "ready")
+    ];
+    const groups = importQueueGroups(rows, new Set(["local"]));
+    expect(groups.review.map((r) => r.id)).toEqual(["none"]);
   });
 
   it("回收站与写作不进导入队列", () => {
     const rows = [row("trashed", "failed", { inTrash: true }), row("w", "action_required", { modality: "writing" })];
-    expect(importQueueGroups(rows)).toEqual({ working: [], review: [], failed: [] });
-    expect(importBadgeCount(rows)).toBe(0);
+    expect(importQueueGroups(rows, NONE)).toEqual({ working: [], review: [], failed: [] });
+    expect(importBadgeCount(rows, NONE)).toBe(0);
   });
 });
 
-describe("题库页只显示可发布与已发布", () => {
-  it("待检查、识别中、失败的题不出现在题库，写作也不在表格里", () => {
+describe("题库页只显示已发布与已确认入库的题", () => {
+  it("未确认的识别完成行不在题库；确认后出现在题库；已发布始终在题库", () => {
     const rows = [
       row("ready", "ready"),
       row("pub", "published"),
@@ -58,7 +80,12 @@ describe("题库页只显示可发布与已发布", () => {
       row("trashed", "ready", { inTrash: true }),
       row("writing", "ready", { modality: "writing" })
     ];
-    expect(libraryRows(rows).map((r) => r.id)).toEqual(["ready", "pub"]);
+    expect(libraryRows(rows, NONE).map((r) => r.id)).toEqual(["pub"]);
+    expect(libraryRows(rows, new Set(["ready", "review", "working"])).map((r) => r.id)).toEqual(["ready", "pub", "review"]);
+  });
+
+  it("已发布的行不需要确认，即使本地集合里没有它", () => {
+    expect(libraryRows([row("pub", "published")], NONE).map((r) => r.id)).toEqual(["pub"]);
   });
 });
 

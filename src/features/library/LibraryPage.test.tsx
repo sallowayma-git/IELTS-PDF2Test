@@ -15,8 +15,10 @@ vi.mock("../../api/tauriCommands", () => ({ listWritingJobs: mocks.listWriting }
 vi.mock("../settings/appSettings", () => ({ readAppSettings: () => ({}), writeAppSettings: vi.fn() }));
 
 function row(id: string, part?: string, modality: "reading" | "listening" = "reading"): LibraryRowV1 {
+  // 题库只显示已确认入库的识别完成题（见 libraryRows）。
   return { id, title: id, part, modality, stage: "ready", actionableCount: 0, questionTypes: [],
-    updatedAt: "", inTrash: false, publishedForced: false, publishedNotLoadable: false, raw: {} };
+    updatedAt: "", inTrash: false, publishedForced: false, publishedNotLoadable: false, raw: {},
+    confirmedAt: "2026-11-07T00:00:00Z" };
 }
 function Harness({ initialHash = "/library" }: { initialHash?: string }) {
   const [route, setRoute] = useState(() => {

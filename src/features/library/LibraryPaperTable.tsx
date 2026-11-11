@@ -142,7 +142,8 @@ export function LibraryPaperTable({
   onRename,
   onOpen,
   onSetPart,
-  onTrash
+  onTrash,
+  onUnconfirm
 }: {
   rows: LibraryRowV1[];
   modality?: "reading" | "listening";
@@ -157,6 +158,8 @@ export function LibraryPaperTable({
   onSetPart: (itemId: string, label: string | null) => void;
   /** 移入回收站（可恢复）。 */
   onTrash: (itemId: string) => void;
+  /** 退回待确认（只在未发布、且不在当前试卷中的行上提供）。 */
+  onUnconfirm?: (itemId: string) => void;
 }) {
   const groups = groupRowsForPaper(rows, modality);
   return (
@@ -234,6 +237,9 @@ export function LibraryPaperTable({
                       <td>
                         <div className="button-row">
                           <button type="button" className="ghost small" onClick={() => onOpen(row.id)}>打开</button>
+                          {onUnconfirm && row.stage !== "published" && !inPaper ? (
+                            <button type="button" className="ghost small" data-testid="library-row-unconfirm" onClick={() => onUnconfirm(row.id)}>退回待确认</button>
+                          ) : null}
                           <button type="button" className="danger small" onClick={() => onTrash(row.id)}>删除</button>
                         </div>
                       </td>

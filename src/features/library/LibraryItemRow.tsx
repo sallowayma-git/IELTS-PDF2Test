@@ -25,6 +25,7 @@ export function LibraryItemRow({
   onPermanentDelete,
   onSetPart,
   onRetry,
+  onConfirm,
   selectable = true
 }: {
   row: LibraryRowV1;
@@ -36,6 +37,8 @@ export function LibraryItemRow({
   onPermanentDelete: (id: string) => void;
   onSetPart: (id: string, label: string | null) => void;
   onRetry?: (id: string) => void;
+  /** 导入页「待确认」行：用户检查无误后确认入库。 */
+  onConfirm?: (id: string) => void;
   /** 导入队列等不做批量选择的地方关掉复选框。 */
   selectable?: boolean;
 }) {
@@ -97,7 +100,11 @@ export function LibraryItemRow({
           <>
             {canRetryRow(row) && onRetry ? (
               <button className="primary small" data-testid="library-row-retry" onClick={() => onRetry(row.id)}>重试</button>
-            ) : (
+            ) : null}
+            {onConfirm && (row.stage === "ready" || row.stage === "action_required") ? (
+              <button className="primary small" data-testid="import-row-confirm" onClick={() => onConfirm(row.id)}>确认入库</button>
+            ) : null}
+            {canRetryRow(row) && onRetry ? null : (
               <button className="ghost small" onClick={() => onOpen(row.id)}>打开</button>
             )}
             <select

@@ -7,6 +7,7 @@ import { readAppSettings, writeAppSettings } from "../settings/appSettings";
 import { chooseExportDirectory } from "../../api/desktopDialogs";
 import { toUserFacingError } from "../../utils/userFacingError";
 import { CurrentPaperCard } from "./CurrentPaperCard";
+import { unconfirmItem, useConfirmedIds } from "./confirmedStore";
 import { LibraryItemList } from "./LibraryItemList";
 import { LibraryPaperTable } from "./LibraryPaperTable";
 import { PaperComposerBar, type PaperConfirmation } from "./PaperComposerBar";
@@ -29,7 +30,7 @@ import {
   resolveLibrarySection, resolveReadingFilter, type LibrarySection, type ReadingPartFilter
 } from "./libraryNavigation";
 
-// 题库一级页：只显示「可发布」与「已发布」。待检查、识别中、失败的题在「导入」页。
+// 题库一级页：只显示「已发布」与「已确认入库」的题。待确认、识别中、失败的题在「导入」页。
 // 唯一的发布动作是「发布为当前试卷」（替换语义）。回收站是右上角的次级入口。
 
 /** 失败提示经用户文案层收敛；机器码只进日志。 */
@@ -152,13 +153,14 @@ export function LibraryPage({ intent, pickItemId, modality, part }: {
     [currentPaper]
   );
 
-  /** 题库可见行：可发布 + 已发布（待检查不在这里），按标题搜索。 */
+  const confirmedIds = useConfirmedIds();
+  /** 题库可见行：已确认入库 + 已发布（待确认不在这里），按标题搜索。 */
   const visibleRows = useMemo(
-    () => libraryRows(store.rows).filter((row) => row.modality === section && matchesSearch(row, search)
+    () => libraryRows(store.rows, confirmedIds).filter((row) => row.modality === section && matchesSearch(row, search)
       && (section !== "reading" || matchesReadingFilter(row, readingFilter))),
-    [store.rows, search, section, readingFilter]
+    [store.rows, confirmedIds, search, section, readingFilter]
   );
-  const readingRows = libraryRows(store.rows).filter((row) => row.modality === "reading");
+  const readingRows = libraryRows(store.rows, confirmedIds).filter((row) => row.modality === "reading");
   const trashRows = useMemo(() => store.rows.filter((row) => row.inTrash), [store.rows]);
 
   // 发布目录：设置里选过就记住，否则追问一次。
@@ -230,6 +232,18 @@ export function LibraryPage({ intent, pickItemId, modality, part }: {
         throw new Error("已被其他编辑修改，请刷新。");
       }
       throw new Error(describeLibraryActionError(error, "名称保存失败，请稍后再试。"));
+    }
+  }
+
+  /** 退回待确认：题回到导入页「待确认」，不再出现在题库里。 */
+  async function unconfirm(id: string) {
+    try {
+      await unconfirmItem(id);
+      store.refresh();
+      setNotice("已退回待确认，可在「导入」页重新确认入库。");
+    } catch (error) {
+      store.refresh();
+      setNotice(describeLibraryActionError(error, "退回待确认没有成功，请稍后重试。"));
     }
   }
 
@@ -344,7 +358,7 @@ export function LibraryPage({ intent, pickItemId, modality, part }: {
         <div className="library-header-top">
           <div>
             <h1>题库</h1>
-            <p className="library-background-note">按阅读、听力和写作管理题目。导入后待检查的题在「导入」页处理。</p>
+            <p className="library-background-note">按阅读、听力和写作管理题目。识别完成的题在「导入」页确认后进入题库。</p>
           </div>
           <div className="button-row">
             <button className="ghost small" data-testid="library-import" onClick={() => go("/import")}>导入</button>
@@ -402,6 +416,7 @@ export function LibraryPage({ intent, pickItemId, modality, part }: {
         onOpen={(id) => go(workspacePath(id))}
         onSetPart={setPart}
         onTrash={trash}
+        onUnconfirm={unconfirm}
       />
       <div className="library-publish-context">
         <CurrentPaperCard paper={currentPaper} destination={destination} error={currentPaperError} />

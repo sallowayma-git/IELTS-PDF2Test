@@ -95,6 +95,8 @@ export interface LibraryRowV1 {
   examId?: string;
   updatedAt: string;
   inTrash: boolean;
+  /** 用户确认入库的时间（后端 `confirmed_at`）；未确认为 null/undefined。本地兜底见 confirmedStore。 */
+  confirmedAt?: string | null;
   /** 已发布，且那次发布时检查没有全部通过、由用户点击发布放行（后端 `published_forced`）。 */
   publishedForced: boolean;
   /**
@@ -172,6 +174,9 @@ export function deriveStage(job: ImportJob | undefined, summary: LibraryExamSumm
   }
 }
 
+/** 识别完成但用户还没确认入库的行，在导入页「待确认」里的提示。 */
+export const AWAITING_CONFIRM_DETAIL = "检查无误后点「确认入库」";
+
 function detailFor(
   stage: LibraryStageV1,
   job: ImportJob | undefined,
@@ -188,8 +193,9 @@ function detailFor(
     const errorCode = v2?.processing?.lastErrorCode;
     if (errorCode === "retry_exhausted") return "已达到自动恢复上限，请手动重试";
     if (errorCode === "interrupted") return "已自动排队重试";
-    return "可以打开编辑";
+    return v2?.confirmedAt ? "已确认入库，可在题库里组卷发布" : AWAITING_CONFIRM_DETAIL;
   }
+  if (stage === "ready") return v2?.confirmedAt ? "已确认入库，可在题库里组卷发布" : AWAITING_CONFIRM_DETAIL;
   if (stage === "failed") {
     // G1 对抗审计：用户主动取消的行不得显示成"识别失败，可以重试"。
     if (v2?.processing?.stage === "cancelled") return "已取消";
@@ -240,7 +246,8 @@ export function buildRow(
     title: v2?.title ?? job?.title ?? summary?.title ?? id,
     modality: rowModality(summary, v2),
     stage,
-    detail: detailFor(stage, job, actionable, v2),
+    // 回收站里的行不再提示「待确认」：它不在任何队列里。
+    detail: options.inTrash && (stage === "ready" || stage === "action_required") ? undefined : detailFor(stage, job, actionable, v2),
     progressPercent: job && isProcessingStage(stage) ? STEP_PROGRESS[job.currentStep] : undefined,
     actionableCount: actionable,
     category: summary?.category ?? job?.category,
@@ -250,6 +257,7 @@ export function buildRow(
     examId: v2?.examId ?? undefined,
     updatedAt: v2?.updatedAt ?? job?.updatedAt ?? summary?.updatedAt ?? "",
     inTrash: Boolean(options.inTrash),
+    confirmedAt: v2?.confirmedAt ?? null,
     publishedForced:
       stage === "published" &&
       (v2?.status === "published_forced" || v2?.status === "published_forced_not_loadable"),
@@ -299,33 +307,52 @@ export function matchesPart(row: LibraryRowV1, part: string | undefined): boolea
   return row.part === part;
 }
 
-// 一级入口拆分（导入 / 题库）的行归属。两边读同一份行模型，只是过滤不同：
-// - 导入：识别中 / 待检查 / 失败（发布门禁通过、变成「可发布」后离开导入页）。
-// - 题库：可发布 + 已发布（待检查不出现在题库）。写作走自己的区块，不进组卷表格。
-const IMPORT_QUEUE_STAGES: readonly LibraryStageV1[] = ["queued", "local", "cloud", "reconciling", "action_required", "failed"];
+// 一级入口拆分（导入 / 题库）的行归属。两边读同一份行模型，只是过滤不同。
+//
+// 识别完成（ready / action_required）的题不会自动进入题库：用户在导入页检查后点「确认入库」
+// （见 confirmedStore）。确认集合作为参数传入，这里保持纯函数。
+// - 导入「待确认」：识别完成且未确认（含 ready 但未确认的行）。
+// - 导入「识别中 / 失败」：处理中与失败的行。
+// - 题库：已发布（始终在题库），或已确认且识别完成的行。写作走自己的区块，不进组卷表格。
 
-export function isImportQueueStage(stage: LibraryStageV1): boolean {
-  return IMPORT_QUEUE_STAGES.includes(stage);
+/** 行是否已确认入库：后端 confirmedAt 非空，或本地兜底集合包含它。 */
+export function isRowConfirmed(row: Pick<LibraryRowV1, "id" | "confirmedAt">, confirmedIds: ReadonlySet<string>): boolean {
+  return Boolean(row.confirmedAt) || confirmedIds.has(row.id);
 }
 
-/** 导入页的三组：识别中 / 待检查 / 失败。已删除（回收站）的行不在队列里。 */
-export function importQueueGroups(rows: LibraryRowV1[]): { working: LibraryRowV1[]; review: LibraryRowV1[]; failed: LibraryRowV1[] } {
-  const live = rows.filter((row) => !row.inTrash && row.modality !== "writing" && isImportQueueStage(row.stage));
+/** 识别完成但尚未确认入库：进入导入页「待确认」。 */
+export function isAwaitingConfirmation(row: LibraryRowV1, confirmedIds: ReadonlySet<string>): boolean {
+  return !row.inTrash
+    && row.modality !== "writing"
+    && (row.stage === "ready" || row.stage === "action_required")
+    && !isRowConfirmed(row, confirmedIds);
+}
+
+/** 导入页的三组：识别中 / 待确认 / 失败。已删除（回收站）的行不在队列里。 */
+export function importQueueGroups(
+  rows: LibraryRowV1[],
+  confirmedIds: ReadonlySet<string>
+): { working: LibraryRowV1[]; review: LibraryRowV1[]; failed: LibraryRowV1[] } {
+  const live = rows.filter((row) => !row.inTrash && row.modality !== "writing");
   const byUpdate = (a: LibraryRowV1, b: LibraryRowV1) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "");
   return {
     working: live.filter((row) => isProcessingStage(row.stage)).sort(byUpdate),
-    review: live.filter((row) => row.stage === "action_required").sort(byUpdate),
+    review: live.filter((row) => isAwaitingConfirmation(row, confirmedIds)).sort(byUpdate),
     failed: live.filter((row) => row.stage === "failed").sort(byUpdate)
   };
 }
 
-/** 题库里可见的行：只有可发布与已发布；写作不在这里（见 WritingPanel 区块）。 */
-export function libraryRows(rows: LibraryRowV1[]): LibraryRowV1[] {
-  return rows.filter((row) => !row.inTrash && row.modality !== "writing" && (row.stage === "ready" || row.stage === "published"));
+/** 题库里可见的行：已发布，或已确认入库的识别完成行；写作不在这里（见 WritingPanel 区块）。 */
+export function libraryRows(rows: LibraryRowV1[], confirmedIds: ReadonlySet<string>): LibraryRowV1[] {
+  return rows.filter((row) => {
+    if (row.inTrash || row.modality === "writing") return false;
+    if (row.stage === "published") return true;
+    return (row.stage === "ready" || row.stage === "action_required") && isRowConfirmed(row, confirmedIds);
+  });
 }
 
-/** 导入角标：识别中 + 待检查 + 失败。 */
-export function importBadgeCount(rows: LibraryRowV1[]): number {
-  const groups = importQueueGroups(rows);
+/** 导入角标：识别中 + 待确认 + 失败。 */
+export function importBadgeCount(rows: LibraryRowV1[], confirmedIds: ReadonlySet<string>): number {
+  const groups = importQueueGroups(rows, confirmedIds);
   return groups.working.length + groups.review.length + groups.failed.length;
 }

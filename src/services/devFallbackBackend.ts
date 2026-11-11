@@ -2515,6 +2515,10 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
     case "list_library_items": {
       return Object.keys(store.authoringV2).map((itemId) => devLibraryItem(store, itemId)) as T;
     }
+    // 用户确认入库：后端命令尚未实现（另有任务书）。开发预览抛出 requires_tauri_runtime，
+    // 由 confirmedStore 退回本地兜底（localStorage），与真实后端不可用时的行为一致。
+    case "set_library_item_confirmed":
+      throw new Error("requires_tauri_runtime:set_library_item_confirmed");
     case "set_library_item_part": {
       const id = String(args.itemId ?? "");
       const label = args.label == null ? null : String(args.label).trim();

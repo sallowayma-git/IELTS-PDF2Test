@@ -31,13 +31,16 @@ export interface AppSettingsV1 {
   cloudTokenBudget: number;
   /** 学生端的考试作答存储目录（含 snapshots/ 与 status/），只读；与 NAS 发布目录分开保存。 */
   submissionsRoot: string;
+  /** 用户确认入库的题目 id（后端 `set_library_item_confirmed` 不可用时的本地兜底，见 confirmedStore）。 */
+  confirmedLibraryItemIds: string[];
 }
 
 export const DEFAULT_APP_SETTINGS: Readonly<AppSettingsV1> = Object.freeze({
   nasDestination: "",
   developerMode: false,
   cloudTokenBudget: DEFAULT_CLOUD_TOKEN_BUDGET,
-  submissionsRoot: ""
+  submissionsRoot: "",
+  confirmedLibraryItemIds: []
 });
 
 export function readAppSettings(): AppSettingsV1 {
@@ -52,7 +55,10 @@ export function readAppSettings(): AppSettingsV1 {
     nasDestination: (stored.nasDestination ?? legacyNas).trim(),
     developerMode: stored.developerMode === true,
     cloudTokenBudget: normalizeCloudTokenBudget(stored.cloudTokenBudget),
-    submissionsRoot: typeof stored.submissionsRoot === "string" ? stored.submissionsRoot.trim() : ""
+    submissionsRoot: typeof stored.submissionsRoot === "string" ? stored.submissionsRoot.trim() : "",
+    confirmedLibraryItemIds: Array.isArray(stored.confirmedLibraryItemIds)
+      ? stored.confirmedLibraryItemIds.filter((id): id is string => typeof id === "string")
+      : []
   };
 }
 
@@ -63,6 +69,7 @@ export function writeAppSettings(patch: Partial<AppSettingsV1>): AppSettingsV1 {
   next.nasDestination = next.nasDestination.trim();
   next.submissionsRoot = (next.submissionsRoot ?? "").trim();
   next.cloudTokenBudget = normalizeCloudTokenBudget(next.cloudTokenBudget);
+  next.confirmedLibraryItemIds = [...new Set(next.confirmedLibraryItemIds ?? [])];
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     // 迁移期同时写回旧 key，兼容仍在使用它的旧导出页。

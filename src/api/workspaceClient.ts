@@ -53,6 +53,8 @@ export interface LibraryItemSummaryV2 {
   /** 权威稿的 examId（与发布清单、当前试卷同一身份）；无权威稿时为 null。 */
   examId?: string | null;
   processing?: ProcessingState | null;
+  /** 用户确认入库的时间；未确认为 null/undefined。后端命令上线前不返回该字段。 */
+  confirmedAt?: string | null;
 }
 
 export interface ApplyEditorCommandsResultV1 {
@@ -117,4 +119,12 @@ export async function listLibraryItems(includeDeleted = false): Promise<LibraryI
 /** 改名走权威稿的版本 CAS：`baseVersion` 过期时后端返回 EDIT_VERSION_CONFLICT。 */
 export async function renameLibraryItem(itemId: string, title: string, baseVersion: number): Promise<LibraryItemSummaryV2> {
   return command("rename_library_item", { itemId, title, baseVersion });
+}
+
+/**
+ * 用户确认入库 / 退回待确认（`set_library_item_confirmed`）。
+ * 后端尚未注册该命令时调用会失败，由 confirmedStore 判断后退回本地兜底。
+ */
+export async function setLibraryItemConfirmed(itemId: string, confirmed: boolean): Promise<LibraryItemSummaryV2> {
+  return command("set_library_item_confirmed", { itemId, confirmed });
 }
