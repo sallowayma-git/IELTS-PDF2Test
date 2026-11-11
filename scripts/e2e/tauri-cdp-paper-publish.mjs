@@ -17,7 +17,6 @@ import {
   CDP_CHANNEL_LABEL, CDP_CHANNEL_NOTE, CannotRunError,
   assertBuildFresh, buildFreshReport, gitHead, launchTauriAppCdp, repoRoot, sha256File, sleep, writeReport,
 } from "./lib/tauri-cdp-harness.mjs";
-import { confirmedSettingsJs } from "./lib/paper-publish-steps.mjs";
 
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 const runDir = path.join(repoRoot, "artifacts", "e2e-cdp", `paper-publish-${stamp}`);
@@ -227,13 +226,19 @@ async function main() {
       `题库里的预置条目=${ids.filter((id) => migrated.some((row) => row.id === id)).length}/3`);
     if (!ids.every((id) => migrated.some((row) => row.id === id))) throw new Error("预置的三篇没有被启动迁移种进题库");
 
+    // 预置条目是「识别完成、未确认」：经真实后端命令确认入库（与界面「确认入库」同一条后端路径），才会进题库。
+    const confirmed = await session.invoke("set_library_items_confirmed", { itemIds: ids, confirmed: true });
+    const confirmRows = confirmed?.ok ? confirmed.value?.results ?? [] : [];
+    recordAssertion(report, "P-0b backend-confirm-seeded-items",
+      confirmed?.ok && confirmRows.length === ids.length && confirmRows.every((row) => row.ok),
+      `后端确认=${confirmRows.filter((row) => row.ok).length}/${ids.length}${confirmed?.ok ? "" : `；${confirmed?.error ?? ""}`}`);
+    if (!confirmed?.ok || confirmRows.some((row) => !row.ok)) throw new Error("预置条目没有通过后端确认入库");
+
     // 1. 发布目录写进设置，并重新挂载题库页让「当前试卷」卡片读到目录。
     await session.evaluate(`(() => {
       const raw = window.localStorage.getItem(${JSON.stringify(APP_SETTINGS_KEY)});
       const settings = raw ? JSON.parse(raw) : {};
       settings.nasDestination = ${JSON.stringify(nasRoot)};
-      // 预置条目是「识别完成、未确认」：先标为已确认入库（用户确认入库的本地兜底），才会进题库。
-      ${confirmedSettingsJs(ids)}
       window.localStorage.setItem(${JSON.stringify(APP_SETTINGS_KEY)}, JSON.stringify(settings));
       window.location.hash = "#/settings"; return true;
     })()`);

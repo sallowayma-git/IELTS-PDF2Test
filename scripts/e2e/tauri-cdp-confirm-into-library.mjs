@@ -34,6 +34,13 @@ const SYNTHETIC_AUTHORING = path.join(repoRoot, "fixtures", "golden", "synthetic
 const NOW = "2026-11-07T00:00:00Z";
 
 
+/** 真实 IPC 调用并解开结果：失败时抛出后端原文，成功返回 value。 */
+async function invokeValue(session, command, args = {}) {
+  const result = await session.invoke(command, args);
+  if (!result?.ok) throw new Error(`${command}: ${result?.error ?? JSON.stringify(result)}`);
+  return result.value;
+}
+
 /** 轮询直到 fn 返回真值或超时；超时返回 null（不抛错，由断言如实报告）。 */
 async function waitFor(fn, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
@@ -145,8 +152,8 @@ async function main() {
   try {
     report.browserArgs = session.browserArgs;
     // 真实探测确认命令：空数组调用不写任何数据，只证明命令已注册、返回批量结果结构。
-    const probe = await session.invoke("set_library_items_confirmed", { itemIds: [], confirmed: true })
-      .then((result) => ({ ok: Array.isArray(result?.results) }))
+    const probe = await invokeValue(session, "set_library_items_confirmed", { itemIds: [], confirmed: true })
+      .then((value) => ({ ok: Array.isArray(value?.results) }))
       .catch((cause) => ({ ok: false, error: String(cause?.message ?? cause) }));
     report.backendConfirmCommand = probe.ok ? "set_library_items_confirmed (probed: registered)" : `unavailable: ${probe.error}`;
     recordAssertion(report, "C-0a backend-confirm-command-registered", probe.ok, report.backendConfirmCommand);
@@ -171,7 +178,7 @@ async function main() {
     await sleep(3000);
     await session.waitFor(`!!document.querySelector('#root *')`, { timeoutMs: 60000, label: "reloaded" });
     const migratedLegacy = await waitFor(async () => {
-      const rows = await session.invoke("list_library_items", { includeDeleted: false });
+      const rows = await invokeValue(session, "list_library_items", { includeDeleted: false }).catch(() => []);
       const row = rows.find((item) => item.id === legacyTarget.jobId);
       return row && row.confirmedAt ? row : null;
     }, 60000);
@@ -211,7 +218,7 @@ async function main() {
       { timeoutMs: 30000, label: "library-has-target" });
     recordAssertion(report, "C-4 confirmed-item-in-library", await libraryHas(session, confirmTarget.jobId), "题库里出现了它");
     const localIdsNow = async () => session.evaluate(`(() => JSON.parse(window.localStorage.getItem(${JSON.stringify(APP_SETTINGS_KEY)}) ?? "{}").confirmedLibraryItemIds ?? [])()`);
-    const backendConfirmedAt = async (id) => ((await session.invoke("list_library_items", { includeDeleted: false })).find((item) => item.id === id)?.confirmedAt) ?? null;
+    const backendConfirmedAt = async (id) => ((await invokeValue(session, "list_library_items", { includeDeleted: false })).find((item) => item.id === id)?.confirmedAt) ?? null;
     const localAfterConfirm = await localIdsNow();
     const backendAt = await backendConfirmedAt(confirmTarget.jobId);
     recordAssertion(report, "C-4b confirm-writes-backend-not-local",
