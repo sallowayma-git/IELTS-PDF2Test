@@ -503,46 +503,63 @@
 .exam-canvas-v2.is-author .v2-author-tools button:hover:not(:disabled) { background: var(--paper-control-hover, #f2f2f2); color: #111; }
 .exam-canvas-v2.is-author .v2-author-tools button:focus-visible { outline: 2px solid var(--paper-focus, #1f6387); outline-offset: 1px; }
 .exam-canvas-v2.is-author .v2-author-tools button:disabled { opacity: 0.35; cursor: not-allowed; }
-/* 选项增删：悬停到选项行才出现行末 ×；「添加选项」在选项列表下方，悬停到本组才出现
-   （没有选项时常显，否则无处可点）。 */
+/* 选项增删：行末 × 作者模式下常显（低对比度，触屏与键盘都可达）；悬停/聚焦到选项行时加深。
+   选项池 chip 上的 × 绝对定位在 chip 内右侧，不挤压 chip 的版面。拖动排序中隐藏。 */
 .exam-canvas-v2.is-author .v2-option-delete {
   flex: 0 0 auto;
   align-self: center;
-  width: 18px;
-  height: 18px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
   margin-left: 8px;
   padding: 0;
   border: 0;
+  border-radius: 3px;
   background: transparent;
-  color: #8a8a8a;
+  color: #5f6670;
   font: inherit;
-  font-size: 0.9rem;
-  line-height: 18px;
+  font-size: 0.95rem;
+  line-height: 1;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 120ms ease;
+  opacity: 0.55;
+  transition: opacity 120ms ease, color 120ms ease;
 }
-.exam-canvas-v2.is-author .v2-choice-item[data-option-row]:hover > .v2-option-delete,
+.exam-canvas-v2.is-author [data-option-row]:hover > .v2-option-delete,
+.exam-canvas-v2.is-author .v2-option-delete:hover,
 .exam-canvas-v2.is-author .v2-option-delete:focus-visible { opacity: 1; }
-.exam-canvas-v2.is-author .v2-option-delete:hover { color: #b42318; }
-.exam-canvas-v2.is-author .is-reordering .v2-option-delete { opacity: 0; }
+.exam-canvas-v2.is-author .v2-option-delete:hover:not(:disabled) { color: #b42318; }
+.exam-canvas-v2.is-author .v2-option-delete:focus-visible { outline: 2px solid var(--paper-focus, #1f6387); outline-offset: 1px; }
+.exam-canvas-v2.is-author .v2-option-delete:disabled { opacity: 0.25; cursor: not-allowed; }
+.exam-canvas-v2.is-author .is-reordering .v2-option-delete { opacity: 0; pointer-events: none; }
+/* 选项池 chip：× 在 chip 内右侧，给文字让出空间。 */
+.exam-canvas-v2.is-author .v2-answer-option[data-option-row] > .v2-option-delete {
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  margin: 0;
+  transform: translateY(-50%);
+}
+.exam-canvas-v2.is-author .v2-answer-option[data-option-row] > .v2-answer-option-token { padding-right: 28px; }
+/* 「＋ 添加选项」常显（低对比度）：没有悬停前提，触屏与键盘都能找到。 */
 .exam-canvas-v2.is-author .v2-option-add {
   display: block;
   margin: 8px 0 0;
   padding: 2px 0;
   border: 0;
   background: transparent;
-  color: #8a8a8a;
+  color: #6b7178;
   font: inherit;
   font-size: 0.85rem;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 120ms ease;
+  opacity: 0.8;
 }
-.exam-canvas-v2.is-author .v2-response-group:hover > .v2-option-add,
-.exam-canvas-v2.is-author .v2-option-add:focus-visible,
-.exam-canvas-v2.is-author .v2-option-add.is-empty { opacity: 1; }
-.exam-canvas-v2.is-author .v2-option-add:hover { color: var(--paper-ink, #111); text-decoration: underline; }
+.exam-canvas-v2.is-author .v2-option-add:hover,
+.exam-canvas-v2.is-author .v2-option-add:focus-visible { opacity: 1; color: var(--paper-ink, #111); text-decoration: underline; }
+.exam-canvas-v2.is-author .v2-option-add:focus-visible { outline: 2px solid var(--paper-focus, #1f6387); outline-offset: 1px; }
+.exam-canvas-v2.is-author .v2-answer-option-pool > .v2-option-add { margin: 8px 0 0; }
 /* 选项拖动排序：手柄绝对定位在选项行左侧、不占版面，悬停/聚焦到该行时才出现；
    拖动中用边线提示落点（竖排选项用上下边线，TFNG 横排用左右边线）。 */
 .exam-canvas-v2.is-author .v2-option-drag-handle {

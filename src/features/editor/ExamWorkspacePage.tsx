@@ -457,6 +457,19 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
     setNotice(undefined);
     setNoticeDetail(undefined);
   }
+  // 结构修改（选项增删等）被后端规则拒绝时，提示在页面顶部；编辑者多半正在画布下方操作，
+  // 所以出现时把提示滚动到可见处。
+  const noticeRef = useRef<HTMLParagraphElement | null>(null);
+  const scrollNoticeIntoView = useRef(false);
+  function structureError(error: unknown, fallback: string) {
+    scrollNoticeIntoView.current = true;
+    showError(error, fallback);
+  }
+  useEffect(() => {
+    if (!notice || !scrollNoticeIntoView.current) return;
+    scrollNoticeIntoView.current = false;
+    noticeRef.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  }, [notice]);
 
   async function withBusy(key: string, work: () => Promise<void>) {
     setBusyAction(key);
@@ -718,7 +731,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
         </div>
       ) : null}
       {notice ? (
-        <p className="workspace-notice" role="status">
+        <p className="workspace-notice" role="status" ref={noticeRef}>
           {notice}
           {noticeDetail && noticeDetail !== notice && readAppSettings().developerMode ? (
             <small className="workspace-notice-detail">技术详情：{noticeDetail}</small>
@@ -973,13 +986,13 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               // 静默返回 undefined，这里必须响亮失败而不是静默吞掉这次操作。
               const missing = missingStructureActionMessage(draft, action);
               if (missing) {
-                showError(new Error(missing), "这个结构修改没有生效，请重试。");
+                structureError(new Error(missing), "这个结构修改没有生效，请重试。");
                 return;
               }
               try {
                 const patch = compileStructureAction(draft, action);
                 if (patch) editor.applyPatch(patch);
-              } catch (error) { showError(error, "这个结构修改没有生效，请重试。"); }
+              } catch (error) { structureError(error, "这个结构修改没有生效，请重试。"); }
             }}
           />
         ) : null}

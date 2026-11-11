@@ -133,12 +133,15 @@ function OptionDeleteButton({ canvas, taskId, responseGroupId, option, count }: 
   option: OptionV2;
   count: number;
 }) {
-  if (canvas.mode !== "author" || !canvas.onStructureAction || count <= 1 || !optionSourceEditable(canvas, taskId, responseGroupId)) return null;
+  if (canvas.mode !== "author" || !canvas.onStructureAction || !optionSourceEditable(canvas, taskId, responseGroupId)) return null;
+  // 只剩一个选项时仍渲染（禁用并说明原因），避免用户以为删除功能坏了。
+  const onlyOne = count <= 1;
   return <button
     type="button"
     className="v2-option-delete"
-    title="删除这个选项"
+    title={onlyOne ? "至少保留一个选项" : "删除这个选项"}
     aria-label={`删除选项 ${option.label}`}
+    disabled={onlyOne}
     // 按钮在 <label> 里：阻止点击冒泡成“选中这个选项”。
     onClick={(event) => {
       event.preventDefault();
@@ -668,6 +671,8 @@ function AnswerOptionPool({
         </div>;
       })}
     </div>
+    {/* 「添加选项」放在选项池内部末尾：它添加的是池里的选项，不是题目列表。 */}
+    <OptionAddButton canvas={canvas} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} />
   </section>;
 }
 
@@ -1103,6 +1108,8 @@ export function ExamCanvas(inputProps: ExamCanvasProps) {
               : Number.POSITIVE_INFINITY;
             const unorderedSelected = new Set(response.slotIds.flatMap((slotId) => canvasAnswers[slotId] ?? [])).size;
             const responseSlotIds = new Set(response.slotIds);
+            // 选项池型题目（拖放）的选项与「添加选项」由 AnswerOptionPool 渲染，这里不再重复。
+            const optionPoolRendered = options.length > 0 && response.slotIds.some((slotId) => runtime.answerSlots[slotId]?.interaction === "dragdrop");
             // 判断题（TFNG/YNNG）逐题题干：response.prompt 的顶层段落能被每个 slot 的
             // hostNodeId 一一认领时（全有或全无），该题陈述渲染到题号后面，顶部只留公共段。
             // 缺宿主 / 宿主内嵌 answer_slot / unordered_set 共享多选一律不启用，保持旧版式。
@@ -1143,7 +1150,7 @@ export function ExamCanvas(inputProps: ExamCanvasProps) {
                         : <input className="v2-text-answer" readOnly={props.locked} type="text" name={slotId} value={values[0] ?? ""} aria-label={`Answer ${runtime.questionDisplayMap[slotId]}`} onChange={(event) => setText(slotId, event.target.value)} />;
                 return <div key={slotId} className={`v2-slot-question${props.selectedId === slotId ? " is-selected" : ""}`} data-question-id={slotId} onClick={(event) => { if (props.mode === "author") { event.stopPropagation(); props.onSelect?.(slotId); } }}><div className="v2-slot-question-label"><span className="v2-slot-number">{runtime.questionDisplayMap[slotId]}</span>{hostPromptNode ? <span className="v2-slot-prompt" style={{ flex: 1, minWidth: 0 }}><ContentNodes nodes={[hostPromptNode]} canvas={props} /></span> : null}{slot.hostType === "passage_paragraph" ? <span className="v2-passage-target-reference">{paragraphLabel ? `Paragraph ${paragraphLabel}` : "Passage paragraph"}</span> : response.kind === "text_entry" || response.kind === "matching" ? <span>Response {index + 1}</span> : null}</div>{answerControl}</div>;
               })}</div>}
-              {options.length || (props.mode === "author" && (response.kind === "choice" || response.kind === "matching")) ? <OptionAddButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} /> : null}
+              {!optionPoolRendered && (options.length || (props.mode === "author" && (response.kind === "choice" || response.kind === "matching"))) ? <OptionAddButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} /> : null}
             </section>;
           })}
         </article>)}
