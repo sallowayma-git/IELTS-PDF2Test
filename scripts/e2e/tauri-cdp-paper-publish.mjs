@@ -17,6 +17,7 @@ import {
   CDP_CHANNEL_LABEL, CDP_CHANNEL_NOTE, CannotRunError,
   assertBuildFresh, buildFreshReport, gitHead, launchTauriAppCdp, repoRoot, sha256File, sleep, writeReport,
 } from "./lib/tauri-cdp-harness.mjs";
+import { confirmedSettingsJs } from "./lib/paper-publish-steps.mjs";
 
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 const runDir = path.join(repoRoot, "artifacts", "e2e-cdp", `paper-publish-${stamp}`);
@@ -231,6 +232,8 @@ async function main() {
       const raw = window.localStorage.getItem(${JSON.stringify(APP_SETTINGS_KEY)});
       const settings = raw ? JSON.parse(raw) : {};
       settings.nasDestination = ${JSON.stringify(nasRoot)};
+      // 预置条目是「识别完成、未确认」：先标为已确认入库（用户确认入库的本地兜底），才会进题库。
+      ${confirmedSettingsJs(ids)}
       window.localStorage.setItem(${JSON.stringify(APP_SETTINGS_KEY)}, JSON.stringify(settings));
       window.location.hash = "#/settings"; return true;
     })()`);

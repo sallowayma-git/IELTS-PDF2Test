@@ -8,6 +8,15 @@ import { sha256File, sleep } from "./tauri-cdp-harness.mjs";
 export const APP_SETTINGS_KEY = "ielts-author-studio.app-settings.v1";
 export const PARTS = ["P1", "P2", "P3"];
 
+/**
+ * 用户确认入库的本地兜底（后端 set_library_item_confirmed 未上线前）：预置条目是「识别完成、未确认」，
+ * 不先确认就不会进题库。等价于用户在导入页点了「确认入库」。
+ * 用法：把返回的语句拼进 settings 对象的读写脚本里（见 tauri-cdp-paper-publish.mjs）。
+ */
+export function confirmedSettingsJs(ids) {
+  return `settings.confirmedLibraryItemIds = [...new Set([...(settings.confirmedLibraryItemIds ?? []), ...${JSON.stringify(ids)}])];`;
+}
+
 /** 复现 product_chain.rs::physical_shadow_for（与 tauri-cdp-paper-publish.mjs 同款）。 */
 export function physicalShadowFor(authoring, jobId) {
   const nodeIds = new Set();

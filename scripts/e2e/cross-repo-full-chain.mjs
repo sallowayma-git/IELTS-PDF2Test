@@ -33,7 +33,7 @@ import {
   assertBuildFresh, buildFreshReport, gitHead, launchTauriAppCdp, repoRoot, sha256File, sleep, writeReport,
 } from "./lib/tauri-cdp-harness.mjs";
 import {
-  APP_SETTINGS_KEY, PARTS, checkPointerOnDisk, ensureAllCheckedStable, ensureChecked, libraryRows, publishCurrentSelection,
+  APP_SETTINGS_KEY, PARTS, checkPointerOnDisk, confirmedSettingsJs, ensureAllCheckedStable, ensureChecked, libraryRows, publishCurrentSelection,
   readPointer, seedReadingJob, setRowPart, waitForRows,
 } from "./lib/paper-publish-steps.mjs";
 
@@ -118,6 +118,7 @@ async function authorPublish({ runDir, nasRoot, state, seed, label }) {
       const raw = window.localStorage.getItem(${JSON.stringify(APP_SETTINGS_KEY)});
       const settings = raw ? JSON.parse(raw) : {};
       settings.nasDestination = ${JSON.stringify(nasRoot)};
+      ${confirmedSettingsJs(ids)}
       window.localStorage.setItem(${JSON.stringify(APP_SETTINGS_KEY)}, JSON.stringify(settings));
       window.location.hash = "#/settings"; return true;
     })()`);
