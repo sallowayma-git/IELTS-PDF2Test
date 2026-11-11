@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import { describeRetryOutcome, retryProcessing } from "../../api/processingClient";
 import { go, workspacePath } from "../../app/router";
 import { LibraryItemRow } from "../library/LibraryItemRow";
-import { confirmItems, useConfirmedIds } from "../library/confirmedStore";
+import { confirmItems, summarizeConfirmFailures, useConfirmedIds } from "../library/confirmedStore";
 import { useLibraryStore } from "../library/libraryStore";
 import { importQueueGroups, type LibraryRowV1 } from "../library/libraryTypes";
 import { toUserFacingError } from "../../utils/userFacingError";
@@ -116,8 +116,14 @@ export function ImportPage() {
   /** 确认入库：未设置 Part 的题照常入库，但提示用户入库后在题库里设置 Part 才能组卷。 */
   async function confirmRows(ids: string[]) {
     try {
-      await confirmItems(ids);
+      const outcome = await confirmItems(ids);
       store.refresh();
+      const titleOf = (id: string) => store.rows.find((row) => row.id === id)?.title ?? id;
+      if (outcome.failed.length) {
+        const done = outcome.confirmed.length ? `已进入题库 ${outcome.confirmed.length} 项；` : "";
+        setNotice(`${done}未确认入库：${summarizeConfirmFailures(outcome, titleOf)}。`);
+        return;
+      }
       const single = ids.length === 1 ? store.rows.find((row) => row.id === ids[0]) : undefined;
       const needsPart = single !== undefined && (single.modality === "reading" || single.modality === "listening") && !single.part;
       setNotice(needsPart

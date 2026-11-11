@@ -13,6 +13,7 @@ import {
 } from "../../api/tauriCommands";
 import { getLibraryRow, listLibraryItems, type LibraryItemSummaryV2 } from "../../api/workspaceClient";
 import type { ImportJob, LibraryExamSummary } from "../../types";
+import { migrateLocalConfirmedOnce } from "./confirmedStore";
 import { buildRow, type LibraryRowV1 } from "./libraryTypes";
 
 // 题库行 = 处理任务（ImportJob）与题库条目（LibraryExamSummary）按 id 合并。
@@ -149,6 +150,13 @@ export function useLibraryStore(): LibraryStore {
       refreshingItems.current.delete(itemId);
       if (active.current && !snapshotPending.current && dirtyItems.current.has(itemId)) void refreshItem(itemId);
     }
+  }, [refresh]);
+
+  // 启动时把旧版本留在本地的确认集合迁移进后端（整个会话只执行一次；失败保留本地，下次启动再试）。
+  useEffect(() => {
+    void migrateLocalConfirmedOnce().then((moved) => {
+      if (moved) refresh();
+    });
   }, [refresh]);
 
   useEffect(() => {

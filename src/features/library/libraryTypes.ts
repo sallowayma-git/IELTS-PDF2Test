@@ -95,7 +95,11 @@ export interface LibraryRowV1 {
   examId?: string;
   updatedAt: string;
   inTrash: boolean;
-  /** 用户确认入库的时间（后端 `confirmed_at`）；未确认为 null/undefined。本地兜底见 confirmedStore。 */
+  /**
+   * 用户确认入库的时间（后端 `confirmed_at`）。
+   * - 字符串：已确认；null：后端明确为未确认（此时本地兜底集合不再参与判断）；
+   * - undefined：行上没有后端确认字段（仅浏览器预览的兜底数据），才退回本地集合。
+   */
   confirmedAt?: string | null;
   /** 已发布，且那次发布时检查没有全部通过、由用户点击发布放行（后端 `published_forced`）。 */
   publishedForced: boolean;
@@ -257,7 +261,7 @@ export function buildRow(
     examId: v2?.examId ?? undefined,
     updatedAt: v2?.updatedAt ?? job?.updatedAt ?? summary?.updatedAt ?? "",
     inTrash: Boolean(options.inTrash),
-    confirmedAt: v2?.confirmedAt ?? null,
+    confirmedAt: v2?.confirmedAt,
     publishedForced:
       stage === "published" &&
       (v2?.status === "published_forced" || v2?.status === "published_forced_not_loadable"),
@@ -315,9 +319,14 @@ export function matchesPart(row: LibraryRowV1, part: string | undefined): boolea
 // - 导入「识别中 / 失败」：处理中与失败的行。
 // - 题库：已发布（始终在题库），或已确认且识别完成的行。写作走自己的区块，不进组卷表格。
 
-/** 行是否已确认入库：后端 confirmedAt 非空，或本地兜底集合包含它。 */
+/**
+ * 行是否已确认入库。真实应用中后端 confirmedAt 是唯一权威：有字符串即已确认，null 即未确认。
+ * 只有行上没有后端确认字段（浏览器预览 / 命令缺失的兜底）时，才看本地兜底集合。
+ */
 export function isRowConfirmed(row: Pick<LibraryRowV1, "id" | "confirmedAt">, confirmedIds: ReadonlySet<string>): boolean {
-  return Boolean(row.confirmedAt) || confirmedIds.has(row.id);
+  if (row.confirmedAt) return true;
+  if (row.confirmedAt === null) return false;
+  return confirmedIds.has(row.id);
 }
 
 /** 识别完成但尚未确认入库：进入导入页「待确认」。 */

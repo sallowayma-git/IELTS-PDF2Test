@@ -7,12 +7,15 @@
 // 第二阶段（关闭应用，启动 #2，同一个数据目录与 WebView 配置）：
 //   → 题库页仍有它（确认状态持久化）→ 点「退回待确认」→ 题库页消失、导入页「待确认」重新出现它
 // 第三阶段（同一次启动）：
+//   预置一条「旧版本留在本地的确认 id」→ 重新加载界面 → 启动迁移把它导入后端并清空本地集合；行上 confirmedAt 非空。
+//   （放在第一阶段之前，只看迁移结果，不影响上面的确认流程。）
+// 第四阶段（同一次启动）：
 //   预置一篇选项池型题目（拖放答案位，选项来自题组选项库）→ 打开编辑页 → 「＋ 添加选项」出现在池内部
 //   → 新选项的 × 可见（不悬停、透明度足够、尺寸不小于 20×20）→ 点 × 删除 → 选项数回到原值
 //
 // 证据层级：real-app-e2e（CDP 驱动真实 Tauri/WebView2 界面 + 读取磁盘与后端只读命令的事实）。
-// 注意：后端 set_library_item_confirmed 命令尚未上线（另有任务书），确认状态走前端本地兜底
-// （appSettings.confirmedLibraryItemIds）；报告中会记录这一点。
+// 确认状态以后端 confirmedAt 为唯一权威；本地 appSettings.confirmedLibraryItemIds 只在命令缺失时作兜底，
+// 真实应用中应为空（断言 C-4b、C-5b）。
 // 缺少合成权威稿或 exe 不存在时以 CannotRunError 退出（退出码 3），不伪装成通过。
 import fs from "node:fs";
 import path from "node:path";
@@ -21,7 +24,7 @@ import {
   CDP_CHANNEL_LABEL, CDP_CHANNEL_NOTE, CannotRunError,
   assertBuildFresh, buildFreshReport, gitHead, launchTauriAppCdp, repoRoot, sleep, writeReport,
 } from "./lib/tauri-cdp-harness.mjs";
-import { physicalShadowFor, waitForRows } from "./lib/paper-publish-steps.mjs";
+import { APP_SETTINGS_KEY, physicalShadowFor, waitForRows } from "./lib/paper-publish-steps.mjs";
 
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 const runDir = path.join(repoRoot, "artifacts", "e2e-cdp", `confirm-into-library-${stamp}`);
@@ -30,6 +33,17 @@ const extraArgs = "--no-sandbox --disable-gpu";
 const SYNTHETIC_AUTHORING = path.join(repoRoot, "fixtures", "golden", "synthetic", "ielts", "early-approaches-authoring-v2.json");
 const NOW = "2026-11-07T00:00:00Z";
 
+
+/** 轮询直到 fn 返回真值或超时；超时返回 null（不抛错，由断言如实报告）。 */
+async function waitFor(fn, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = await fn();
+    if (value) return value;
+    await sleep(500);
+  }
+  return null;
+}
 
 function recordAssertion(report, id, ok, detail) {
   report.assertions.push({ id, ok: Boolean(ok), detail });
@@ -108,7 +122,7 @@ async function main() {
     scope: "导入页待确认→确认入库→题库出现→重启后仍在→退回待确认；编辑页选项池的「添加选项」与 × 删除",
     channel: CDP_CHANNEL_LABEL, channelNote: CDP_CHANNEL_NOTE,
     evidenceLevel: "real-app-e2e (CDP automation channel; UI driven; disk + read-only command facts)",
-    backendConfirmCommand: "not-yet-implemented (local fallback in appSettings.confirmedLibraryItemIds)",
+    backendConfirmCommand: "unprobed",
     identity: { exePath, commit: gitHead(repoRoot), buildFresh: buildFreshReport(fresh) },
     assertions: [], consoleErrors: [], pageExceptions: [], screenshots: [],
   };
@@ -117,8 +131,9 @@ async function main() {
   const dataDir = path.join(runDir, "appdata", "data");
   const confirmTarget = seedJob(dataDir, "review", template);
   const poolTarget = seedJob(dataDir, "pool", template, { status: "NeedsReview", authoringTransform: poolAuthoring });
-  const ids = [confirmTarget.jobId, poolTarget.jobId];
-  report.seeded = { confirmTarget, poolTarget };
+  const legacyTarget = seedJob(dataDir, "legacy", template);
+  const ids = [confirmTarget.jobId, poolTarget.jobId, legacyTarget.jobId];
+  report.seeded = { confirmTarget, poolTarget, legacyTarget };
 
   let verdict = "failed";
   let session = await launchTauriAppCdp({ exePath, runDir, extraBrowserArgs: extraArgs });
@@ -129,13 +144,44 @@ async function main() {
   };
   try {
     report.browserArgs = session.browserArgs;
+    // 真实探测确认命令：空数组调用不写任何数据，只证明命令已注册、返回批量结果结构。
+    const probe = await session.invoke("set_library_items_confirmed", { itemIds: [], confirmed: true })
+      .then((result) => ({ ok: Array.isArray(result?.results) }))
+      .catch((cause) => ({ ok: false, error: String(cause?.message ?? cause) }));
+    report.backendConfirmCommand = probe.ok ? "set_library_items_confirmed (probed: registered)" : `unavailable: ${probe.error}`;
+    recordAssertion(report, "C-0a backend-confirm-command-registered", probe.ok, report.backendConfirmCommand);
+
     const migrated = await waitForRows(session, ids, 90000);
     const rowOf = (id) => migrated.find((row) => row.id === id);
     recordAssertion(report, "C-0 seeded-items-migrated",
-      ids.every((id) => rowOf(id)), `后端条目=${ids.filter((id) => rowOf(id)).length}/2`);
+      ids.every((id) => rowOf(id)), `后端条目=${ids.filter((id) => rowOf(id)).length}/${ids.length}`);
     if (!ids.every((id) => rowOf(id))) throw new Error("预置条目没有被启动迁移读入");
     recordAssertion(report, "C-0b seeded-item-is-action-required",
       rowOf(confirmTarget.jobId)?.status === "action_required", `后端状态=${rowOf(confirmTarget.jobId)?.status}`);
+
+    // 旧版本的本地确认记录：写入 localStorage 后重新加载界面，启动迁移应把它导入后端并清空本地集合。
+    await session.evaluate(`(() => {
+      const key = ${JSON.stringify(APP_SETTINGS_KEY)};
+      const settings = JSON.parse(window.localStorage.getItem(key) ?? "{}");
+      settings.confirmedLibraryItemIds = [${JSON.stringify(legacyTarget.jobId)}];
+      window.localStorage.setItem(key, JSON.stringify(settings));
+      return true;
+    })()`);
+    await session.evaluate(`(() => { setTimeout(() => window.location.reload(), 50); return true; })()`);
+    await sleep(3000);
+    await session.waitFor(`!!document.querySelector('#root *')`, { timeoutMs: 60000, label: "reloaded" });
+    const migratedLegacy = await waitFor(async () => {
+      const rows = await session.invoke("list_library_items", { includeDeleted: false });
+      const row = rows.find((item) => item.id === legacyTarget.jobId);
+      return row && row.confirmedAt ? row : null;
+    }, 60000);
+    const localAfterMigration = await session.evaluate(`(() => {
+      const settings = JSON.parse(window.localStorage.getItem(${JSON.stringify(APP_SETTINGS_KEY)}) ?? "{}");
+      return settings.confirmedLibraryItemIds ?? [];
+    })()`);
+    recordAssertion(report, "C-0c legacy-local-confirm-migrated-to-backend",
+      Boolean(migratedLegacy) && Array.isArray(localAfterMigration) && localAfterMigration.length === 0,
+      `后端 confirmedAt=${migratedLegacy?.confirmedAt ?? "null"}；本地集合=${JSON.stringify(localAfterMigration)}`);
 
     // ── 第一阶段：导入页待确认 → 确认入库 → 题库可见 ──
     await gotoRoute(session, "#/library");
@@ -164,6 +210,12 @@ async function main() {
     await session.waitFor(`!!document.querySelector('[data-testid="library-page"] tr[data-item-id="${confirmTarget.jobId}"]')`,
       { timeoutMs: 30000, label: "library-has-target" });
     recordAssertion(report, "C-4 confirmed-item-in-library", await libraryHas(session, confirmTarget.jobId), "题库里出现了它");
+    const localIdsNow = async () => session.evaluate(`(() => JSON.parse(window.localStorage.getItem(${JSON.stringify(APP_SETTINGS_KEY)}) ?? "{}").confirmedLibraryItemIds ?? [])()`);
+    const backendConfirmedAt = async (id) => ((await session.invoke("list_library_items", { includeDeleted: false })).find((item) => item.id === id)?.confirmedAt) ?? null;
+    const localAfterConfirm = await localIdsNow();
+    const backendAt = await backendConfirmedAt(confirmTarget.jobId);
+    recordAssertion(report, "C-4b confirm-writes-backend-not-local",
+      localAfterConfirm.length === 0 && Boolean(backendAt), `本地集合=${JSON.stringify(localAfterConfirm)}；后端 confirmedAt=${backendAt ?? "null"}`);
     await shot("03-library-after-confirm");
 
     // ── 第二阶段：重启后仍在题库 → 退回待确认 ──
@@ -175,6 +227,9 @@ async function main() {
     await session.waitFor(`!!document.querySelector('[data-testid="library-page"] tr[data-item-id="${confirmTarget.jobId}"]')`,
       { timeoutMs: 60000, label: "library-after-restart" });
     recordAssertion(report, "C-5 confirmation-survives-restart", await libraryHas(session, confirmTarget.jobId), "重启后题库仍有它（确认状态持久化）");
+    const backendAtRestart = await backendConfirmedAt(confirmTarget.jobId);
+    recordAssertion(report, "C-5b confirmed-at-from-backend-after-restart",
+      Boolean(backendAtRestart) && (await localIdsNow()).length === 0, `重启后后端 confirmedAt=${backendAtRestart ?? "null"}`);
     await shot("04-library-after-restart");
 
     await session.clickSelector(`tr[data-item-id="${confirmTarget.jobId}"] [data-testid="library-row-unconfirm"]`);

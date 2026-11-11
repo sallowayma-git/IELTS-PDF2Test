@@ -128,3 +128,26 @@ export async function renameLibraryItem(itemId: string, title: string, baseVersi
 export async function setLibraryItemConfirmed(itemId: string, confirmed: boolean): Promise<LibraryItemSummaryV2> {
   return command("set_library_item_confirmed", { itemId, confirmed });
 }
+
+/** 批量确认 / 退回的逐条结果：业务拒绝逐条返回（`error` 为机器码），数据库错误整批失败。 */
+export interface LibraryItemConfirmResult {
+  itemId: string;
+  ok: boolean;
+  row?: LibraryItemSummaryV2;
+  /** 机器码，如 `LIBRARY_ITEM_NOT_CONFIRMABLE:processing`、`LIBRARY_ITEM_IN_USE`。 */
+  error?: string;
+}
+
+/** 批量确认入库 / 退回待确认（`set_library_items_confirmed`）。 */
+export async function setLibraryItemsConfirmed(itemIds: string[], confirmed: boolean): Promise<LibraryItemConfirmResult[]> {
+  const response = await command<{ results: LibraryItemConfirmResult[] }>("set_library_items_confirmed", { itemIds, confirmed });
+  return response.results;
+}
+
+/**
+ * 把启动前写在 localStorage 的确认集合导入后端（`import_local_confirmed_ids`）。
+ * 返回被后端接受（仍存在且可确认）的 id。
+ */
+export async function importLocalConfirmedIds(itemIds: string[]): Promise<string[]> {
+  return command("import_local_confirmed_ids", { itemIds });
+}

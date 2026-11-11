@@ -113,6 +113,18 @@ export function describePublishError(error: unknown): string {
   return toUserFacingError(error, "发布失败，请稍后重试。").userMessage;
 }
 
+/**
+ * 组卷发布的失败文案。`PAPER_ITEM_NOT_CONFIRMED:<itemId>`（试卷里有题目尚未确认入库，发布前已被拦下、
+ * 旧试卷未变）译成「试卷里有题目尚未确认入库：<题目名>」；`titleOf` 取不到名称时退回 id。
+ */
+export function describePublishFailure(error: unknown, titleOf: (itemId: string) => string = (id) => id): string {
+  const raw = String(error);
+  if (raw.includes("nas_package_v2_lock_busy")) return PUBLISH_LOCK_BUSY_NOTICE;
+  const notConfirmed = raw.match(/PAPER_ITEM_NOT_CONFIRMED:([^\s"',;}\]]+)/);
+  if (notConfirmed) return `试卷里有题目尚未确认入库：${titleOf(notConfirmed[1])}`;
+  return describePublishError(error);
+}
+
 export const PUBLISHED_NOTICE = "已发布";
 export const PUBLISHED_NOT_LOADABLE_NOTICE = "已发布，但学生端暂时无法打开这道题";
 
@@ -176,7 +188,7 @@ export function describeBatchPublishOutcome(outcome: PublishBatchOutcome): strin
 export async function publishItems(
   itemIds: string[], destination: string,
   onProgress?: (done: number, total: number, itemId: string) => void,
-  options?: { paper?: PaperSpec }
+  options?: { paper?: PaperSpec; titleOf?: (itemId: string) => string }
 ): Promise<PublishBatchOutcome> {
   if (!itemIds.length) return { destination, succeeded: [], failed: [] };
   onProgress?.(0, itemIds.length, itemIds[0]);
@@ -188,9 +200,7 @@ export async function publishItems(
     onProgress?.(itemIds.length, itemIds.length, "");
     return result;
   } catch (error) {
-    const message = String(error).includes("nas_package_v2_lock_busy")
-      ? PUBLISH_LOCK_BUSY_NOTICE
-      : describePublishError(error);
+    const message = describePublishFailure(error, options?.titleOf);
     return { destination, succeeded: [], failed: itemIds.map((itemId) => ({
       itemId, ok: false, message
     })) };

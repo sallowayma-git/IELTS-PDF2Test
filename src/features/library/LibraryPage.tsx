@@ -201,7 +201,7 @@ export function LibraryPage({ intent, pickItemId, modality, part }: {
       setPaperMessage(`正在发布 0/${itemIds.length}`);
       const outcome = await publishItems(itemIds, target, (done, total) => {
         setPaperMessage(`正在发布 ${done}/${total}`);
-      }, { paper: spec });
+      }, { paper: spec, titleOf: (id) => store.rows.find((row) => row.id === id)?.title ?? id });
       const titleOf = (id: string) => store.rows.find((row) => row.id === id)?.title ?? id;
       // 一条结论只说一次：顶层提示与组卷区用同一句，由后端 status 决定（审计 A5）。
       const message = describePublishResult(outcome, titleOf);

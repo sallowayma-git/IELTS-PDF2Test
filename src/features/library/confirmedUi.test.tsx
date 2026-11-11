@@ -8,7 +8,7 @@ import type { LibraryRowV1 } from "./libraryTypes";
 const mocks = vi.hoisted(() => ({
   rows: [] as LibraryRowV1[],
   refresh: vi.fn(),
-  setLibraryItemConfirmed: vi.fn()
+  setLibraryItemsConfirmed: vi.fn()
 }));
 vi.mock("./libraryStore", () => ({
   useLibraryStore: () => ({
@@ -16,7 +16,10 @@ vi.mock("./libraryStore", () => ({
     moveToTrash: vi.fn(), restore: vi.fn(), permanentlyDelete: vi.fn(), emptyTrash: vi.fn(), setPart: vi.fn()
   })
 }));
-vi.mock("../../api/workspaceClient", () => ({ setLibraryItemConfirmed: mocks.setLibraryItemConfirmed }));
+vi.mock("../../api/workspaceClient", () => ({
+  setLibraryItemsConfirmed: mocks.setLibraryItemsConfirmed,
+  importLocalConfirmedIds: vi.fn(async () => [])
+}));
 vi.mock("../import/ImportDrawer", () => ({ ImportDrawer: () => null }));
 vi.mock("../import/useImportFiles", () => ({
   useImportFiles: () => ({ busy: false, stageMessage: undefined, error: undefined, importFiles: vi.fn() })
@@ -38,10 +41,10 @@ function row(id: string, overrides: Partial<LibraryRowV1> = {}): LibraryRowV1 {
 
 beforeEach(() => {
   window.localStorage.clear();
-  mocks.setLibraryItemConfirmed.mockReset();
+  mocks.setLibraryItemsConfirmed.mockReset();
   mocks.refresh.mockReset();
   // 后端命令未注册：确认走本地兜底（真实 appSettings 写入 localStorage）。
-  mocks.setLibraryItemConfirmed.mockRejectedValue(new Error("Command set_library_item_confirmed not found"));
+  mocks.setLibraryItemsConfirmed.mockRejectedValue(new Error("Command set_library_items_confirmed not found"));
   window.history.replaceState(null, "", "#/import");
 });
 afterEach(() => {
@@ -77,7 +80,7 @@ describe("导入页「待确认」", () => {
     render(<ImportPage />);
     fireEvent.click(screen.getByTestId("import-confirm-all"));
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining("确认 2 项"));
-    expect(mocks.setLibraryItemConfirmed).not.toHaveBeenCalled();
+    expect(mocks.setLibraryItemsConfirmed).not.toHaveBeenCalled();
     expect(screen.getByTestId("import-group-review").textContent).toContain("题目 a");
   });
 
@@ -91,7 +94,7 @@ describe("导入页「待确认」", () => {
   });
 
   it("确认失败（非命令缺失）时如实提示，题仍留在待确认", async () => {
-    mocks.setLibraryItemConfirmed.mockRejectedValue(new Error("database is locked"));
+    mocks.setLibraryItemsConfirmed.mockRejectedValue(new Error("database is locked"));
     mocks.rows = [row("a")];
     render(<ImportPage />);
     fireEvent.click(screen.getByTestId("import-row-confirm"));

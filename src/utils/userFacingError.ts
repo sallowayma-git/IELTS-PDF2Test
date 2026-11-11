@@ -109,6 +109,15 @@ function classify(raw: string): { category: UserErrorCategory; userMessage?: str
     // 旧导出入口（无界面调用方）仍是严格门禁；产品发布按钮不会再收到这个错误。
     return { category: "validation", userMessage: "这道题还有未完成的内容，暂时不能用这个方式导出；请直接点击「发布」。" };
   }
+  if (raw.includes("PAPER_ITEM_NOT_CONFIRMED")) {
+    return { category: "validation", userMessage: "试卷里有题目尚未确认入库，请先在导入页确认入库。" };
+  }
+  if (raw.includes("LIBRARY_ITEM_IN_USE")) {
+    return { category: "conflict", userMessage: "已发布或正被 NAS 当前试卷使用，不能退回待确认。" };
+  }
+  if (raw.includes("LIBRARY_ITEM_NOT_CONFIRMABLE")) {
+    return { category: "validation", userMessage: "这道题当前还不能确认入库，请等识别完成后再确认。" };
+  }
   if (raw.includes("requires_tauri_runtime")) {
     return { category: "runtime", userMessage: "这个操作需要在桌面应用中运行。" };
   }
