@@ -221,11 +221,17 @@ pub(crate) fn get_library_item_summary_core(root: &Path, item_id: &str) -> Comma
             }
         }
     }
-    let processing = crate::processing::queue::get_job_by_library_item(&conn, item_id)?;
-    let extras = library_row_extras(&conn, Some(item_id))?;
+    library_row_value(&conn, row)
+}
+
+/// Pure row serialization, also used by confirmation (which must never perform lazy writes).
+pub(crate) fn library_row_value(conn: &rusqlite::Connection, row: super::repository::LibraryItemRowV2) -> CommandResult<Value> {
+    let processing = crate::processing::queue::get_job_by_library_item(conn, &row.id)?;
+    let extras = library_row_extras(conn, Some(&row.id))?;
+    let id = row.id.clone();
     let mut value = serde_json::to_value(row).map_err(|error| error.to_string())?;
     value["processing"] = serde_json::to_value(processing).map_err(|error| error.to_string())?;
-    apply_row_extras(&mut value, extras.get(item_id));
+    apply_row_extras(&mut value, extras.get(&id));
     Ok(value)
 }
 

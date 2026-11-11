@@ -53,6 +53,16 @@ export type AuthoringNodeAttributeV2 = {
   provenanceStatus?: "source" | "derived" | "user_edited" | "manual";
 };
 
+export interface AuthoringStructureChangeV2 {
+  path: string[];
+  before?: unknown;
+  after?: unknown;
+}
+
+export type AnswerSlotPlacementV2 =
+  | { node: Extract<ContentNodeV2, { type: "answer_slot" }>; target: AuthoringContentTargetV2; index: number; parentId?: string; promptNode?: never }
+  | { node?: undefined; target?: undefined; index?: undefined; parentId?: undefined; promptNode?: ContentNodeV2 };
+
 export type AuthoringPatchV2 =
   | { op: "setExamCategory"; category: NonNullable<IeltsAuthoringIRV2["exam"]["category"]> }
   | { op: "replaceText"; nodeId: string; from: number; to: number; text: string; expectedText?: string; preserveProvenance?: boolean; restoreProvenanceStatus?: ProvenanceStatus }
@@ -69,8 +79,11 @@ export type AuthoringPatchV2 =
   | { op: "setResponseCardinality"; taskId: string; responseGroupId: string; cardinality: ResponseGroupV2["cardinality"]; preserveProvenance?: boolean; restoreProvenanceStatus?: ProvenanceStatus }
   | { op: "setResponseGroup"; taskId: string; responseGroup: ResponseGroupV2; preserveProvenance?: boolean; restoreProvenanceStatus?: ProvenanceStatus }
   | { op: "setOptionBank"; taskId: string; optionBank: OptionBankV2 | null; preserveProvenance?: boolean; restoreProvenanceStatus?: ProvenanceStatus }
-  | { op: "insertAnswerSlot"; taskId: string; responseGroupId: string; target: AuthoringContentTargetV2; parentId?: string; index: number; slotIndex: number; node: Extract<ContentNodeV2, { type: "answer_slot" }>; slot: AnswerSlotV2; value: AnswerValueV2; expression: QuestionNumberExpressionV2 }
-  | { op: "deleteAnswerSlot"; taskId: string; responseGroupId: string; nodeId: string; slotId: string; expression: QuestionNumberExpressionV2 }
+  | ({ op: "insertAnswerSlot"; taskId: string; responseGroupId: string; slotIndex: number; slot: AnswerSlotV2; value: AnswerValueV2; expression?: QuestionNumberExpressionV2 } & AnswerSlotPlacementV2)
+  | { op: "deleteAnswerSlot"; taskId: string; responseGroupId: string; nodeId?: string; slotId: string; expression?: QuestionNumberExpressionV2 }
+  | { op: "deleteResponseGroup"; taskId: string; responseGroupId: string }
+  | { op: "deleteTaskGroup"; taskId: string }
+  | { op: "restoreStructure"; taskIds: string[]; changes: AuthoringStructureChangeV2[] }
   | { op: "setAnswerSlotHost"; slotId: string; hostNodeId: string; preserveProvenance?: boolean; restoreProvenanceStatus?: ProvenanceStatus }
   | { op: "setAnswer"; slotId: string; value: AnswerValueV2 }
   | { op: "bindSource"; entityId: string; anchors: SourceAnchorV2[]; preserveProvenance?: boolean; restoreProvenanceStatus?: ProvenanceStatus }

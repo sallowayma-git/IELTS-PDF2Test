@@ -3,7 +3,7 @@
 //! Alignment only produces the repair checklist and source anchors; it never decides admission.
 
 use crate::reconcile::alignment::{AlignmentOutcome, AlignmentReport};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -1687,6 +1687,33 @@ pub(crate) fn merge_human_edits(
     journal: &[Value],
 ) -> Result<Vec<String>, String> {
     let mut preserved_groups = BTreeSet::new();
+    // Replay deletions against the candidate before preserving surviving groups.
+    // Question-number evidence also catches cloud candidates with regenerated IDs.
+    let current_numbers: BTreeSet<u64> = current["answerSlots"].as_object().into_iter().flat_map(|s|s.values()).filter_map(|s|s["questionNumber"].as_u64()).collect();
+    for entry in journal {
+        let removed_numbers: BTreeSet<u64> = entry.pointer("/result/removedSlots").and_then(Value::as_array).into_iter().flatten()
+            .filter_map(|s|s["questionNumber"].as_u64()).filter(|n| !current_numbers.contains(n)).collect();
+        let removed_tasks: BTreeSet<&str> = entry.pointer("/result/removedTaskIds").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str)
+            .filter(|id| !current["taskGroups"].as_array().into_iter().flatten().any(|t|t["taskId"]==*id)).collect();
+        let tasks = cloud["taskGroups"].as_array().cloned().unwrap_or_default();
+        for task in tasks {
+            let Some(task_id) = task["taskId"].as_str() else { continue; };
+            if removed_tasks.contains(task_id) {
+                crate::authoring_v2_commands::apply_patch(cloud,&json!({"op":"deleteTaskGroup","taskId":task_id}))?;
+                continue;
+            }
+            for group in task["responseGroups"].as_array().into_iter().flatten() {
+                let ids: Vec<String> = group["slotIds"].as_array().into_iter().flatten().filter_map(Value::as_str)
+                    .filter(|id|cloud["answerSlots"][*id]["questionNumber"].as_u64().is_some_and(|n|removed_numbers.contains(&n))).map(str::to_string).collect();
+                if ids.is_empty() { continue; }
+                if ids.len() == group["slotIds"].as_array().map_or(0,Vec::len) {
+                    crate::authoring_v2_commands::apply_patch(cloud,&json!({"op":"deleteResponseGroup","taskId":task_id,"responseGroupId":group["responseGroupId"]}))?;
+                } else { for id in ids {
+                    crate::authoring_v2_commands::apply_patch(cloud,&json!({"op":"deleteAnswerSlot","taskId":task_id,"responseGroupId":group["responseGroupId"],"slotId":id}))?;
+                }}
+            }
+        }
+    }
     for entry in journal {
         let payload = entry.get("command").unwrap_or(entry);
         let commands = payload
@@ -1701,7 +1728,7 @@ pub(crate) fn merge_human_edits(
                 .unwrap_or_default();
             if op == "setAnswer" {
                 if let Some(slot_id) = command.get("slotId").and_then(Value::as_str) {
-                    put_answer_slot(current, cloud, slot_id)?;
+                    if current["answerSlots"].get(slot_id).is_some() { put_answer_slot(current, cloud, slot_id)?; }
                 }
                 continue;
             }
@@ -1724,14 +1751,33 @@ pub(crate) fn merge_human_edits(
                     | "setOptionBank"
                     | "insertAnswerSlot"
                     | "deleteAnswerSlot"
+                    | "deleteResponseGroup"
+                    | "deleteTaskGroup"
+                    | "restoreStructure"
                     | "upsertTaskGroupBundle"
                     | "insertNode"
                     | "deleteNode"
                     | "moveNode"
             );
             if group_wide {
-                let groups = command_group_ids(&command, current);
-                preserved_groups.extend(preserve_groups(current, cloud, &groups)?);
+                let mut groups = command_group_ids(&command, current);
+                groups.extend(command["taskIds"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string));
+                // A deleted task has no current seed. Its tombstone was applied above.
+                let missing: Vec<String> = groups.iter().filter(|id| !current["taskGroups"].as_array().into_iter().flatten().any(|t|t["taskId"]==id.as_str())).cloned().collect();
+                for id in missing {
+                    groups.remove(&id);
+                    if cloud["taskGroups"].as_array().into_iter().flatten().any(|t|t["taskId"]==id) {
+                        crate::authoring_v2_commands::apply_patch(cloud,&json!({"op":"deleteTaskGroup","taskId":id}))?;
+                    }
+                }
+                if !groups.is_empty() { preserved_groups.extend(preserve_groups(current, cloud, &groups)?); }
+                if op == "restoreStructure" {
+                    for field in ["passage","listening"] {
+                        if command["changes"].as_array().into_iter().flatten().any(|c| c["path"][0]==field) {
+                            if let Some(value)=current.get(field) { cloud[field]=value.clone(); }
+                        }
+                    }
+                }
                 continue;
             }
             if op == "replaceContent" {

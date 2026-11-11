@@ -16,7 +16,7 @@
     },
     "IeltsAuthoringIRV2": {
       "path": "ielts-authoring-ir-v2.schema.json",
-      "sha256": "8166e6fc75dd161550c7874a02e6dd4bcc57e5231b2ae578b9f3453c679f54a0"
+      "sha256": "3744ea0b893cd492dfe93bf94c0f1bf4227782a93dd9ab93438ce8249103ffb6"
     },
     "QualityReportV2": {
       "path": "quality-report-v2.schema.json",

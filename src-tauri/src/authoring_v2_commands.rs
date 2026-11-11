@@ -1593,8 +1593,7 @@ pub(crate) fn apply_patch(document: &mut Value, patch: &Value) -> CommandResult<
         "setResponseCardinality" => set_response_cardinality(document, object),
         "setResponseGroup" => set_response_group(document, object),
         "setOptionBank" => set_option_bank(document, object),
-        "insertAnswerSlot" => insert_answer_slot(document, object),
-        "deleteAnswerSlot" => delete_answer_slot(document, object),
+        "insertAnswerSlot" | "deleteAnswerSlot" | "deleteResponseGroup" | "deleteTaskGroup" | "restoreStructure" => crate::authoring_structure::apply(document, object),
         "setAnswerSlotHost" => set_answer_slot_host(document, object),
         "setAnswer" => set_answer(document, object),
         "bindSource" => bind_source(document, object),
@@ -1760,7 +1759,7 @@ fn replace_content(document: &mut Value, patch: &Map<String, Value>) -> CommandR
     })
 }
 
-fn insert_node(document: &mut Value, patch: &Map<String, Value>) -> CommandResult<()> {
+pub(crate) fn insert_node(document: &mut Value, patch: &Map<String, Value>) -> CommandResult<()> {
     let target = patch
         .get("target")
         .ok_or_else(|| "AUTHORING_PATCH_CONTENT_TARGET_REQUIRED".to_string())?;
@@ -2419,7 +2418,7 @@ fn validate_task_answer_preservation(
     Ok(())
 }
 
-fn set_question_expression(document: &mut Value, patch: &Map<String, Value>) -> CommandResult<()> {
+pub(crate) fn set_question_expression(document: &mut Value, patch: &Map<String, Value>) -> CommandResult<()> {
     let task_id = required_string(patch, "taskId")?;
     let expression = patch
         .get("expression")
@@ -2547,138 +2546,6 @@ fn set_option_bank(document: &mut Value, patch: &Map<String, Value>) -> CommandR
         restore_provenance_status(patch),
     );
     Ok(())
-}
-
-fn insert_answer_slot(document: &mut Value, patch: &Map<String, Value>) -> CommandResult<()> {
-    let task_id = required_string(patch, "taskId")?;
-    let response_id = required_string(patch, "responseGroupId")?;
-    let slot_index = required_u64(patch, "slotIndex")? as usize;
-    let node = patch
-        .get("node")
-        .and_then(Value::as_object)
-        .ok_or_else(|| "AUTHORING_PATCH_SLOT_NODE_REQUIRED".to_string())?;
-    let slot = patch
-        .get("slot")
-        .and_then(Value::as_object)
-        .ok_or_else(|| "AUTHORING_PATCH_SLOT_REQUIRED".to_string())?;
-    let value = patch
-        .get("value")
-        .ok_or_else(|| "AUTHORING_PATCH_ANSWER_REQUIRED".to_string())?;
-    let slot_id = slot
-        .get("slotId")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "AUTHORING_PATCH_SLOT_ID_REQUIRED".to_string())?;
-    if node.get("type").and_then(Value::as_str) != Some("answer_slot")
-        || node.get("slotId").and_then(Value::as_str) != Some(slot_id)
-    {
-        return Err("AUTHORING_PATCH_SLOT_NODE_MISMATCH".to_string());
-    }
-    let expression = patch
-        .get("expression")
-        .ok_or_else(|| "AUTHORING_PATCH_EXPRESSION_REQUIRED".to_string())?;
-    expand_question_expression(expression)?;
-    if document
-        .get("answerSlots")
-        .and_then(Value::as_object)
-        .is_some_and(|slots| slots.contains_key(slot_id))
-    {
-        return Err(format!("AUTHORING_PATCH_SLOT_ALREADY_EXISTS:{slot_id}"));
-    }
-    let backup = document.clone();
-    let result = (|| {
-        insert_node(document, patch)?;
-        document
-            .get_mut("answerSlots")
-            .and_then(Value::as_object_mut)
-            .ok_or_else(|| "AUTHORING_PATCH_ANSWER_SLOTS_MISSING".to_string())?
-            .insert(slot_id.to_string(), Value::Object(slot.clone()));
-        document
-            .get_mut("answerKey")
-            .and_then(Value::as_object_mut)
-            .ok_or_else(|| "AUTHORING_PATCH_ANSWER_KEY_MISSING".to_string())?
-            .insert(slot_id.to_string(), value.clone());
-        let task = find_object_by_field_mut(document, "taskId", task_id)
-            .ok_or_else(|| format!("AUTHORING_PATCH_TASK_NOT_FOUND:{task_id}"))?;
-        let group = task
-            .get_mut("responseGroups")
-            .and_then(Value::as_array_mut)
-            .and_then(|groups| {
-                groups.iter_mut().find(|item| {
-                    item.get("responseGroupId").and_then(Value::as_str) == Some(response_id)
-                })
-            })
-            .and_then(Value::as_object_mut)
-            .ok_or_else(|| format!("AUTHORING_PATCH_RESPONSE_GROUP_NOT_FOUND:{response_id}"))?;
-        let slot_ids = group
-            .get_mut("slotIds")
-            .and_then(Value::as_array_mut)
-            .ok_or_else(|| "AUTHORING_PATCH_SLOT_IDS_MISSING".to_string())?;
-        if slot_index > slot_ids.len() {
-            return Err(format!("AUTHORING_PATCH_INDEX_INVALID:{slot_index}"));
-        }
-        slot_ids.insert(slot_index, Value::String(slot_id.to_string()));
-        set_question_expression(document, patch)
-    })();
-    if result.is_err() {
-        *document = backup;
-    }
-    result
-}
-
-fn delete_answer_slot(document: &mut Value, patch: &Map<String, Value>) -> CommandResult<()> {
-    let task_id = required_string(patch, "taskId")?;
-    let response_id = required_string(patch, "responseGroupId")?;
-    let node_id = required_string(patch, "nodeId")?;
-    let slot_id = required_string(patch, "slotId")?;
-    let expression = patch
-        .get("expression")
-        .ok_or_else(|| "AUTHORING_PATCH_EXPRESSION_REQUIRED".to_string())?;
-    expand_question_expression(expression)?;
-    let node = find_object_mut_by_id(document, node_id)
-        .ok_or_else(|| format!("AUTHORING_PATCH_SLOT_NODE_NOT_FOUND:{slot_id}"))?;
-    if node.get("type").and_then(Value::as_str) != Some("answer_slot")
-        || node.get("slotId").and_then(Value::as_str) != Some(slot_id)
-    {
-        return Err(format!("AUTHORING_PATCH_SLOT_NODE_NOT_FOUND:{slot_id}"));
-    }
-    let backup = document.clone();
-    let result = (|| {
-        remove_content_node(document, node_id)
-            .ok_or_else(|| format!("AUTHORING_PATCH_SLOT_NODE_NOT_FOUND:{slot_id}"))?;
-        document
-            .get_mut("answerSlots")
-            .and_then(Value::as_object_mut)
-            .ok_or_else(|| "AUTHORING_PATCH_ANSWER_SLOTS_MISSING".to_string())?
-            .remove(slot_id)
-            .ok_or_else(|| format!("AUTHORING_PATCH_SLOT_NOT_FOUND:{slot_id}"))?;
-        document
-            .get_mut("answerKey")
-            .and_then(Value::as_object_mut)
-            .ok_or_else(|| "AUTHORING_PATCH_ANSWER_KEY_MISSING".to_string())?
-            .remove(slot_id);
-        let task = find_object_by_field_mut(document, "taskId", task_id)
-            .ok_or_else(|| format!("AUTHORING_PATCH_TASK_NOT_FOUND:{task_id}"))?;
-        let group = task
-            .get_mut("responseGroups")
-            .and_then(Value::as_array_mut)
-            .and_then(|groups| {
-                groups.iter_mut().find(|item| {
-                    item.get("responseGroupId").and_then(Value::as_str) == Some(response_id)
-                })
-            })
-            .and_then(Value::as_object_mut)
-            .ok_or_else(|| format!("AUTHORING_PATCH_RESPONSE_GROUP_NOT_FOUND:{response_id}"))?;
-        let slot_ids = group
-            .get_mut("slotIds")
-            .and_then(Value::as_array_mut)
-            .ok_or_else(|| "AUTHORING_PATCH_SLOT_IDS_MISSING".to_string())?;
-        slot_ids.retain(|value| value.as_str() != Some(slot_id));
-        set_question_expression(document, patch)
-    })();
-    if result.is_err() {
-        *document = backup;
-    }
-    result
 }
 
 fn set_answer_slot_host(document: &mut Value, patch: &Map<String, Value>) -> CommandResult<()> {

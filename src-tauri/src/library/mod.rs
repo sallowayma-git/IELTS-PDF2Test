@@ -9,6 +9,7 @@
 
 pub(crate) mod change_diff;
 pub(crate) mod commands;
+pub(crate) mod confirmation;
 pub(crate) mod final_version;
 pub(crate) mod migration;
 pub(crate) mod paper_archive;

@@ -49,6 +49,7 @@ mod authoring_commands;
 mod authoring_pipeline;
 mod authoring_review;
 mod authoring_v2_commands;
+mod authoring_structure;
 mod authoring_validation;
 mod auto_pipeline;
 mod candidate_evidence;
@@ -2100,6 +2101,30 @@ async fn empty_recycle_bin(app: AppHandle) -> CommandResult<Value> {
     }))
 }
 
+#[tauri::command]
+async fn set_library_item_confirmed(item_id: String, confirmed: bool, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        library::confirmation::set_library_item_confirmed_core(&root, &item_id, confirmed)
+    }).await.map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn set_library_items_confirmed(item_ids: Vec<String>, confirmed: bool, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        library::confirmation::set_library_items_confirmed_core(&root, &item_ids, confirmed)
+    }).await.map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn import_local_confirmed_ids(item_ids: Vec<String>, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        library::confirmation::import_local_confirmed_ids_core(&root, &item_ids)
+    }).await.map_err(|error| error.to_string())?
+}
+
 /// 手动设置题库条目的 Part 标签。`label` 为空表示清除手动值、回到自动判定。
 #[tauri::command]
 async fn set_library_item_part(
@@ -2320,7 +2345,10 @@ pub fn run() {
             list_trashed_exams,
             permanently_delete_library_exam,
             empty_recycle_bin,
-            set_library_item_part
+            set_library_item_part,
+            set_library_item_confirmed,
+            set_library_items_confirmed,
+            import_local_confirmed_ids
         ])
         .run(context)
         .expect("error while running tauri application");

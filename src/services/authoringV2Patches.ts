@@ -3,6 +3,7 @@ import type {
   AuthoringContentTargetV2,
   AuthoringNodeAttributeV2,
   AuthoringPatchV2,
+  AuthoringStructureChangeV2,
   IeltsAuthoringIRV2,
   QuestionNumberExpressionV2,
   ResponseGroupV2,
@@ -341,50 +342,213 @@ function patchOptionBank(document: IeltsAuthoringIRV2, patch: Extract<AuthoringP
   markUserEdited(task as unknown as JsonObject, patch.preserveProvenance, patch.restoreProvenanceStatus);
 }
 
-function patchInsertAnswerSlot(document: IeltsAuthoringIRV2, patch: Extract<AuthoringPatchV2, { op: "insertAnswerSlot" }>): void {
-  if (document.answerSlots[patch.slot.slotId] || findObjectById(document, patch.node.id)) throw new Error(`AUTHORING_PATCH_SLOT_ALREADY_EXISTS:${patch.slot.slotId}`);
-  if (patch.node.slotId !== patch.slot.slotId) throw new Error("AUTHORING_PATCH_SLOT_NODE_MISMATCH");
-  const task = document.taskGroups.find((candidate) => candidate.taskId === patch.taskId);
-  const group = task?.responseGroups.find((candidate) => candidate.responseGroupId === patch.responseGroupId);
-  if (!task || !group) throw new Error(`AUTHORING_PATCH_RESPONSE_GROUP_NOT_FOUND:${patch.responseGroupId}`);
-  const root = patch.parentId ? rootForTarget(document, { kind: "node", nodeId: patch.parentId }) : rootForTarget(document, patch.target);
-  validateIndex(patch.index, root.nodes.length);
-  validateIndex(patch.slotIndex, group.slotIds.length);
-  root.nodes.splice(patch.index, 0, structuredClone(patch.node));
-  group.slotIds.splice(patch.slotIndex, 0, patch.slot.slotId);
-  document.answerSlots[patch.slot.slotId] = structuredClone(patch.slot);
-  document.answerKey[patch.slot.slotId] = structuredClone(patch.value);
-  patchExpression(document, { op: "setQuestionExpression", taskId: patch.taskId, expression: patch.expression });
+// Structural edits traverse container wrappers too (table rows/cells, flow steps).
+function visitJson(value: unknown, visit: (object: JsonObject) => void): void {
+  if (Array.isArray(value)) value.forEach((child) => visitJson(child, visit));
+  else if (isObject(value)) { visit(value); Object.values(value).forEach((child) => visitJson(child, visit)); }
 }
 
-/** 删除答案位时同步清掉内容里仍指向该 slot 的热点，避免留下无法修复的悬挂热点。 */
-function removeHotspotsForSlot(document: IeltsAuthoringIRV2, slotId: string): void {
-  const visit = (nodes: ContentNodeV2[]): void => {
-    for (const node of nodes) {
-      if ((node.type === "figure" || node.type === "diagram") && Array.isArray(node.hotspots)) {
-        const next = node.hotspots.filter((hotspot) => hotspot.slotId !== slotId);
-        if (next.length !== node.hotspots.length) node.hotspots = next;
+function hasEmbeddedSlot(value: unknown): boolean {
+  let found = false;
+  visitJson(value, (object) => { if (object.type === "answer_slot") found = true; });
+  return found;
+}
+
+function validNewSubtree(document: IeltsAuthoringIRV2, node: ContentNodeV2): boolean {
+  const ids = new Set<string>();
+  let valid = true;
+  visitJson(node, (value) => {
+    if (typeof value.id === "string") {
+      if (ids.has(value.id) || findObjectById(document, value.id)) valid = false;
+      ids.add(value.id);
+    }
+  });
+  return valid;
+}
+
+function perSlotPrompt(document: IeltsAuthoringIRV2, group: ResponseGroupV2): boolean {
+  const hosts = new Set<string>();
+  return group.assignment !== "unordered_set" && group.slotIds.length > 0 && group.slotIds.every((id) => {
+    const host = document.answerSlots[id]?.hostNodeId;
+    const node = group.prompt?.find((node) => node.id === host);
+    if (!host || !node || hosts.has(host) || hasEmbeddedSlot(node)) return false;
+    hosts.add(host);
+    return true;
+  });
+}
+
+function collectNodeIds(value: unknown): Set<string> {
+  const ids = new Set<string>();
+  visitJson(value, (node) => { if (typeof node.id === "string") ids.add(node.id); });
+  return ids;
+}
+
+function cleanBindings(document: IeltsAuthoringIRV2, removed: Set<string>): void {
+  const map = document.passage?.paragraphMap;
+  if (map) for (const [label, id] of Object.entries(map)) if (removed.has(id)) delete map[label];
+  for (const slot of Object.values(document.answerSlots)) if (slot.hostNodeId && removed.has(slot.hostNodeId)) delete slot.hostNodeId;
+}
+
+function removeSlots(document: IeltsAuthoringIRV2, ids: Set<string>): void {
+  const hosts = new Set<string>();
+  for (const task of document.taskGroups) for (const group of task.responseGroups) {
+    if (perSlotPrompt(document, group)) for (const id of group.slotIds) {
+      const host = document.answerSlots[id]?.hostNodeId;
+      if (ids.has(id) && host) hosts.add(host);
+    }
+  }
+  for (const [id, slot] of Object.entries(document.answerSlots)) if (!ids.has(id) && slot.hostNodeId) hosts.delete(slot.hostNodeId);
+  const removed = new Set<string>();
+  const clean = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (let index = value.length - 1; index >= 0; index -= 1) {
+        const node = value[index];
+        if (isObject(node) && ((node.type === "answer_slot" && ids.has(String(node.slotId))) || hosts.has(String(node.id)))) {
+          for (const id of collectNodeIds(node)) removed.add(id);
+          value.splice(index, 1);
+        } else clean(node);
       }
-      for (const child of childArrays(node as unknown as JsonObject)) visit(child.nodes);
+    } else if (isObject(value)) {
+      if (Array.isArray(value.slotIds)) value.slotIds = value.slotIds.filter((id) => !ids.has(String(id)));
+      if (Array.isArray(value.hotspots)) value.hotspots = value.hotspots.filter((h) => !isObject(h) || !ids.has(String(h.slotId)));
+      Object.values(value).forEach(clean);
     }
   };
-  for (const root of everyContentRoot(document)) visit(root);
+  clean(document);
+  for (const task of document.taskGroups) for (const group of task.responseGroups) group.slotIds = group.slotIds.filter((id) => !ids.has(id));
+  for (const id of ids) { delete document.answerSlots[id]; delete document.answerKey[id]; }
+  cleanBindings(document, removed);
+}
+
+function refreshListening(document: IeltsAuthoringIRV2, before: IeltsAuthoringIRV2): void {
+  if (!document.listening) return;
+  const taskNumbers = (draft: IeltsAuthoringIRV2, ids: string[]) => new Set(draft.taskGroups.filter((t) => ids.includes(t.taskId))
+    .flatMap((t) => t.responseGroups.flatMap((g) => g.slotIds)).map((id) => draft.answerSlots[id]?.questionNumber).filter((n): n is number => Number.isInteger(n)));
+  for (const part of document.listening.parts) {
+    const oldNumbers = taskNumbers(before, part.taskIds);
+    const newNumbers = taskNumbers(document, part.taskIds);
+    part.taskIds = part.taskIds.filter((id) => document.taskGroups.some((t) => t.taskId === id));
+    part.expectedQuestionNumbers = part.expectedQuestionNumbers.filter((n) => !oldNumbers.has(n) || newNumbers.has(n));
+    for (const n of [...newNumbers].filter((n) => !oldNumbers.has(n)).sort((a, b) => a - b)) if (!part.expectedQuestionNumbers.includes(n)) part.expectedQuestionNumbers.push(n);
+  }
+}
+
+function refreshNumbers(document: IeltsAuthoringIRV2, taskId: string, expression?: QuestionNumberExpressionV2): void {
+  const task = document.taskGroups.find((t) => t.taskId === taskId)!;
+  const numbers = [...new Set(task.responseGroups.flatMap((g) => g.slotIds).map((id) => document.answerSlots[id]?.questionNumber)
+    .filter((n): n is number => Number.isInteger(n)))].sort((a, b) => a - b);
+  if (!expression && numbers.length === 0) throw new Error("AUTHORING_PATCH_EXPRESSION_EMPTY");
+  patchExpression(document, { op: "setQuestionExpression", taskId, expression: expression ?? { kind: "set", values: numbers } });
+}
+
+function patchInsertAnswerSlot(document: IeltsAuthoringIRV2, patch: Extract<AuthoringPatchV2, { op: "insertAnswerSlot" }>): void {
+  const task = document.taskGroups.find((candidate) => candidate.taskId === patch.taskId);
+  if (!task) throw new Error(`AUTHORING_PATCH_TASK_NOT_FOUND:${patch.taskId}`);
+  const group = task.responseGroups.find((candidate) => candidate.responseGroupId === patch.responseGroupId);
+  if (!group) throw new Error(`AUTHORING_PATCH_RESPONSE_GROUP_NOT_FOUND:${patch.responseGroupId}`);
+  const id = patch.slot.slotId;
+  if (document.answerSlots[id]) throw new Error(`AUTHORING_PATCH_SLOT_ALREADY_EXISTS:${id}`);
+  validateIndex(patch.slotIndex, group.slotIds.length);
+  const slot = structuredClone(patch.slot);
+  if (patch.node) {
+    if (patch.node.type !== "answer_slot" || patch.node.slotId !== id) throw new Error("AUTHORING_PATCH_SLOT_NODE_MISMATCH");
+    if (findObjectById(document, patch.node.id)) throw new Error(`AUTHORING_PATCH_SLOT_ALREADY_EXISTS:${id}`);
+    if (!patch.target) throw new Error("AUTHORING_PATCH_CONTENT_TARGET_REQUIRED");
+    const root = patch.parentId ? rootForTarget(document, { kind: "node", nodeId: patch.parentId }) : rootForTarget(document, patch.target);
+    validateIndex(patch.index!, root.nodes.length);
+    root.nodes.splice(patch.index!, 0, structuredClone(patch.node));
+  } else if (patch.promptNode || perSlotPrompt(document, group)) {
+    const prompt: ContentNodeV2 = structuredClone(patch.promptNode ?? {
+      type: "paragraph", id: `${id}-prompt`, children: [{ type: "text", id: `${id}-prompt-text`, text: "新题干", sourceAnchors: [], provenanceStatus: "manual" }], sourceAnchors: [], provenanceStatus: "manual"
+    });
+    if (!prompt.id || !validNewSubtree(document, prompt) || hasEmbeddedSlot(prompt)) throw new Error("AUTHORING_PATCH_PROMPT_INVALID");
+    slot.hostNodeId = prompt.id; slot.hostType = "prompt";
+    (group.prompt ??= []).push(prompt);
+  }
+  group.slotIds.splice(patch.slotIndex, 0, id);
+  document.answerSlots[id] = slot;
+  document.answerKey[id] = structuredClone(patch.value);
+  refreshNumbers(document, patch.taskId, patch.expression);
 }
 
 function patchDeleteAnswerSlot(document: IeltsAuthoringIRV2, patch: Extract<AuthoringPatchV2, { op: "deleteAnswerSlot" }>): void {
   const task = document.taskGroups.find((candidate) => candidate.taskId === patch.taskId);
-  const group = task?.responseGroups.find((candidate) => candidate.responseGroupId === patch.responseGroupId);
-  if (!task || !group) throw new Error(`AUTHORING_PATCH_RESPONSE_GROUP_NOT_FOUND:${patch.responseGroupId}`);
-  const location = locateContentNode(document, patch.nodeId);
-  if (!location || location.node.type !== "answer_slot" || location.node.slotId !== patch.slotId) throw new Error(`AUTHORING_PATCH_SLOT_NODE_NOT_FOUND:${patch.slotId}`);
-  for (const root of everyContentRoot(document)) {
-    if (removeNode(root, patch.nodeId)) break;
+  if (!task) throw new Error(`AUTHORING_PATCH_TASK_NOT_FOUND:${patch.taskId}`);
+  const group = task.responseGroups.find((candidate) => candidate.responseGroupId === patch.responseGroupId);
+  if (!group) throw new Error(`AUTHORING_PATCH_RESPONSE_GROUP_NOT_FOUND:${patch.responseGroupId}`);
+  if (!group.slotIds.includes(patch.slotId) || !document.answerSlots[patch.slotId]) throw new Error(`AUTHORING_PATCH_SLOT_NOT_FOUND:${patch.slotId}`);
+  if (group.slotIds.length <= 1) throw new Error("AUTHORING_PATCH_LAST_ANSWER_SLOT");
+  if (patch.nodeId) {
+    const node = findObjectById(document, patch.nodeId);
+    if (!node || node.type !== "answer_slot" || node.slotId !== patch.slotId) throw new Error(`AUTHORING_PATCH_SLOT_NODE_NOT_FOUND:${patch.slotId}`);
   }
-  group.slotIds = group.slotIds.filter((slotId) => slotId !== patch.slotId);
-  delete document.answerSlots[patch.slotId];
-  delete document.answerKey[patch.slotId];
-  removeHotspotsForSlot(document, patch.slotId);
-  patchExpression(document, { op: "setQuestionExpression", taskId: patch.taskId, expression: patch.expression });
+  removeSlots(document, new Set([patch.slotId]));
+  refreshNumbers(document, patch.taskId, patch.expression);
+}
+
+function patchDeleteTaskGroup(document: IeltsAuthoringIRV2, taskId: string): void {
+  const task = document.taskGroups.find((t) => t.taskId === taskId);
+  if (!task) throw new Error(`AUTHORING_PATCH_TASK_NOT_FOUND:${taskId}`);
+  removeSlots(document, new Set(task.responseGroups.flatMap((g) => g.slotIds)));
+  document.taskGroups = document.taskGroups.filter((t) => t.taskId !== taskId);
+  if (task.optionBank) for (const other of document.taskGroups) {
+    if (!other.optionBank && other.responseGroups.some((g) => g.optionBankRef === task.optionBank!.optionBankId)) other.optionBank = structuredClone(task.optionBank);
+  }
+  const removed = new Set([...collectNodeIds(task)].filter((id) => !findObjectById(document, id)));
+  cleanBindings(document, removed);
+}
+
+function patchDeleteResponseGroup(document: IeltsAuthoringIRV2, patch: Extract<AuthoringPatchV2, { op: "deleteResponseGroup" }>): void {
+  const task = document.taskGroups.find((t) => t.taskId === patch.taskId);
+  if (!task) throw new Error(`AUTHORING_PATCH_TASK_NOT_FOUND:${patch.taskId}`);
+  const group = task.responseGroups.find((g) => g.responseGroupId === patch.responseGroupId);
+  if (!group) throw new Error(`AUTHORING_PATCH_RESPONSE_GROUP_NOT_FOUND:${patch.responseGroupId}`);
+  if (task.responseGroups.length === 1) return patchDeleteTaskGroup(document, patch.taskId);
+  removeSlots(document, new Set(group.slotIds));
+  task.responseGroups = task.responseGroups.filter((g) => g.responseGroupId !== patch.responseGroupId);
+  if (group.optionBankRef && !document.taskGroups.some((t) => t.responseGroups.some((g) => g.optionBankRef === group.optionBankRef))
+    && task.optionBank?.optionBankId === group.optionBankRef) delete task.optionBank;
+  const removed = new Set([...collectNodeIds(group)].filter((id) => !findObjectById(document, id)));
+  cleanBindings(document, removed);
+  refreshNumbers(document, patch.taskId);
+}
+
+// Undo stores only changed paths and checks the post-edit value before restoring.
+// This prevents a delayed undo from silently overwriting intervening cloud edits.
+function equalJson(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((value, i) => equalJson(value, b[i]));
+  if (isObject(a) && isObject(b)) return Object.keys(a).length === Object.keys(b).length && Object.keys(a).every((key) => Object.hasOwn(b, key) && equalJson(a[key], b[key]));
+  return false;
+}
+
+function structureChanges(before: unknown, after: unknown, path: string[] = []): AuthoringStructureChangeV2[] {
+  if (equalJson(before, after)) return [];
+  if (isObject(before) && isObject(after)) return [...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .flatMap((key) => structureChanges(before[key], after[key], [...path, key]));
+  if (Array.isArray(before) && Array.isArray(after) && before.length === after.length
+      && before.every((v, i) => !isObject(v) || !isObject(after[i]) || (v.id ?? v.taskId ?? v.responseGroupId) === (after[i].id ?? after[i].taskId ?? after[i].responseGroupId))) {
+    return before.flatMap((v, i) => structureChanges(v, after[i], [...path, String(i)]));
+  }
+  return [{ path, ...(before !== undefined ? { before: structuredClone(before) } : {}), ...(after !== undefined ? { after: structuredClone(after) } : {}) }];
+}
+
+function patchRestoreStructure(document: IeltsAuthoringIRV2, patch: Extract<AuthoringPatchV2, { op: "restoreStructure" }>): void {
+  for (const change of patch.changes) {
+    const { path } = change;
+    if (!path.length || !["taskGroups", "answerSlots", "answerKey", "passage", "listening"].includes(path[0]) || path.some((key) => ["__proto__", "prototype", "constructor"].includes(key))) throw new Error("AUTHORING_PATCH_RESTORE_INVALID");
+    let parent: any = document;
+    for (const key of path.slice(0, -1)) {
+      if (parent === null || typeof parent !== "object" || !Object.hasOwn(parent, key)) throw new Error("AUTHORING_PATCH_RESTORE_CONFLICT");
+      parent = parent[key];
+    }
+    const key = path[path.length - 1];
+    if (Array.isArray(parent) && (!/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= parent.length || !Object.hasOwn(change, "before") || !Object.hasOwn(change, "after"))) throw new Error("AUTHORING_PATCH_RESTORE_INVALID");
+    if (!parent || typeof parent !== "object" || !equalJson(parent[key], change.after)) throw new Error("AUTHORING_PATCH_RESTORE_CONFLICT");
+    if (Object.hasOwn(change, "before")) parent[key] = structuredClone(change.before);
+    else if (Array.isArray(parent)) throw new Error("AUTHORING_PATCH_RESTORE_INVALID");
+    else delete parent[key];
+  }
 }
 
 function patchAnswer(document: IeltsAuthoringIRV2, patch: Extract<AuthoringPatchV2, { op: "setAnswer" }>): void {
@@ -408,6 +572,8 @@ function patchResolveIssue(document: IeltsAuthoringIRV2, patch: Extract<Authorin
 export function applyAuthoringV2Patches(authoring: IeltsAuthoringIRV2, patches: AuthoringPatchV2[]): IeltsAuthoringIRV2 {
   const document = structuredClone(authoring);
   for (const patch of patches) {
+    const structural = ["insertAnswerSlot", "deleteAnswerSlot", "deleteResponseGroup", "deleteTaskGroup"].includes(patch.op);
+    const beforeStructure = structural ? structuredClone(document) : undefined;
     switch (patch.op) {
       case "setExamCategory":
         if (document.modality && document.modality !== "reading") throw new Error("AUTHORING_PATCH_READING_REQUIRED");
@@ -430,10 +596,14 @@ export function applyAuthoringV2Patches(authoring: IeltsAuthoringIRV2, patches: 
       case "setOptionBank": patchOptionBank(document, patch); break;
       case "insertAnswerSlot": patchInsertAnswerSlot(document, patch); break;
       case "deleteAnswerSlot": patchDeleteAnswerSlot(document, patch); break;
+      case "deleteTaskGroup": patchDeleteTaskGroup(document, patch.taskId); break;
+      case "deleteResponseGroup": patchDeleteResponseGroup(document, patch); break;
+      case "restoreStructure": patchRestoreStructure(document, patch); break;
       case "setAnswer": patchAnswer(document, patch); break;
       case "bindSource": patchSource(document, patch); break;
       case "resolveIssue": patchResolveIssue(document, patch); break;
     }
+    if (beforeStructure) refreshListening(document, beforeStructure);
   }
   return document;
 }
@@ -557,16 +727,14 @@ export function inverseAuthoringPatch(authoring: IeltsAuthoringIRV2, patch: Auth
       return task ? { op: "setOptionBank", taskId: patch.taskId, optionBank: clone(task.optionBank ?? null), preserveProvenance: true, restoreProvenanceStatus: typeof (task as unknown as JsonObject).provenanceStatus === "string" ? (task as unknown as JsonObject).provenanceStatus as "source" | "derived" | "user_edited" | "manual" : undefined } : undefined;
     }
     case "insertAnswerSlot":
-      return { op: "deleteAnswerSlot", taskId: patch.taskId, responseGroupId: patch.responseGroupId, nodeId: patch.node.id, slotId: patch.slot.slotId, expression: clone(authoring.taskGroups.find((task) => task.taskId === patch.taskId)?.displayRange ?? patch.expression) };
-    case "deleteAnswerSlot": {
-      const location = locateContentNode(authoring, patch.nodeId);
-      const task = authoring.taskGroups.find((candidate) => candidate.taskId === patch.taskId);
-      const group = task?.responseGroups.find((candidate) => candidate.responseGroupId === patch.responseGroupId);
-      const slot = authoring.answerSlots[patch.slotId];
-      const value = authoring.answerKey[patch.slotId];
-      if (!location || location.node.type !== "answer_slot" || !task || !group || !slot || !value) return undefined;
-      return { op: "insertAnswerSlot", taskId: patch.taskId, responseGroupId: patch.responseGroupId, target: clone(location.target), parentId: location.parentId, index: location.index, slotIndex: Math.max(0, group.slotIds.indexOf(patch.slotId)), node: clone(location.node), slot: clone(slot), value: clone(value), expression: clone(task.displayRange) };
+    case "deleteAnswerSlot":
+    case "deleteResponseGroup":
+    case "deleteTaskGroup": {
+      const after = applyAuthoringV2Patches(authoring, [patch]);
+      const changes = structureChanges(authoring, after).filter((change) => ["taskGroups", "answerSlots", "answerKey", "passage", "listening"].includes(change.path[0]));
+      return { op: "restoreStructure", taskIds: [patch.taskId], changes };
     }
+    case "restoreStructure": return { op: "restoreStructure", taskIds: clone(patch.taskIds), changes: patch.changes.map(({ path, before, after }) => ({ path: clone(path), ...(after !== undefined ? { before: clone(after) } : {}), ...(before !== undefined ? { after: clone(before) } : {}) })) };
     case "setAnswer":
       return { op: "setAnswer", slotId: patch.slotId, value: clone(authoring.answerKey[patch.slotId] ?? { kind: "unresolved" }) };
     case "bindSource": {

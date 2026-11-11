@@ -147,9 +147,10 @@ fn repair_shadow_seed(
     if shadow.as_ref() != Some(&current) || current == revision {
         return Ok(false);
     }
+    let _confirmation_guard=super::confirmation::PublicationGuard::acquire(root)?;
     let updated = conn
         .execute(
-            "UPDATE library_items_v2 SET canonical_ds_json = ?2,
+            "UPDATE library_items_v2 SET canonical_ds_json = ?2, confirmed_at=NULL, confirmed_by=NULL,
          title = CASE WHEN title = ?3 THEN ?4 ELSE title END
          WHERE id = ?1 AND current_edit_version = 1 AND canonical_ds_json = ?5
          AND NOT EXISTS (SELECT 1 FROM editor_journal_v1 WHERE library_item_id = ?1)",

@@ -12,7 +12,7 @@ use rusqlite::Connection;
 use crate::CommandResult;
 
 /// 当前 V2 schema 版本。每次追加 DDL 时 +1，并在 [`migrations`] 增加对应步骤。
-pub(crate) const LIBRARY_V2_SCHEMA_VERSION: i64 = 11;
+pub(crate) const LIBRARY_V2_SCHEMA_VERSION: i64 = 12;
 
 pub(crate) fn ensure_v2_schema(conn: &Connection) -> CommandResult<()> {
     let transaction =
@@ -131,6 +131,14 @@ fn migrations() -> Vec<(i64, &'static str)> {
              ALTER TABLE library_items_v2 ADD COLUMN part_source TEXT;",
         ),
         (11, include_str!("paper_archive.sql")),
+        (12, "ALTER TABLE library_items_v2 ADD COLUMN confirmed_at TEXT;
+              ALTER TABLE library_items_v2 ADD COLUMN confirmed_by TEXT;
+              UPDATE library_items_v2 SET confirmed_at = COALESCE(
+                  (SELECT MIN(created_at) FROM publish_records_v2 WHERE library_item_id=library_items_v2.id),
+                  (SELECT published_at FROM library_final_versions_v2 WHERE library_item_id=library_items_v2.id),
+                  updated_at)
+              WHERE status LIKE 'published%' OR EXISTS (
+                  SELECT 1 FROM publish_records_v2 WHERE library_item_id=library_items_v2.id);"),
     ]
 }
 
@@ -307,6 +315,28 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_editor_journal_v1_request
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn confirmation_migration_backfills_only_published_history_once() {
+        let conn = Connection::open_in_memory().unwrap();
+        for (version,sql) in migrations() { if version < 12 { conn.execute_batch(sql).unwrap(); } }
+        conn.execute_batch("PRAGMA user_version=11;
+            INSERT INTO library_items_v2(id,modality,title,status,created_at,updated_at) VALUES
+             ('history','reading','h','action_required','2026-01-01','2026-10-01'),
+             ('status','reading','s','published_forced','2026-01-01','2026-09-01'),
+             ('never','reading','n','ready','2026-01-01','2026-10-01');
+            INSERT INTO publish_records_v2(id,library_item_id,edit_version,batch_id,destination,forced,verdict_json,reasons_json,student_loadable,status,created_at) VALUES
+             ('p2','history',2,'b','nas',0,'{}','[]',1,'published','2026-06-01'),
+             ('p1','history',1,'a','nas',0,'{}','[]',1,'published','2026-05-01');").unwrap();
+        ensure_v2_schema(&conn).unwrap();
+        for (id,expected) in [("history",Some("2026-05-01")),("status",Some("2026-09-01")),("never",None)] {
+            let at:Option<String>=conn.query_row("SELECT confirmed_at FROM library_items_v2 WHERE id=?1",[id],|r|r.get(0)).unwrap();
+            assert_eq!(at.as_deref(),expected);
+        }
+        conn.execute("UPDATE library_items_v2 SET confirmed_at=NULL WHERE id='history'",[]).unwrap();
+        ensure_v2_schema(&conn).unwrap();
+        assert!(conn.query_row("SELECT confirmed_at FROM library_items_v2 WHERE id='history'",[],|r|r.get::<_,Option<String>>(0)).unwrap().is_none());
+    }
 
     #[test]
     fn v2_schema_is_idempotent_and_versioned() {

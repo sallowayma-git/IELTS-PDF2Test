@@ -2642,6 +2642,7 @@ fn write_direct_canonical_inner(
     document: &Value,
     worker_id: Option<&str>,
 ) -> CommandResult<i64> {
+    let _confirmation_guard=crate::library::confirmation::PublicationGuard::acquire(root)?;
     let mut bound_document = document.clone();
     if document["modality"] == "listening" {
         let bindings = crate::listening_audio::store::list_bindings(root, job_id)?;
@@ -2766,7 +2767,12 @@ fn write_direct_canonical_inner(
                 crate::authoring_v2_commands::refresh_quality_report(root, job_id, document)?;
                 crate::authoring_v2_commands::validate_authoring(document)
             },
-            &|conn, _| check_direct_lease(conn, job_id, worker_id),
+            &|conn, _| {
+                check_direct_lease(conn, job_id, worker_id)?;
+                conn.execute("UPDATE library_items_v2 SET confirmed_at=NULL, confirmed_by=NULL WHERE id=?1", [job_id])
+                    .map_err(|e| format!("cloud_direct_clear_confirmation:{e}"))?;
+                Ok(())
+            },
         );
         match result {
             Ok(result) => return Ok(result.edit_version),

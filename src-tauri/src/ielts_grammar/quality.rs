@@ -549,6 +549,16 @@ fn evaluate_quality_inner(
             );
         }
     }
+    // Deleting a task preserves the original paper's numbers. Report internal gaps
+    // independently of the surviving tasks' (now narrower) declared ranges.
+    for pair in seen.iter().copied().collect::<Vec<_>>().windows(2) {
+        if pair[1] > pair[0] + 1 {
+            push_issue(&mut issues,&mut hard_failures,issue(
+                "QUESTION_NUMBER_NONCONTIGUOUS","warning",
+                &format!("题号 {} 到 {} 之间不连续。",pair[0],pair[1]),
+                "document","document",Vec::new(),vec!["edit_text","split_prompt"]));
+        }
+    }
     for expected in expected_numbers.iter().copied() {
         if !slots.values().any(|slot| {
             slot.get("questionNumber")

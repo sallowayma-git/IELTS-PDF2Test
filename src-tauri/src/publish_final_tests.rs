@@ -102,6 +102,7 @@ fn seed_item(
     fs::write(dir.join("pipeline-report.json"), b"{}").unwrap();
     crate::library::commands::get_workspace_item_core(root, &job.job_id)
         .expect("on-demand migration must seed the canonical draft");
+    crate::library::confirmation::set_library_item_confirmed_core(root,&job.job_id,true).unwrap();
     job.job_id
 }
 
@@ -927,6 +928,7 @@ fn seed_listening_item(root: &Path, exam_id: &str, bound_parts: &[i64]) -> Strin
 
     crate::library::commands::get_workspace_item_core(root, &job.job_id)
         .expect("on-demand migration must seed the canonical draft");
+    crate::library::confirmation::set_library_item_confirmed_core(root,&job.job_id,true).unwrap();
     job.job_id
 }
 
@@ -1286,6 +1288,25 @@ fn current_paper_is_null_before_any_paper_is_published() {
             .expect("reading a missing pointer must not fail");
     assert!(value.is_null(), "{value}");
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn paper_publish_refuses_unconfirmed_items_before_any_nas_write_even_when_forced() {
+    let root=temp_root("paper-not-confirmed");
+    ensure_app_dirs(&root).unwrap();
+    let p1=seed_part(&root,"unconfirmed-p1","P1");
+    let p2=seed_part(&root,"unconfirmed-p2","P2");
+    let p3=seed_part(&root,"unconfirmed-p3","P3");
+    crate::library::confirmation::set_library_item_confirmed_core(&root,&p1,false).unwrap();
+    for force in [None,force_now()] {
+        let error=publish_items_core(&root,PublishItemsInput {
+            item_ids:vec![p1.clone(),p2.clone(),p3.clone()],
+            destination:destination(&root).to_string_lossy().into(),
+            fault:None,force,paper:Some(paper_spec(&p1,&p2,&p3,&[])),
+        }).unwrap_err();
+        assert_eq!(error,format!("PAPER_ITEM_NOT_CONFIRMED:{p1}"));
+        assert!(!destination(&root).exists(),"even lock/staging directories must not be written to NAS");
+    }
 }
 
 #[test]

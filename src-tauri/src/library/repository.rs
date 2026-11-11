@@ -67,6 +67,7 @@ pub(crate) struct LibraryItemRowV2 {
     pub part_label: Option<String>,
     /// 判定来源：manual | content | range | filename。
     pub part_source: Option<String>,
+    pub confirmed_at: Option<String>,
 }
 
 fn row_from(row: &rusqlite::Row<'_>) -> rusqlite::Result<LibraryItemRowV2> {
@@ -83,11 +84,12 @@ fn row_from(row: &rusqlite::Row<'_>) -> rusqlite::Result<LibraryItemRowV2> {
         deleted_at: row.get("deleted_at")?,
         part_label: row.get("part_label")?,
         part_source: row.get("part_source")?,
+        confirmed_at: row.get("confirmed_at")?,
     })
 }
 
 const ITEM_COLUMNS: &str =
-    "id, modality, title, status, current_edit_version, canonical_ds_json IS NOT NULL AS has_canonical_ds, source_asset_id, created_at, updated_at, deleted_at, part_label, part_source";
+    "id, modality, title, status, current_edit_version, canonical_ds_json IS NOT NULL AS has_canonical_ds, source_asset_id, created_at, updated_at, deleted_at, part_label, part_source, confirmed_at";
 
 /// 写入 Part 标签与来源（`None` 清空）。返回是否有行被更新。
 pub(crate) fn set_item_part(
@@ -209,7 +211,7 @@ pub(crate) fn seed_canonical_ds(
     let updated = conn
         .execute(
             "UPDATE library_items_v2
-             SET canonical_ds_json = ?2, status = ?3, updated_at = ?4
+             SET canonical_ds_json = ?2, status = ?3, updated_at = ?4, confirmed_at = NULL, confirmed_by = NULL
              WHERE id = ?1 AND canonical_ds_json IS NULL",
             params![item_id, ds_json, status, now],
         )
@@ -711,7 +713,9 @@ impl EditFootprint {
             | "setQuestionExpression"
             | "setResponseCardinality"
             | "setResponseGroup"
-            | "setOptionBank" => {
+            | "setOptionBank"
+            | "deleteResponseGroup"
+            | "deleteTaskGroup" => {
                 if let Some(task_id) = command.get("taskId").and_then(Value::as_str) {
                     group_roots(task_id, &mut targets);
                 }
@@ -796,11 +800,28 @@ impl EditFootprint {
                     targets.extend(strings_of(entry.get("partId")));
                 }
             }
+            "restoreStructure" => {},
             // 未知 / 不允许的命令：影响范围取「整个稿件」这一最保守的边界，
             // 让它必然与任何人工保护目标相交，从而在授权层就被拒掉。
             _ => {
                 collect_subtree_ids(document, &mut targets);
             }
+        }
+        if matches!(op,"insertAnswerSlot"|"deleteAnswerSlot"|"deleteResponseGroup"|"deleteTaskGroup"|"restoreStructure") {
+            let mut after = document.clone();
+            if crate::authoring_structure::apply(&mut after,command.as_object().unwrap()).is_ok() {
+                for key in cloud_candidate_change_targets(document,&after) {
+                    if let Some(task_id) = key.strip_prefix(TASK_GROUP_PREFIX) {
+                        group_roots(task_id,&mut targets);
+                        targets.extend(task_group_owned_ids(&after,task_id));
+                    } else {
+                        targets.insert(key.clone());
+                        extend_with_context(document,&[key.clone()],&mut targets);
+                        extend_with_context(&after,&[key],&mut targets);
+                    }
+                }
+            }
+            for id in command.get("taskIds").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) { group_roots(id,&mut targets); }
         }
         EditFootprint { targets }
     }
@@ -1142,6 +1163,12 @@ fn capture_transaction_change_targets(
             .collect();
     }
 
+    if commands.iter().any(|c| matches!(c["op"].as_str(),Some("insertAnswerSlot"|"deleteAnswerSlot"|"deleteResponseGroup"|"deleteTaskGroup"|"restoreStructure"))) {
+        let mut after = document.clone();
+        if commands.iter().all(|c| crate::authoring_v2_commands::apply_patch(&mut after,c).is_ok()) {
+            return cloud_candidate_change_targets(document,&after).into_iter().collect();
+        }
+    }
     let mut targets = capture_change_targets(commands)
         .into_iter()
         .collect::<BTreeSet<_>>();
@@ -2248,6 +2275,8 @@ pub(crate) fn apply_editor_commands_tx_with(
     let change_targets = capture_transaction_change_targets(&ds, &input.commands, origin);
     let change_before = capture_before_values(&ds, &change_targets);
 
+    let original_slots = ds["answerSlots"].as_object().cloned().unwrap_or_default();
+    let original_task_ids: Vec<String> = ds["taskGroups"].as_array().into_iter().flatten().filter_map(|t|t["taskId"].as_str()).map(str::to_string).collect();
     for command in &input.commands {
         apply_patch(&mut ds, command)?;
         // 只有**人工**编辑才盖 `user_edited`：云端修复与撤销都不能把自己的改动
@@ -2320,6 +2349,10 @@ pub(crate) fn apply_editor_commands_tx_with(
         "appliedCount": input.commands.len(),
         "editVersion": next_version,
         "targets": footprint.sorted_targets(),
+        // Compact deletion evidence survives changed cloud IDs and does not rely on a large undo diff.
+        "removedSlots": original_slots.iter().filter(|(id,_)| ds["answerSlots"].get(*id).is_none())
+            .map(|(id,slot)|serde_json::json!({"slotId":id,"questionNumber":slot["questionNumber"]})).collect::<Vec<_>>(),
+        "removedTaskIds": original_task_ids.iter().filter(|id| !ds["taskGroups"].as_array().into_iter().flatten().any(|t|t["taskId"]==id.as_str())).collect::<Vec<_>>(),
     });
     insert_journal_row(
         &transaction,

@@ -367,6 +367,9 @@ fn validate_paper_spec(
             return Err(format!("PAPER_ITEM_NOT_SELECTED:{item_id}"));
         }
         let row = get_item(conn, item_id)?.ok_or_else(|| format!("ITEM_NOT_FOUND:{item_id}"))?;
+        if row.confirmed_at.is_none() {
+            return Err(format!("PAPER_ITEM_NOT_CONFIRMED:{item_id}"));
+        }
         if row.modality != modality || row.part_label.as_deref() != Some(part) {
             return Err(format!("PAPER_PART_MISMATCH:{item_id}"));
         }
@@ -531,6 +534,7 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
     for id in &ids {
         crate::library::migration::migrate_single_item(root, id)?;
     }
+    let _confirmation_guard=crate::library::confirmation::PublicationGuard::acquire(root)?;
     let mut conn = open_library_connection(root)?;
     let transaction = conn.transaction().map_err(|error| error.to_string())?;
     // P2-3：Part 标签与试卷约定在快照事务内重新核对，与读取权威稿处于同一一致视图。

@@ -29,6 +29,321 @@
     "audit": { "$ref": "#/$defs/audit" }
   },
   "$defs": {
+      "authoringContentTarget": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "passage"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "taskId"
+            ],
+            "properties": {
+              "kind": {
+                "const": "taskInstructions"
+              },
+              "taskId": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "taskId"
+            ],
+            "properties": {
+              "kind": {
+                "const": "taskStimulus"
+              },
+              "taskId": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "responseGroupId"
+            ],
+            "properties": {
+              "kind": {
+                "const": "responsePrompt"
+              },
+              "responseGroupId": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "optionId"
+            ],
+            "properties": {
+              "kind": {
+                "const": "option"
+              },
+              "optionId": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "nodeId"
+            ],
+            "properties": {
+              "kind": {
+                "const": "node"
+              },
+              "nodeId": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        ]
+      },
+      "authoringStructurePatch": {
+        "description": "Editor structural patches and guarded undo. Deleting the final response group deletes its task. Surviving question numbers are preserved.",
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "op",
+              "taskId",
+              "responseGroupId",
+              "slotId"
+            ],
+            "properties": {
+              "op": {
+                "const": "deleteAnswerSlot"
+              },
+              "taskId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "responseGroupId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "slotId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "nodeId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "expression": {
+                "$ref": "#/$defs/questionNumberExpression"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "op",
+              "taskId",
+              "responseGroupId",
+              "slotIndex",
+              "slot",
+              "value"
+            ],
+            "properties": {
+              "op": {
+                "const": "insertAnswerSlot"
+              },
+              "taskId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "responseGroupId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "slotIndex": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "target": {
+                "$ref": "#/$defs/authoringContentTarget"
+              },
+              "parentId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "node": {
+                "allOf": [
+                  {
+                    "$ref": "./content-doc-v2.schema.json#/$defs/contentNode"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "const": "answer_slot"
+                      }
+                    }
+                  }
+                ]
+              },
+              "promptNode": {
+                "$ref": "./content-doc-v2.schema.json#/$defs/contentNode"
+              },
+              "slot": {
+                "$ref": "#/$defs/answerSlot"
+              },
+              "value": {
+                "$ref": "#/$defs/answerValue"
+              },
+              "expression": {
+                "$ref": "#/$defs/questionNumberExpression"
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "required": [
+                    "node"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "target",
+                    "index"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "op",
+              "taskId",
+              "responseGroupId"
+            ],
+            "properties": {
+              "op": {
+                "const": "deleteResponseGroup"
+              },
+              "taskId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "responseGroupId": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "op",
+              "taskId"
+            ],
+            "properties": {
+              "op": {
+                "const": "deleteTaskGroup"
+              },
+              "taskId": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "op",
+              "taskIds",
+              "changes"
+            ],
+            "properties": {
+              "op": {
+                "const": "restoreStructure"
+              },
+              "taskIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "changes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "path"
+                  ],
+                  "properties": {
+                    "path": {
+                      "type": "array",
+                      "minItems": 1,
+                      "prefixItems": [
+                        {
+                          "enum": [
+                            "taskGroups",
+                            "answerSlots",
+                            "answerKey",
+                            "passage",
+                            "listening"
+                          ]
+                        }
+                      ],
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "before": {},
+                    "after": {}
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
     "examMeta": {
       "type": "object",
       "additionalProperties": false,
@@ -172,13 +487,13 @@
         "expectedQuestionNumbers": {
           "type": "array",
           "items": { "type": "integer", "minimum": 1, "maximum": 40 },
-          "minItems": 1,
+          "minItems": 0,
           "uniqueItems": true
         },
         "taskIds": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
-          "minItems": 1,
+          "minItems": 0,
           "uniqueItems": true
         },
         "cue": { "$ref": "#/$defs/listeningCue" },
