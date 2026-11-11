@@ -44,6 +44,16 @@ describe("确认入库：后端命令不存在时退回本地", () => {
     expect(readLocalConfirmedIds().size).toBe(0);
   });
 
+  it("后端接管后退回待确认：同时清掉之前留在本地的兜底记录", async () => {
+    mocks.setLibraryItemConfirmed.mockRejectedValueOnce(new Error("Command set_library_item_confirmed not found"));
+    await confirmItems(["a"]);
+    expect(readLocalConfirmedIds().has("a")).toBe(true);
+    mocks.setLibraryItemConfirmed.mockResolvedValue({});
+    await unconfirmItem("a");
+    expect(mocks.setLibraryItemConfirmed).toHaveBeenLastCalledWith("a", false);
+    expect(isConfirmed(row("a"))).toBe(false);
+  });
+
   it("其他错误如实抛出，不退回本地", async () => {
     mocks.setLibraryItemConfirmed.mockRejectedValue(new Error("database is locked"));
     await expect(confirmItems(["a"])).rejects.toThrow("database is locked");

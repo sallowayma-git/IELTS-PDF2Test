@@ -96,6 +96,8 @@ async function setConfirmed(ids: string[], confirmed: boolean): Promise<void> {
     if (!localFallback) {
       try {
         await setLibraryItemConfirmed(itemId, confirmed);
+        // 后端已接管后，旧的本地兜底记录若还在，退回时必须一并清掉，否则行会因并集而仍显示为已确认。
+        if (!confirmed && readLocalIds().includes(itemId)) writeLocalIds(readLocalIds().filter((id) => id !== itemId));
         continue;
       } catch (cause) {
         if (!isConfirmCommandUnavailable(cause)) throw cause;
