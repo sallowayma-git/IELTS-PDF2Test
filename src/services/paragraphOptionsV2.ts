@@ -1,7 +1,7 @@
 import type { ContentNodeV2 } from "../types/content-doc-v2";
 import type { ResponseGroupV2, TaskGroupV2 } from "../types/ielts-authoring-v2";
 
-function paragraphIds(nodes: ContentNodeV2[], result = new Set<string>()): Set<string> {
+export function paragraphIds(nodes: ContentNodeV2[], result = new Set<string>()): Set<string> {
   for (const node of nodes) {
     if (node.type === "paragraph") result.add(node.id);
     for (const key of ["children", "items", "rows", "cells", "steps", "caption"]) {

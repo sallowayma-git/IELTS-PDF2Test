@@ -116,24 +116,44 @@ describe("task presentation in the authoring canvas", () => {
     expect(onAnswerChange).toHaveBeenCalledWith("q14", { kind: "option", labels: ["A"], assignment: "per_slot" });
     expect(container.querySelector('.v2-option-add,.v2-option-delete,.v2-option-drag-handle')).toBeNull();
   });
-  it("keeps heading targets only in the passage when an old response prompt duplicates paragraph ids", () => {
+  it.each(["author", "student"] as const)("keeps heading targets only in the passage when an old response prompt duplicates paragraph ids in %s mode", mode => {
     const draft = headingDraft({ q14: { kind: "option", labels: ["i"], assignment: "per_slot" } });
     draft.taskGroups[0].responseGroups[0].prompt = structuredClone(draft.passage!.content);
-    const { container } = render(<ExamCanvas authoring={draft} mode="student" />);
+    const { container } = render(<ExamCanvas authoring={draft} mode={mode} />);
     expect(container.querySelectorAll('[data-answer-drop-slot="q14"]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-answer-drop-slot="q15"]')).toHaveLength(1);
     expect(container.querySelectorAll('.v2-task-group [data-answer-drop-slot]')).toHaveLength(0);
-    expect(container.querySelector('[data-answer-drop-slot="q14"]')?.textContent).toContain("Drop heading here");
-    expect(container.querySelector('[data-answer-drop-slot="q14"]')?.textContent).not.toContain("First heading");
+    expect(container.querySelector('.v2-task-group .v2-response-prompt')).toBeNull();
+    expect(container.querySelector('.v2-task-group .v2-slot-question')).toBeNull();
+    expect(container.querySelector('[data-answer-drop-slot="q14"]')?.textContent).toContain(mode === "author" ? "First heading" : "Drop heading here");
   });
-  it("places each heading target before its source paragraph and offers a shared Roman heading pool", () => {
-    const { container } = render(<ExamCanvas authoring={headingDraft()} mode="author" onAnswerChange={vi.fn()} onStructureAction={vi.fn()} />);
+  it.each(["author", "student"] as const)("places heading questions only before their source paragraphs in %s mode", mode => {
+    const { container } = render(<ExamCanvas authoring={headingDraft()} mode={mode} onAnswerChange={vi.fn()} onStructureAction={vi.fn()} />);
     const targetA = container.querySelector('[data-answer-drop-slot="q14"]')!;
     const paragraphA = container.querySelector('[data-editor-id="passage-a"]')!;
     expect(Boolean(targetA.compareDocumentPosition(paragraphA) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
     expect(targetA.textContent).toContain("Paragraph A (14)");
     expect(container.querySelectorAll('[data-option-pool-task="headings"] [data-option-label]')).toHaveLength(2);
     expect(screen.getByText("First heading")).toBeTruthy();
+    expect(container.querySelector('.v2-task-group .v2-slot-list')).toBeNull();
+    expect(container.querySelector('.v2-passage-pane [data-question-id="q14"]')).not.toBeNull();
+  });
+
+  it("keeps heading structure actions at the passage target and option group", () => {
+    const onStructureAction = vi.fn();
+    const { container } = render(<ExamCanvas authoring={headingDraft()} mode="author" onStructureAction={onStructureAction} />);
+    const target = container.querySelector('.v2-passage-pane [data-question-id="q14"]')!;
+    fireEvent.click(target.querySelector('button[aria-label="删除第 14 题"]')!);
+    expect(onStructureAction).toHaveBeenLastCalledWith({ type: "answer-slot.delete", slotId: "q14" });
+    fireEvent.click(screen.getByRole("button", { name: "＋ 添加一题" }));
+    expect(onStructureAction).toHaveBeenLastCalledWith({ type: "answer-slot.append", taskId: "headings", responseGroupId: "headings-rg" });
+  });
+
+  it("keeps heading rows visible when a passage target is missing", () => {
+    const draft = headingDraft();
+    draft.answerSlots.q15.hostNodeId = "missing-paragraph";
+    const { container } = render(<ExamCanvas authoring={draft} mode="author" />);
+    expect(container.querySelector('.v2-slot-question[data-question-id="q15"]')).not.toBeNull();
   });
 
   it("uses pointer drops for answers, clears from a target to the pool, and swaps occupied targets", () => {

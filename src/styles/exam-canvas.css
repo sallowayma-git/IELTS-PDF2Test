@@ -277,6 +277,10 @@
 .exam-canvas-v2 .v2-answer-dropzone.is-filled .v2-answer-dropzone-value { color: var(--paper-ink, #111); font-weight: 700; }
 .exam-canvas-v2 .v2-answer-dropzone-content { flex: 1 1 100%; min-width: 0; }
 .exam-canvas-v2 .v2-answer-target-editor { display: inline-flex; gap: 5px; align-items: center; margin: 4px 0 0; font-size: 0.78rem; }
+.exam-canvas-v2 .v2-answer-dropzone-wrap.is-passage { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 4px 8px; }
+.exam-canvas-v2 .is-passage > .v2-answer-dropzone { flex: 1 1 240px; min-width: 0; }
+.exam-canvas-v2 .is-passage > .v2-answer-target-editor { flex-basis: 100%; margin: 0; }
+.exam-canvas-v2 .v2-answer-target-editor > span { flex-shrink: 0; white-space: nowrap; }
 .exam-canvas-v2 .v2-answer-target-editor select,
 .exam-canvas-v2 .v2-select-answer,
 .exam-canvas-v2 .v2-answer-slot-select select { max-width: 100%; font: inherit; }

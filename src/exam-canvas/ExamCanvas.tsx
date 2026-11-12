@@ -14,6 +14,7 @@ import { QuestionNavBar } from "./QuestionNavBar";
 import { buildQuestionNavModel } from "./questionNavModel";
 import { isTfngOptionSet, optionContentDuplicatesLabel } from "./tfngOptions";
 import { perSlotPrompts } from "./perSlotPrompts";
+import { paragraphIds } from "../services/paragraphOptionsV2";
 import { usePaneDivider } from "../features/editor/usePaneDivider";
 import type { AnswerValueV2, ContentNodeV2, IeltsAuthoringIRV2, OptionV2, ResponseGroupV2, TaskGroupV2 } from "../types";
 
@@ -728,7 +729,7 @@ function AnswerDropTarget({
     });
   };
   const paragraphOptions = Object.entries(canvas.authoring.passage?.paragraphMap ?? {});
-  return <span className={`v2-answer-dropzone-wrap is-${placement}`}>
+  return <span className={`v2-answer-dropzone-wrap is-${placement}`} data-question-id={placement === "passage" ? slotId : undefined}>
     <button
       type="button"
       className={`v2-answer-dropzone${value ? " is-filled" : " is-empty"}`}
@@ -749,6 +750,7 @@ function AnswerDropTarget({
       <span className="v2-answer-dropzone-value">{(selectedOption?.label ?? value) || emptyLabel}</span>
       {selectedOption?.content.length ? <span className="v2-answer-dropzone-content"><ContentNodes nodes={selectedOption.content} canvas={canvas} /></span> : null}
     </button>
+    {placement === "passage" ? <QuestionDeleteButton canvas={canvas} slotId={slotId} displayNumber={slot.displayLabel} count={binding.response.slotIds.length} /> : null}
     {canvas.mode === "author" && canvas.onStructureAction && slot.hostType === "passage_paragraph" && paragraphOptions.length ? <label className="v2-answer-target-editor">
       <span>Target</span>
       <select
@@ -850,6 +852,7 @@ export function ExamCanvas(inputProps: ExamCanvasProps) {
   const [localFontSize, setLocalFontSize] = useState<"normal" | "large" | "xlarge">("normal");
   const fontSize = props.studentFontSize ?? localFontSize;
   const runtime = useMemo(() => buildRuntimeViewModelV2(props.authoring), [props.authoring]);
+  const passageParagraphIds = useMemo(() => paragraphIds(runtime.passage), [runtime.passage]);
   const interactionModel = useMemo(() => buildReadingInteractionModelV2(runtime), [runtime]);
   const [studentAnswers, setStudentAnswers] = useState<Record<string, string[]>>({});
   const canvasAnswers = props.mode === "author"
@@ -1234,13 +1237,22 @@ export function ExamCanvas(inputProps: ExamCanvasProps) {
               : Number.POSITIVE_INFINITY;
             const unorderedSelected = new Set(response.slotIds.flatMap((slotId) => canvasAnswers[slotId] ?? [])).size;
             const responseSlotIds = new Set(response.slotIds);
+            // Heading questions already have their controls before the source paragraphs.
+            // Keep the fallback list when a target is missing or this view has no passage.
+            const passageResponseComplete = task.taskType === "matching_headings"
+              && response.kind === "matching" && !unordered && !listening && !props.comparisonPreview
+              && response.slotIds.length > 0 && response.slotIds.every((slotId) => {
+                const slot = runtime.answerSlots[slotId];
+                return slot?.interaction === "dragdrop" && slot.hostType === "passage_paragraph"
+                  && Boolean(slot.hostNodeId && passageParagraphIds.has(slot.hostNodeId));
+              });
             // 选项池型题目（拖放）的选项与「添加选项」由 AnswerOptionPool 渲染，这里不再重复。
             const optionPoolRendered = options.length > 0 && response.slotIds.some((slotId) => runtime.answerSlots[slotId]?.interaction === "dragdrop");
             // 判断题（TFNG/YNNG）逐题题干：response.prompt 的顶层段落能被每个 slot 的
             // hostNodeId 一一认领时（全有或全无），该题陈述渲染到题号后面，顶部只留公共段。
             // 缺宿主 / 宿主内嵌 answer_slot / unordered_set 共享多选一律不启用，保持旧版式。
             const perSlot = perSlotPrompts(response, runtime.answerSlots);
-            const sharedPromptNodes = perSlot
+            const sharedPromptNodes = passageResponseComplete ? [] : perSlot
               ? (response.prompt ?? []).filter((node) => !perSlot.claimedNodeIds.has(node.id))
               : response.prompt;
             // Text completion is rendered as one canonical stimulus document
@@ -1255,7 +1267,7 @@ export function ExamCanvas(inputProps: ExamCanvasProps) {
             return <section key={response.responseGroupId} className={`v2-response-group${props.selectedId === response.responseGroupId ? " is-selected" : ""}`} data-response-group-id={response.responseGroupId} data-assignment={response.assignment} onClick={(event) => { if (props.mode === "author") { event.stopPropagation(); props.onSelect?.(response.responseGroupId); } }}>
               {(task as TaskGroupV2).responseGroups.length > 1 ? <GroupDeleteMenu canvas={props} scope="response" taskId={task.taskId} responseGroupId={response.responseGroupId} slotIds={response.slotIds} /> : null}
               {sharedPromptNodes?.length ? <div className="v2-response-prompt"><ContentNodes nodes={sharedPromptNodes} canvas={props} /></div> : null}
-              {inlineStimulusComplete ? null : unordered ? <fieldset className="v2-shared-selection" data-option-list={props.mode === "author" ? "" : undefined}><legend>Select {response.cardinality.exact || response.slotIds.length} options for {response.slotIds.map((slotId) => runtime.questionDisplayMap[slotId]).join(", ")}</legend>{options.map((option, optionIndex) => { const checked = response.slotIds.some((slotId) => (canvasAnswers[slotId] ?? []).includes(option.label)); return <label key={option.optionId} className={`v2-choice-item${checked ? " is-checked" : ""}`} {...optionRowProps(option)}><OptionDragHandle canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} index={optionIndex} /><input type="checkbox" value={option.label} checked={checked} disabled={props.locked || (!checked && unorderedSelected >= unorderedLimit)} onChange={(event) => { const selected = Array.from(new Set(response.slotIds.flatMap((slotId) => canvasAnswers[slotId] ?? []).filter((value) => value !== option.label))).slice(0, response.slotIds.length); if (event.target.checked) selected.push(option.label); response.slotIds.forEach((slotId, index) => setOption(slotId, selected[index] ?? "", Boolean(selected[index]), false, "unordered_set")); }} /><span><strong>{option.label}</strong>{optionContentDuplicatesLabel(option) ? null : <> <ContentNodes nodes={option.content} canvas={props} /></>}</span><OptionDeleteButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} option={option} count={options.length} /></label>; })}<div className="v2-slot-summary">{response.slotIds.map((slotId) => <span key={slotId} className="v2-slot-chip" data-question-id={slotId}>{runtime.questionDisplayMap[slotId]}: {(canvasAnswers[slotId] ?? []).join(", ") || "—"}</span>)}</div></fieldset> : <div className="v2-slot-list">{response.slotIds.map((slotId, index) => {
+              {passageResponseComplete ? <QuestionAppendButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} /> : inlineStimulusComplete ? null : unordered ? <fieldset className="v2-shared-selection" data-option-list={props.mode === "author" ? "" : undefined}><legend>Select {response.cardinality.exact || response.slotIds.length} options for {response.slotIds.map((slotId) => runtime.questionDisplayMap[slotId]).join(", ")}</legend>{options.map((option, optionIndex) => { const checked = response.slotIds.some((slotId) => (canvasAnswers[slotId] ?? []).includes(option.label)); return <label key={option.optionId} className={`v2-choice-item${checked ? " is-checked" : ""}`} {...optionRowProps(option)}><OptionDragHandle canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} index={optionIndex} /><input type="checkbox" value={option.label} checked={checked} disabled={props.locked || (!checked && unorderedSelected >= unorderedLimit)} onChange={(event) => { const selected = Array.from(new Set(response.slotIds.flatMap((slotId) => canvasAnswers[slotId] ?? []).filter((value) => value !== option.label))).slice(0, response.slotIds.length); if (event.target.checked) selected.push(option.label); response.slotIds.forEach((slotId, index) => setOption(slotId, selected[index] ?? "", Boolean(selected[index]), false, "unordered_set")); }} /><span><strong>{option.label}</strong>{optionContentDuplicatesLabel(option) ? null : <> <ContentNodes nodes={option.content} canvas={props} /></>}</span><OptionDeleteButton canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} option={option} count={options.length} /></label>; })}<div className="v2-slot-summary">{response.slotIds.map((slotId) => <span key={slotId} className="v2-slot-chip" data-question-id={slotId}>{runtime.questionDisplayMap[slotId]}: {(canvasAnswers[slotId] ?? []).join(", ") || "—"}</span>)}</div></fieldset> : <div className="v2-slot-list">{response.slotIds.map((slotId, index) => {
                 const slot = runtime.answerSlots[slotId];
                 if (!slot) return null;
                 const values = canvasAnswers[slotId] ?? [];
