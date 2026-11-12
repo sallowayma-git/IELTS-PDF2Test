@@ -3,6 +3,7 @@ import { StudentReadingTools } from "./StudentReadingTools";
 import { InlineTextEditor } from "./editors/InlineTextEditor";
 import { MatchingMatrix, type MatchingRow } from "./renderers/MatchingMatrix";
 import { matrixRowsForTask, type MatrixRuntimeLike } from "./matrixRows";
+import { confirmRenumber, type RenumberAction } from "./renumber";
 import { resolveAuthoringAssetPreview, type AuthoringAssetPreview } from "../api/tauriCommands";
 import { getListeningAudio, type ListeningAudioStatus } from "../api/listeningAudioClient";
 import { buildReadingInteractionModelV2, buildRuntimeViewModelV2 } from "../services/runtimeViewModelV2";
@@ -35,6 +36,8 @@ export type ExamCanvasStructureAction =
   | { type: "response-group.delete"; taskId: string; responseGroupId: string }
   /** 删除整道大题（含其全部作答组与题目）。 */
   | { type: "task-group.delete"; taskId: string }
+  /** 显式重新编号（调用方已二次确认）。scope=task 只动 taskId 所指大题；exam 动全卷。 */
+  | { type: "questions.renumber"; scope: "task" | "exam"; taskId?: string; startAt?: number }
   | { type: "answer-slot.host.set"; slotId: string; hostNodeId: string };
 
 export interface ExamCanvasProps {
@@ -234,6 +237,15 @@ function GroupDeleteMenu({ canvas, scope, taskId, responseGroupId, slotIds }: {
   return <details className="v2-structure-menu" onClick={(event) => event.stopPropagation()}>
     <summary aria-label={`更多结构操作（${what}）`} title="更多结构操作">更多</summary>
     <div className="v2-structure-menu-items">
+      {scope === "task" ? <button
+        type="button"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const action: RenumberAction = { type: "questions.renumber", scope: "task", taskId };
+          if (confirmRenumber(canvas.authoring, action)) canvas.onStructureAction?.(action);
+        }}
+      >按顺序重新编号本题组</button> : null}
       <button
         type="button"
         onClick={(event) => {

@@ -119,6 +119,20 @@ function classify(raw: string): { category: UserErrorCategory; userMessage?: str
   if (raw.includes("RESPONSE_GROUP_SLOT_MISMATCH")) {
     return { category: "validation", userMessage: "新题的作答位与作答组不一致，这次添加没有生效，请重试。" };
   }
+  // 显式重新编号的机器码。
+  const collision = raw.match(/RENUMBER_COLLISION:(\d+)/);
+  if (collision) {
+    return { category: "conflict", userMessage: `与其他题组的第 ${collision[1]} 题冲突，请改用全卷重新编号。` };
+  }
+  if (raw.includes("RENUMBER_SCOPE_INVALID")) {
+    return { category: "validation", userMessage: "重新编号的范围无效，请重试。" };
+  }
+  if (raw.includes("RENUMBER_START_INVALID")) {
+    return { category: "validation", userMessage: "起始题号无效，请输入正整数。" };
+  }
+  if (raw.includes("RENUMBER_SLOT_REUSED")) {
+    return { category: "validation", userMessage: "同一道题出现在多处，无法重新编号，请先检查题目结构。" };
+  }
   // 结构编辑（删除 / 添加 / 撤销）的机器码：只留一句能照做的人话。
   if (raw.includes("AUTHORING_PATCH_LAST_ANSWER_SLOT")) {
     return { category: "validation", userMessage: "每组至少保留一题，可删除整组。" };

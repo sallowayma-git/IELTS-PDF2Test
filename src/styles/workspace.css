@@ -471,6 +471,13 @@
   list-style: none;
 }
 
+/* 题号不连续的快捷入口：一句说明 + 全卷重新编号按钮，操作前仍有二次确认。 */
+.workspace-renumber-hint {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 /* 问题卡片：第一行是「⚠ 徽标 + 标题」，下面依次是说明与操作按钮。
  *
  * 此前 `severity-badge` / `workspace-task-title` / `workspace-task-detail` **三个类名全无样式**，

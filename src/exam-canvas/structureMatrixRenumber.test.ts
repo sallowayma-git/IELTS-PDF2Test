@@ -4,6 +4,7 @@ import { applyAuthoringV2Patches, inverseAuthoringPatch } from "../services/auth
 import { buildRuntimeViewModelV2 } from "../services/runtimeViewModelV2";
 import { compileStructureAction } from "./structureActions";
 import { matrixRowsForTask } from "./matrixRows";
+import { formatQuestionNumbers, renumberPreview } from "./renumber";
 import { structureDraft } from "./structureDeleteFixture";
 import type { IeltsAuthoringIRV2 } from "../types";
 
@@ -65,5 +66,54 @@ describe("矩阵追加：answer-slot.append 在矩阵上编译为 insertResponse
     expect(matrixRows(draft)).toHaveLength(0);
     const patch = compileStructureAction(draft, { type: "answer-slot.append", taskId: "headings", responseGroupId: "rg-a" });
     expect(patch?.op).toBe("insertAnswerSlot");
+  });
+});
+
+describe("显式重新编号：questions.renumber", () => {
+  it("task 范围必须带 taskId；不存在的大题给人话提示", () => {
+    expect(() => compileStructureAction(structureDraft(), { type: "questions.renumber", scope: "task", taskId: "missing" }))
+      .toThrow("这道大题已不在当前题稿里");
+  });
+
+  it("编译为 renumberQuestions；startAt 仅在给出时携带", () => {
+    expect(compileStructureAction(structureDraft(), { type: "questions.renumber", scope: "exam" }))
+      .toEqual({ op: "renumberQuestions", scope: "exam" });
+    expect(compileStructureAction(structureDraft(), { type: "questions.renumber", scope: "task", taskId: "headings", startAt: 3 }))
+      .toEqual({ op: "renumberQuestions", scope: "task", taskId: "headings", startAt: 3 });
+  });
+
+  it("预览：乱序题号按编译顺序列出改前改后，与应用结果一致", () => {
+    const draft = structureDraft();
+    draft.answerSlots.q14.questionNumber = 1;
+    draft.answerSlots.q15.questionNumber = 3;
+    draft.answerSlots.q16.questionNumber = 2;
+    const preview = renumberPreview(draft, { type: "questions.renumber", scope: "exam" });
+    expect(preview).toEqual({ before: [1, 3, 2], after: [1, 2, 3] });
+    expect(formatQuestionNumbers(preview.after)).toBe("1–3");
+    expect(formatQuestionNumbers(preview.before)).toBe("1、3、2");
+  });
+
+  it("应用后题号连续，撤销恢复原题号", () => {
+    const draft = structureDraft();
+    draft.answerSlots.q14.questionNumber = 1;
+    draft.answerSlots.q15.questionNumber = 3;
+    draft.answerSlots.q16.questionNumber = 2;
+    const before = clone(draft);
+    const patch = compileStructureAction(draft, { type: "questions.renumber", scope: "exam" })!;
+    const after = applyAuthoringV2Patches(draft, [patch]);
+    expect(Object.values(after.answerSlots).map((slot) => slot.questionNumber).sort()).toEqual([1, 2, 3]);
+    expect(after.answerSlots.q15.displayLabel).toBe("2");
+    expect(applyAuthoringV2Patches(after, [inverseAuthoringPatch(draft, patch)!])).toEqual(before);
+  });
+
+  it("与其他大题的题号冲突：预览直接报 RENUMBER_COLLISION，不做部分修改", () => {
+    const draft = structureDraft();
+    draft.taskGroups.push({ ...clone(draft.taskGroups[0]), taskId: "other", responseGroups: [
+      { ...clone(draft.taskGroups[0].responseGroups[1]), responseGroupId: "rg-other", slotIds: ["q20"] },
+    ] });
+    draft.answerSlots.q20 = { ...clone(draft.answerSlots.q16), slotId: "q20", questionNumber: 20, displayLabel: "20" };
+    draft.answerKey.q20 = { kind: "unresolved" };
+    expect(() => renumberPreview(draft, { type: "questions.renumber", scope: "task", taskId: "headings", startAt: 19 }))
+      .toThrow("AUTHORING_PATCH_RENUMBER_COLLISION:20");
   });
 });

@@ -222,6 +222,68 @@ async function main() {
     await shot("07-student-preview-after-delete");
     report.student = preview;
 
+    // 9. 制造乱序并全卷重新编号。往大题 1 的第一个作答组末尾追加一题（题号取全卷最大 + 1 = 8），
+    //    它在界面上排在大题 2 的题之前，于是显示顺序变成乱序（如 1 3 4 8 5 7）。
+    //    「全卷按顺序重新编号」→ 二次确认（stub 记录确认文字）→ 题号按显示顺序连续；撤销恢复乱序；重做回到连续；
+    //    保存、重启后保持连续。
+    const inDocumentOrder = `(() => { const seen = []; for (const b of document.querySelectorAll('[data-testid="exam-canvas-v2-author"] button[aria-label^="删除第 "]')) { const n = Number(b.getAttribute('aria-label').match(/\\d+/)[0]); if (!seen.includes(n)) seen.push(n); } return seen; })()`;
+    await session.clickSelector('[data-testid="workspace-mode-edit"]');
+    await session.waitFor(deleteControl(1), { timeoutMs: 60000, label: "back-to-author-canvas" });
+    await session.clickSelector('[data-response-group-id="group-1-0"] .v2-question-append');
+    await session.waitFor(deleteControl(8), { timeoutMs: 20000, label: "q8-appended-to-task-1" });
+    const disordered = await session.evaluate(inDocumentOrder);
+    assertTrue(report, "R-9a disordered-display-order", JSON.stringify(disordered) !== JSON.stringify([...disordered].sort((a, b) => a - b)), `display=${JSON.stringify(disordered)}`);
+    const beforeRenumber = disordered;
+    report.observations = [{
+      id: "R-O1", note: "质量提示是否出现「题号不连续」快捷入口（观察项，取决于后端是否给出该警告）",
+      hintVisibleAtDisorder: await session.evaluate(`!!document.querySelector('[data-testid="workspace-renumber-hint"]')`),
+    }];
+
+    await session.evaluate(`(() => { window.__confirmAnswer = true; window.__confirmLog = []; return true; })()`);
+    await session.clickSelector('button[aria-label="更多操作"]');
+    await session.clickSelector('[data-testid="workspace-renumber-exam"]');
+    await session.waitFor(`window.__confirmLog.length === 1`, { timeoutMs: 20000, label: "renumber-confirm" });
+    const renumberLog = await session.evaluate(`window.__confirmLog.slice()`);
+    assertTrue(report, "R-9b confirm-states-change-and-undo",
+      /题号会改变，答案与统计不受影响，可撤销/.test(renumberLog[0] ?? "") && /原题号/.test(renumberLog[0] ?? ""), JSON.stringify(renumberLog[0]?.slice(0, 120)));
+    await session.waitFor(`(${inDocumentOrder}).join(',') === '1,2,3,4,5,6'`, { timeoutMs: 20000, label: "renumbered-six" });
+    const renumbered = await session.evaluate(inDocumentOrder);
+    assertEqual(report, "R-9c renumbered-display-continuous", renumbered, [1, 2, 3, 4, 5, 6]);
+    assertEqual(report, "R-9d renumbered-ui-sorted", await authorSlotNumbers(session), [1, 2, 3, 4, 5, 6]);
+    await shot("08-after-exam-renumber");
+
+    // 9e. 撤销恢复乱序原题号；重做回到连续。
+    await session.clickSelector('button[aria-label="撤销"]');
+    await session.waitFor(`(${inDocumentOrder}).join(',') === '${beforeRenumber.join(",")}'`, { timeoutMs: 20000, label: "renumber-undone" });
+    assertEqual(report, "R-9e toolbar-undo-restores-numbers", await session.evaluate(inDocumentOrder), beforeRenumber);
+    await session.clickSelector('button[aria-label="重做"]');
+    await session.waitFor(`(${inDocumentOrder}).join(',') === '1,2,3,4,5,6'`, { timeoutMs: 20000, label: "renumber-redone" });
+    assertEqual(report, "R-9f redo-renumber", await session.evaluate(inDocumentOrder), [1, 2, 3, 4, 5, 6]);
+
+    // 9g. 学生预览的题号连续且与后端一致。
+    await session.clickSelector('[data-testid="workspace-mode-student"]');
+    await session.waitFor(`!!document.querySelector('[data-testid="exam-canvas-v2-student"]')`, { timeoutMs: 60000, label: "student-preview-renumbered" });
+    const renumberedPreview = await session.evaluate(`[...new Set([...document.querySelectorAll('[data-testid="exam-canvas-v2-student"] .v2-slot-question .v2-slot-number, [data-testid="exam-canvas-v2-student"] .v2-matching-item .v2-slot-number')].map((n) => Number(n.textContent.trim())).filter((n) => Number.isInteger(n) && n > 0))]`);
+    assertEqual(report, "R-9g student-preview-renumbered-continuous", renumberedPreview, [1, 2, 3, 4, 5, 6]);
+    await shot("09-student-preview-renumbered");
+
+    // 9h. 保存 → 后端连续；重启后仍连续。
+    await session.clickSelector('[data-testid="workspace-mode-edit"]');
+    await session.waitFor(deleteControl(1), { timeoutMs: 60000, label: "edit-before-save" });
+    await session.clickSelector('[data-testid="workspace-save"]');
+    await session.waitFor(`document.querySelector('[data-testid="workspace-save-state"]')?.textContent === '已保存'`, { timeoutMs: 40000, label: "renumber-saved" });
+    const renumberedSaved = await backendSlots(session, itemId);
+    assertEqual(report, "R-9h backend-renumbered-after-save", renumberedSaved.numbers, [1, 2, 3, 4, 5, 6]);
+    await session.close();
+    await sleep(1500);
+    session = await launchTauriAppCdp({ exePath, runDir, extraBrowserArgs: extraArgs });
+    await waitForRows(session, [itemId], 90000);
+    const renumberedReopened = await backendSlots(session, itemId);
+    assertEqual(report, "R-9i restart-keeps-renumbered", renumberedReopened.numbers, [1, 2, 3, 4, 5, 6]);
+    await openEditor();
+    assertEqual(report, "R-9j reopened-ui-renumbered", await authorSlotNumbers(session), [1, 2, 3, 4, 5, 6]);
+    await shot("10-reopened-renumbered");
+
     report.consoleErrors = session.cdp.events
       .filter((e) => e.method === "Runtime.consoleAPICalled" && ["error", "assert"].includes(e.params?.type))
       .map((e) => (e.params.args ?? []).map((a) => a.value ?? a.description ?? "").join(" ").slice(0, 300));

@@ -513,7 +513,7 @@ function patchDeleteResponseGroup(document: IeltsAuthoringIRV2, patch: Extract<A
   refreshNumbers(document, patch.taskId);
 }
 
-function orderedTaskSlots(task: IeltsAuthoringIRV2["taskGroups"][number]): string[] {
+export function orderedTaskSlots(task: IeltsAuthoringIRV2["taskGroups"][number]): string[] {
   const owned = new Set(task.responseGroups.flatMap((g) => g.slotIds));
   const seen = new Set<string>();
   const out: string[] = [];

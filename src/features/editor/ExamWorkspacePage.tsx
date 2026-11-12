@@ -8,6 +8,7 @@ import { go, libraryPath, libraryPickPath, type LibraryIntent } from "../../app/
 import { StudentFontSizeControls, type StudentFontSize } from "../../exam-canvas/StudentReadingTools";
 import { ExamCanvas, type ExamCanvasStructureAction } from "../../exam-canvas/ExamCanvas";
 import { compileStructureAction } from "../../exam-canvas/structureActions";
+import { confirmRenumber, type RenumberAction } from "../../exam-canvas/renumber";
 import { SelectionInspector } from "./SelectionInspector";
 import type { IeltsAuthoringIRV2, JobDetail } from "../../types";
 import { readAppSettings } from "../settings/appSettings";
@@ -256,6 +257,8 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
     [editor.draft, issues, repairAids]
   );
   const pendingTasks = taskSummary.tasks.filter((task) => !confirmedHints.isConfirmed(task));
+  // 后端质量警告：题号不连续。给一个全卷重新编号的快捷入口（仍需二次确认）。
+  const numberingIssue = issues.some((issue) => issue.code === "QUESTION_NUMBER_NONCONTIGUOUS" || issue.rootCause === "QUESTION_NUMBER_NONCONTIGUOUS");
   const hintCount = pendingTasks.length + comparisons.length;
   function confirmHint(task: UserTaskV1) {
     try { confirmedHints.confirm(task); }
@@ -465,6 +468,29 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
     scrollNoticeIntoView.current = true;
     showError(error, fallback);
   }
+  /** 画布与顶栏的结构动作共用这一条路径：按最新草稿分辨、编译、应用；失败响亮报错。 */
+  function applyStructureAction(action: ExamCanvasStructureAction) {
+    const draft = latestDraftRef.current;
+    if (!draft) return;
+    // 先按**最新**草稿分辨「做不了」：compileStructureAction 对找不到的实体静默返回 undefined，
+    // 这里必须响亮失败而不是静默吞掉这次操作。
+    const missing = missingStructureActionMessage(draft, action);
+    if (missing) {
+      structureError(new Error(missing), "这个结构修改没有生效，请重试。");
+      return;
+    }
+    try {
+      const patch = compileStructureAction(draft, action);
+      if (patch) editor.applyPatch(patch);
+    } catch (error) { structureError(error, "这个结构修改没有生效，请重试。"); }
+  }
+  /** 全卷按顺序重新编号：二次确认（写明题号前后变化），通过后走同一条结构动作路径，可撤销。 */
+  function renumberWholeExam() {
+    const draft = latestDraftRef.current;
+    if (!draft || cloudReviewing) return;
+    const action: RenumberAction = { type: "questions.renumber", scope: "exam" };
+    if (confirmRenumber(draft, action)) applyStructureAction(action);
+  }
   // Ctrl+Z 撤销、Ctrl+Shift+Z / Ctrl+Y 重做（与工具栏按钮同一条路径）。焦点在文本框里时交给浏览器自己的文字撤销。
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -667,6 +693,13 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               {!sourceActionsEnabled ? (
                 <small className="workspace-menu-note" data-testid="workspace-source-purged-note">{SOURCE_PURGED_EXPLANATION}</small>
               ) : null}
+              <button
+                role="menuitem"
+                data-testid="workspace-renumber-exam"
+                disabled={!editor.draft || cloudReviewing}
+                title={cloudReviewing ? "云端校核进行中，暂时不能修改题目结构" : "按当前顺序把全卷题号改为 1 起连续编号"}
+                onClick={() => { setMenuOpen(false); renumberWholeExam(); }}
+              >全卷按顺序重新编号</button>
               <button role="menuitem" onClick={() => withBusy("cancel", async () => {
                 await cancelProcessing(itemId);
                 setNotice("已请求停止识别。");
@@ -864,6 +897,12 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               同一份夹具，一次任务 id 是 `missing-answer:q27+…+q40`（题号解析成功、定位命中
               `group-1-stimulus-b032`），另一次退化成 `unnumbered` 且定位失败（F-R15-5）。
               判据用 `taskSummary.ready`（领域规则，可单测），不用 `editor.loading`。 */}
+          {numberingIssue && mode === "edit" ? (
+            <p className="workspace-renumber-hint" data-testid="workspace-renumber-hint">
+              <span>题号不连续。答案与统计不受影响，可以按顺序重新编号。</span>{" "}
+              <button className="ghost small" data-testid="workspace-renumber-hint-action" disabled={Boolean(busyAction) || cloudReviewing} onClick={renumberWholeExam}>重新编号（全卷）</button>
+            </p>
+          ) : null}
           {!taskSummary.ready ? (
             <p className="empty compact" data-testid="workspace-tasks-loading">{taskSummary.headline}</p>
           ) : visibleTasks.visible.length ? (
@@ -1001,21 +1040,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               editor.applyCommand({ op: "set_text", nodeId, expectedText, text })
             }
             onAnswerChange={cloudReviewing ? undefined : (slotId, value) => editor.applyCommand({ op: "set_answer", slotId, value })}
-            onStructureAction={cloudReviewing ? undefined : (action) => {
-              const draft = latestDraftRef.current;
-              if (!draft) return;
-              // 先按**最新**草稿分辨「做不了」：compileStructureAction 对找不到的实体
-              // 静默返回 undefined，这里必须响亮失败而不是静默吞掉这次操作。
-              const missing = missingStructureActionMessage(draft, action);
-              if (missing) {
-                structureError(new Error(missing), "这个结构修改没有生效，请重试。");
-                return;
-              }
-              try {
-                const patch = compileStructureAction(draft, action);
-                if (patch) editor.applyPatch(patch);
-              } catch (error) { structureError(error, "这个结构修改没有生效，请重试。"); }
-            }}
+            onStructureAction={cloudReviewing ? undefined : applyStructureAction}
           />
         ) : null}
 

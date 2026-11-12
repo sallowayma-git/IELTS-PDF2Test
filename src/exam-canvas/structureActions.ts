@@ -117,6 +117,16 @@ export function compileStructureAction(current: IeltsAuthoringIRV2, action: Exam
     if (!current.taskGroups.some((candidate) => candidate.taskId === action.taskId)) throw new Error("这道大题已不在当前题稿里，这次删除没有生效。");
     return { op: "deleteTaskGroup", taskId: action.taskId };
   }
+  if (action.type === "questions.renumber") {
+    if (action.scope === "task" && !current.taskGroups.some((candidate) => candidate.taskId === action.taskId)) {
+      throw new Error("这道大题已不在当前题稿里，这次重新编号没有生效。");
+    }
+    return {
+      op: "renumberQuestions", scope: action.scope,
+      ...(action.scope === "task" ? { taskId: action.taskId } : {}),
+      ...(action.startAt !== undefined ? { startAt: action.startAt } : {}),
+    };
+  }
   if (action.type === "answer-slot.append") {
     const task = current.taskGroups.find((candidate) => candidate.taskId === action.taskId);
     const group = task?.responseGroups.find((candidate) => candidate.responseGroupId === action.responseGroupId);
