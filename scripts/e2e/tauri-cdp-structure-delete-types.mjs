@@ -8,10 +8,10 @@
 //   1. 初始 6 题，矩阵可见；
 //   2. 矩阵第 2 行的 × 删除 → 该行消失、矩阵仍在；Ctrl+Z 恢复，Ctrl+Shift+Z 重做；
 //   3. 判断题第 6 题的 × 删除 → 该题消失；工具栏「撤销」恢复，「重做」再删；
-//   4. 矩阵底部「＋ 添加一题」→ 新题出现（题号 = 全卷最大 + 1）；工具栏「撤销」移除；
-//      观察项（非断言）：追加到矩阵末行所在的组后，该组不再是单题组，矩阵退回逐题列表；
-//   5. 保存 → 后端题稿题号与界面一致；判断题选项库仍是 TRUE / FALSE / NOT GIVEN；
-//   6. 关闭并重启同一数据目录 → 结构仍一致；
+//   4. 矩阵底部「＋ 添加一题」→ 新题出现（题号 = 全卷最大 + 1）；追加后仍渲染为矩阵（新增一个单题作答组）；
+//      工具栏「撤销」移除、「重做」恢复；新行真实点选一个选项；
+//   5. 保存 → 后端题稿题号与界面一致；判断题选项库仍是 TRUE / FALSE / NOT GIVEN；新行答案已落盘；
+//   6. 关闭并重启同一数据目录 → 结构与新行答案仍一致；
 //   7. 学生预览：题号与后端一致，无编译失败。
 //
 // 证据层级：real-app-e2e（CDP 驱动真实 Tauri/WebView2 界面 + 真实 IPC 读取持久化结果；学生预览为作者端的学生画布）。
@@ -184,11 +184,10 @@ async function main() {
     await session.clickSelector('[data-testid="exam-canvas-v2-author"] .v2-matching-footer > .v2-question-append');
     await session.waitFor(deleteControl(6), { timeoutMs: 20000, label: "matrix-append-added" });
     assertEqual(report, "T-4 matrix-append-adds-next-number", await authorSlotNumbers(session), [1, 3, 4, 5, 6]);
-    report.observations.push({
-      id: "O-1",
-      note: "追加到矩阵末行所在的组后，该组不再是单题组，矩阵前提不满足，任务退回逐题列表",
-      matrixRenderedAfterAppend: await session.evaluate(matrixRendered),
-    });
+    // 追加后仍是矩阵：新题是矩阵的一个新行（单题作答组），不是退回逐题列表。
+    assertTrue(report, "T-4a matrix-still-rendered-after-append", await session.evaluate(matrixRendered), "追加后仍以矩阵呈现");
+    const appendedRows = await session.evaluate(`document.querySelectorAll('[data-testid="exam-canvas-v2-author"] [data-testid="matching-matrix"] tbody tr').length`);
+    assertEqual(report, "T-4a2 matrix-row-count-after-append", appendedRows, 4);
     await shot("types-04-after-matrix-append");
     await session.clickSelector('button[aria-label="撤销"]');
     await session.waitFor(deleteControlGone(6), { timeoutMs: 20000, label: "matrix-append-undone" });
@@ -197,13 +196,22 @@ async function main() {
     await session.waitFor(deleteControl(6), { timeoutMs: 20000, label: "matrix-append-redone" });
     assertEqual(report, "T-4c toolbar-redo-restores-appended", await authorSlotNumbers(session), [1, 3, 4, 5, 6]);
 
-    // 5. 保存 → 后端核对。
+    // 新行可作答：真实点选该行第一个选项，再核对界面勾选状态。
+    const newRowRadio = '[data-testid="exam-canvas-v2-author"] tr[data-question-id^="q6-"] input[type="radio"]';
+    await session.clickSelector(newRowRadio);
+    const picked = await session.evaluate(`(() => { const el = document.querySelector(${JSON.stringify(newRowRadio)}); return { label: el?.value ?? null, checked: Boolean(el?.checked) }; })()`);
+    assertTrue(report, "T-4d new-row-answerable", picked.checked && Boolean(picked.label), JSON.stringify(picked));
+
+    // 5. 保存 → 后端核对（题号、判断题选项库、新行答案）。
     await session.clickSelector('[data-testid="workspace-save"]');
     await session.waitFor(`document.querySelector('[data-testid="workspace-save-state"]')?.textContent === '已保存'`, { timeoutMs: 40000, label: "saved" });
     const saved = await backendState(session, itemId);
     assertEqual(report, "T-5 backend-matches-ui-after-save", saved.numbers, [1, 3, 4, 5, 6]);
     const tfngOptions = saved.ds.taskGroups.find((task) => task.taskId === "task-2")?.optionBank?.options.map((option) => option.label);
     assertEqual(report, "T-5b tfng-option-bank-kept", tfngOptions, ["TRUE", "FALSE", "NOT GIVEN"]);
+    const newSlotId = Object.values(saved.ds.answerSlots).find((slot) => slot.questionNumber === 6)?.slotId ?? null;
+    const savedAnswer = newSlotId ? saved.ds.answerKey[newSlotId] : undefined;
+    assertTrue(report, "T-5c appended-row-answer-saved", savedAnswer?.kind === "option" && (savedAnswer.labels ?? []).includes(picked.label), `slot=${newSlotId} answer=${JSON.stringify(savedAnswer)}`);
     report.savedSlotIds = Object.keys(saved.ds.answerSlots).sort();
 
     // 6. 关闭并重启同一数据目录。
@@ -216,6 +224,8 @@ async function main() {
     assertEqual(report, "T-6b restart-keeps-task-types", reopened.ds.taskGroups.map((task) => task.taskType), ["matching_features", "true_false_not_given"]);
     await openEditor();
     assertEqual(report, "T-6c reopened-ui-matches", await authorSlotNumbers(session), [1, 3, 4, 5, 6]);
+    assertTrue(report, "T-6d reopened-matrix-rendered", await session.evaluate(matrixRendered), "重启后仍是矩阵");
+    assertTrue(report, "T-6e reopened-appended-answer-checked", await session.evaluate(`Boolean(document.querySelector(${JSON.stringify(`[data-testid="exam-canvas-v2-author"] tr[data-question-id="${newSlotId}"] input[type="radio"][value="${picked.label}"]`)})?.checked)`), `slot=${newSlotId}`);
     await shot("types-05-reopened-editor");
 
     // 7. 学生预览：题号与后端一致，无编译失败面板，判断题选项正常渲染。

@@ -1,5 +1,7 @@
-import type { AnswerSlotV2, AuthoringPatchV2, ContentNodeV2, IeltsAuthoringIRV2, QuestionNumberExpressionV2 } from "../types";
+import type { AnswerSlotV2, AuthoringPatchV2, ContentNodeV2, IeltsAuthoringIRV2, QuestionNumberExpressionV2, ResponseGroupV2 } from "../types";
 import { locateContentNode } from "../services/authoringV2Patches";
+import { buildRuntimeViewModelV2 } from "../services/runtimeViewModelV2";
+import { matrixRowsForTask } from "./matrixRows";
 import type { ExamCanvasStructureAction } from "./ExamCanvas";
 
 export function manualParagraph(text = "新内容"): ContentNodeV2 {
@@ -123,10 +125,30 @@ export function compileStructureAction(current: IeltsAuthoringIRV2, action: Exam
     const anchorId = action.afterSlotId ?? group.slotIds.at(-1);
     const template = anchorId ? current.answerSlots[anchorId] : undefined;
     if (!template) throw new Error("这组题没有可参照的答案位，无法添加。");
-    const slotIndex = action.afterSlotId ? group.slotIds.indexOf(action.afterSlotId) + 1 : group.slotIds.length;
-    if (slotIndex <= 0) throw new Error("插入位置已不在当前题稿里，这次添加没有生效，请重试。");
     const questionNumber = Math.max(0, ...Object.values(current.answerSlots).map((slot) => slot.questionNumber)) + 1;
     const slotId = `q${questionNumber}-${stamp}`;
+    // 矩阵（配对表）每行一个单题组：追加时新增一个组，矩阵保持不变，而不是把新题塞进已有组。
+    const runtime = buildRuntimeViewModelV2(current);
+    const runtimeTask = runtime.taskGroups.find((candidate) => candidate.taskId === task.taskId);
+    if (runtimeTask && matrixRowsForTask(runtime, runtimeTask, current.passage?.paragraphMap).length > 0) {
+      const rowGroup = group;
+      const cardinality = structuredClone(rowGroup.cardinality);
+      const responseGroup: ResponseGroupV2 = {
+        responseGroupId: `rg-${slotId}`, kind: "matching", assignment: "per_slot", slotIds: [slotId],
+        cardinality, scoringPolicy: rowGroup.scoringPolicy, duplicatePolicy: rowGroup.duplicatePolicy,
+        allowOptionReuse: rowGroup.allowOptionReuse, sourceAnchors: [],
+      };
+      // 题干由后端生成「新题干」占位；选项不内联，沿用模板的共享选项库。
+      const matrixTemplate: Partial<AnswerSlotV2> = structuredClone(template);
+      delete matrixTemplate.hostNodeId;
+      const rowSlot: AnswerSlotV2 = {
+        ...(matrixTemplate as AnswerSlotV2), slotId, questionNumber, displayLabel: String(questionNumber),
+        hostType: "prompt", sourceAnchors: [], provenanceStatus: "manual", confidence: 1,
+      };
+      return { op: "insertResponseGroup", taskId: task.taskId, index: task.responseGroups.length, responseGroup, slot: rowSlot, value: { kind: "unresolved" } };
+    }
+    const slotIndex = action.afterSlotId ? group.slotIds.indexOf(action.afterSlotId) + 1 : group.slotIds.length;
+    if (slotIndex <= 0) throw new Error("插入位置已不在当前题稿里，这次添加没有生效，请重试。");
     // 宿主只沿用原文段落；其余宿主（题干节点等）不能复制，由后端在逐题题干布局下自动生成新题干。
     const { hostNodeId, ...templateRest } = structuredClone(template);
     const passageHost = template.hostType === "passage_paragraph";

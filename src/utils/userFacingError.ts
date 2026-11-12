@@ -109,6 +109,16 @@ function classify(raw: string): { category: UserErrorCategory; userMessage?: str
     // 旧导出入口（无界面调用方）仍是严格门禁；产品发布按钮不会再收到这个错误。
     return { category: "validation", userMessage: "这道题还有未完成的内容，暂时不能用这个方式导出；请先保存，再到「题库」组卷发布。" };
   }
+  // 矩阵追加（新增一个单题作答组）的机器码。
+  if (raw.includes("RESPONSE_GROUP_TEMPLATE_REQUIRED")) {
+    return { category: "validation", userMessage: "这组题没有可参照的作答组，无法添加，请刷新后重试。" };
+  }
+  if (raw.includes("RESPONSE_GROUP_ALREADY_EXISTS")) {
+    return { category: "conflict", userMessage: "新题的作答组编号已被占用，请刷新后重试。" };
+  }
+  if (raw.includes("RESPONSE_GROUP_SLOT_MISMATCH")) {
+    return { category: "validation", userMessage: "新题的作答位与作答组不一致，这次添加没有生效，请重试。" };
+  }
   // 结构编辑（删除 / 添加 / 撤销）的机器码：只留一句能照做的人话。
   if (raw.includes("AUTHORING_PATCH_LAST_ANSWER_SLOT")) {
     return { category: "validation", userMessage: "每组至少保留一题，可删除整组。" };

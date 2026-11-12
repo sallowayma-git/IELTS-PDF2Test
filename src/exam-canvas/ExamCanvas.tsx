@@ -1,7 +1,8 @@
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { StudentReadingTools } from "./StudentReadingTools";
 import { InlineTextEditor } from "./editors/InlineTextEditor";
-import { MatchingMatrix, matchingRowsFor, type MatchingRow } from "./renderers/MatchingMatrix";
+import { MatchingMatrix, type MatchingRow } from "./renderers/MatchingMatrix";
+import { matrixRowsForTask, type MatrixRuntimeLike } from "./matrixRows";
 import { resolveAuthoringAssetPreview, type AuthoringAssetPreview } from "../api/tauriCommands";
 import { getListeningAudio, type ListeningAudioStatus } from "../api/listeningAudioClient";
 import { buildReadingInteractionModelV2, buildRuntimeViewModelV2 } from "../services/runtimeViewModelV2";
@@ -817,20 +818,13 @@ function containsAnswerSlot(nodes: ContentNodeV2[] | undefined, slotIds?: Set<st
   });
 }
 
-/** 矩阵已经完整呈现该 task 时，不再重复渲染逐组列表。 */
+/** 矩阵已经完整呈现该 task 时，不再重复渲染逐组列表。判定与结构编译共用 matrixRowsForTask。 */
 function matrixHandled(
   task: TaskGroupV2,
-  runtime: { questionDisplayMap: Record<string, string>; answerSlots: Record<string, { interaction?: string }> },
+  runtime: MatrixRuntimeLike,
   paragraphMap?: Record<string, string>
 ): boolean {
-  return matchingRowsFor(
-    task.responseGroups,
-    runtime.questionDisplayMap,
-    (slotId) => runtime.answerSlots[slotId]?.interaction,
-    response => response.options?.length ? response.options : task.optionBank?.options ?? [],
-    task.taskType,
-    paragraphMap
-  ).length > 0;
+  return matrixRowsForTask(runtime, task, paragraphMap).length > 0;
 }
 
 export function ExamCanvas(inputProps: ExamCanvasProps) {
@@ -1190,14 +1184,7 @@ export function ExamCanvas(inputProps: ExamCanvasProps) {
           {(() => {
             // Matching 矩阵：相同选项集合、每行一个 radio/checkbox 答案位。
             // 不符合矩阵前提的 matching（多答案位、unordered_set）继续走下面的逐组列表。
-            const rows = matchingRowsFor(
-              task.responseGroups as ResponseGroupV2[],
-              runtime.questionDisplayMap,
-              (slotId) => runtime.answerSlots[slotId]?.interaction,
-              response => optionsFor(task as TaskGroupV2, response),
-              task.taskType,
-              props.authoring.passage?.paragraphMap
-            );
+            const rows = matrixRowsForTask(runtime, task as TaskGroupV2, props.authoring.passage?.paragraphMap);
             if (!rows.length) return null;
             return <><MatchingMatrix
               rows={rows}
